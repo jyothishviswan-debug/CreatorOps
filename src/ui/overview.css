@@ -1,0 +1,101 @@
+/* Ported from the golden master's "refined-overview" template CSS
+   (docs/reference/CreatorOps_UI_Golden_Master.html, #refined-overview-style),
+   for the rich per-module Overview panels (kpi/donut/trend/stages/rankings/
+   events/action-grid). Classes are "ov-" prefixed so they never collide with
+   the base shell classes in foundation.css (both define .panel, .kpi, etc.
+   with different rules). Reuses this app's existing --orange/--ink/--muted/
+   --line tokens instead of the source's separate --brand token set. */
+
+.ov-context{background:white;border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;align-items:center;padding:10px 13px;margin-bottom:16px;box-shadow:var(--shadow)}
+.ov-context-icon{color:var(--orange);background:var(--tint);border-radius:8px;width:35px;height:35px;display:grid;place-items:center;flex:none}
+.ov-context-icon svg{width:20px;height:20px}
+.ov-context strong{font-size:13px;display:block}
+.ov-context small{font-size:11px;color:var(--muted)}
+.ov-context-chips{display:flex;gap:8px;align-items:center;margin-left:auto;white-space:nowrap}
+
+.ov-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.ov-kpi{position:relative;overflow:hidden;display:flex;align-items:flex-start;gap:11px;text-align:left;border-radius:10px;background:white;border:1px solid var(--line);padding:14px 13px;box-shadow:var(--shadow);min-width:0}
+.ov-kpi::before{content:"";position:absolute;left:-1px;right:-1px;top:-1px;height:3px;background:var(--ov-accent,var(--orange));border-radius:10px 10px 0 0}
+.ov-kpi-icon{width:39px;height:39px;border-radius:10px;display:grid;place-items:center;flex:none;background:var(--ov-tint);color:var(--ov-tone)}
+.ov-kpi-icon svg{width:22px;height:22px}
+.ov-kpi-text{min-width:0;flex:1}
+.ov-kpi-label{font-size:11.5px;color:#4d6080}
+.ov-kpi-value{font-size:25px;letter-spacing:-.6px;line-height:1.35;margin:4px 0;font-weight:700}
+.ov-kpi small{font-size:10.5px;color:var(--muted)}
+
+.ov-row{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:stretch;margin-bottom:12px}
+.ov-panel{grid-column:span var(--ov-span,4);position:relative;overflow:hidden;min-width:0;background:white;border:1px solid var(--line);border-radius:10px;padding:13px 13px 0;box-shadow:var(--shadow);display:flex;flex-direction:column}
+.ov-panel::before{content:"";position:absolute;left:-1px;right:-1px;top:-1px;height:3px;background:var(--ov-accent,var(--orange));border-radius:10px 10px 0 0}
+.ov-panel-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
+.ov-panel-head h2{font-size:12.5px;line-height:1.25;letter-spacing:-.15px;font-weight:650;margin:0}
+.ov-panel-icon{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;background:var(--ov-tint);color:var(--ov-tone);flex:none}
+.ov-panel-icon svg{width:16px;height:16px}
+.ov-panel-link{margin-left:auto;border:0;background:none;padding:3px 0 3px 5px;white-space:nowrap;font-size:11px;color:var(--orange)}
+.ov-panel-note{font-size:10.5px;color:var(--muted);margin-bottom:8px}
+.ov-panel-body{flex:1;display:flex;flex-direction:column;justify-content:center;min-width:0}
+.ov-panel-foot{display:flex;align-items:center;gap:7px;font-size:10px;line-height:1.4;color:var(--muted);border-top:1px solid #edf0f4;margin-top:11px;padding:9px 0;min-height:42px}
+.ov-panel-foot svg{width:14px;height:14px;color:#657793;flex:none}
+.ov-chev{margin-left:auto;font-size:16px;color:#a1a9b3}
+
+.ov-donut-layout{display:flex;align-items:center;gap:16px;padding:2px 0}
+.ov-ring{width:124px;height:124px;position:relative;flex:none}
+.ov-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
+.ov-ring-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:23px;font-weight:700;letter-spacing:-.4px}
+.ov-ring-center small{font-size:9px;text-transform:uppercase;letter-spacing:.3px;font-weight:400;color:var(--muted)}
+.ov-legend{display:grid;gap:8px;width:100%}
+.ov-legend-item{display:flex;align-items:center;gap:7px;font-size:10.5px}
+.ov-swatch{width:8px;height:8px;border-radius:50%;flex:none}
+.ov-legend-item b{margin-left:auto;font-size:11px}
+.ov-legend-item small{font-size:10px;color:var(--muted);min-width:30px;text-align:right}
+
+.ov-trend-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
+.ov-trend-label{font-size:11px;display:flex;align-items:center;gap:6px}
+.ov-trend-value{font-size:25px;font-weight:700;margin:4px 0 2px;letter-spacing:-.6px}
+.ov-trend-value small{font-size:10px;margin-left:7px;color:#11885d;font-weight:500}
+.ov-trend svg{width:100%;height:110px;display:block}
+.ov-axis{display:flex;justify-content:space-between;font-size:9px;color:var(--muted)}
+
+.ov-stages{display:flex;flex-direction:column;gap:0}
+.ov-stage-item{display:flex;align-items:center;gap:10px;padding:8px 0}
+.ov-step{width:22px;height:22px;border-radius:6px;background:var(--tint);color:var(--orange);font-size:10px;display:grid;place-items:center;flex:none}
+.ov-stage-item span{font-size:11px;flex:1}
+.ov-stage-item b{font-size:15px}
+
+.ov-rankings{display:flex;flex-direction:column;gap:7px}
+.ov-rank-item{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid #eff1f5;font-size:11.5px}
+.ov-rank-item:last-child{border-bottom:0}
+.ov-rank-no{color:#91a0b5;font-size:10px;min-width:12px}
+.ov-initials{width:29px;height:29px;display:grid;place-items:center;flex:none;background:var(--ov-tint);color:var(--ov-tone);font-size:10px;font-weight:650;border-radius:50%}
+.ov-rank-item b{font-size:12px;margin-left:auto}
+
+.ov-attention{display:grid;gap:7px}
+.ov-attention-row{padding:8px 9px;text-align:left;display:flex;align-items:center;gap:8px;border:1px solid #e9edf4;border-radius:8px;min-width:0;background:white}
+.ov-mini{width:26px;height:26px;border-radius:7px;background:var(--ov-tint);color:var(--ov-tone);display:grid;place-items:center;flex:none}
+.ov-mini svg{width:16px;height:16px}
+.ov-attention-name{flex:1;font-size:11px;min-width:0}
+.ov-attention-count{font-size:11px;font-weight:650;padding:1px 7px;background:var(--tint);color:var(--orange);border-radius:15px}
+.ov-attention-arrow{font-size:15px;color:#728198}
+
+.ov-events{display:grid;gap:6px}
+.ov-event{padding:7px 8px;border:1px solid #edf0f5;border-radius:8px;display:flex;gap:8px;align-items:center;min-width:0}
+.ov-event strong{font-size:10.5px;font-weight:550;display:block}
+.ov-event small{font-size:10px;display:block;color:var(--muted)}
+
+.ov-action-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;flex:1}
+.ov-action-grid button{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;text-align:center;padding:9px 6px;border-radius:8px;min-height:64px;font-size:11px;border:1px solid var(--line);background:white}
+.ov-action-grid button:hover{background:var(--tint);border-color:#f5b98f}
+.ov-action-grid svg{width:20px;height:20px;color:var(--ov-tone,var(--orange))}
+
+@media(max-width:1050px){
+  .ov-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ov-row{grid-template-columns:repeat(1,minmax(0,1fr))}
+  .ov-panel{grid-column:span 1}
+  .ov-donut-layout{flex-direction:column}
+  .ov-trend-grid{grid-template-columns:1fr}
+}
+
+@media(max-width:760px){
+  .ov-kpis{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .ov-context{flex-wrap:wrap}
+  .ov-context-chips{margin-left:0;width:100%;flex-wrap:wrap}
+}
