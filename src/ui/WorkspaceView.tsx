@@ -16,7 +16,7 @@ function pillTone(tone: Tone): "default" | "orange" | "blue" | "purple" | "red" 
   return tone;
 }
 
-export function WorkspaceView({ workspace, basePath }: { workspace: ModuleWorkspace; basePath: string }) {
+export function WorkspaceView({ workspace, basePath }: { workspace: ModuleWorkspace; basePath?: string }) {
   const router = useRouter();
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("All statuses");
@@ -34,7 +34,7 @@ export function WorkspaceView({ workspace, basePath }: { workspace: ModuleWorksp
     [workspace.rows, query, status],
   );
 
-  const openRecord = (id: string) => router.push(`${basePath}/${id}`);
+  const openRecord = basePath ? (id: string) => router.push(`${basePath}/${id}`) : undefined;
 
   return (
     <section className="panel">
@@ -94,18 +94,28 @@ export function WorkspaceView({ workspace, basePath }: { workspace: ModuleWorksp
   );
 }
 
-function RecordCards({ rows, onOpen }: { rows: RecordRow[]; onOpen: (id: string) => void }) {
+function RecordCards({ rows, onOpen }: { rows: RecordRow[]; onOpen?: (id: string) => void }) {
   return (
     <div className="recordgrid">
       {rows.map((r) => (
         <article className="record" key={r.id}>
-          <button className="rowlink person" type="button" onClick={() => onOpen(r.id)}>
-            <span className="avatar">{r.initials}</span>
-            <span>
-              <b>{r.name}</b>
-              <small>{r.sub}</small>
+          {onOpen ? (
+            <button className="rowlink person" type="button" onClick={() => onOpen(r.id)}>
+              <span className="avatar">{r.initials}</span>
+              <span>
+                <b>{r.name}</b>
+                <small>{r.sub}</small>
+              </span>
+            </button>
+          ) : (
+            <span className="person">
+              <span className="avatar">{r.initials}</span>
+              <span>
+                <b>{r.name}</b>
+                <small>{r.sub}</small>
+              </span>
             </span>
-          </button>
+          )}
           <div style={{ marginTop: 13 }}>
             <Pill tone={pillTone(statusTone(r.status))}>{r.status}</Pill>
           </div>
@@ -128,7 +138,7 @@ function RecordTable({
   rows: RecordRow[];
   columns: ModuleWorkspace["columns"];
   density: boolean;
-  onOpen: (id: string) => void;
+  onOpen?: (id: string) => void;
 }) {
   return (
     <div className={density ? "tablewrap" : "tablewrap compact"}>
@@ -141,24 +151,38 @@ function RecordTable({
             <th>{columns.context}</th>
             <th>{columns.region}</th>
             <th>{columns.owner}</th>
-            <th>
-              <span className="sr">Action</span>
-            </th>
+            {onOpen && (
+              <th>
+                <span className="sr">Action</span>
+              </th>
+            )}
           </tr>
         </thead>
         <tbody>
           {rows.map((r, i) => (
             <tr key={r.id}>
               <td>
-                <button className="rowlink person" type="button" onClick={() => onOpen(r.id)}>
-                  <span className="avatar" style={{ background: ROW_TINTS[i % ROW_TINTS.length] }}>
-                    {r.initials}
+                {onOpen ? (
+                  <button className="rowlink person" type="button" onClick={() => onOpen(r.id)}>
+                    <span className="avatar" style={{ background: ROW_TINTS[i % ROW_TINTS.length] }}>
+                      {r.initials}
+                    </span>
+                    <span>
+                      <b>{r.name}</b>
+                      <small>{r.sub}</small>
+                    </span>
+                  </button>
+                ) : (
+                  <span className="person">
+                    <span className="avatar" style={{ background: ROW_TINTS[i % ROW_TINTS.length] }}>
+                      {r.initials}
+                    </span>
+                    <span>
+                      <b>{r.name}</b>
+                      <small>{r.sub}</small>
+                    </span>
                   </span>
-                  <span>
-                    <b>{r.name}</b>
-                    <small>{r.sub}</small>
-                  </span>
-                </button>
+                )}
               </td>
               <td>
                 <Pill tone={pillTone(statusTone(r.status))}>{r.status}</Pill>
@@ -166,11 +190,13 @@ function RecordTable({
               <td>{r.type}</td>
               <td>{r.region}</td>
               <td>{r.owner}</td>
-              <td>
-                <button className="iconbutton" aria-label={`Inspect ${r.name}`} type="button" onClick={() => onOpen(r.id)}>
-                  &rsaquo;
-                </button>
-              </td>
+              {onOpen && (
+                <td>
+                  <button className="iconbutton" aria-label={`Inspect ${r.name}`} type="button" onClick={() => onOpen(r.id)}>
+                    &rsaquo;
+                  </button>
+                </td>
+              )}
             </tr>
           ))}
         </tbody>

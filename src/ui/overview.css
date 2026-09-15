@@ -121,6 +121,20 @@
 .ov-campaign-card strong{display:block;font-size:15px;margin-top:2px}
 .ov-campaign-card small{font-size:10px;color:var(--muted)}
 
+.ov-catalog{display:grid;grid-template-columns:1fr 1fr;gap:8px;flex:1}
+.ov-catalog button{text-align:left;padding:9px 10px;border-radius:8px;display:flex;gap:8px;align-items:flex-start;border:1px solid var(--line);background:white}
+.ov-catalog button:hover{background:var(--tint)}
+.ov-catalog .ov-mini{padding:6px;width:auto;height:auto}
+.ov-catalog b{display:block;font-size:11.5px}
+.ov-catalog small{display:block;font-size:10px;margin-top:4px;color:var(--muted)}
+
+.ov-settled-hero{border-radius:8px;padding:8px 12px;background:#eefaf5;border:1px solid #d9f0e4;margin-bottom:6px}
+.ov-settled-hero small{font-size:10px;color:#397259}
+.ov-settled-hero strong{display:block;font-size:22px;color:#176646;letter-spacing:-.5px}
+.ov-settlement-line{display:flex;justify-content:space-between;padding:6px 1px;border-bottom:1px solid #edf1f6;gap:9px;font-size:11px}
+.ov-settlement-line b{font-size:12.5px}
+.ov-settlement-note{font-size:10px;color:#17835d;margin-top:6px}
+
 .ov-action-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;flex:1}
 .ov-action-grid button{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;text-align:center;padding:9px 6px;border-radius:8px;min-height:64px;font-size:11px;border:1px solid var(--line);background:white}
 .ov-action-grid button:hover{background:var(--tint);border-color:#f5b98f}

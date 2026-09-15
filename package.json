@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "test:e2e": "playwright test",
     "firebase:emulators": "firebase emulators:start --project demo-creatorops"
   },
   "dependencies": {

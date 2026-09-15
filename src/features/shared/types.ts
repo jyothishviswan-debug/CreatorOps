@@ -40,6 +40,8 @@ export type OverviewPanelData = PanelBase &
     | { kind: "activity"; rows: ActivityRow[] }
     | { kind: "rank"; rows: { name: string; value: string; initials: string }[] }
     | { kind: "campaignboard"; rows: { name: string; completed: number; required: number }[] }
+    | { kind: "catalog"; rows: { title: string; detail: string }[] }
+    | { kind: "settlement"; heroLabel: string; heroValue: string; lines: { label: string; value: string }[] }
     | { kind: "actions"; rows: ActionRow[] }
   );
 

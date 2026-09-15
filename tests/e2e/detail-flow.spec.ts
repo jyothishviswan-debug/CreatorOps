@@ -1,0 +1,78 @@
+import { test, expect } from "@playwright/test";
+
+// Modules whose index route IS the record workspace (real table, click a
+// row to open a detail record): Discovery's dedicated /leads sub-route,
+// plus Assignments and Content which have no Overview and are
+// workspace-only per the golden master's navigate() default.
+const WORKSPACE_TO_DETAIL: { workspace: string; back: string }[] = [
+  { workspace: "/discovery/leads", back: "/discovery/leads" },
+  { workspace: "/assignments", back: "/assignments" },
+  { workspace: "/content", back: "/content" },
+];
+
+for (const { workspace, back } of WORKSPACE_TO_DETAIL) {
+  test(`workspace to detail flow: ${workspace}`, async ({ page }) => {
+    await page.goto(workspace);
+
+    const firstRow = page.locator("button.rowlink.person").first();
+    await expect(firstRow).toBeVisible();
+    const recordName = await firstRow.locator("b").innerText();
+    await firstRow.click();
+
+    await expect(page.locator("h1")).toHaveText(recordName);
+    await expect(page.getByText("Back to workspace")).toBeVisible();
+
+    await page.getByText("Back to workspace").click();
+    await expect(page).toHaveURL(new RegExp(`${back}$`));
+  });
+}
+
+// Modules that are single-Overview-index (no separate workspace route yet
+// - the Overview/Workspace tabs bar is kept for a future build step, per
+// explicit product direction). Their Overview's Recent Activity panel
+// links directly to real detail records, so the detail pattern is
+// exercised via those known hrefs instead of a workspace table.
+const OVERVIEW_DETAIL_LINKS: { detail: string; back: string }[] = [
+  { detail: "/partners/ananya-rao", back: "/partners" },
+  { detail: "/vendors/creator-house", back: "/vendors" },
+  { detail: "/campaigns/civic-voices", back: "/campaigns" },
+  { detail: "/partner-reviews/ananya-rao", back: "/partner-reviews" },
+  { detail: "/reports/monthly-partner-review", back: "/reports" },
+];
+
+for (const { detail, back } of OVERVIEW_DETAIL_LINKS) {
+  test(`detail screen renders and returns to workspace: ${detail}`, async ({ page }) => {
+    await page.goto(detail);
+    await expect(page.locator("h1")).toBeVisible();
+    await expect(page.getByText("Back to workspace")).toBeVisible();
+
+    await page.getByText("Back to workspace").click();
+    await expect(page).toHaveURL(new RegExp(`${back}$`));
+  });
+}
+
+test("overview screen renders KPIs and panels: /dashboard", async ({ page }) => {
+  await page.goto("/dashboard");
+  await expect(page.locator(".ov-kpis").first()).toBeVisible();
+});
+
+test("overview screen renders KPIs and panels: /partners", async ({ page }) => {
+  await page.goto("/partners");
+  await expect(page.locator("h1")).toHaveText("Partners");
+  await expect(page.locator(".ov-kpis").first()).toBeVisible();
+});
+
+test("create/edit form flow: /partners/new", async ({ page }) => {
+  await page.goto("/partners/new");
+  await page.getByPlaceholder("Ananya Rao").fill("Test Partner");
+  await page.locator('input[type="email"]').fill("test@example.com");
+  await page.getByRole("button", { name: "Review and save" }).click();
+  await expect(page).toHaveURL(/\/partners$/);
+});
+
+test("create/edit form flow: /campaigns/new", async ({ page }) => {
+  await page.goto("/campaigns/new");
+  await page.getByPlaceholder("Civic Voices").fill("Test Campaign");
+  await page.locator('form.panel button[type="submit"]').click();
+  await expect(page).toHaveURL(/\/campaigns$/);
+});

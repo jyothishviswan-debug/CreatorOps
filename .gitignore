@@ -170,3 +170,9 @@ firestore-debug.log
 ui-debug.log
 .firebase/
 emulator-data/
+
+# Playwright
+test-results/
+playwright-report/
+blob-report/
+playwright/.cache/

@@ -320,11 +320,11 @@ export function Events({
           </>
         );
         return item.href ? (
-          <Link className="ov-event" href={item.href} key={item.title} style={toneVars(i)}>
+          <Link className="ov-event" href={item.href} key={`${item.title}-${i}`} style={toneVars(i)}>
             {content}
           </Link>
         ) : (
-          <div className="ov-event" key={item.title} style={toneVars(i)}>
+          <div className="ov-event" key={`${item.title}-${i}`} style={toneVars(i)}>
             {content}
           </div>
         );
@@ -369,6 +369,50 @@ export function CampaignBoard({ rows }: { rows: { name: string; completed: numbe
           </div>
         );
       })}
+    </div>
+  );
+}
+
+export function Catalog({ rows }: { rows: { title: string; detail: string }[] }) {
+  return (
+    <div className="ov-catalog">
+      {rows.map((row, i) => (
+        <button type="button" key={row.title} style={toneVars(i)}>
+          <span className="ov-mini">
+            <Icon name="file" />
+          </span>
+          <span>
+            <b>{row.title}</b>
+            <small>{row.detail}</small>
+          </span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+export function Settlement({
+  heroLabel,
+  heroValue,
+  lines,
+}: {
+  heroLabel: string;
+  heroValue: string;
+  lines: { label: string; value: string }[];
+}) {
+  return (
+    <div>
+      <div className="ov-settled-hero">
+        <small>{heroLabel}</small>
+        <strong>{heroValue}</strong>
+      </div>
+      {lines.map((line) => (
+        <div className="ov-settlement-line" key={line.label}>
+          <span>{line.label}</span>
+          <b>{line.value}</b>
+        </div>
+      ))}
+      <div className="ov-settlement-note">&#10003; Settlement components reconcile</div>
     </div>
   );
 }
@@ -517,5 +561,9 @@ function PanelBody({ panel }: { panel: OverviewPanelData }) {
       return <ActionGrid actions={panel.rows.map((r) => ({ label: r.label, icon: r.icon }))} />;
     case "campaignboard":
       return <CampaignBoard rows={panel.rows} />;
+    case "catalog":
+      return <Catalog rows={panel.rows} />;
+    case "settlement":
+      return <Settlement heroLabel={panel.heroLabel} heroValue={panel.heroValue} lines={panel.lines} />;
   }
 }

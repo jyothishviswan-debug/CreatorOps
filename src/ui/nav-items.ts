@@ -52,8 +52,8 @@ export const NAV_GROUPS: NavGroup[] = [
       { label: "Finance", href: "/finance", icon: "wallet" },
       { label: "Operations", href: "/operations", icon: "clock" },
       { label: "Reports", href: "/reports", icon: "file" },
-      { label: "Import Center", href: "/import-center", icon: "upload" },
-      { label: "Export Center", href: "/export-center", icon: "download" },
+      { label: "Import Center", href: "/imports", icon: "upload" },
+      { label: "Export Center", href: "/exports", icon: "download" },
     ],
   },
   {
