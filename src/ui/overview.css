@@ -87,8 +87,8 @@
 .ov-attention-count{font-size:11px;font-weight:650;padding:1px 7px;background:var(--tint);color:var(--orange);border-radius:15px}
 .ov-attention-arrow{font-size:15px;color:#728198}
 
-.ov-events{display:grid;gap:4px}
-.ov-event{padding:4px 8px;border:1px solid #edf0f5;border-radius:8px;display:flex;gap:8px;align-items:center;min-width:0}
+.ov-events{display:grid;gap:3px}
+.ov-event{padding:3px 8px;border:1px solid #edf0f5;border-radius:8px;display:flex;gap:8px;align-items:center;min-width:0}
 .ov-event strong{font-size:10.5px;font-weight:550;display:block}
 .ov-event small{font-size:10px;display:block;color:var(--muted)}
 
