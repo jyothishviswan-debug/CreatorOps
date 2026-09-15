@@ -216,6 +216,11 @@ export default function DashboardPage() {
                   title: "Invoice review requested",
                   detail: "Creator House · 1 hour ago",
                 },
+                {
+                  icon: "search",
+                  title: "Discovery lead converted",
+                  detail: "South Lens · 3 hours ago",
+                },
               ]}
             />
           </OverviewPanel>
