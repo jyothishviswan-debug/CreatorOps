@@ -6,7 +6,9 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "eslint"
+    "lint": "eslint",
+    "typecheck": "tsc --noEmit",
+    "firebase:emulators": "firebase emulators:start --project demo-creatorops"
   },
   "dependencies": {
     "firebase": "^12.19.0",

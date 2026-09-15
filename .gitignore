@@ -70,6 +70,13 @@ web_modules/
 .env.*
 !.env.example
 
+# Service-account / credential files
+service-account*.json
+firebase-service-account*.json
+*-firebase-adminsdk-*.json
+credentials*.json
+secrets/
+
 # parcel-bundler cache (https://parceljs.org/)
 .cache
 .parcel-cache
@@ -153,3 +160,13 @@ next-env.d.ts
 
 # Vercel
 .vercel
+
+# Local Claude Code session config
+.claude/
+
+# Firebase emulator local data/logs
+firebase-debug.log
+firestore-debug.log
+ui-debug.log
+.firebase/
+emulator-data/
