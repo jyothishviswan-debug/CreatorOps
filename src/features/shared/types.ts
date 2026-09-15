@@ -20,7 +20,7 @@ export type ColumnRow = { label: string; value: number };
 
 export type ListRow = { title: string; detail: string; count: string };
 
-export type ActivityRow = { title: string; detail: string };
+export type ActivityRow = { title: string; detail: string; href?: string };
 
 export type CheckRow = { label: string; detail: string; badge: string };
 

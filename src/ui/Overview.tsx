@@ -4,6 +4,7 @@
 // SVG algorithms), rendered inside this app's one global shell instead of
 // the source's own duplicate nested topbar/sidebar.
 import type { CSSProperties, ReactNode } from "react";
+import Link from "next/link";
 
 import { Icon, type IconName } from "./icons";
 import type { OverviewPanelData } from "@/features/shared/types";
@@ -302,21 +303,32 @@ export function AttentionRows({
 export function Events({
   items,
 }: {
-  items: { icon: IconName; title: string; detail: string }[];
+  items: { icon: IconName; title: string; detail: string; href?: string }[];
 }) {
   return (
     <div className="ov-events">
-      {items.map((item, i) => (
-        <div className="ov-event" key={item.title} style={toneVars(i)}>
-          <span className="ov-mini">
-            <Icon name={item.icon} />
-          </span>
-          <div>
-            <strong>{item.title}</strong>
-            <small>{item.detail}</small>
+      {items.map((item, i) => {
+        const content = (
+          <>
+            <span className="ov-mini">
+              <Icon name={item.icon} />
+            </span>
+            <div>
+              <strong>{item.title}</strong>
+              <small>{item.detail}</small>
+            </div>
+          </>
+        );
+        return item.href ? (
+          <Link className="ov-event" href={item.href} key={item.title} style={toneVars(i)}>
+            {content}
+          </Link>
+        ) : (
+          <div className="ov-event" key={item.title} style={toneVars(i)}>
+            {content}
           </div>
-        </div>
-      ))}
+        );
+      })}
     </div>
   );
 }
@@ -458,7 +470,7 @@ function PanelBody({ panel }: { panel: OverviewPanelData }) {
         />
       );
     case "activity":
-      return <Events items={panel.rows.map((r) => ({ icon: "clock", title: r.title, detail: r.detail }))} />;
+      return <Events items={panel.rows.map((r) => ({ icon: "clock", title: r.title, detail: r.detail, href: r.href }))} />;
     case "rank":
       return <Rankings rows={panel.rows.map((r, i) => ({ rank: i + 1, name: r.name, value: r.value, initials: r.initials }))} />;
     case "actions":
