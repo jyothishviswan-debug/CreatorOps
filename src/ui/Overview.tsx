@@ -6,6 +6,7 @@
 import type { CSSProperties, ReactNode } from "react";
 
 import { Icon, type IconName } from "./icons";
+import type { OverviewPanelData } from "@/features/shared/types";
 
 export const TONES: { tone: string; tint: string }[] = [
   { tone: "#2878fa", tint: "#edf4ff" },
@@ -60,7 +61,7 @@ export function OverviewKpiRow({
   items: { icon: IconName; label: string; value: string; hint: string }[];
 }) {
   return (
-    <div className="ov-kpis">
+    <div className="ov-kpis" style={{ "--ov-n": items.length } as CSSProperties}>
       {items.map((item, i) => (
         <div className="ov-kpi" style={toneVars(i)} key={item.label}>
           <span className="ov-kpi-icon">
@@ -331,4 +332,136 @@ export function ActionGrid({ actions }: { actions: { label: string; icon: IconNa
       ))}
     </div>
   );
+}
+
+const FUNNEL_COLORS = ["#ffc495", "#ffa45f", "#ff8c36", "#f37013", "#d45b05"];
+
+export function Funnel({ rows }: { rows: { label: string; value: number }[] }) {
+  const max = rows[0]?.value || 1;
+  return (
+    <div className="ov-pipeline">
+      {rows.map((row, i) => (
+        <div className="ov-pipeline-stage" key={row.label}>
+          <strong>{row.value}</strong>
+          <div className="ov-stage-area">
+            <div
+              className="ov-stage-fill"
+              style={{ height: `${(row.value / max) * 100}%`, background: FUNNEL_COLORS[i % FUNNEL_COLORS.length] }}
+            />
+          </div>
+          <span className="ov-pipeline-name">{row.label}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+export function ColumnChart({ rows, unit = "count" }: { rows: { label: string; value: number }[]; unit?: string }) {
+  const max = Math.max(...rows.map((r) => r.value), 1);
+  return (
+    <div className="ov-column-chart" style={{ "--ov-columns": rows.length } as CSSProperties}>
+      <div className="ov-column-unit">
+        <span>0 &rarr; {max.toLocaleString()}</span>
+        <span>{unit}</span>
+      </div>
+      <div className="ov-columns">
+        {rows.map((row, i) => (
+          <div className="ov-col" key={row.label}>
+            <b>{row.value.toLocaleString()}</b>
+            <div
+              className="ov-column"
+              style={{ height: `${(row.value / max) * 78}%`, background: TONES[i % TONES.length].tone }}
+            />
+          </div>
+        ))}
+      </div>
+      <div className="ov-column-labels">
+        {rows.map((row) => (
+          <span key={row.label}>{row.label}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+export function Checks({ rows }: { rows: { label: string; detail: string; badge: string }[] }) {
+  return (
+    <div className="ov-checks">
+      {rows.map((row) => (
+        <div className="ov-check" key={row.label}>
+          <div className="ov-check-text">
+            {row.label}
+            <small>{row.detail}</small>
+          </div>
+          <span className="ov-badge" style={badgeVars(row.badge)}>
+            {row.badge}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function badgeVars(text: string): CSSProperties {
+  if (/action|review|due|check|partial/i.test(text)) return { "--ov-badge-ink": "#a8550b", "--ov-badge-bg": "#fff3df" } as CSSProperties;
+  if (/demo|required|policy|coverage|current/i.test(text)) return { "--ov-badge-ink": "#275eae", "--ov-badge-bg": "#edf4ff" } as CSSProperties;
+  if (/upcoming|scheduled/i.test(text)) return { "--ov-badge-ink": "#7355a6", "--ov-badge-bg": "#f5f0fc" } as CSSProperties;
+  return { "--ov-badge-ink": "#08734c", "--ov-badge-bg": "#e6f9ef" } as CSSProperties;
+}
+
+export function OverviewPanels({ panels, secondary }: { panels: OverviewPanelData[]; secondary?: boolean }) {
+  return (
+    <OverviewRow secondary={secondary}>
+      {panels.map((panel, i) => (
+        <OverviewPanel
+          key={panel.title}
+          span={panel.span}
+          icon={panel.icon}
+          tone={i}
+          title={panel.title}
+          note={panel.note}
+          foot={panel.foot}
+          link
+        >
+          <PanelBody panel={panel} />
+        </OverviewPanel>
+      ))}
+    </OverviewRow>
+  );
+}
+
+function PanelBody({ panel }: { panel: OverviewPanelData }) {
+  switch (panel.kind) {
+    case "funnel":
+      return <Funnel rows={panel.rows} />;
+    case "donut":
+      return (
+        <DonutRing
+          total={panel.total}
+          totalLabel={panel.totalLabel}
+          healthPalette={panel.healthPalette}
+          segments={panel.segments}
+        />
+      );
+    case "columns":
+      return <ColumnChart rows={panel.rows} />;
+    case "trends":
+      return <TrendGrid series={panel.series} />;
+    case "stages":
+      return <Stages rows={panel.rows} />;
+    case "checks":
+      return <Checks rows={panel.rows} />;
+    case "attention":
+      return (
+        <AttentionRows
+          items={panel.rows.map((r) => ({ icon: "alert", title: r.title, hint: r.detail, count: r.count }))}
+        />
+      );
+    case "activity":
+      return <Events items={panel.rows.map((r) => ({ icon: "clock", title: r.title, detail: r.detail }))} />;
+    case "rank":
+      return <Rankings rows={panel.rows.map((r, i) => ({ rank: i + 1, name: r.name, value: r.value, initials: r.initials }))} />;
+    case "actions":
+      return <ActionGrid actions={panel.rows.map((r) => ({ label: r.label, icon: r.icon }))} />;
+  }
 }
