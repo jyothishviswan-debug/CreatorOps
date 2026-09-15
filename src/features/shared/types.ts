@@ -39,6 +39,7 @@ export type OverviewPanelData = PanelBase &
     | { kind: "attention"; rows: ListRow[] }
     | { kind: "activity"; rows: ActivityRow[] }
     | { kind: "rank"; rows: { name: string; value: string; initials: string }[] }
+    | { kind: "campaignboard"; rows: { name: string; completed: number; required: number }[] }
     | { kind: "actions"; rows: ActionRow[] }
   );
 

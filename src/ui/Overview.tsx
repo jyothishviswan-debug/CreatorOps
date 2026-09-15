@@ -333,6 +333,46 @@ export function Events({
   );
 }
 
+const RING_CIRCUMFERENCE = 2 * Math.PI * 20;
+
+export function CampaignBoard({ rows }: { rows: { name: string; completed: number; required: number }[] }) {
+  return (
+    <div className="ov-campaign-board">
+      {rows.map((row, i) => {
+        const rate = row.completed / row.required;
+        const color = TONES[i % TONES.length].tone;
+        return (
+          <div className="ov-campaign-card" key={row.name}>
+            <svg viewBox="0 0 50 50" role="img" aria-label={`${row.name}: ${row.completed} of ${row.required} completed`}>
+              <circle cx="25" cy="25" r="20" stroke="#edf2f7" strokeWidth="5" fill="none" />
+              <circle
+                cx="25"
+                cy="25"
+                r="20"
+                stroke={color}
+                strokeWidth="5"
+                fill="none"
+                strokeDasharray={`${rate * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
+                transform="rotate(-90 25 25)"
+              />
+              <text x="25" y="28" fontSize="10" fill="#344963" textAnchor="middle">
+                {Math.round(rate * 100)}%
+              </text>
+            </svg>
+            <div>
+              <b>{row.name}</b>
+              <strong>
+                {row.completed} <small>/ {row.required}</small>
+              </strong>
+              <small>deliverables completed</small>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 export function ActionGrid({ actions }: { actions: { label: string; icon: IconName }[] }) {
   return (
     <div className="ov-action-grid">
@@ -475,5 +515,7 @@ function PanelBody({ panel }: { panel: OverviewPanelData }) {
       return <Rankings rows={panel.rows.map((r, i) => ({ rank: i + 1, name: r.name, value: r.value, initials: r.initials }))} />;
     case "actions":
       return <ActionGrid actions={panel.rows.map((r) => ({ label: r.label, icon: r.icon }))} />;
+    case "campaignboard":
+      return <CampaignBoard rows={panel.rows} />;
   }
 }

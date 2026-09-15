@@ -114,6 +114,13 @@
 .ov-column{width:min(72%,40px);border-radius:5px 5px 0 0;min-height:2px}
 .ov-column-labels{display:grid;grid-template-columns:repeat(var(--ov-columns),minmax(0,1fr));gap:8px;font-size:10px;color:var(--muted);text-align:center}
 
+.ov-campaign-board{display:grid;grid-template-columns:1fr 1fr;gap:8px}
+.ov-campaign-card{display:flex;align-items:center;gap:9px;border:1px solid var(--line);border-radius:8px;padding:8px 9px}
+.ov-campaign-card svg{width:42px;height:42px;flex:none}
+.ov-campaign-card b{display:block;font-size:11px}
+.ov-campaign-card strong{display:block;font-size:15px;margin-top:2px}
+.ov-campaign-card small{font-size:10px;color:var(--muted)}
+
 .ov-action-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;flex:1}
 .ov-action-grid button{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;text-align:center;padding:9px 6px;border-radius:8px;min-height:64px;font-size:11px;border:1px solid var(--line);background:white}
 .ov-action-grid button:hover{background:var(--tint);border-color:#f5b98f}
