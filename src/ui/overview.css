@@ -6,14 +6,14 @@
    with different rules). Reuses this app's existing --orange/--ink/--muted/
    --line tokens instead of the source's separate --brand token set. */
 
-.ov-context{background:white;border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;align-items:center;padding:10px 13px;margin-bottom:16px;box-shadow:var(--shadow)}
+.ov-context{background:white;border:1px solid var(--line);border-radius:10px;display:flex;gap:12px;align-items:center;padding:8px 13px;margin-bottom:12px;box-shadow:var(--shadow)}
 .ov-context-icon{color:var(--orange);background:var(--tint);border-radius:8px;width:35px;height:35px;display:grid;place-items:center;flex:none}
 .ov-context-icon svg{width:20px;height:20px}
 .ov-context strong{font-size:13px;display:block}
 .ov-context small{font-size:11px;color:var(--muted)}
 .ov-context-chips{display:flex;gap:8px;align-items:center;margin-left:auto;white-space:nowrap}
 
-.ov-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:16px}
+.ov-kpis{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin-bottom:12px}
 .ov-kpi{position:relative;overflow:hidden;display:flex;align-items:flex-start;gap:11px;text-align:left;border-radius:10px;background:white;border:1px solid var(--line);padding:14px 13px;box-shadow:var(--shadow);min-width:0}
 .ov-kpi::before{content:"";position:absolute;left:-1px;right:-1px;top:-1px;height:3px;background:var(--ov-accent,var(--orange));border-radius:10px 10px 0 0}
 .ov-kpi-icon{width:39px;height:39px;border-radius:10px;display:grid;place-items:center;flex:none;background:var(--ov-tint);color:var(--ov-tone)}
@@ -23,9 +23,17 @@
 .ov-kpi-value{font-size:25px;letter-spacing:-.6px;line-height:1.35;margin:4px 0;font-weight:700}
 .ov-kpi small{font-size:10.5px;color:var(--muted)}
 
-.ov-row{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:stretch;margin-bottom:12px}
-.ov-panel{grid-column:span var(--ov-span,4);position:relative;overflow:hidden;min-width:0;background:white;border:1px solid var(--line);border-radius:10px;padding:13px 13px 0;box-shadow:var(--shadow);display:flex;flex-direction:column}
-.ov-panel::before{content:"";position:absolute;left:-1px;right:-1px;top:-1px;height:3px;background:var(--ov-accent,var(--orange));border-radius:10px 10px 0 0}
+.ov-page{display:block}
+.main:has(> .ov-page){max-width:1600px;padding:16px 20px 12px}
+.ov-page .head{margin-bottom:10px}
+.ov-page .head h1{font-size:23px;line-height:1.2}
+.ov-page .head p{margin-top:3px;font-size:12px}
+.ov-page .eyebrow{margin-bottom:3px;font-size:10px}
+
+.ov-row{display:grid;grid-template-columns:repeat(12,minmax(0,1fr));gap:12px;align-items:stretch}
+.ov-row + .ov-row{margin-top:12px}
+.ov-panel{grid-column:span var(--ov-span,4);min-width:0;background:white;border:1px solid var(--line);border-radius:10px;padding:13px 13px 0;box-shadow:var(--shadow);display:flex;flex-direction:column;min-height:clamp(220px,calc(38vh - 90px),300px)}
+.ov-row-secondary .ov-panel{min-height:clamp(190px,calc(30vh - 60px),250px)}
 .ov-panel-head{display:flex;align-items:center;gap:8px;margin-bottom:6px}
 .ov-panel-head h2{font-size:12.5px;line-height:1.25;letter-spacing:-.15px;font-weight:650;margin:0}
 .ov-panel-icon{width:27px;height:27px;border-radius:7px;display:grid;place-items:center;background:var(--ov-tint);color:var(--ov-tone);flex:none}
@@ -33,12 +41,12 @@
 .ov-panel-link{margin-left:auto;border:0;background:none;padding:3px 0 3px 5px;white-space:nowrap;font-size:11px;color:var(--orange)}
 .ov-panel-note{font-size:10.5px;color:var(--muted);margin-bottom:8px}
 .ov-panel-body{flex:1;display:flex;flex-direction:column;justify-content:center;min-width:0}
-.ov-panel-foot{display:flex;align-items:center;gap:7px;font-size:10px;line-height:1.4;color:var(--muted);border-top:1px solid #edf0f4;margin-top:11px;padding:9px 0;min-height:42px}
+.ov-panel-foot{display:flex;align-items:center;gap:7px;font-size:10px;line-height:1.4;color:var(--muted);border-top:1px solid #edf0f4;margin-top:8px;padding:6px 0;min-height:35px}
 .ov-panel-foot svg{width:14px;height:14px;color:#657793;flex:none}
 .ov-chev{margin-left:auto;font-size:16px;color:#a1a9b3}
 
-.ov-donut-layout{display:flex;align-items:center;gap:16px;padding:2px 0}
-.ov-ring{width:124px;height:124px;position:relative;flex:none}
+.ov-donut-layout{display:flex;align-items:center;gap:12px;padding:0}
+.ov-ring{width:100px;height:100px;position:relative;flex:none}
 .ov-ring svg{width:100%;height:100%;transform:rotate(-90deg)}
 .ov-ring-center{position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;font-size:23px;font-weight:700;letter-spacing:-.4px}
 .ov-ring-center small{font-size:9px;text-transform:uppercase;letter-spacing:.3px;font-weight:400;color:var(--muted)}
@@ -50,9 +58,9 @@
 
 .ov-trend-grid{display:grid;grid-template-columns:1fr 1fr;gap:18px}
 .ov-trend-label{font-size:11px;display:flex;align-items:center;gap:6px}
-.ov-trend-value{font-size:25px;font-weight:700;margin:4px 0 2px;letter-spacing:-.6px}
+.ov-trend-value{font-size:22px;font-weight:700;margin:3px 0 1px;letter-spacing:-.6px}
 .ov-trend-value small{font-size:10px;margin-left:7px;color:#11885d;font-weight:500}
-.ov-trend svg{width:100%;height:110px;display:block}
+.ov-trend svg{width:100%;height:92px;display:block}
 .ov-axis{display:flex;justify-content:space-between;font-size:9px;color:var(--muted)}
 
 .ov-stages{display:flex;flex-direction:column;gap:0}
@@ -62,22 +70,23 @@
 .ov-stage-item b{font-size:15px}
 
 .ov-rankings{display:flex;flex-direction:column;gap:7px}
-.ov-rank-item{display:flex;align-items:center;gap:9px;padding:8px 0;border-bottom:1px solid #eff1f5;font-size:11.5px}
+.ov-rank-item{display:flex;align-items:center;gap:9px;padding:3px 0;border-bottom:1px solid #eff1f5;font-size:11.5px}
 .ov-rank-item:last-child{border-bottom:0}
 .ov-rank-no{color:#91a0b5;font-size:10px;min-width:12px}
 .ov-initials{width:29px;height:29px;display:grid;place-items:center;flex:none;background:var(--ov-tint);color:var(--ov-tone);font-size:10px;font-weight:650;border-radius:50%}
 .ov-rank-item b{font-size:12px;margin-left:auto}
 
 .ov-attention{display:grid;gap:7px}
-.ov-attention-row{padding:8px 9px;text-align:left;display:flex;align-items:center;gap:8px;border:1px solid #e9edf4;border-radius:8px;min-width:0;background:white}
+.ov-attention-row{padding:6px 8px;text-align:left;display:flex;align-items:center;gap:8px;border:1px solid #e9edf4;border-radius:8px;min-width:0;background:white}
 .ov-mini{width:26px;height:26px;border-radius:7px;background:var(--ov-tint);color:var(--ov-tone);display:grid;place-items:center;flex:none}
 .ov-mini svg{width:16px;height:16px}
+.ov-attention-row .ov-mini{width:22px;height:22px}
 .ov-attention-name{flex:1;font-size:11px;min-width:0}
 .ov-attention-count{font-size:11px;font-weight:650;padding:1px 7px;background:var(--tint);color:var(--orange);border-radius:15px}
 .ov-attention-arrow{font-size:15px;color:#728198}
 
 .ov-events{display:grid;gap:6px}
-.ov-event{padding:7px 8px;border:1px solid #edf0f5;border-radius:8px;display:flex;gap:8px;align-items:center;min-width:0}
+.ov-event{padding:6px 8px;border:1px solid #edf0f5;border-radius:8px;display:flex;gap:8px;align-items:center;min-width:0}
 .ov-event strong{font-size:10.5px;font-weight:550;display:block}
 .ov-event small{font-size:10px;display:block;color:var(--muted)}
 

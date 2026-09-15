@@ -2,13 +2,7 @@
 
 import { Icon } from "./icons";
 
-export function Topbar({
-  crumb,
-  onMenuClick,
-}: {
-  crumb: string;
-  onMenuClick: () => void;
-}) {
+export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   return (
     <header className="topbar">
       <button
@@ -19,11 +13,7 @@ export function Topbar({
       >
         ☰
       </button>
-      <div className="crumb">
-        Workspace <span style={{ marginLeft: 10, color: "#bbc1c8" }}>/</span>{" "}
-        <b>{crumb}</b>
-      </div>
-      <div className="topactions">
+      <div className="topactions" style={{ marginLeft: "auto" }}>
         <button className="searchtrigger" type="button">
           <Icon name="search" />
           <span>Find a module or pattern</span>

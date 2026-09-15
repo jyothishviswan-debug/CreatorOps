@@ -77,8 +77,8 @@ export function OverviewKpiRow({
   );
 }
 
-export function OverviewRow({ children }: { children: ReactNode }) {
-  return <div className="ov-row">{children}</div>;
+export function OverviewRow({ children, secondary }: { children: ReactNode; secondary?: boolean }) {
+  return <div className={secondary ? "ov-row ov-row-secondary" : "ov-row"}>{children}</div>;
 }
 
 export function OverviewPanel({

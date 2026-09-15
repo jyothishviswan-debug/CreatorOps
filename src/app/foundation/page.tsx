@@ -20,7 +20,7 @@ export default function FoundationPage() {
   const [dialogOpen, setDialogOpen] = useState(false);
 
   return (
-    <AppShell crumb="Foundation">
+    <AppShell>
       <PageHeader
         eyebrow="LIVE VISUAL REFERENCE"
         title="Design foundation"

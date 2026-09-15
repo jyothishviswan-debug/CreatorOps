@@ -5,13 +5,7 @@ import { useState, type ReactNode } from "react";
 import { GlobalSidebar } from "./GlobalSidebar";
 import { Topbar } from "./Topbar";
 
-export function AppShell({
-  crumb,
-  children,
-}: {
-  crumb: string;
-  children: ReactNode;
-}) {
+export function AppShell({ children }: { children: ReactNode }) {
   const [navOpen, setNavOpen] = useState(false);
 
   return (
@@ -26,7 +20,7 @@ export function AppShell({
         onClick={() => setNavOpen(false)}
       />
       <div className="app">
-        <Topbar crumb={crumb} onMenuClick={() => setNavOpen((value) => !value)} />
+        <Topbar onMenuClick={() => setNavOpen((value) => !value)} />
         <main className="main" id="main" tabIndex={-1}>
           {children}
         </main>
