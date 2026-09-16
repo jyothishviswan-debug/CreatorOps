@@ -319,27 +319,27 @@ export const leadRestrictedKycDocSchema = z.object({
   uid: z.string().min(1),
   version: z.number().int().min(1),
   email: z.string().min(1).max(300),
-  aadhaar: z.object({ number: z.string().min(1).max(40), evidenceRef: z.string().min(1).max(300) }),
-  pan: z.object({ number: z.string().min(1).max(20), evidenceRef: z.string().min(1).max(300) }),
+  aadhaar: z.object({ number: z.string().min(1).max(40) }),
+  pan: z.object({ number: z.string().min(1).max(20) }),
   bank: z.object({
     accountHolderName: z.string().min(1).max(200),
     accountNumber: z.string().min(1).max(40),
     ifsc: z.string().min(1).max(20),
     bankName: z.string().min(1).max(120),
-    proofRef: z.string().min(1).max(300),
   }),
   gst: z.object({
     applicable: z.boolean(),
     number: z.string().min(1).max(30).optional(),
-    certificateRef: z.string().min(1).max(300).optional(),
   }),
 
-  // Step 6B.1: a supplementary attachment list, additional to (never a
-  // replacement for) the plain evidenceRef/proofRef/certificateRef text
-  // fields above. Each entry is either an operator-supplied link or a
-  // real file uploaded to the Lead's own Drive subfolder - see
-  // drive-client.ts. "upload" entries never fabricate success; the
-  // stored url is always the real Drive webViewLink returned by the API.
+  // Step 6B.1: the actual evidence for every field above - each entry
+  // is either an operator-supplied link or a real file uploaded to the
+  // Lead's own Drive subfolder, see drive-client.ts. This replaced an
+  // earlier design with a plain evidenceRef/proofRef/certificateRef text
+  // field per document; that free-text duplicate is gone, this list is
+  // now the only evidence record. "upload" entries never fabricate
+  // success; the stored url is always the real Drive webViewLink
+  // returned by the API.
   attachments: z
     .array(
       z.object({

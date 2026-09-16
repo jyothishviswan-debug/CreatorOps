@@ -12,7 +12,7 @@ import { AlternativeOutcomes } from "./AlternativeOutcomes";
 import { absoluteTime, LIFECYCLE_LABELS, lifecycleTone } from "./format";
 import { HistoryPanel } from "./HistoryPanel";
 import { ConvertedStage, ReadyStage } from "./ReadyConvertedStages";
-import { AgreementStage, AssetStage, LeadStage, ManagerKycStage, OutreachStage, ResearchStage, ReviewStage } from "./stages";
+import { AgreementStage, AssetStage, KycStage, LeadStage, ManagerStage, OutreachStage, ResearchStage, ReviewStage } from "./stages";
 import { currentStageKey, isStageDone, STAGES, type StageKey } from "./workflow";
 
 type ReadinessDto = ReadinessResult & { leadRef: string; version: number; lifecycle: LeadDto["lifecycle"] };
@@ -96,33 +96,61 @@ export function DiscoveryLeadDetail({ initialLead, initialReadiness }: { initial
         })}
       </div>
 
-      <PanelGrid>
-        <Panel span={12}>
-          <PanelHead
-            title={STAGES.find((s) => s.key === selectedStage)!.label}
-            description={
-              isStageDone(selectedStage, lead, blockers)
-                ? "Saved evidence for this stage - update it below at any time."
-                : selectedStage === currentStageKey(lead, blockers)
-                  ? "This is the next stage to complete."
-                  : "You can still review or prepare this stage ahead of time."
-            }
-          />
-          <PanelBody>
-            <StageBody stageKey={selectedStage} lead={lead} readiness={readiness} onSaved={handleLeadUpdated} />
-          </PanelBody>
-        </Panel>
-      </PanelGrid>
+      {/* Manager pairs with Alternative Outcomes as a 1x2 row on this
+          tab specifically; Restricted KYC gets its own full-width
+          section right below (its form needs the full width) - every
+          other stage keeps Alternative Outcomes as its own full-width
+          panel below instead (see the else branch). */}
+      {selectedStage === "manager" ? (
+        <>
+          <PanelGrid>
+            <Panel span={6}>
+              <PanelHead title="Manager" description={stageDescription(selectedStage, lead, blockers)} />
+              <PanelBody>
+                <ManagerStage lead={lead} onSaved={handleLeadUpdated} />
+              </PanelBody>
+            </Panel>
+            <AlternativeOutcomes lead={lead} onSaved={handleLeadUpdated} span={6} />
+          </PanelGrid>
+          <PanelGrid>
+            <Panel span={12}>
+              <PanelHead title="Restricted KYC" description="Gated by the discovery_kyc sensitive-access category." />
+              <PanelBody>
+                <KycStage lead={lead} onSaved={handleLeadUpdated} />
+              </PanelBody>
+            </Panel>
+          </PanelGrid>
+        </>
+      ) : (
+        <>
+          <PanelGrid>
+            <Panel span={12}>
+              <PanelHead title={STAGES.find((s) => s.key === selectedStage)!.label} description={stageDescription(selectedStage, lead, blockers)} />
+              <PanelBody>
+                <StageBody stageKey={selectedStage} lead={lead} readiness={readiness} onSaved={handleLeadUpdated} />
+              </PanelBody>
+            </Panel>
+          </PanelGrid>
 
-      <PanelGrid>
-        <AlternativeOutcomes lead={lead} onSaved={handleLeadUpdated} />
-      </PanelGrid>
+          <PanelGrid>
+            <AlternativeOutcomes lead={lead} onSaved={handleLeadUpdated} />
+          </PanelGrid>
+        </>
+      )}
 
       <PanelGrid>
         <HistoryPanel leadRef={lead.leadRef} refreshKey={historyRefreshKey} />
       </PanelGrid>
     </>
   );
+}
+
+function stageDescription(stageKey: StageKey, lead: LeadDto, blockers: ReadinessResult["blockers"]): string {
+  return isStageDone(stageKey, lead, blockers)
+    ? "Saved evidence for this stage - update it below at any time."
+    : stageKey === currentStageKey(lead, blockers)
+      ? "This is the next stage to complete."
+      : "You can still review or prepare this stage ahead of time.";
 }
 
 function StageBody({ stageKey, lead, readiness, onSaved }: { stageKey: StageKey; lead: LeadDto; readiness: ReadinessDto | null; onSaved: (lead: LeadDto) => void }) {
@@ -140,7 +168,7 @@ function StageBody({ stageKey, lead, readiness, onSaved }: { stageKey: StageKey;
     case "asset":
       return <AssetStage lead={lead} onSaved={onSaved} />;
     case "manager":
-      return <ManagerKycStage lead={lead} onSaved={onSaved} />;
+      return <ManagerStage lead={lead} onSaved={onSaved} />;
     case "ready":
       return <ReadyStage lead={lead} readiness={readiness} onSaved={onSaved} />;
     case "converted":

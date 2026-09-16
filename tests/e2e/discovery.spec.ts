@@ -355,14 +355,11 @@ test.describe("Restricted KYC", () => {
 
     await page.getByLabel("Email", { exact: true }).fill("kyc-e2e@example.com");
     await page.getByLabel("Aadhaar number").fill("1234-5678-9999");
-    await page.getByLabel("Aadhaar evidence reference").fill("ref://aadhaar");
     await page.getByLabel("PAN", { exact: true }).fill("ABCDE1234F");
-    await page.getByLabel("PAN evidence reference").fill("ref://pan");
     await page.getByLabel("Account holder name").fill("E2E Creator");
     await page.getByLabel("Account number").fill("000111222333");
     await page.getByLabel("IFSC").fill("TEST0000001");
     await page.getByLabel("Bank name").fill("Test Bank");
-    await page.getByLabel("Bank proof reference").fill("ref://bank");
     await page.getByRole("button", { name: "Save KYC package" }).click();
     await expect(page.getByText("Save KYC package")).toBeEnabled({ timeout: 5000 });
   });
@@ -375,14 +372,11 @@ test.describe("Restricted KYC", () => {
     await page.getByRole("button", { name: "View / manage restricted KYC" }).click();
     await page.getByLabel("Email", { exact: true }).fill("secret-kyc@example.com");
     await page.getByLabel("Aadhaar number").fill("9999-8888-7777");
-    await page.getByLabel("Aadhaar evidence reference").fill("ref://a");
     await page.getByLabel("PAN", { exact: true }).fill("SECRT1234F");
-    await page.getByLabel("PAN evidence reference").fill("ref://p");
     await page.getByLabel("Account holder name").fill("Secret Name");
     await page.getByLabel("Account number").fill("SECRETNUM123");
     await page.getByLabel("IFSC").fill("SECR0000001");
     await page.getByLabel("Bank name").fill("Secret Bank");
-    await page.getByLabel("Bank proof reference").fill("ref://b");
     await page.getByRole("button", { name: "Save KYC package" }).click();
     await expect(page.getByText("Save KYC package")).toBeEnabled({ timeout: 5000 });
 

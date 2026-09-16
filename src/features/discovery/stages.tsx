@@ -584,9 +584,12 @@ export function AssetStage({ lead, onSaved }: StageProps) {
   );
 }
 
-// ---- Manager & KYC ----
+// ---- Manager ----
+// Its own section, paired with Alternative Outcomes as a 1x2 row (see
+// DiscoveryLeadDetail.tsx) - deliberately separate from KYC below,
+// which needs the full panel width for its own multi-field form.
 
-export function ManagerKycStage({ lead, onSaved }: StageProps) {
+export function ManagerStage({ lead, onSaved }: StageProps) {
   const managerSave = useSaveHandler(onSaved);
 
   async function handleAssign(candidate: ManagerCandidateDto) {
@@ -599,8 +602,7 @@ export function ManagerKycStage({ lead, onSaved }: StageProps) {
 
   return (
     <div>
-      <h3>Manager</h3>
-      <div className="kv">
+      <div className="kv" style={{ borderBottom: "none" }}>
         <span>Assigned manager</span>
         <b>{lead.managerDisplayName ?? "Unassigned"}</b>
       </div>
@@ -612,11 +614,17 @@ export function ManagerKycStage({ lead, onSaved }: StageProps) {
         <ManagerPicker onSelect={handleAssign} />
       )}
       <ErrorBanner message={managerSave.error} />
-
-      <h3 style={{ marginTop: 28 }}>Restricted KYC</h3>
-      <KycPanel lead={lead} onSaved={onSaved} />
     </div>
   );
+}
+
+// ---- Restricted KYC ----
+// Its own full-width section (see DiscoveryLeadDetail.tsx) - the form
+// below has 11+ fields plus a document-attachments manager, which needs
+// the full panel width, not a half-width column shared with Manager.
+
+export function KycStage({ lead, onSaved }: StageProps) {
+  return <KycPanel lead={lead} onSaved={onSaved} />;
 }
 
 function KycPanel({ lead, onSaved }: StageProps) {
@@ -624,17 +632,13 @@ function KycPanel({ lead, onSaved }: StageProps) {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [email, setEmail] = useState("");
   const [aadhaarNumber, setAadhaarNumber] = useState("");
-  const [aadhaarRef, setAadhaarRef] = useState("");
   const [panNumber, setPanNumber] = useState("");
-  const [panRef, setPanRef] = useState("");
   const [accountHolderName, setAccountHolderName] = useState("");
   const [accountNumber, setAccountNumber] = useState("");
   const [ifsc, setIfsc] = useState("");
   const [bankName, setBankName] = useState("");
-  const [proofRef, setProofRef] = useState("");
   const [gstApplicable, setGstApplicable] = useState(false);
   const [gstNumber, setGstNumber] = useState("");
-  const [gstCertificateRef, setGstCertificateRef] = useState("");
   const [existingKycVersion, setExistingKycVersion] = useState(0);
   const [attachments, setAttachments] = useState<LeadKycAttachment[]>([]);
   const [saving, setSaving] = useState(false);
@@ -658,17 +662,13 @@ function KycPanel({ lead, onSaved }: StageProps) {
     if (result.data) {
       setEmail(result.data.email);
       setAadhaarNumber(result.data.aadhaar.number);
-      setAadhaarRef(result.data.aadhaar.evidenceRef);
       setPanNumber(result.data.pan.number);
-      setPanRef(result.data.pan.evidenceRef);
       setAccountHolderName(result.data.bank.accountHolderName);
       setAccountNumber(result.data.bank.accountNumber);
       setIfsc(result.data.bank.ifsc);
       setBankName(result.data.bank.bankName);
-      setProofRef(result.data.bank.proofRef);
       setGstApplicable(result.data.gst.applicable);
       setGstNumber(result.data.gst.number ?? "");
-      setGstCertificateRef(result.data.gst.certificateRef ?? "");
       setExistingKycVersion(result.data.version);
       setAttachments(result.data.attachments);
     }
@@ -702,18 +702,18 @@ function KycPanel({ lead, onSaved }: StageProps) {
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    if (gstApplicable && (!gstNumber.trim() || !gstCertificateRef.trim())) {
-      setSaveError("GST number and certificate reference are required when GST is applicable.");
+    if (gstApplicable && !gstNumber.trim()) {
+      setSaveError("GST number is required when GST is applicable.");
       return;
     }
     setSaving(true);
     setSaveError(null);
     const result = await saveLeadKyc(lead.leadRef, {
       email,
-      aadhaar: { number: aadhaarNumber, evidenceRef: aadhaarRef },
-      pan: { number: panNumber, evidenceRef: panRef },
-      bank: { accountHolderName, accountNumber, ifsc, bankName, proofRef },
-      gst: { applicable: gstApplicable, number: gstApplicable ? gstNumber.trim() : undefined, certificateRef: gstApplicable ? gstCertificateRef.trim() : undefined },
+      aadhaar: { number: aadhaarNumber },
+      pan: { number: panNumber },
+      bank: { accountHolderName, accountNumber, ifsc, bankName },
+      gst: { applicable: gstApplicable, number: gstApplicable ? gstNumber.trim() : undefined },
       expectedKycVersion: existingKycVersion,
       expectedLeadVersion: lead.version,
     });
@@ -729,7 +729,7 @@ function KycPanel({ lead, onSaved }: StageProps) {
   return (
     <>
     <form onSubmit={handleSubmit}>
-      <p className="foundationnote">No postal address or address proof is collected. Evidence references above are plain IDs/URLs - use the attachments panel below for a real Drive-backed document link or upload.</p>
+      <p className="foundationnote">No postal address or address proof is collected. Save the identifiers below, then add each document as a real Drive-backed link or upload in the attachments panel.</p>
       <div className="fields">
         <div className="field">
           <label htmlFor="kyc-email">Email</label>
@@ -740,16 +740,8 @@ function KycPanel({ lead, onSaved }: StageProps) {
           <input id="kyc-aadhaar" type="text" value={aadhaarNumber} onChange={(e) => setAadhaarNumber(e.target.value)} required />
         </div>
         <div className="field">
-          <label htmlFor="kyc-aadhaar-ref">Aadhaar evidence reference</label>
-          <input id="kyc-aadhaar-ref" type="text" value={aadhaarRef} onChange={(e) => setAadhaarRef(e.target.value)} required />
-        </div>
-        <div className="field">
           <label htmlFor="kyc-pan">PAN</label>
           <input id="kyc-pan" type="text" value={panNumber} onChange={(e) => setPanNumber(e.target.value)} required />
-        </div>
-        <div className="field">
-          <label htmlFor="kyc-pan-ref">PAN evidence reference</label>
-          <input id="kyc-pan-ref" type="text" value={panRef} onChange={(e) => setPanRef(e.target.value)} required />
         </div>
         <div className="field">
           <label htmlFor="kyc-account-holder">Account holder name</label>
@@ -768,26 +760,16 @@ function KycPanel({ lead, onSaved }: StageProps) {
           <input id="kyc-bank-name" type="text" value={bankName} onChange={(e) => setBankName(e.target.value)} required />
         </div>
         <div className="field">
-          <label htmlFor="kyc-bank-proof">Bank proof reference</label>
-          <input id="kyc-bank-proof" type="text" value={proofRef} onChange={(e) => setProofRef(e.target.value)} required />
-        </div>
-        <div className="field">
           <label htmlFor="kyc-gst-applicable">
             <input id="kyc-gst-applicable" type="checkbox" checked={gstApplicable} onChange={(e) => setGstApplicable(e.target.checked)} style={{ marginRight: 8 }} />
             GST applicable
           </label>
         </div>
         {gstApplicable && (
-          <>
-            <div className="field">
-              <label htmlFor="kyc-gst-number">GST number</label>
-              <input id="kyc-gst-number" type="text" value={gstNumber} onChange={(e) => setGstNumber(e.target.value)} required />
-            </div>
-            <div className="field">
-              <label htmlFor="kyc-gst-cert">GST certificate reference</label>
-              <input id="kyc-gst-cert" type="text" value={gstCertificateRef} onChange={(e) => setGstCertificateRef(e.target.value)} required />
-            </div>
-          </>
+          <div className="field">
+            <label htmlFor="kyc-gst-number">GST number</label>
+            <input id="kyc-gst-number" type="text" value={gstNumber} onChange={(e) => setGstNumber(e.target.value)} required />
+          </div>
         )}
       </div>
       <ErrorBanner message={saveError} />
@@ -873,64 +855,60 @@ function KycAttachments({
   }
 
   return (
-    <div className="panel" style={{ marginTop: 18 }}>
-      <div className="panelhead">
-        <h2>Document attachments</h2>
-      </div>
-      <div className="panelbody">
-        <p className="foundationnote">Add a link to an existing document, or upload a real file - uploads are stored in this Lead&rsquo;s own Drive folder, never simulated.</p>
+    <div style={{ marginTop: 28 }}>
+      <h3>Document attachments</h3>
+      <p className="foundationnote">Add a link to an existing document, or upload a real file - uploads are stored in this Lead&rsquo;s own Drive folder, never simulated.</p>
 
-        <form onSubmit={handleAdd}>
-          <div className="fields">
-            <div className="field">
-              <label htmlFor="attach-doc-type">Document name</label>
-              <select id="attach-doc-type" value={docType} onChange={(e) => setDocType(e.target.value as LeadKycAttachment["docType"])}>
-                {DOC_TYPES.map((type) => (
-                  <option key={type} value={type}>
-                    {DOC_TYPE_LABELS[type]}
-                  </option>
-                ))}
-              </select>
-            </div>
-            <div className="field">
-              <label htmlFor="attach-mode">Source</label>
-              <select id="attach-mode" value={mode} onChange={(e) => setMode(e.target.value as "link" | "upload")}>
-                <option value="link">Doc link</option>
-                <option value="upload">Upload file</option>
-              </select>
-            </div>
-            {mode === "link" ? (
-              <div className="field full">
-                <label htmlFor="attach-url">Document link</label>
-                <input id="attach-url" type="url" placeholder="https://…" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} required />
-              </div>
-            ) : (
-              <div className="field full">
-                <label htmlFor="attach-file">Choose file</label>
-                <input id="attach-file" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
-              </div>
-            )}
+      <form onSubmit={handleAdd}>
+        <div className="fields">
+          <div className="field">
+            <label htmlFor="attach-doc-type">Document name</label>
+            <select id="attach-doc-type" value={docType} onChange={(e) => setDocType(e.target.value as LeadKycAttachment["docType"])}>
+              {DOC_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {DOC_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </select>
           </div>
-          <ErrorBanner message={error} />
-          <button type="submit" className="btn" disabled={busy} style={{ marginTop: 12 }}>
-            <Icon name="upload" /> {busy ? "Adding…" : mode === "link" ? "Add link" : "Upload"}
-          </button>
-        </form>
+          <div className="field">
+            <label htmlFor="attach-mode">Source</label>
+            <select id="attach-mode" value={mode} onChange={(e) => setMode(e.target.value as "link" | "upload")}>
+              <option value="link">Doc link</option>
+              <option value="upload">Upload file</option>
+            </select>
+          </div>
+          {mode === "link" ? (
+            <div className="field full">
+              <label htmlFor="attach-url">Document link</label>
+              <input id="attach-url" type="url" placeholder="https://…" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} required />
+            </div>
+          ) : (
+            <div className="field full">
+              <label htmlFor="attach-file">Choose file</label>
+              <input id="attach-file" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
+            </div>
+          )}
+        </div>
+        <ErrorBanner message={error} />
+        <button type="submit" className="btn" disabled={busy} style={{ marginTop: 12 }}>
+          <Icon name="upload" /> {busy ? "Adding…" : mode === "link" ? "Add link" : "Upload"}
+        </button>
+      </form>
 
-        {attachments.length > 0 && (
-          <ul className="checklist" style={{ marginTop: 18 }}>
-            {attachments.map((a, i) => (
-              <li key={`${a.docType}-${a.addedAt}-${i}`}>
-                <b>{DOC_TYPE_LABELS[a.docType]}</b> ·{" "}
-                <a href={a.url} target="_blank" rel="noreferrer">
-                  {a.kind === "upload" ? a.fileName ?? "Uploaded file" : "Open link"}
-                </a>{" "}
-                <small>{a.kind === "upload" ? "uploaded to Drive" : "linked"}</small>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {attachments.length > 0 && (
+        <ul className="checklist" style={{ marginTop: 18 }}>
+          {attachments.map((a, i) => (
+            <li key={`${a.docType}-${a.addedAt}-${i}`}>
+              <b>{DOC_TYPE_LABELS[a.docType]}</b> ·{" "}
+              <a href={a.url} target="_blank" rel="noreferrer">
+                {a.kind === "upload" ? a.fileName ?? "Uploaded file" : "Open link"}
+              </a>{" "}
+              <small>{a.kind === "upload" ? "uploaded to Drive" : "linked"}</small>
+            </li>
+          ))}
+        </ul>
+      )}
     </div>
   );
 }

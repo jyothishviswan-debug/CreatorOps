@@ -203,9 +203,9 @@ export async function seedDiscoveryData(): Promise<void> {
   // kycPackageComplete is true - never real PAN/Aadhaar/bank data.
   const fakeKyc = {
     email: "kyc-test@example-creator.test",
-    aadhaar: { number: "0000-0000-0000", evidenceRef: "seed://evidence/aadhaar-fake" },
-    pan: { number: "ABCDE0000F", evidenceRef: "seed://evidence/pan-fake" },
-    bank: { accountHolderName: "Test Creator", accountNumber: "000000000000", ifsc: "TEST0000000", bankName: "Test Bank", proofRef: "seed://evidence/bank-fake" },
+    aadhaar: { number: "0000-0000-0000" },
+    pan: { number: "ABCDE0000F" },
+    bank: { accountHolderName: "Test Creator", accountNumber: "000000000000", ifsc: "TEST0000000", bankName: "Test Bank" },
     gst: { applicable: false },
     updatedAt: now,
     updatedByUserRef: headUserRef,

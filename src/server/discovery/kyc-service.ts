@@ -26,10 +26,10 @@ export type LeadKycDto = {
   leadRef: string;
   version: number;
   email: string;
-  aadhaar: { number: string; evidenceRef: string };
-  pan: { number: string; evidenceRef: string };
-  bank: { accountHolderName: string; accountNumber: string; ifsc: string; bankName: string; proofRef: string };
-  gst: { applicable: boolean; number?: string; certificateRef?: string };
+  aadhaar: { number: string };
+  pan: { number: string };
+  bank: { accountHolderName: string; accountNumber: string; ifsc: string; bankName: string };
+  gst: { applicable: boolean; number?: string };
   attachments: LeadKycAttachment[];
   updatedAt: string;
   updatedByUserRef: string;
@@ -83,16 +83,15 @@ export async function getLeadKyc(actor: ActorContext | null, leadRef: unknown): 
 
 const saveKycInputSchema = z.object({
   email: z.string().min(1).max(300),
-  aadhaar: z.object({ number: z.string().min(1).max(40), evidenceRef: z.string().min(1).max(300) }),
-  pan: z.object({ number: z.string().min(1).max(20), evidenceRef: z.string().min(1).max(300) }),
+  aadhaar: z.object({ number: z.string().min(1).max(40) }),
+  pan: z.object({ number: z.string().min(1).max(20) }),
   bank: z.object({
     accountHolderName: z.string().min(1).max(200),
     accountNumber: z.string().min(1).max(40),
     ifsc: z.string().min(1).max(20),
     bankName: z.string().min(1).max(120),
-    proofRef: z.string().min(1).max(300),
   }),
-  gst: z.object({ applicable: z.boolean(), number: z.string().min(1).max(30).optional(), certificateRef: z.string().min(1).max(300).optional() }),
+  gst: z.object({ applicable: z.boolean(), number: z.string().min(1).max(30).optional() }),
   // 0 means "no KYC document exists yet for this Lead".
   expectedKycVersion: z.number().int().min(0),
   expectedLeadVersion: z.number().int().min(1),
@@ -117,8 +116,8 @@ export async function saveLeadKyc(actor: ActorContext | null, leadRef: unknown, 
   if (!parsed.success) return discoveryInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
   const input = parsed.data;
 
-  if (input.gst.applicable && (!input.gst.number || !input.gst.certificateRef)) {
-    return discoveryInvalidInputResult("gst.number and gst.certificateRef are required when GST is applicable.");
+  if (input.gst.applicable && !input.gst.number) {
+    return discoveryInvalidInputResult("gst.number is required when GST is applicable.");
   }
 
   const db = getAdminFirestore();
@@ -164,9 +163,8 @@ export async function saveLeadKyc(actor: ActorContext | null, leadRef: unknown, 
 }
 
 // ---- Write: attachments (Step 6B.1) ----
-// Supplementary to the plain evidenceRef/proofRef/certificateRef text
-// fields above, never a replacement - each entry is either an
-// operator-supplied link or a real file uploaded into the Lead's own
+// The actual evidence for the identifiers above - each entry is either
+// an operator-supplied link or a real file uploaded into the Lead's own
 // Drive subfolder. Requires the core KYC package to already exist (the
 // operator saves email/Aadhaar/PAN/bank/GST first); attachments have
 // nowhere to live before that.
