@@ -16,6 +16,7 @@ function fullyReadyLead(overrides: Partial<LeadDoc> = {}): LeadDoc {
     previousLifecycle: null,
     lifecycleReason: null,
     displayName: "Test Creator",
+    displayNameLower: "test creator",
     email: "creator@example.com",
     phone: "+91 90000 00000",
     profileUrl: "https://instagram.com/testcreator",

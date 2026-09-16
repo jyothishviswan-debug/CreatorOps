@@ -120,7 +120,11 @@ export async function runLeadMutation(leadUid: string, expectedVersion: number, 
   });
 }
 
-export type LeadListCursor = { createdAt: string; uid: string };
+// Opaque to callers - `orderValue` is whichever field the active query
+// mode is actually ordered by (createdAt / displayNameLower /
+// outreachSummary.nextFollowUpAt, see listLeadDocs) - the client only
+// ever echoes it back unchanged, never inspects or constructs it.
+export type LeadListCursor = { orderValue: string; uid: string };
 
 export type ListLeadsPage = { leads: LeadDoc[]; nextCursor: LeadListCursor | null };
 
@@ -166,13 +170,26 @@ function buildLeadScopeFilter(actorUid: string, grants: ScopeGrant[]): Filter | 
   return branches.length === 1 ? branches[0]! : Filter.or(...branches);
 }
 
-// Deterministically ordered (createdAt desc, doc id as tiebreak), bounded
-// cursor pagination - never a whole-collection fetch, never a broad
-// fetch followed by in-memory scope filtering. `hasGlobal` short-
-// circuits to no scope filter at all; otherwise the scope filter is
-// pushed into the Firestore query itself via Filter.or (see
+function readPath(data: Record<string, unknown>, path: string): unknown {
+  return path.split(".").reduce<unknown>((acc, key) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined), data);
+}
+
+// Bounded cursor pagination, never a whole-collection fetch, never a
+// broad fetch followed by in-memory scope/filter narrowing. `hasGlobal`
+// short-circuits to no scope filter at all; otherwise the scope filter
+// is pushed into the Firestore query itself via Filter.or (see
 // buildLeadScopeFilter). A non-GLOBAL actor with zero relevant grants
 // gets an empty page without any Firestore read at all.
+//
+// Step 6B extends this with real server-side filters (lifecycle,
+// region, platform, "assigned to me", name search) plus a "follow-up
+// due" view. displayNamePrefix and followUpDue are mutually exclusive
+// alternate ORDERING modes, not stackable on top of the default - a
+// Firestore range/prefix filter must be the first orderBy field, so
+// searching by name orders by name (not recency), and the follow-up
+// view orders by due date (not recency) instead of the default
+// createdAt-desc ordering. Every mode still combines with the scope
+// filter and the plain-equality filters above via Filter.and.
 export async function listLeadDocs(options: {
   limit: number;
   cursor?: LeadListCursor;
@@ -180,6 +197,11 @@ export async function listLeadDocs(options: {
   grants: ScopeGrant[];
   hasGlobal: boolean;
   lifecycle?: string;
+  region?: string;
+  platform?: string;
+  assignedToMe?: boolean;
+  displayNamePrefix?: string;
+  followUpDue?: boolean;
 }): Promise<ListLeadsPage> {
   const pageSize = Math.max(1, Math.min(options.limit, MAX_LEAD_PAGE_SIZE));
 
@@ -192,11 +214,27 @@ export async function listLeadDocs(options: {
   const filters: Filter[] = [];
   if (scopeFilter) filters.push(scopeFilter);
   if (options.lifecycle) filters.push(Filter.where("lifecycle", "==", options.lifecycle));
+  if (options.region) filters.push(Filter.where("region", "==", options.region));
+  if (options.platform) filters.push(Filter.where("platform", "==", options.platform));
+  if (options.assignedToMe) filters.push(Filter.where("ownerUid", "==", options.actorUid));
 
-  let query = leadsCollection().orderBy("createdAt", "desc").orderBy(FieldPath.documentId()).limit(pageSize + 1);
+  let orderField = "createdAt";
+  let orderDirection: FirebaseFirestore.OrderByDirection = "desc";
+  if (options.displayNamePrefix) {
+    orderField = "displayNameLower";
+    orderDirection = "asc";
+    filters.push(Filter.where("displayNameLower", ">=", options.displayNamePrefix));
+    filters.push(Filter.where("displayNameLower", "<", `${options.displayNamePrefix}`));
+  } else if (options.followUpDue) {
+    orderField = "outreachSummary.nextFollowUpAt";
+    orderDirection = "asc";
+    filters.push(Filter.where("outreachSummary.nextFollowUpAt", "<=", new Date().toISOString()));
+  }
+
+  let query = leadsCollection().orderBy(orderField, orderDirection).orderBy(FieldPath.documentId()).limit(pageSize + 1);
   if (filters.length === 1) query = query.where(filters[0]!);
   else if (filters.length > 1) query = query.where(Filter.and(...filters));
-  if (options.cursor) query = query.startAfter(options.cursor.createdAt, options.cursor.uid);
+  if (options.cursor) query = query.startAfter(options.cursor.orderValue, options.cursor.uid);
 
   const snapshot = await query.get();
   const pageDocs = snapshot.docs.slice(0, pageSize);
@@ -209,7 +247,7 @@ export async function listLeadDocs(options: {
   }
 
   const last = pageDocs[pageDocs.length - 1];
-  const nextCursor = hasMore && last ? { createdAt: (last.data() as { createdAt: string }).createdAt, uid: last.id } : null;
+  const nextCursor = hasMore && last ? { orderValue: String(readPath(last.data() as Record<string, unknown>, orderField) ?? ""), uid: last.id } : null;
 
   return { leads, nextCursor };
 }

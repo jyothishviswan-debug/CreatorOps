@@ -43,6 +43,7 @@ export async function seedDiscoveryData(): Promise<void> {
       leadRef,
       version: 1,
       displayName,
+      displayNameLower: displayName.toLowerCase(),
       email: `${leadRef.replace("seed-lead-", "")}@example-creator.test`,
       phone: "+91 90000 00000",
       profileUrl: `https://instagram.com/${leadRef.replace("seed-lead-", "")}`,

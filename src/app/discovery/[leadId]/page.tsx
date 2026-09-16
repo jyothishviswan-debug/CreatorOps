@@ -1,21 +1,34 @@
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/ui/AppShell";
-import { DetailView } from "@/ui/DetailView";
-import { getDiscoveryLeadDetail } from "@/features/discovery/fixtures";
+import { EmptyState } from "@/ui/States";
+import { DiscoveryLeadDetail } from "@/features/discovery/DiscoveryLeadDetail";
+import { getLeadReadiness } from "@/server/discovery/conversion-service";
+import { resolveRequestActor } from "@/server/discovery/http";
+import { getLead } from "@/server/discovery/lead-service";
 
-export default async function DiscoveryLeadDetailPage({
-  params,
-}: {
-  params: Promise<{ leadId: string }>;
-}) {
+export default async function DiscoveryLeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
   const { leadId } = await params;
-  const detail = getDiscoveryLeadDetail(leadId);
-  if (!detail) notFound();
+  const actor = await resolveRequestActor();
+  const result = await getLead(actor, leadId);
+
+  if (!result.ok && result.code === "not_found") notFound();
+
+  if (!result.ok) {
+    return (
+      <AppShell>
+        <section className="panel">
+          <EmptyState title="Access denied" description="You don't have permission to view this Lead." />
+        </section>
+      </AppShell>
+    );
+  }
+
+  const readiness = await getLeadReadiness(actor, leadId);
 
   return (
     <AppShell>
-      <DetailView moduleLabel="Discovery" workspaceHref="/discovery/leads" detail={detail} />
+      <DiscoveryLeadDetail initialLead={result.data} initialReadiness={readiness.ok ? readiness.data : null} />
     </AppShell>
   );
 }

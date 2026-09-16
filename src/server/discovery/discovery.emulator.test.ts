@@ -98,7 +98,7 @@ describe("Discovery domain (real emulator)", () => {
     it("cursor pagination is deterministic: visits every in-scope Lead exactly once across bounded pages", async () => {
       const admin = await actorFor("super_admin");
       const seen: string[] = [];
-      let cursor: { createdAt: string; uid: string } | undefined;
+      let cursor: { orderValue: string; uid: string } | undefined;
 
       for (let guard = 0; guard < 50; guard += 1) {
         const page = await listLeads(admin, { limit: 3, cursor });

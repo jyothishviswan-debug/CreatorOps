@@ -9,7 +9,8 @@ import { checkForDuplicates } from "./duplicate-check";
 import { requireDiscoveryAccess, requireDiscoveryFeatureAccess, requireLeadInScope } from "./discovery-gate";
 import { generateLeadRef } from "./ids";
 import { getLeadDocByRef, leadsCollection, listLeadDocs, runLeadMutation, type LeadListCursor } from "./firestore";
-import { writeLeadEvent } from "./lead-events";
+import { listLeadEvents, writeLeadEvent, type LeadEventListCursor } from "./lead-events";
+import type { LeadEvent } from "./types";
 import {
   assetDecisionKindSchema,
   commercialEvidenceSchema,
@@ -52,8 +53,15 @@ async function loadAuthorizedLead(actor: ActorContext | null, leadRef: unknown, 
 
 const listLeadsInputSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
-  cursor: z.object({ createdAt: z.string().min(1), uid: z.string().min(1) }).optional(),
+  cursor: z.object({ orderValue: z.string(), uid: z.string().min(1) }).optional(),
   lifecycle: leadLifecycleSchema.optional(),
+  region: z.string().min(1).max(80).optional(),
+  platform: z.string().min(1).max(60).optional(),
+  assignedToMe: z.boolean().optional(),
+  // Lowercased server-side too - a caller that doesn't normalize case
+  // still gets a correct prefix match.
+  search: z.string().min(1).max(200).optional(),
+  followUpDue: z.boolean().optional(),
 });
 export type ListLeadsInput = z.input<typeof listLeadsInputSchema>;
 
@@ -73,6 +81,11 @@ export async function listLeads(actor: ActorContext | null, rawInput: unknown): 
     grants,
     hasGlobal: hasGlobalScope(grants),
     lifecycle: parsed.data.lifecycle,
+    region: parsed.data.region,
+    platform: parsed.data.platform,
+    assignedToMe: parsed.data.assignedToMe,
+    displayNamePrefix: parsed.data.search?.toLowerCase(),
+    followUpDue: parsed.data.followUpDue,
   });
 
   const leads = await Promise.all(page.leads.map(toLeadDto));
@@ -139,6 +152,7 @@ export async function createLead(actor: ActorContext | null, rawInput: unknown, 
     previousLifecycle: null,
     lifecycleReason: null,
     displayName: input.displayName,
+    displayNameLower: input.displayName.toLowerCase(),
     email: input.email ?? null,
     phone: input.phone ?? null,
     profileUrl: input.profileUrl ?? null,
@@ -215,6 +229,9 @@ export async function updateLead(actor: ActorContext | null, leadRef: unknown, r
       after[key] = value;
       (next as Record<string, unknown>)[key] = value;
     }
+    // Kept in sync with displayName on every write - see the schema's
+    // own comment on displayNameLower.
+    if (patch.displayName !== undefined) next.displayNameLower = patch.displayName.toLowerCase();
     return next;
   });
 
@@ -571,4 +588,39 @@ export async function precheckDuplicates(actor: ActorContext | null, rawInput: u
 
   const result = await checkForDuplicates(parsed.data);
   return { ok: true, data: duplicateCheckResultSchema.parse(result) };
+}
+
+// ---- History / activity (Step 6B) ----
+// Reads the append-only leads/{uid}/events subcollection - the same
+// history Step 6A's audit trail is built from. Read-only, gated by
+// Feature Access + Record Scope like get/list; the events themselves are
+// already redacted at write time (see lead-events.ts), so nothing
+// restricted ever reaches this response.
+const listLeadHistoryInputSchema = z.object({
+  limit: z.number().int().min(1).max(100).optional(),
+  cursor: z.object({ createdAt: z.string().min(1), id: z.string().min(1) }).optional(),
+});
+export type ListLeadHistoryInput = z.input<typeof listLeadHistoryInputSchema>;
+
+export async function getLeadHistory(
+  actor: ActorContext | null,
+  leadRef: unknown,
+  rawInput: unknown,
+): Promise<DiscoveryServiceResult<{ events: (LeadEvent & { id: string })[]; nextCursor: LeadEventListCursor | null }>> {
+  if (!actor) return discoveryUnauthorizedResult("not_authenticated");
+  const gate = await requireDiscoveryFeatureAccess(actor);
+  if (!gate.ok) return discoveryUnauthorizedResult(gate.reason);
+
+  if (typeof leadRef !== "string" || leadRef.length === 0) return discoveryInvalidInputResult("Missing leadRef.");
+  const lead = await getLeadDocByRef(leadRef);
+  if (!lead) return { ok: false, code: "not_found", message: "Lead not found." };
+
+  const scopeCheck = await requireLeadInScope(actor, lead);
+  if (!scopeCheck.ok) return discoveryUnauthorizedResult(scopeCheck.reason);
+
+  const parsed = listLeadHistoryInputSchema.safeParse(rawInput);
+  if (!parsed.success) return discoveryInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
+
+  const page = await listLeadEvents(lead.uid, { limit: parsed.data.limit ?? 20, cursor: parsed.data.cursor });
+  return { ok: true, data: page };
 }

@@ -207,6 +207,7 @@ export type LeadConversionRecord = z.infer<typeof conversionRecordSchema>;
 // --- Source / provenance ---------------------------------------------------
 export const LEAD_SOURCE_TYPES = ["research", "referral", "inbound", "other"] as const;
 export const leadSourceTypeSchema = z.enum(LEAD_SOURCE_TYPES);
+export type LeadSourceType = z.infer<typeof leadSourceTypeSchema>;
 
 export const leadSourceSchema = z.object({
   type: leadSourceTypeSchema,
@@ -233,6 +234,13 @@ export const leadDocSchema = z.object({
   lifecycleReason: z.string().min(1).max(1000).nullable().default(null),
 
   displayName: z.string().min(1).max(200),
+  // Kept in sync with displayName on every write - the searchable field
+  // (Step 6B's Workspace "search by name") for the same reason
+  // users/{uid}.email is stored lowercase: a Firestore prefix-range
+  // query is byte-order/case-sensitive, so case-insensitive search needs
+  // its own normalized field, never a client-side filter over a
+  // preloaded page.
+  displayNameLower: z.string().min(1).max(200),
   email: z.string().min(1).max(300).nullable().default(null),
   phone: z.string().min(1).max(40).nullable().default(null),
   profileUrl: z.string().min(1).max(500).nullable().default(null),

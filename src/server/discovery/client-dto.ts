@@ -34,6 +34,7 @@ export type LeadDto = {
   region: string | null;
   teamId: string | null;
   ownerRef: string | null;
+  ownerDisplayName: string | null;
   research: LeadResearch | null;
   latestReview: LeadReview | null;
   outreachSummary: LeadOutreachSummary | null;
@@ -42,6 +43,7 @@ export type LeadDto = {
   discoveryAgreement: LeadDiscoveryAgreementEvidence | null;
   assetDecision: LeadAssetDecision | null;
   managerRef: string | null;
+  managerDisplayName: string | null;
   kycPackageComplete: boolean;
   duplicateCheck: DuplicateCheckResult | null;
   conversion: LeadConversionRecord | null;
@@ -52,18 +54,21 @@ export type LeadDto = {
 };
 
 // A referenced uid (owner/manager) can, in principle, no longer resolve
-// (the user doc was somehow removed) - fail soft here (null) rather than
-// throwing, since this is a display concern, not an authorization
+// (the user doc was somehow removed) - fail soft here (nulls) rather
+// than throwing, since this is a display concern, not an authorization
 // decision; nothing about access control depends on this lookup
-// succeeding.
-async function resolveUserRef(uid: string | null): Promise<string | null> {
-  if (!uid) return null;
+// succeeding. Resolves both the opaque userRef AND a display name in one
+// lookup - Discovery UI needs a human-readable owner/manager name (the
+// Workspace table, the Detail page) without a second round-trip through
+// an Administration endpoint Discovery actors may not have access to.
+async function resolveUserRefAndName(uid: string | null): Promise<{ ref: string | null; displayName: string | null }> {
+  if (!uid) return { ref: null, displayName: null };
   const doc = await getUserDoc(uid);
-  return doc?.userRef ?? null;
+  return { ref: doc?.userRef ?? null, displayName: doc?.displayName ?? null };
 }
 
 export async function toLeadDto(doc: LeadDoc): Promise<LeadDto> {
-  const [ownerRef, managerRef] = await Promise.all([resolveUserRef(doc.ownerUid), resolveUserRef(doc.managerUid)]);
+  const [owner, manager] = await Promise.all([resolveUserRefAndName(doc.ownerUid), resolveUserRefAndName(doc.managerUid)]);
 
   return {
     leadRef: doc.leadRef,
@@ -80,7 +85,8 @@ export async function toLeadDto(doc: LeadDoc): Promise<LeadDto> {
     source: doc.source,
     region: doc.region,
     teamId: doc.teamId,
-    ownerRef,
+    ownerRef: owner.ref,
+    ownerDisplayName: owner.displayName,
     research: doc.research,
     latestReview: doc.latestReview,
     outreachSummary: doc.outreachSummary,
@@ -88,7 +94,8 @@ export async function toLeadDto(doc: LeadDoc): Promise<LeadDto> {
     commercial: doc.commercial,
     discoveryAgreement: doc.discoveryAgreement,
     assetDecision: doc.assetDecision,
-    managerRef,
+    managerRef: manager.ref,
+    managerDisplayName: manager.displayName,
     kycPackageComplete: doc.kycPackageComplete,
     duplicateCheck: doc.duplicateCheck,
     conversion: doc.conversion,

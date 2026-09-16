@@ -1,5 +1,13 @@
 import type { ScopeSummaryDto } from "@/server/authz/client-dto";
 
+// A fixed locale, never `undefined` - `undefined` resolves to the
+// running environment's own default locale, which differs between the
+// Node.js server (SSR) and the browser (hydration), producing two
+// different formatted strings for the exact same instant and a React
+// hydration mismatch. "en-GB" also matches this app's existing date
+// style elsewhere (e.g. "14 Sep 2026 · 10:24").
+const DATE_LOCALE = "en-GB";
+
 export function relativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   if (Number.isNaN(then)) return iso;
@@ -12,13 +20,13 @@ export function relativeTime(iso: string): string {
   if (diffHour < 24) return `${diffHour}h ago`;
   const diffDay = Math.round(diffHour / 24);
   if (diffDay < 30) return `${diffDay}d ago`;
-  return new Date(iso).toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+  return new Date(iso).toLocaleDateString(DATE_LOCALE, { year: "numeric", month: "short", day: "numeric" });
 }
 
 export function absoluteTime(iso: string): string {
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return iso;
-  return date.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleString(DATE_LOCALE, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 const OPERATION_LABELS: Record<string, string> = {
