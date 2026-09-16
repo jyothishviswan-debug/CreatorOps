@@ -23,6 +23,8 @@ import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
 import { COLLECTIONS } from "@/server/authz/firestore";
 import { seedAccessControlData } from "@/server/authz/seed-access-data";
+import { DISCOVERY_COLLECTIONS } from "@/server/discovery/firestore";
+import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
 
 const LOCAL_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 
@@ -59,15 +61,34 @@ async function deleteAllAuthUsers(): Promise<void> {
   } while (pageToken);
 }
 
-async function deleteCollection(collectionName: string): Promise<void> {
+async function deleteCollection(collectionRef: FirebaseFirestore.CollectionReference): Promise<void> {
   const db = getAdminFirestore();
-  const collectionRef = db.collection(collectionName);
   // Bounded batches, repeated until empty - the same "never an unbounded
   // single operation" discipline every other bulk read/write in this
   // codebase follows, just applied to a delete instead of a list.
   for (;;) {
     const snapshot = await collectionRef.limit(500).get();
     if (snapshot.empty) return;
+    const batch = db.batch();
+    for (const doc of snapshot.docs) batch.delete(doc.ref);
+    await batch.commit();
+  }
+}
+
+// leads/{uid}/events is a subcollection - deleting a lead's own document
+// does NOT cascade-delete it (Firestore never cascades), so each lead's
+// events must be deleted explicitly before (or regardless of) the lead
+// document itself, or they'd linger as orphaned, inaccessible-via-list
+// data and break "produces the same baseline on every test run".
+async function deleteLeadsCollectionWithEvents(): Promise<void> {
+  const db = getAdminFirestore();
+  const leadsRef = db.collection(DISCOVERY_COLLECTIONS.leads);
+  for (;;) {
+    const snapshot = await leadsRef.limit(200).get();
+    if (snapshot.empty) return;
+    for (const doc of snapshot.docs) {
+      await deleteCollection(doc.ref.collection(DISCOVERY_COLLECTIONS.leadEvents));
+    }
     const batch = db.batch();
     for (const doc of snapshot.docs) batch.delete(doc.ref);
     await batch.commit();
@@ -82,12 +103,18 @@ async function deleteCollection(collectionName: string): Promise<void> {
 // design.
 export async function resetEmulatorTestState(password: string): Promise<void> {
   assertSafeToReset();
+  const db = getAdminFirestore();
 
   await deleteAllAuthUsers();
   for (const collectionName of Object.values(COLLECTIONS)) {
-    await deleteCollection(collectionName);
+    await deleteCollection(db.collection(collectionName));
   }
+  await deleteLeadsCollectionWithEvents();
+  await deleteCollection(db.collection(DISCOVERY_COLLECTIONS.leadRestrictedKyc));
+  await deleteCollection(db.collection(DISCOVERY_COLLECTIONS.partners));
+  await deleteCollection(db.collection(DISCOVERY_COLLECTIONS.partnerAccounts));
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();
+  await seedDiscoveryData();
 }

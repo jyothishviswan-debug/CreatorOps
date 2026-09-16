@@ -34,9 +34,10 @@ import { ROLES } from "./roles";
 import { seedAccessControlData, TEST_IDENTITIES } from "./seed-access-data";
 
 // Total individual scope grants across all five seeded identities - kept
-// in sync with the SCOPE_GRANTS matrix in seed-access-data.ts (Viewer 2,
-// Analyst 4, Partnership Manager 4, Partnership Head 8, Super Admin 1).
-const TOTAL_SCOPE_GRANTS = 2 + 4 + 4 + 8 + 1;
+// in sync with the SCOPE_GRANTS matrix in seed-access-data.ts (Viewer 3
+// - Step 6A added an EXPLICIT_RECORD lead grant, Analyst 4, Partnership
+// Manager 4, Partnership Head 8, Super Admin 1).
+const TOTAL_SCOPE_GRANTS = 3 + 4 + 4 + 8 + 1;
 
 // Kept in sync with USER_OVERRIDES in seed-access-data.ts: viewer,
 // analyst and manager each get one representative override document

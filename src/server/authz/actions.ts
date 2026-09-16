@@ -34,6 +34,14 @@ export const ACTIONS = [
   "view_audit",
   // Discovery
   "convert_lead",
+  "manage_research",
+  "manage_review",
+  "manage_outreach",
+  "manage_commercial",
+  "manage_asset_decision",
+  "manage_manager_assignment",
+  "manage_kyc",
+  "transition_lifecycle",
   // Partners / Vendors
   "manage_relationships",
   // Campaigns

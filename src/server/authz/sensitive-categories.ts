@@ -10,4 +10,5 @@ export const SENSITIVE_CATEGORIES: SensitiveCategoryDef[] = [
   { id: "finance_amounts", label: "Finance amounts", description: "Payable, invoice and payment amounts within Finance." },
   { id: "partner_contact_info", label: "Partner contact info", description: "Partner phone numbers, emails and direct contacts." },
   { id: "payment_details", label: "Payment details", description: "Bank/payout account details on file." },
+  { id: "discovery_kyc", label: "Discovery KYC", description: "Restricted Discovery Lead KYC: Aadhaar, PAN, bank details and tax status." },
 ];

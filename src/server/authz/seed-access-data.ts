@@ -69,14 +69,42 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // catalog (module-actions.ts): can manage day-to-day finance
       // records but cannot approve payables, unlike Partnership Head.
       finance: featureGrant(true, { manage_agreements: true, manage_payables: true, approve_payables: false, manage_invoices: true, record_payments: true }),
-      discovery: featureGrant(true, { create: true, edit: true, convert_lead: true }),
+      // Step 6A: both relationship-owner roles get the full Discovery
+      // evidence-recording surface (manage_kyc included - see
+      // SENSITIVE_GRANTS below for why that alone isn't enough to read
+      // KYC values for Partnership Manager).
+      discovery: featureGrant(true, {
+        create: true,
+        edit: true,
+        manage_research: true,
+        manage_review: true,
+        manage_outreach: true,
+        manage_commercial: true,
+        manage_asset_decision: true,
+        manage_manager_assignment: true,
+        manage_kyc: true,
+        transition_lifecycle: true,
+        convert_lead: true,
+      }),
     },
   },
   partnership_head: {
     features: {
       ...featuresOf(["dashboard", "partners", "vendors", "campaigns", "assignments", "content", "analytics", "partner_reviews", "operations", "reports"]),
       finance: featureGrant(true, { manage_agreements: true, manage_payables: true, approve_payables: true, manage_invoices: true, record_payments: true }),
-      discovery: featureGrant(true, { create: true, edit: true, convert_lead: true }),
+      discovery: featureGrant(true, {
+        create: true,
+        edit: true,
+        manage_research: true,
+        manage_review: true,
+        manage_outreach: true,
+        manage_commercial: true,
+        manage_asset_decision: true,
+        manage_manager_assignment: true,
+        manage_kyc: true,
+        transition_lifecycle: true,
+        convert_lead: true,
+      }),
     },
   },
   super_admin: {
@@ -98,13 +126,17 @@ function featuresOf(features: FeatureId[]): AccessGrantDoc["features"] {
 
 // Sensitive Access is a distinct gate from Feature Access: Partnership
 // Manager can view Finance but is not granted the "finance_amounts"
-// sensitive category, unlike Partnership Head.
+// sensitive category, unlike Partnership Head. Step 6A: the same
+// non-monotonic shape for Discovery KYC - Partnership Manager has the
+// manage_kyc ACTION (can operate the KYC workflow) but not the
+// "discovery_kyc" sensitive CATEGORY (cannot see the actual restricted
+// values), proving the two gates are independent.
 const SENSITIVE_GRANTS: Record<Role, string[]> = {
   viewer: [],
   analyst: [],
   partnership_manager: [],
-  partnership_head: ["finance_amounts"],
-  super_admin: ["finance_amounts"],
+  partnership_head: ["finance_amounts", "discovery_kyc"],
+  super_admin: ["finance_amounts", "discovery_kyc"],
 };
 
 // Explicit, per-role scope grants (Step 4C's canonical multi-dimensional
@@ -114,7 +146,15 @@ const SENSITIVE_GRANTS: Record<Role, string[]> = {
 // explicit document, not something inferred from the role name, and
 // nothing here compares roles to each other to decide breadth.
 const SCOPE_GRANTS: Record<Role, ScopeGrantInput[]> = {
-  viewer: [{ type: "SELF" }, { type: "REGION", region: "Kerala" }],
+  viewer: [
+    { type: "SELF" },
+    { type: "REGION", region: "Kerala" },
+    // Step 6A: proves EXPLICIT_RECORD scope works for Leads specifically,
+    // independent of region/team - this one out-of-region (Karnataka)
+    // seeded Lead is reachable for Viewer ONLY through this grant (see
+    // discovery/seed-discovery-data.ts's "seed-lead-duplicate").
+    { type: "EXPLICIT_RECORD", resourceType: "lead", resourceId: "seed-lead-duplicate" },
+  ],
   analyst: [
     { type: "REGION", region: "Kerala" },
     { type: "REGION", region: "Tamil Nadu" },
