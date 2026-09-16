@@ -604,11 +604,12 @@ export function ManagerKycStage({ lead, onSaved }: StageProps) {
         <span>Assigned manager</span>
         <b>{lead.managerDisplayName ?? "Unassigned"}</b>
       </div>
-      <ManagerPicker onSelect={handleAssign} />
-      {lead.managerRef && (
+      {lead.managerRef ? (
         <button type="button" className="btn" style={{ marginTop: 10 }} disabled={managerSave.saving} onClick={handleClear}>
           Remove manager
         </button>
+      ) : (
+        <ManagerPicker onSelect={handleAssign} />
       )}
       <ErrorBanner message={managerSave.error} />
 
