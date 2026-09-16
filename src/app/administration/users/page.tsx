@@ -1,7 +1,11 @@
+import Link from "next/link";
+
 import { AppShell } from "@/ui/AppShell";
 import { ModuleTabs } from "@/ui/ModuleTabs";
-import { WorkspaceView } from "@/ui/WorkspaceView";
-import { getAdministrationWorkspace } from "@/features/administration/fixtures";
+import { EmptyState } from "@/ui/States";
+import { AdministrationUsersWorkspace } from "@/features/administration/AdministrationUsersWorkspace";
+import { resolveRequestActor } from "@/server/administration/http";
+import { listUsers } from "@/server/administration/users-service";
 
 const TABS = [
   { label: "Overview", href: "/administration" },
@@ -10,7 +14,12 @@ const TABS = [
   { label: "Audit", href: "/administration/audit" },
 ];
 
-export default function AdministrationUsersPage() {
+const INITIAL_LIMIT = 10;
+
+export default async function AdministrationUsersPage() {
+  const actor = await resolveRequestActor();
+  const result = await listUsers(actor, { limit: INITIAL_LIMIT });
+
   return (
     <AppShell>
       <div className="head">
@@ -19,9 +28,20 @@ export default function AdministrationUsersPage() {
           <h1>Users</h1>
           <p>Registered accounts and their assigned roles.</p>
         </div>
+        <div className="actions">
+          <Link href="/administration/users/new" className="btn primary">
+            + New user
+          </Link>
+        </div>
       </div>
       <ModuleTabs tabs={TABS} />
-      <WorkspaceView workspace={getAdministrationWorkspace("users")} />
+      {result.ok ? (
+        <AdministrationUsersWorkspace initialUsers={result.data.users} initialNextCursor={result.data.nextCursor} initialLimit={INITIAL_LIMIT} />
+      ) : (
+        <section className="panel">
+          <EmptyState title="Access denied" description="You don't have permission to view the user directory." />
+        </section>
+      )}
     </AppShell>
   );
 }

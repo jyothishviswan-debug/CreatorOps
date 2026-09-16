@@ -85,7 +85,7 @@ describe("removeScopeGrant", () => {
     expect(deleteMock).not.toHaveBeenCalled();
   });
 
-  it("removes an existing grant and records an audit event", async () => {
+  it("removes an existing grant and records an audit event with the raw uid/grantedBy stripped from the metadata", async () => {
     requireAdministrationAccessMock.mockResolvedValue({ ok: true });
     getUserDocByRefMock.mockResolvedValue(targetDoc);
     const existingGrant = { type: "REGION", region: "Kerala", uid: "uid-2", grantedAt: "x", grantedBy: "y" };
@@ -95,6 +95,14 @@ describe("removeScopeGrant", () => {
 
     expect(result).toEqual({ ok: true, data: { removed: true } });
     expect(deleteMock).toHaveBeenCalledTimes(1);
-    expect(writeAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "scope_grant.remove", before: existingGrant, after: null }));
+    expect(writeAuditEventMock).toHaveBeenCalledWith(
+      expect.objectContaining({ operation: "scope_grant.remove", before: { type: "REGION", region: "Kerala", grantedAt: "x" }, after: null }),
+    );
+    // The audit trail is reviewable through a client-facing API - the
+    // stored grant's real uid/grantedBy (Firebase uids) must never appear
+    // in that metadata, only the type/discriminator/grantedAt.
+    const auditCall = writeAuditEventMock.mock.calls[0]![0];
+    expect(auditCall.before).not.toHaveProperty("uid");
+    expect(auditCall.before).not.toHaveProperty("grantedBy");
   });
 });

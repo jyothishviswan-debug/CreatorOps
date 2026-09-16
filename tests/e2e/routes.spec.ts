@@ -35,6 +35,7 @@ const STATIC_ROUTES = [
   "/exports",
   "/administration",
   "/administration/users",
+  "/administration/users/new",
   "/administration/access",
   "/administration/audit",
   "/foundation",

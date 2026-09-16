@@ -81,6 +81,15 @@ test.describe("Partnership Head", () => {
     await expectDirectAccessAllowed(page, "/finance", "Finance");
     await expectDirectAccessDenied(page, "/administration", "Administration");
   });
+
+  test("cannot reach any Administration sub-route directly (Users, Access, Audit, New user)", async ({ page }) => {
+    await signInAs(page, emailFor("head"));
+
+    await expectDirectAccessDenied(page, "/administration/users", "Administration");
+    await expectDirectAccessDenied(page, "/administration/users/new", "Administration");
+    await expectDirectAccessDenied(page, "/administration/access", "Administration");
+    await expectDirectAccessDenied(page, "/administration/audit", "Administration");
+  });
 });
 
 test.describe("Super Admin", () => {

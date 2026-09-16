@@ -25,6 +25,18 @@ const scopeGrantInputSchema = z.discriminatedUnion("type", [
 
 export type ScopeGrantRequestInput = z.input<typeof scopeGrantInputSchema>;
 
+// The stored ScopeGrant document carries `uid`/`grantedBy` - real Firebase
+// uids - alongside the type/discriminator fields. Audit metadata must never
+// include those (see audit.ts's redact(), which only catches
+// password/token/secret-shaped keys, not this), so the raw document is
+// never logged as-is; only its safe, presentation-shaped fields are.
+function toSafeGrantMetadata(grant: Record<string, unknown>): Record<string, unknown> {
+  const safe = { ...grant };
+  delete safe.uid;
+  delete safe.grantedBy;
+  return safe;
+}
+
 // Add is idempotent (same deterministic doc id, a repeat call just
 // overwrites with a fresh grantedAt/grantedBy) - "created" distinguishes
 // a genuinely new grant from a no-op re-grant of one that already existed,
@@ -61,7 +73,7 @@ export async function addScopeGrant(
     actor,
     actorUserRef: actor.userRef,
     target: { uid: targetDoc.uid, userRef: targetDoc.userRef, email: targetDoc.email },
-    before: existing.exists ? (existing.data() as Record<string, unknown>) : null,
+    before: existing.exists ? toSafeGrantMetadata(existing.data() as Record<string, unknown>) : null,
     after: grantInput,
     requestId,
   });
@@ -102,7 +114,7 @@ export async function removeScopeGrant(
     actor,
     actorUserRef: actor.userRef,
     target: { uid: targetDoc.uid, userRef: targetDoc.userRef, email: targetDoc.email },
-    before: existing.data() as Record<string, unknown>,
+    before: toSafeGrantMetadata(existing.data() as Record<string, unknown>),
     after: null,
     requestId,
   });
