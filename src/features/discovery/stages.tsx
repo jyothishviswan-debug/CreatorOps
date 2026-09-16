@@ -433,13 +433,24 @@ export function OutreachStage({ lead, onSaved }: StageProps) {
 export function AgreementStage({ lead, onSaved }: StageProps) {
   const a = lead.discoveryAgreement;
   const [summary, setSummary] = useState(a?.summary ?? "");
+  const [amount, setAmount] = useState(a?.amount !== undefined ? String(a.amount) : "");
+  const [deliverableCount, setDeliverableCount] = useState(a?.deliverableCount !== undefined ? String(a.deliverableCount) : "");
   const [referenceUrl, setReferenceUrl] = useState(a?.referenceUrl ?? "");
   const [confirmed, setConfirmed] = useState(Boolean(a?.confirmedAt));
   const { saving, error, run } = useSaveHandler(onSaved);
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    await run(() => saveDiscoveryAgreement(lead.leadRef, { summary: summary.trim() || undefined, referenceUrl: referenceUrl.trim() || undefined, confirmed, expectedVersion: lead.version }));
+    await run(() =>
+      saveDiscoveryAgreement(lead.leadRef, {
+        summary: summary.trim() || undefined,
+        amount: amount.trim() ? Number(amount) : undefined,
+        deliverableCount: deliverableCount.trim() ? Number(deliverableCount) : undefined,
+        referenceUrl: referenceUrl.trim() || undefined,
+        confirmed,
+        expectedVersion: lead.version,
+      }),
+    );
   }
 
   return (
@@ -448,16 +459,38 @@ export function AgreementStage({ lead, onSaved }: StageProps) {
         <b>Discovery operational agreement evidence only.</b> This is never canonical Finance Agreement truth.
       </p>
       {a && (
-        <div className="kv">
-          <span>Confirmed</span>
-          <Pill tone={a.confirmedAt ? "default" : "gray"}>{a.confirmedAt ? "Yes" : "Not yet"}</Pill>
-        </div>
+        <>
+          <div className="kv">
+            <span>Confirmed</span>
+            <Pill tone={a.confirmedAt ? "default" : "gray"}>{a.confirmedAt ? "Yes" : "Not yet"}</Pill>
+          </div>
+          {a.amount !== undefined && (
+            <div className="kv">
+              <span>Amount</span>
+              <b>{a.amount.toLocaleString()}</b>
+            </div>
+          )}
+          {a.deliverableCount !== undefined && (
+            <div className="kv">
+              <span>Deliverables</span>
+              <b>{a.deliverableCount}</b>
+            </div>
+          )}
+        </>
       )}
       <form onSubmit={handleSubmit}>
         <div className="fields">
           <div className="field full">
-            <label htmlFor="agreement-summary">Summary</label>
+            <label htmlFor="agreement-summary">Summary note</label>
             <textarea id="agreement-summary" value={summary} onChange={(e) => setSummary(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="agreement-amount">Amount</label>
+            <input id="agreement-amount" type="number" min={0} step="0.01" value={amount} onChange={(e) => setAmount(e.target.value)} />
+          </div>
+          <div className="field">
+            <label htmlFor="agreement-deliverable-count">Deliverable count</label>
+            <input id="agreement-deliverable-count" type="number" min={0} step="1" value={deliverableCount} onChange={(e) => setDeliverableCount(e.target.value)} />
           </div>
           <div className="field full">
             <label htmlFor="agreement-reference">Reference URL</label>

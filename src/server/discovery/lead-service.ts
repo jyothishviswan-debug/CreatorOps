@@ -419,6 +419,8 @@ export async function saveCommercial(actor: ActorContext | null, leadRef: unknow
 
 const saveAgreementInputSchema = z.object({
   summary: z.string().min(1).max(2000).optional(),
+  amount: z.number().nonnegative().optional(),
+  deliverableCount: z.number().int().nonnegative().optional(),
   referenceUrl: z.string().min(1).max(500).optional(),
   confirmed: z.boolean(),
   expectedVersion: z.number().int().min(1),
@@ -457,6 +459,8 @@ export async function saveDiscoveryAgreement(actor: ActorContext | null, leadRef
     const now = new Date().toISOString();
     const discoveryAgreement = discoveryAgreementEvidenceSchema.parse({
       ...(input.summary !== undefined ? { summary: input.summary } : {}),
+      ...(input.amount !== undefined ? { amount: input.amount } : {}),
+      ...(input.deliverableCount !== undefined ? { deliverableCount: input.deliverableCount } : {}),
       ...(input.referenceUrl !== undefined ? { referenceUrl: input.referenceUrl } : {}),
       confirmedAt: input.confirmed ? now : null,
       updatedAt: now,

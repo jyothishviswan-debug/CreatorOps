@@ -424,6 +424,70 @@ test.describe("Readiness and conversion", () => {
     expect(response.status()).toBe(400);
   });
 
+  // Regression: CONVERSION_READY's only valid predecessor is EVALUATING
+  // (src/server/authz/lifecycle.ts), but nothing in the UI ever moves a
+  // Lead into EVALUATING - a real Lead reaching full readiness via
+  // outreach is still at RESPONDED. The "Mark conversion ready" button
+  // used to call the CONVERSION_READY transition directly and fail with
+  // "Cannot move a Lead from RESPONDED to CONVERSION_READY.", a dead end
+  // with no way to ever convert through the real UI. Unlike the
+  // "fully-prepared Lead converts" test below, this one deliberately
+  // does NOT pre-set EVALUATING via the API, so it actually exercises
+  // the UI button's own transition chain.
+  test("Mark conversion ready works from the real RESPONDED state a Lead reaches through outreach, without a manual EVALUATING step", async ({ page }) => {
+    await signInAs(page, "head");
+    const lead = await createLeadViaApi(page, { email: `${uniqueName("readystate").replace(/\s+/g, "")}@example.com` });
+    let version = lead.version;
+
+    const research = await page.request.post(`/api/discovery/leads/${lead.leadRef}/research`, { data: { targetAudience: "India 1", expectedVersion: version } });
+    version = (await research.json()).version;
+    const outbound = await page.request.post(`/api/discovery/leads/${lead.leadRef}/outreach`, {
+      data: { direction: "OUTBOUND", channel: "email", summary: "hi", outcome: "sent", expectedVersion: version },
+    });
+    version = (await outbound.json()).version;
+    const inbound = await page.request.post(`/api/discovery/leads/${lead.leadRef}/outreach`, {
+      data: { direction: "INBOUND", channel: "email", summary: "reply", outcome: "interested", meaningfulResponse: true, expectedVersion: version },
+    });
+    version = (await inbound.json()).version;
+    const review = await page.request.post(`/api/discovery/leads/${lead.leadRef}/review`, { data: { outcome: "SHORTLIST", expectedVersion: version } });
+    version = (await review.json()).version;
+    const commercial = await page.request.post(`/api/discovery/leads/${lead.leadRef}/commercial`, { data: { alignmentConfirmed: true, expectedVersion: version } });
+    version = (await commercial.json()).version;
+    const agreement = await page.request.post(`/api/discovery/leads/${lead.leadRef}/agreement`, { data: { confirmed: true, expectedVersion: version } });
+    version = (await agreement.json()).version;
+    const asset = await page.request.post(`/api/discovery/leads/${lead.leadRef}/asset-decision`, { data: { decision: "NEW_ACCOUNT", expectedVersion: version } });
+    version = (await asset.json()).version;
+    const candidates = await page.request.get(`/api/discovery/users/search?emailPrefix=head@`);
+    const [managerCandidate] = (await candidates.json()) as { userRef: string }[];
+    const manager = await page.request.post(`/api/discovery/leads/${lead.leadRef}/manager`, { data: { managerUserRef: managerCandidate!.userRef, expectedVersion: version } });
+    version = (await manager.json()).version;
+    const kyc = await page.request.put(`/api/discovery/leads/${lead.leadRef}/kyc`, {
+      data: {
+        email: "ready-state@example.com",
+        aadhaar: { number: "0000-1111-2222", evidenceRef: "ref://a" },
+        pan: { number: "READY1234F", evidenceRef: "ref://p" },
+        bank: { accountHolderName: "Ready State", accountNumber: "111122223333", ifsc: "REDY0000001", bankName: "Ready Bank", proofRef: "ref://b" },
+        gst: { applicable: false },
+        expectedKycVersion: 0,
+        expectedLeadVersion: version,
+      },
+    });
+    expect(kyc.ok()).toBeTruthy();
+    const leadAfterKyc = await page.request.get(`/api/discovery/leads/${lead.leadRef}`);
+    const leadAfterKycBody = await leadAfterKyc.json();
+    version = leadAfterKycBody.version;
+    expect(leadAfterKycBody.lifecycle).toBe("RESPONDED");
+    const dup = await page.request.post(`/api/discovery/leads/${lead.leadRef}/duplicate-check`, { data: { expectedVersion: version } });
+    expect(dup.ok()).toBeTruthy();
+
+    await page.goto(`/discovery/${lead.leadRef}`);
+    await page.getByRole("tab", { name: "Ready" }).click();
+    await expect(page.locator(".kv", { hasText: "Readiness" })).toContainText("Ready", { timeout: 5000 });
+    await page.getByRole("button", { name: "Mark conversion ready" }).click();
+    await expect(page.locator(".detailcontext").getByText("Conversion ready")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole("button", { name: "Convert to Partner" })).toBeEnabled();
+  });
+
   test("a fully-prepared Lead converts successfully, repeated conversion returns the same Partner, and NEW_ACCOUNT creates no fake Partner Account", async ({ page }) => {
     await signInAs(page, "head");
     const lead = await createLeadViaApi(page, { email: `${uniqueName("conv").replace(/\s+/g, "")}@example.com` });

@@ -25,7 +25,29 @@ export function ReadyStage({ lead, readiness, onSaved }: Props) {
   async function handleMarkReady() {
     setMarkingReady(true);
     setMarkError(null);
-    const result = await transitionLifecycle(lead.leadRef, { to: "CONVERSION_READY", expectedVersion: lead.version });
+
+    // CONVERSION_READY's only valid predecessor is EVALUATING (see
+    // src/server/authz/lifecycle.ts's LEAD_LIFECYCLE_TRANSITIONS) - a
+    // real Lead reaching this point via outreach is normally still at
+    // RESPONDED, since nothing else in the UI ever moves it into
+    // EVALUATING. Rather than expose that intermediate technical state
+    // as a separate operator-facing step, chain through it here: one
+    // click, two calls when needed.
+    let version = lead.version;
+    let lifecycle = lead.lifecycle;
+    if (lifecycle === "RESPONDED") {
+      const step = await transitionLifecycle(lead.leadRef, { to: "EVALUATING", expectedVersion: version });
+      if (!step.ok) {
+        setMarkingReady(false);
+        setMarkError(step.error);
+        return;
+      }
+      version = step.data.version;
+      lifecycle = step.data.lifecycle;
+      onSaved({ ...lead, lifecycle, version });
+    }
+
+    const result = await transitionLifecycle(lead.leadRef, { to: "CONVERSION_READY", expectedVersion: version });
     setMarkingReady(false);
     if (!result.ok) {
       setMarkError(result.error);

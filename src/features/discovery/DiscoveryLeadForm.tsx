@@ -61,7 +61,11 @@ export function DiscoveryLeadForm(props: Props) {
     const derived = deriveFromProfileUrl(profileUrl);
     if (derived.platform && !platformTouched.current) {
       setPlatform(derived.platform);
-      setPlatformOther(false);
+      // A recognized platform outside the (currently short) dropdown
+      // list - e.g. TikTok - still needs to land somewhere: show it via
+      // the "Other" free-text fallback instead of a dropdown value with
+      // no matching option, which would look unselected.
+      setPlatformOther(!(DISCOVERY_PLATFORMS as readonly string[]).includes(derived.platform));
     }
     if (derived.handle && !handleTouched.current) setHandle(derived.handle);
   }, [profileUrl]);
@@ -164,10 +168,10 @@ export function DiscoveryLeadForm(props: Props) {
             <Field label="Full name">
               <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={200} />
             </Field>
-            <Field label="Profile URL" hint="The primary platform profile - prominent because it drives duplicate checking and platform/handle detection.">
+            <Field label="Profile URL">
               <input type="url" value={profileUrl} onChange={(e) => setProfileUrl(e.target.value)} placeholder="https://instagram.com/handle" />
             </Field>
-            <Field label="Platform" hint="Derived from the profile URL when recognized - always correctable.">
+            <Field label="Platform">
               <select
                 value={platformOther ? "other" : platform}
                 onChange={(e) => {
@@ -203,7 +207,7 @@ export function DiscoveryLeadForm(props: Props) {
                 />
               )}
             </Field>
-            <Field label="Handle" hint="Derived from the profile URL when safe - always correctable.">
+            <Field label="Handle">
               <input
                 type="text"
                 value={handle}
@@ -217,13 +221,13 @@ export function DiscoveryLeadForm(props: Props) {
             <Field label="Email address">
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </Field>
-            <Field label="Mobile number" hint="Include the country code.">
+            <Field label="Mobile number">
               <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </Field>
             <Field label="Region">
               <input type="text" value={region} onChange={(e) => setRegion(e.target.value)} placeholder="e.g. Kerala" />
             </Field>
-            <Field label="Team / portfolio" hint="Scope context - used for record-scope authorization.">
+            <Field label="Team / portfolio">
               <input type="text" value={teamId} onChange={(e) => setTeamId(e.target.value)} placeholder="e.g. kerala-programmes" />
             </Field>
           </Fields>
@@ -242,7 +246,7 @@ export function DiscoveryLeadForm(props: Props) {
                 ))}
               </select>
             </Field>
-            <Field label="Source note" full hint="Optional context - never a required blocker.">
+            <Field label="Source note" full>
               <input type="text" value={sourceNote} onChange={(e) => setSourceNote(e.target.value)} maxLength={300} />
             </Field>
           </Fields>
