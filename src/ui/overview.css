@@ -136,8 +136,8 @@
 .ov-settlement-note{font-size:10px;color:#17835d;margin-top:6px}
 
 .ov-action-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px;flex:1}
-.ov-action-grid button{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;text-align:center;padding:9px 6px;border-radius:8px;min-height:64px;font-size:11px;border:1px solid var(--line);background:white}
-.ov-action-grid button:hover{background:var(--tint);border-color:#f5b98f}
+.ov-action-grid button,.ov-action-grid a{display:flex;flex-direction:column;gap:6px;align-items:center;justify-content:center;text-align:center;padding:9px 6px;border-radius:8px;min-height:64px;font-size:11px;border:1px solid var(--line);background:white;color:inherit}
+.ov-action-grid button:hover,.ov-action-grid a:hover{background:var(--tint);border-color:#f5b98f}
 .ov-action-grid svg{width:20px;height:20px;color:var(--ov-tone,var(--orange))}
 
 @media(max-width:1050px){

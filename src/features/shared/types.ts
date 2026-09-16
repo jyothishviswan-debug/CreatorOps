@@ -24,7 +24,10 @@ export type ActivityRow = { title: string; detail: string; href?: string };
 
 export type CheckRow = { label: string; detail: string; badge: string };
 
-export type ActionRow = { label: string; icon: IconName };
+// `href` is optional so existing fixture-driven "actions" panels (which
+// have no real destination) keep rendering as inert preview buttons
+// unchanged - only a panel that supplies it becomes a real navigable link.
+export type ActionRow = { label: string; icon: IconName; href?: string };
 
 type PanelBase = { icon: IconName; title: string; note?: string; foot: string; span: number };
 

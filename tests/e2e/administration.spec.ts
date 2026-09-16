@@ -190,7 +190,11 @@ test("an access-changing mutation is visible as an audit event immediately after
   expect(patchResponse.ok()).toBeTruthy();
 
   await page.goto("/administration/audit");
-  const auditRow = page.locator("table tbody tr", { hasText: "E2E Audit Visible User (renamed)" });
+  // This user has two audit rows (the provisioning itself, then this
+  // rename) sharing the same unique email, so scope by BOTH the email and
+  // the renamed text to pinpoint the rename event specifically - a static
+  // display-name string alone isn't unique across repeated emulator runs.
+  const auditRow = page.locator("table tbody tr").filter({ hasText: user.email }).filter({ hasText: "renamed" });
   await expect(auditRow).toBeVisible();
   await expect(auditRow).toContainText("admin@creatorops.com");
   await expect(auditRow).toContainText("Profile updated");

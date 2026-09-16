@@ -113,14 +113,17 @@ export default async function AdministrationOverviewPage() {
     {
       kind: "checks",
       icon: "layers",
-      title: "Role Distribution",
-      note: "Live counts per canonical role",
-      foot: "Roles are a closed set - never ranked or inferred.",
+      title: "System Readiness",
+      note: "Administration capability status",
+      foot: "Rules deployment stays out of scope for every step in this build.",
       span: 3,
-      rows: ROLES.map((role) => {
-        const count = roleCounts.get(role) ?? 0;
-        return { label: ROLE_LABELS[role], detail: `${count} user${count === 1 ? "" : "s"}`, badge: count > 0 ? "Assigned" : "Unassigned" };
-      }),
+      rows: [
+        { label: "Administration UI", detail: "Wired to real emulator data", badge: "Live" },
+        { label: "Role & scope model", detail: `${ROLES.length} canonical roles`, badge: "Live" },
+        { label: "Provisioning", detail: "Real Auth emulator accounts", badge: "Live" },
+        { label: "Admin SDK", detail: "Configured", badge: "Live" },
+        { label: "Rules deployment", detail: "Never deployed by this build", badge: "Check" },
+      ],
     },
   ];
 
@@ -131,8 +134,8 @@ export default async function AdministrationOverviewPage() {
       title: "Recent Activity",
       note: "Latest access-changing mutations",
       foot: recentEvents.length > 0 ? "Full history stays in the audit workspace." : "No access-changing mutations recorded yet.",
-      span: 6,
-      rows: recentEvents.slice(0, 5).map((event) => ({
+      span: 3,
+      rows: recentEvents.slice(0, 4).map((event) => ({
         title: operationLabel(event.operation),
         detail: `${event.actorEmail} · ${relativeTime(event.createdAt)}`,
         href: "/administration/audit",
@@ -144,45 +147,75 @@ export default async function AdministrationOverviewPage() {
       title: "Pending Actions",
       note: "Actionable directory queues",
       foot: "Derived from the live emulator dataset.",
-      span: 6,
+      span: 3,
       rows: [
         { title: "Inactive users", detail: "Review admission", count: String(inactive) },
         { title: "Access changes (24h)", detail: "Audit trail", count: String(changesLast24h) },
+      ],
+    },
+    {
+      kind: "checks",
+      icon: "shield",
+      title: "Access Principles",
+      note: "Canonical authorization principles",
+      foot: "Inspect authorized audit history for supporting evidence.",
+      span: 3,
+      rows: [
+        { label: "Least privilege", detail: "Required", badge: "Policy" },
+        { label: "Scope boundary", detail: "Required", badge: "Policy" },
+        { label: "Protected admin", detail: "Required", badge: "Policy" },
+        { label: "Sensitive fields", detail: "Restricted", badge: "Policy" },
+      ],
+    },
+    {
+      kind: "actions",
+      icon: "grid",
+      title: "Quick Actions",
+      note: "Continue from insight to action",
+      foot: "Every action below navigates to a real screen.",
+      span: 3,
+      rows: [
+        { label: "User workspace", icon: "users", href: "/administration/users" },
+        { label: "Scope review", icon: "shield", href: "/administration/access" },
+        { label: "Audit history", icon: "clock", href: "/administration/audit" },
+        { label: "Provision a user", icon: "grid", href: "/administration/users/new" },
       ],
     },
   ];
 
   return (
     <AppShell>
-      <div className="head">
-        <div>
-          <div className="eyebrow">SYSTEM GOVERNANCE</div>
-          <h1>Administration</h1>
-          <p>Understand access, scope integrity and system capability.</p>
+      <div className="ov-page">
+        <div className="head">
+          <div>
+            <div className="eyebrow">SYSTEM GOVERNANCE</div>
+            <h1>Administration</h1>
+            <p>Understand access, scope integrity and system capability.</p>
+          </div>
         </div>
+
+        <ModuleTabs tabs={TABS} />
+
+        <ContextBanner
+          icon="shield"
+          title="Administration governance cockpit"
+          description="What is happening, what needs attention, and where to act next."
+          chips={["Live emulator data", `${total} user${total === 1 ? "" : "s"}`]}
+        />
+
+        <OverviewKpiRow
+          items={[
+            { icon: "users", label: "Total users", value: String(total), hint: "registered accounts" },
+            { icon: "check", label: "Active users", value: String(active), hint: "admitted users" },
+            { icon: "alert", label: "Inactive users", value: String(inactive), hint: "not admitted" },
+            { icon: "shield", label: "Configured roles", value: String(ROLES.length), hint: "non-monotonic access" },
+            { icon: "lock", label: "Active Super Admins", value: String(activeSuperAdmins), hint: "protected by last-admin guard" },
+            { icon: "clock", label: "Access changes (24h)", value: String(changesLast24h), hint: "from the audit trail" },
+          ]}
+        />
+        <OverviewPanels panels={topPanels} />
+        <OverviewPanels panels={bottomPanels} secondary />
       </div>
-
-      <ModuleTabs tabs={TABS} />
-
-      <ContextBanner
-        icon="shield"
-        title="Administration governance cockpit"
-        description="What is happening, what needs attention, and where to act next."
-        chips={["Live emulator data", `${total} user${total === 1 ? "" : "s"}`]}
-      />
-
-      <OverviewKpiRow
-        items={[
-          { icon: "users", label: "Total users", value: String(total), hint: "registered accounts" },
-          { icon: "check", label: "Active users", value: String(active), hint: "admitted users" },
-          { icon: "alert", label: "Inactive users", value: String(inactive), hint: "not admitted" },
-          { icon: "shield", label: "Configured roles", value: String(ROLES.length), hint: "non-monotonic access" },
-          { icon: "lock", label: "Active Super Admins", value: String(activeSuperAdmins), hint: "protected by last-admin guard" },
-          { icon: "clock", label: "Access changes (24h)", value: String(changesLast24h), hint: "from the audit trail" },
-        ]}
-      />
-      <OverviewPanels panels={topPanels} />
-      <OverviewPanels panels={bottomPanels} secondary />
     </AppShell>
   );
 }

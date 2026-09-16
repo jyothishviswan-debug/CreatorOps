@@ -418,15 +418,22 @@ export function Settlement({
   );
 }
 
-export function ActionGrid({ actions }: { actions: { label: string; icon: IconName }[] }) {
+export function ActionGrid({ actions }: { actions: { label: string; icon: IconName; href?: string }[] }) {
   return (
     <div className="ov-action-grid">
-      {actions.map((action) => (
-        <button type="button" key={action.label}>
-          <Icon name={action.icon} />
-          {action.label}
-        </button>
-      ))}
+      {actions.map((action) =>
+        action.href ? (
+          <Link href={action.href} key={action.label}>
+            <Icon name={action.icon} />
+            {action.label}
+          </Link>
+        ) : (
+          <button type="button" key={action.label}>
+            <Icon name={action.icon} />
+            {action.label}
+          </button>
+        ),
+      )}
     </div>
   );
 }
@@ -559,7 +566,7 @@ function PanelBody({ panel }: { panel: OverviewPanelData }) {
     case "rank":
       return <Rankings rows={panel.rows.map((r, i) => ({ rank: i + 1, name: r.name, value: r.value, initials: r.initials }))} />;
     case "actions":
-      return <ActionGrid actions={panel.rows.map((r) => ({ label: r.label, icon: r.icon }))} />;
+      return <ActionGrid actions={panel.rows.map((r) => ({ label: r.label, icon: r.icon, href: r.href }))} />;
     case "campaignboard":
       return <CampaignBoard rows={panel.rows} />;
     case "catalog":
