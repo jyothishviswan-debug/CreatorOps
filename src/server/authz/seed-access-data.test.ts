@@ -3,7 +3,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 const { isUsingEmulatorsMock, getServerEnvMock, getUserByEmailMock, setMock, deleteMock, docMock, collectionMock } = vi.hoisted(() => {
   const setMock = vi.fn().mockResolvedValue(undefined);
   const deleteMock = vi.fn().mockResolvedValue(undefined);
-  const docMock = vi.fn(() => ({ set: setMock, delete: deleteMock }));
+  // Simulates "no existing user doc yet" for every getUserDoc() lookup -
+  // seedAccessControlData reads before writing to decide whether to reuse
+  // an existing userRef; these tests all seed from a clean slate.
+  const getMock = vi.fn().mockResolvedValue({ exists: false, data: () => undefined });
+  const docMock = vi.fn(() => ({ set: setMock, delete: deleteMock, get: getMock }));
   const collectionMock = vi.fn(() => ({ doc: docMock }));
   return {
     isUsingEmulatorsMock: vi.fn(),

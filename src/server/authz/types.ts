@@ -18,6 +18,14 @@ export const userDocSchema = z.object({
   role: roleSchema,
   active: z.boolean(),
   displayName: z.string().min(1),
+  // Step 5A: the opaque, unguessable handle browser-facing code uses to
+  // reference this user - the real Firebase uid (this doc's own id) never
+  // leaves the server. Assigned once at creation and never reused/rotated.
+  userRef: z.string().min(1),
+  // Optimistic concurrency for profile mutations (displayName/role/
+  // active) - see src/server/administration/users-service.ts. Starts at 1
+  // and increments by exactly 1 on every accepted update.
+  version: z.number().int().min(1),
 });
 export type UserDoc = z.infer<typeof userDocSchema>;
 
@@ -104,4 +112,46 @@ export type ActorContext = {
   email: string;
   role: (typeof ROLES)[number];
   displayName: string;
+  // The actor's own opaque handle - carried through so Administration
+  // audit events can record "who did this" without ever writing a raw
+  // Firebase uid into anything that might be exposed to a browser later.
+  userRef: string;
 };
+
+// Step 5A: a server-written, append-only record of every access-changing
+// Administration mutation. Never exposed to direct client Firestore
+// access (see firestore.rules); read only through the audit API, which
+// converts this to a safe DTO (opaque userRef only, never a raw uid).
+// `before`/`after` are free-form but must only ever contain non-secret
+// metadata - callers are responsible for never putting a password, token,
+// or other restricted value in them (see audit.ts's redaction helper).
+export const auditOperationSchema = z.enum([
+  "user.create",
+  "user.update",
+  "user.role_change",
+  "user.activate",
+  "user.deactivate",
+  "scope_grant.add",
+  "scope_grant.remove",
+  "sensitive_grant.add",
+  "sensitive_grant.remove",
+]);
+export type AuditOperation = z.infer<typeof auditOperationSchema>;
+
+const safeMetadataSchema = z.record(z.string(), z.unknown()).nullable();
+
+export const auditEventSchema = z.object({
+  operation: auditOperationSchema,
+  actorUid: z.string().min(1),
+  actorUserRef: z.string().min(1),
+  actorEmail: z.string().min(1),
+  targetUid: z.string().min(1).optional(),
+  targetUserRef: z.string().min(1).optional(),
+  targetEmail: z.string().min(1).optional(),
+  targetRole: roleSchema.optional(),
+  before: safeMetadataSchema,
+  after: safeMetadataSchema,
+  requestId: z.string().min(1),
+  createdAt: z.string().min(1),
+});
+export type AuditEvent = z.infer<typeof auditEventSchema>;

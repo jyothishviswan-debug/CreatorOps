@@ -46,7 +46,15 @@ describe("resolveActor", () => {
   it("resolves a valid, active profile into an actor context", async () => {
     getAdminFirestoreMock.mockReturnValue(
       makeFakeFirestore({
-        "users/uid-1": { uid: "uid-1", email: "a@b.com", role: "viewer", active: true, displayName: "A" },
+        "users/uid-1": {
+          uid: "uid-1",
+          email: "a@b.com",
+          role: "viewer",
+          active: true,
+          displayName: "A",
+          userRef: "ref-1",
+          version: 1,
+        },
       }),
     );
     await expect(resolveActor("uid-1")).resolves.toEqual({
@@ -54,6 +62,7 @@ describe("resolveActor", () => {
       email: "a@b.com",
       role: "viewer",
       displayName: "A",
+      userRef: "ref-1",
     });
   });
 });

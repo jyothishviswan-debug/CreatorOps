@@ -12,7 +12,7 @@ afterEach(() => {
 });
 
 function actor(role: ActorContext["role"]): ActorContext {
-  return { uid: `uid-${role}`, email: `${role}@creatorops.com`, role, displayName: role };
+  return { uid: `uid-${role}`, email: `${role}@creatorops.com`, role, displayName: role, userRef: `ref-${role}` };
 }
 
 describe("canAccessSensitive", () => {

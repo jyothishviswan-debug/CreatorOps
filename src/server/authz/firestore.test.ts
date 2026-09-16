@@ -28,7 +28,15 @@ describe("getUserDoc", () => {
   it("returns the parsed document when it's valid", async () => {
     getAdminFirestoreMock.mockReturnValue(
       makeFakeFirestore({
-        "users/uid-1": { uid: "uid-1", email: "a@b.com", role: "viewer", active: true, displayName: "A" },
+        "users/uid-1": {
+          uid: "uid-1",
+          email: "a@b.com",
+          role: "viewer",
+          active: true,
+          displayName: "A",
+          userRef: "ref-1",
+          version: 1,
+        },
       }),
     );
     await expect(getUserDoc("uid-1")).resolves.toEqual({
@@ -37,6 +45,8 @@ describe("getUserDoc", () => {
       role: "viewer",
       active: true,
       displayName: "A",
+      userRef: "ref-1",
+      version: 1,
     });
   });
 });

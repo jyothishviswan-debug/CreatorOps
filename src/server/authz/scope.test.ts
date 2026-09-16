@@ -19,7 +19,7 @@ import {
 } from "./scope";
 import type { ActorContext, ScopeGrant } from "./types";
 
-const actor: ActorContext = { uid: "uid-1", email: "a@b.com", role: "partnership_manager", displayName: "A" };
+const actor: ActorContext = { uid: "uid-1", email: "a@b.com", role: "partnership_manager", displayName: "A", userRef: "ref-1" };
 
 afterEach(() => {
   vi.clearAllMocks();

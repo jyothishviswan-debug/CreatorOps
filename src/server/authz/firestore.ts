@@ -1,14 +1,21 @@
 import type { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
-import { accessGrantDocSchema, scopeGrantSchema, sensitiveAccessGrantDocSchema, userDocSchema, type ScopeGrant } from "./types";
+import type { Role } from "./roles";
+import { accessGrantDocSchema, scopeGrantSchema, sensitiveAccessGrantDocSchema, userDocSchema, type ScopeGrant, type UserDoc } from "./types";
 
 export const COLLECTIONS = {
   users: "users",
   accessGrants: "accessGrants",
   scopeAssignments: "scopeAssignments",
   sensitiveAccessGrants: "sensitiveAccessGrants",
+  auditEvents: "auditEvents",
 } as const;
+
+// Bounded pagination default/ceiling - "no whole-collection client fetch"
+// applies even to a caller that asks for an absurd page size.
+export const MAX_LIST_PAGE_SIZE = 100;
+export const DEFAULT_LIST_PAGE_SIZE = 20;
 
 // Fetches one document and strictly parses it. Returns null for "doesn't
 // exist" AND for "exists but doesn't parse" alike - every caller in this
@@ -57,4 +64,58 @@ export async function getActorScopeGrants(uid: string): Promise<ScopeGrant[]> {
 
 export function getSensitiveAccessGrantDoc(role: string) {
   return getParsedDoc(COLLECTIONS.sensitiveAccessGrants, role, sensitiveAccessGrantDocSchema);
+}
+
+// Resolves a user by their opaque, browser-facing userRef instead of the
+// real Firebase uid. A tampered or made-up token simply matches no
+// document - there is nothing to "almost match" against, since userRef
+// is random and carries no embedded, decodable information about the uid
+// it points to (see src/server/administration/user-ref.ts).
+export async function getUserDocByRef(userRef: string): Promise<UserDoc | null> {
+  const snapshot = await getAdminFirestore().collection(COLLECTIONS.users).where("userRef", "==", userRef).limit(1).get();
+  if (snapshot.empty) return null;
+  const result = userDocSchema.safeParse(snapshot.docs[0]!.data());
+  if (!result.success) return null;
+  return result.data;
+}
+
+export type UserListCursor = { email: string; userRef: string };
+
+export type ListUsersPage = {
+  users: UserDoc[];
+  nextCursor: UserListCursor | null;
+};
+
+// Deterministically ordered (email, then userRef as a tiebreak), bounded
+// cursor pagination - never a whole-collection fetch. The cursor is built
+// entirely from fields already safe to hand back to the client (they're
+// already in the DTO), so there's no need to expose a Firestore document
+// reference or the raw uid to encode "where to resume".
+export async function listUserDocs(options: {
+  limit: number;
+  cursor?: UserListCursor;
+  role?: Role;
+  active?: boolean;
+}): Promise<ListUsersPage> {
+  const pageSize = Math.max(1, Math.min(options.limit, MAX_LIST_PAGE_SIZE));
+
+  let query = getAdminFirestore().collection(COLLECTIONS.users).orderBy("email").orderBy("userRef").limit(pageSize + 1);
+  if (options.role) query = query.where("role", "==", options.role);
+  if (options.active !== undefined) query = query.where("active", "==", options.active);
+  if (options.cursor) query = query.startAfter(options.cursor.email, options.cursor.userRef);
+
+  const snapshot = await query.get();
+  const pageDocs = snapshot.docs.slice(0, pageSize);
+  const hasMore = snapshot.docs.length > pageSize;
+
+  const users: UserDoc[] = [];
+  for (const doc of pageDocs) {
+    const result = userDocSchema.safeParse(doc.data());
+    if (result.success) users.push(result.data);
+  }
+
+  const last = users[users.length - 1];
+  const nextCursor = hasMore && last ? { email: last.email, userRef: last.userRef } : null;
+
+  return { users, nextCursor };
 }

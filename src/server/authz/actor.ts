@@ -22,5 +22,6 @@ export async function resolveActor(uid: string): Promise<ActorContext | null> {
     email: userDoc.email,
     role: userDoc.role,
     displayName: userDoc.displayName,
+    userRef: userDoc.userRef,
   };
 }

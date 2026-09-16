@@ -1,5 +1,5 @@
 import { getActorScopeGrants as loadActorScopeGrants } from "./firestore";
-import type { ActorContext, ScopeGrant } from "./types";
+import type { ActorContext, ScopeGrant, ScopeGrantInput } from "./types";
 
 // Record Scope: the canonical, multi-dimensional model. An actor can hold
 // any number of grants simultaneously (SELF, GLOBAL, REGION, TEAM,
@@ -92,4 +92,33 @@ export function isResourceInScope(grants: ScopeGrant[], actorUid: string, resour
   if (isAnalyticsDatasetInScope(grants, resource.datasetId)) return true;
   if (isAnalyticsAccountInScope(grants, resource.accountId)) return true;
   return false;
+}
+
+// Deterministic, human-decodable, and idempotent: re-writing a grant
+// overwrites the same document rather than creating a duplicate, and each
+// grant can be created/deleted independently by Administration CRUD
+// (src/server/administration/) without touching any other grant. No "/"
+// or ".." ever appears in a discriminator value here, so this is always a
+// valid Firestore doc id. Shared by seed-access-data.ts and the
+// Administration scope-grants service - one implementation, not two.
+export function scopeGrantDocId(uid: string, grant: ScopeGrantInput): string {
+  switch (grant.type) {
+    case "SELF":
+    case "GLOBAL":
+      return `${uid}__${grant.type}`;
+    case "REGION":
+      return `${uid}__REGION__${grant.region}`;
+    case "TEAM":
+      return `${uid}__TEAM__${grant.teamId}`;
+    case "PARTNER":
+      return `${uid}__PARTNER__${grant.partnerId}`;
+    case "CAMPAIGN":
+      return `${uid}__CAMPAIGN__${grant.campaignId}`;
+    case "EXPLICIT_RECORD":
+      return `${uid}__EXPLICIT_RECORD__${grant.resourceType}__${grant.resourceId}`;
+    case "ANALYTICS_DATASET":
+      return `${uid}__ANALYTICS_DATASET__${grant.datasetId}`;
+    case "ANALYTICS_ACCOUNT":
+      return `${uid}__ANALYTICS_ACCOUNT__${grant.accountId}`;
+  }
 }

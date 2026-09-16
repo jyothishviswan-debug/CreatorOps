@@ -7,10 +7,12 @@ import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
 import type { ActionId } from "./actions";
 import type { FeatureId } from "./features";
 import { FEATURES } from "./features";
-import { COLLECTIONS } from "./firestore";
+import { COLLECTIONS, getUserDoc } from "./firestore";
 import type { Role } from "./roles";
 import { ROLES } from "./roles";
+import { scopeGrantDocId } from "./scope";
 import type { AccessGrantDoc, ScopeGrant, ScopeGrantInput, SensitiveAccessGrantDoc, UserDoc } from "./types";
+import { generateUserRef } from "./user-ref";
 
 type TestIdentity = {
   email: string;
@@ -73,7 +75,20 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
   },
   super_admin: {
     features: Object.fromEntries(
-      FEATURES.map((feature) => [feature, featureGrant(true, { create: true, edit: true, approve: true, export: true, manage: true })]),
+      FEATURES.map((feature) => [
+        feature,
+        featureGrant(true, {
+          create: true,
+          edit: true,
+          approve: true,
+          export: true,
+          manage: true,
+          manage_users: true,
+          manage_scope: true,
+          manage_sensitive: true,
+          view_audit: true,
+        }),
+      ]),
     ) as AccessGrantDoc["features"],
   },
 };
@@ -126,33 +141,6 @@ const SCOPE_GRANTS: Record<Role, ScopeGrantInput[]> = {
   super_admin: [{ type: "GLOBAL" }],
 };
 
-// Deterministic, human-decodable, and idempotent: re-seeding overwrites
-// the same documents rather than creating duplicates, and each grant can
-// be found/edited/deleted on its own by future Administration CRUD
-// without touching any other grant. No "/" or ".." ever appears in a
-// discriminator value here, so this is always a valid Firestore doc id.
-function scopeGrantDocId(uid: string, grant: ScopeGrantInput): string {
-  switch (grant.type) {
-    case "SELF":
-    case "GLOBAL":
-      return `${uid}__${grant.type}`;
-    case "REGION":
-      return `${uid}__REGION__${grant.region}`;
-    case "TEAM":
-      return `${uid}__TEAM__${grant.teamId}`;
-    case "PARTNER":
-      return `${uid}__PARTNER__${grant.partnerId}`;
-    case "CAMPAIGN":
-      return `${uid}__CAMPAIGN__${grant.campaignId}`;
-    case "EXPLICIT_RECORD":
-      return `${uid}__EXPLICIT_RECORD__${grant.resourceType}__${grant.resourceId}`;
-    case "ANALYTICS_DATASET":
-      return `${uid}__ANALYTICS_DATASET__${grant.datasetId}`;
-    case "ANALYTICS_ACCOUNT":
-      return `${uid}__ANALYTICS_ACCOUNT__${grant.accountId}`;
-  }
-}
-
 export async function seedAccessControlData(): Promise<void> {
   if (!isUsingEmulators()) {
     throw new Error("seedAccessControlData: refusing to run - Firebase emulator env vars are not set.");
@@ -178,12 +166,22 @@ export async function seedAccessControlData(): Promise<void> {
   for (const identity of TEST_IDENTITIES) {
     const authUser = await auth.getUserByEmail(identity.email);
 
+    // userRef is meant to be assigned once and never rotated (see
+    // user-ref.ts) - reuse it across re-seeds if this identity already
+    // has one, rather than generating a fresh opaque handle every run.
+    const existing = await getUserDoc(authUser.uid);
+    const userRef = existing?.userRef ?? generateUserRef();
+
     const userDoc: UserDoc = {
       uid: authUser.uid,
       email: identity.email,
       role: identity.role,
       active: true,
       displayName: identity.displayName,
+      userRef,
+      // Re-seeding resets to a known baseline version, matching how every
+      // other field here is a full overwrite rather than a merge.
+      version: 1,
     };
     await db.collection(COLLECTIONS.users).doc(authUser.uid).set(userDoc);
 

@@ -8,7 +8,7 @@ import { canAccessFeature, canPerformAction, getAllowedFeatures } from "./capabi
 import type { ActorContext } from "./types";
 
 function actor(role: ActorContext["role"]): ActorContext {
-  return { uid: `uid-${role}`, email: `${role}@creatorops.com`, role, displayName: role };
+  return { uid: `uid-${role}`, email: `${role}@creatorops.com`, role, displayName: role, userRef: `ref-${role}` };
 }
 
 afterEach(() => {
