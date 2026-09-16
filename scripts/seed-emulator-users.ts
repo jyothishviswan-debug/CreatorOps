@@ -16,6 +16,7 @@ loadEnvConfig(process.cwd(), true);
 
 async function main() {
   const { seedEmulatorTestUsers, EMULATOR_TEST_USERS } = await import("../src/server/auth/seed-users");
+  const { seedAccessControlData } = await import("../src/server/authz/seed-access-data");
 
   const password = process.env.EMULATOR_TEST_USER_PASSWORD;
   if (!password) {
@@ -28,6 +29,11 @@ async function main() {
   for (const user of EMULATOR_TEST_USERS) {
     console.log(`  - ${user.email}`);
   }
+
+  // Access-control data (users/accessGrants/scopeAssignments/
+  // sensitiveAccessGrants) depends on the Auth users above already existing.
+  await seedAccessControlData();
+  console.log("Seeded access-control data (users, accessGrants, scopeAssignments, sensitiveAccessGrants).");
 }
 
 main().catch((error) => {

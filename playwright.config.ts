@@ -24,13 +24,17 @@ export default defineConfig({
       name: "chromium",
       use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
       dependencies: ["setup"],
-      testIgnore: [/auth\.setup\.ts/, /auth\.spec\.ts/],
+      testIgnore: [/auth\.setup\.ts/, /auth\.spec\.ts/, /authorization\.spec\.ts/],
     },
     {
+      // Tests that sign in as a specific identity themselves (rather than
+      // reusing the shared admin storageState) - the base auth flow tests
+      // plus the per-role authorization tests, each of which needs its
+      // own fresh, unauthenticated starting context.
       name: "chromium-unauthenticated",
       use: { ...devices["Desktop Chrome"] },
       dependencies: ["setup"],
-      testMatch: /auth\.spec\.ts/,
+      testMatch: [/auth\.spec\.ts/, /authorization\.spec\.ts/],
     },
   ],
   webServer: [
@@ -41,8 +45,10 @@ export default defineConfig({
       timeout: 60_000,
     },
     {
-      // Auth emulator only - Step 4A doesn't touch Firestore data.
-      command: "firebase emulators:start --project demo-creatorops --only auth",
+      // Step 4B's authorization checks read Firestore (users, accessGrants,
+      // scopeAssignments, sensitiveAccessGrants), so both emulators are
+      // needed now, not just Auth.
+      command: "firebase emulators:start --project demo-creatorops --only auth,firestore",
       url: "http://127.0.0.1:9099/",
       reuseExistingServer: !process.env.CI,
       timeout: 60_000,

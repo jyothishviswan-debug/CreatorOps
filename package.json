@@ -9,6 +9,7 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:emulator": "vitest run --config vitest.emulator.config.mts",
     "test:e2e": "playwright test",
     "firebase:emulators": "firebase emulators:start --project demo-creatorops",
     "seed:emulator": "tsx scripts/seed-emulator-users.ts"

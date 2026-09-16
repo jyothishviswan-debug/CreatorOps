@@ -1,6 +1,7 @@
 import { test as setup, expect } from "@playwright/test";
 
 import { EMULATOR_TEST_USERS, seedEmulatorTestUsers } from "@/server/auth/seed-users";
+import { seedAccessControlData } from "@/server/authz/seed-access-data";
 
 const STORAGE_STATE = "tests/e2e/.auth/user.json";
 const ADMIN_USER = EMULATOR_TEST_USERS.find((user) => user.email === "admin@creatorops.com")!;
@@ -13,6 +14,7 @@ setup("seed emulator test users and sign in", async ({ page }) => {
 
   // Idempotent - safe even if a previous run already created these users.
   await seedEmulatorTestUsers(password);
+  await seedAccessControlData();
 
   await page.goto("/sign-in");
   await page.getByPlaceholder("you@company.com").fill(ADMIN_USER.email);
