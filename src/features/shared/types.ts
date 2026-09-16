@@ -97,3 +97,13 @@ export function initialsOf(name: string): string {
     .join("")
     .toUpperCase();
 }
+
+// Compact K/M display for large plain counts (views, interactions, reach).
+// Numbers below 1,000 pass through unchanged, so this is safe to apply
+// wherever a count is displayed - it only kicks in where it's applicable.
+export function formatCompact(value: number): string {
+  const abs = Math.abs(value);
+  if (abs >= 1_000_000) return `${(value / 1_000_000).toFixed(1)}M`;
+  if (abs >= 1_000) return `${Math.round(value / 1_000)}K`;
+  return String(value);
+}

@@ -67,10 +67,10 @@ export const analyticsOverview: ModuleOverview = {
       foot: "No hidden blended performance score.",
       span: 3,
       rows: [
-        { name: "Nila Talks", value: "94,000", initials: "NT" },
-        { name: "Local Decode", value: "82,000", initials: "LD" },
-        { name: "Public Pulse", value: "71,000", initials: "PP" },
-        { name: "South Lens", value: "65,000", initials: "SL" },
+        { name: "Nila Talks", value: "94K", initials: "NT" },
+        { name: "Local Decode", value: "82K", initials: "LD" },
+        { name: "Public Pulse", value: "71K", initials: "PP" },
+        { name: "South Lens", value: "65K", initials: "SL" },
       ],
     },
     {

@@ -8,6 +8,7 @@ import Link from "next/link";
 
 import { Icon, type IconName } from "./icons";
 import type { OverviewPanelData } from "@/features/shared/types";
+import { formatCompact } from "@/features/shared/types";
 
 export const TONES: { tone: string; tint: string }[] = [
   { tone: "#2878fa", tint: "#edf4ff" },
@@ -170,7 +171,7 @@ export function DonutRing({
           {arcs}
         </svg>
         <div className="ov-ring-center">
-          {total}
+          {formatCompact(total)}
           <small>{totalLabel}</small>
         </div>
       </div>
@@ -183,7 +184,7 @@ export function DonutRing({
             <div className="ov-legend-item" key={segment.label}>
               <span className="ov-swatch" style={{ background: color }} />
               <span>{segment.label}</span>
-              <b>{segment.value}</b>
+              <b>{formatCompact(segment.value)}</b>
               <small>{Math.round((segment.value / total) * 100)}%</small>
             </div>
           );
