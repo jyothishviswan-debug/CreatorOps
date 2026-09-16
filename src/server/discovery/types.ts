@@ -31,6 +31,17 @@ export type LeadLifecycle = z.infer<typeof leadLifecycleSchema>;
 export const LEAD_TERMINAL_STATES: readonly LeadLifecycle[] = ["CONVERTED", "DUPLICATE"];
 export const LEAD_RESTORABLE_STATES: readonly LeadLifecycle[] = ["WATCHLIST", "REJECTED", "ARCHIVED"];
 
+// --- Platform picker ---------------------------------------------------
+// Lead.platform itself stays free text (never a schema-level enum - a
+// real platform will always come up that isn't on this list), but the
+// Create/Edit form picks from these common ones by default so the
+// operator rarely has to type it, with "Other" falling back to free
+// text. Every label here must exactly match profile-url.ts's own
+// PLATFORM_HOSTS labels (auto-derived from a profile URL) and
+// proposal-number.ts's platformCodeFor lookup, so a dropdown pick and
+// an auto-derived value always resolve to the same downstream code.
+export const DISCOVERY_PLATFORMS = ["Instagram", "YouTube", "TikTok", "X (Twitter)", "Facebook", "LinkedIn", "Snapchat", "Pinterest"] as const;
+
 // --- Research policy ---------------------------------------------------
 // Step 6A section 3: research completion requires exactly one approved
 // Target Audience from this fixed list - no "Pan India", "Regional",

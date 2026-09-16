@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { FormLayout, FormSection, Fields, Field, FormFoot, Checklist } from "@/ui/Form";
 import { Icon } from "@/ui/icons";
 import type { LeadDto } from "@/server/discovery/client-dto";
-import { LEAD_SOURCE_TYPES, type DuplicateCheckResult, type LeadSourceType } from "@/server/discovery/types";
+import { DISCOVERY_PLATFORMS, LEAD_SOURCE_TYPES, type DuplicateCheckResult, type LeadSourceType } from "@/server/discovery/types";
 import { createLead, precheckDuplicates, updateLead } from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
 import { deriveFromProfileUrl } from "./profile-url";
@@ -28,6 +28,14 @@ export function DiscoveryLeadForm(props: Props) {
   const [displayName, setDisplayName] = useState(initial?.displayName ?? "");
   const [profileUrl, setProfileUrl] = useState(initial?.profileUrl ?? "");
   const [platform, setPlatform] = useState(initial?.platform ?? "");
+  // The dropdown covers the common platforms; "Other" reveals a free-
+  // text fallback - Lead.platform itself stays free text server-side,
+  // so an existing Lead whose platform isn't on the list still shows
+  // (and stays editable) via that fallback rather than being blanked.
+  const [platformOther, setPlatformOther] = useState(() => {
+    const value = initial?.platform ?? "";
+    return value !== "" && !(DISCOVERY_PLATFORMS as readonly string[]).includes(value);
+  });
   const [handle, setHandle] = useState(initial?.handle ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
@@ -51,7 +59,10 @@ export function DiscoveryLeadForm(props: Props) {
   useEffect(() => {
     if (!profileUrl) return;
     const derived = deriveFromProfileUrl(profileUrl);
-    if (derived.platform && !platformTouched.current) setPlatform(derived.platform);
+    if (derived.platform && !platformTouched.current) {
+      setPlatform(derived.platform);
+      setPlatformOther(false);
+    }
     if (derived.handle && !handleTouched.current) setHandle(derived.handle);
   }, [profileUrl]);
 
@@ -157,14 +168,40 @@ export function DiscoveryLeadForm(props: Props) {
               <input type="url" value={profileUrl} onChange={(e) => setProfileUrl(e.target.value)} placeholder="https://instagram.com/handle" />
             </Field>
             <Field label="Platform" hint="Derived from the profile URL when recognized - always correctable.">
-              <input
-                type="text"
-                value={platform}
+              <select
+                value={platformOther ? "other" : platform}
                 onChange={(e) => {
                   platformTouched.current = true;
-                  setPlatform(e.target.value);
+                  const value = e.target.value;
+                  if (value === "other") {
+                    setPlatformOther(true);
+                    setPlatform("");
+                  } else {
+                    setPlatformOther(false);
+                    setPlatform(value);
+                  }
                 }}
-              />
+              >
+                <option value="">Select platform…</option>
+                {DISCOVERY_PLATFORMS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+                <option value="other">Other</option>
+              </select>
+              {platformOther && (
+                <input
+                  type="text"
+                  value={platform}
+                  placeholder="Platform name"
+                  style={{ marginTop: 8 }}
+                  onChange={(e) => {
+                    platformTouched.current = true;
+                    setPlatform(e.target.value);
+                  }}
+                />
+              )}
             </Field>
             <Field label="Handle" hint="Derived from the profile URL when safe - always correctable.">
               <input

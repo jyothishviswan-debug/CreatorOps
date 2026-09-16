@@ -23,11 +23,16 @@ const PLATFORM_CODES: Record<string, string> = {
 };
 
 export function platformCodeFor(platform: string | null): string {
-  const normalized = (platform ?? "").trim().toLowerCase();
-  if (!normalized) return "GEN";
-  const known = PLATFORM_CODES[normalized];
+  const raw = (platform ?? "").trim();
+  if (!raw) return "GEN";
+  // The Create/Edit form's platform picker stores labels like
+  // "X (Twitter)" - match against the part before any "(...)" suffix so
+  // this doesn't silently miss the known-codes table and fall through
+  // to a meaningless abbreviation of the whole label.
+  const primary = raw.split("(")[0]!.trim().toLowerCase();
+  const known = PLATFORM_CODES[primary];
   if (known) return known;
-  const letters = normalized.replace(/[^a-z0-9]/g, "").slice(0, 3).toUpperCase();
+  const letters = primary.replace(/[^a-z0-9]/g, "").slice(0, 3).toUpperCase();
   return letters || "GEN";
 }
 
