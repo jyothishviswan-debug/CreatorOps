@@ -10,39 +10,23 @@ import { FEATURES } from "./features";
 import { COLLECTIONS } from "./firestore";
 import type { Role } from "./roles";
 import { ROLES } from "./roles";
-import type { AccessGrantDoc, ScopeAssignmentDoc, SensitiveAccessGrantDoc, UserDoc } from "./types";
+import type { AccessGrantDoc, ScopeGrant, ScopeGrantInput, SensitiveAccessGrantDoc, UserDoc } from "./types";
 
 type TestIdentity = {
   email: string;
   role: Role;
   displayName: string;
-  regions: string[];
 };
 
 // The same five emails seeded into the Auth emulator by seedEmulatorTestUsers
 // (src/server/auth/seed-users.ts) - kept in sync deliberately, checked by
 // seedAccessControlData itself (throws if an expected user is missing).
 export const TEST_IDENTITIES: TestIdentity[] = [
-  { email: "viewer@creatorops.com", role: "viewer", displayName: "Viewer (Test)", regions: ["Kerala"] },
-  { email: "analyst@creatorops.com", role: "analyst", displayName: "Analyst (Test)", regions: ["Kerala", "Tamil Nadu"] },
-  {
-    email: "manager@creatorops.com",
-    role: "partnership_manager",
-    displayName: "Manager (Test)",
-    regions: ["Kerala", "Maharashtra"],
-  },
-  {
-    email: "head@creatorops.com",
-    role: "partnership_head",
-    displayName: "Head (Test)",
-    regions: ["Kerala", "Maharashtra", "Tamil Nadu", "Karnataka"],
-  },
-  {
-    email: "admin@creatorops.com",
-    role: "super_admin",
-    displayName: "Admin (Test)",
-    regions: ["Kerala", "Maharashtra", "Tamil Nadu", "Karnataka"],
-  },
+  { email: "viewer@creatorops.com", role: "viewer", displayName: "Viewer (Test)" },
+  { email: "analyst@creatorops.com", role: "analyst", displayName: "Analyst (Test)" },
+  { email: "manager@creatorops.com", role: "partnership_manager", displayName: "Manager (Test)" },
+  { email: "head@creatorops.com", role: "partnership_head", displayName: "Head (Test)" },
+  { email: "admin@creatorops.com", role: "super_admin", displayName: "Admin (Test)" },
 ];
 
 function featureGrant(view: boolean, actions: Partial<Record<ActionId, boolean>> = {}) {
@@ -109,6 +93,66 @@ const SENSITIVE_GRANTS: Record<Role, string[]> = {
   super_admin: ["finance_amounts"],
 };
 
+// Explicit, per-role scope grants (Step 4C's canonical multi-dimensional
+// model - see types.ts). Deliberately exercises every one of the 9 grant
+// types across the five identities, and deliberately does NOT give every
+// role the same shape of scope: Super Admin's GLOBAL grant is its own
+// explicit document, not something inferred from the role name, and
+// nothing here compares roles to each other to decide breadth.
+const SCOPE_GRANTS: Record<Role, ScopeGrantInput[]> = {
+  viewer: [{ type: "SELF" }, { type: "REGION", region: "Kerala" }],
+  analyst: [
+    { type: "REGION", region: "Kerala" },
+    { type: "REGION", region: "Tamil Nadu" },
+    { type: "ANALYTICS_DATASET", datasetId: "cross-platform-reach" },
+    { type: "ANALYTICS_ACCOUNT", accountId: "instagram-primary" },
+  ],
+  partnership_manager: [
+    { type: "REGION", region: "Kerala" },
+    { type: "REGION", region: "Maharashtra" },
+    { type: "TEAM", teamId: "kerala-programmes" },
+    { type: "PARTNER", partnerId: "creator-house" },
+  ],
+  partnership_head: [
+    { type: "REGION", region: "Kerala" },
+    { type: "REGION", region: "Maharashtra" },
+    { type: "REGION", region: "Tamil Nadu" },
+    { type: "REGION", region: "Karnataka" },
+    { type: "TEAM", teamId: "kerala-programmes" },
+    { type: "TEAM", teamId: "maharashtra-programmes" },
+    { type: "CAMPAIGN", campaignId: "civic-voices" },
+    { type: "EXPLICIT_RECORD", resourceType: "content", resourceId: "community-story-reel-01" },
+  ],
+  super_admin: [{ type: "GLOBAL" }],
+};
+
+// Deterministic, human-decodable, and idempotent: re-seeding overwrites
+// the same documents rather than creating duplicates, and each grant can
+// be found/edited/deleted on its own by future Administration CRUD
+// without touching any other grant. No "/" or ".." ever appears in a
+// discriminator value here, so this is always a valid Firestore doc id.
+function scopeGrantDocId(uid: string, grant: ScopeGrantInput): string {
+  switch (grant.type) {
+    case "SELF":
+    case "GLOBAL":
+      return `${uid}__${grant.type}`;
+    case "REGION":
+      return `${uid}__REGION__${grant.region}`;
+    case "TEAM":
+      return `${uid}__TEAM__${grant.teamId}`;
+    case "PARTNER":
+      return `${uid}__PARTNER__${grant.partnerId}`;
+    case "CAMPAIGN":
+      return `${uid}__CAMPAIGN__${grant.campaignId}`;
+    case "EXPLICIT_RECORD":
+      return `${uid}__EXPLICIT_RECORD__${grant.resourceType}__${grant.resourceId}`;
+    case "ANALYTICS_DATASET":
+      return `${uid}__ANALYTICS_DATASET__${grant.datasetId}`;
+    case "ANALYTICS_ACCOUNT":
+      return `${uid}__ANALYTICS_ACCOUNT__${grant.accountId}`;
+  }
+}
+
 export async function seedAccessControlData(): Promise<void> {
   if (!isUsingEmulators()) {
     throw new Error("seedAccessControlData: refusing to run - Firebase emulator env vars are not set.");
@@ -143,7 +187,17 @@ export async function seedAccessControlData(): Promise<void> {
     };
     await db.collection(COLLECTIONS.users).doc(authUser.uid).set(userDoc);
 
-    const scopeDoc: ScopeAssignmentDoc = { uid: authUser.uid, regions: identity.regions };
-    await db.collection(COLLECTIONS.scopeAssignments).doc(authUser.uid).set(scopeDoc);
+    // Migration from Step 4B's region-only model: that model stored one
+    // flat scopeAssignments/{uid} document per user. This step replaces
+    // it with a flat *collection* of per-grant documents (see types.ts),
+    // so the old doc - now unread by any code - is removed rather than
+    // left behind as a stale orphan.
+    await db.collection(COLLECTIONS.scopeAssignments).doc(authUser.uid).delete();
+
+    const grantedAt = new Date().toISOString();
+    for (const grantInput of SCOPE_GRANTS[identity.role]) {
+      const grant: ScopeGrant = { ...grantInput, uid: authUser.uid, grantedAt, grantedBy: "system:seed" } as ScopeGrant;
+      await db.collection(COLLECTIONS.scopeAssignments).doc(scopeGrantDocId(authUser.uid, grantInput)).set(grant);
+    }
   }
 }

@@ -10,7 +10,18 @@ import { resolveActor } from "./actor";
 import { canAccessFeature, canPerformAction } from "./capabilities";
 import { seedAccessControlData, TEST_IDENTITIES } from "./seed-access-data";
 import { canAccessSensitive } from "./sensitive";
-import { getActorScope, isRecordInScope } from "./scope";
+import {
+  getActorScopeGrants,
+  hasGlobalScope,
+  isAnalyticsAccountInScope,
+  isAnalyticsDatasetInScope,
+  isCampaignInScope,
+  isExplicitRecordInScope,
+  isPartnerInScope,
+  isRegionInScope,
+  isSelfInScope,
+  isTeamInScope,
+} from "./scope";
 import type { ActorContext } from "./types";
 
 const uidByRole = new Map<string, string>();
@@ -71,10 +82,42 @@ describe("seeded access-control data (real emulator)", () => {
     await expect(canAccessFeature(await actorFor("partnership_head"), "administration")).resolves.toBe(false);
   });
 
-  it("Viewer's seeded scope allows their own region and denies a region outside it", async () => {
-    const scope = await getActorScope(await actorFor("viewer"));
-    expect(scope).not.toBeNull();
-    expect(isRecordInScope(scope!, "Kerala")).toBe(true);
-    expect(isRecordInScope(scope!, "Karnataka")).toBe(false);
+  it("Viewer's seeded scope allows SELF and their own region, and denies a region outside it", async () => {
+    const viewer = await actorFor("viewer");
+    const grants = await getActorScopeGrants(viewer);
+    expect(isSelfInScope(grants, viewer.uid, viewer.uid)).toBe(true);
+    expect(isRegionInScope(grants, "Kerala")).toBe(true);
+    expect(isRegionInScope(grants, "Karnataka")).toBe(false);
+  });
+
+  it("Partnership Manager's seeded scope covers their team and partner, but not the Head's extra team", async () => {
+    const grants = await getActorScopeGrants(await actorFor("partnership_manager"));
+    expect(isTeamInScope(grants, "kerala-programmes")).toBe(true);
+    expect(isPartnerInScope(grants, "creator-house")).toBe(true);
+    expect(isTeamInScope(grants, "maharashtra-programmes")).toBe(false);
+  });
+
+  it("Partnership Head's seeded scope covers their campaign and explicit record grant", async () => {
+    const grants = await getActorScopeGrants(await actorFor("partnership_head"));
+    expect(isCampaignInScope(grants, "civic-voices")).toBe(true);
+    expect(isCampaignInScope(grants, "regional-first")).toBe(false);
+    expect(isExplicitRecordInScope(grants, "content", "community-story-reel-01")).toBe(true);
+    expect(isExplicitRecordInScope(grants, "content", "some-other-item")).toBe(false);
+  });
+
+  it("Analyst's seeded scope covers their analytics dataset and account", async () => {
+    const grants = await getActorScopeGrants(await actorFor("analyst"));
+    expect(isAnalyticsDatasetInScope(grants, "cross-platform-reach")).toBe(true);
+    expect(isAnalyticsAccountInScope(grants, "instagram-primary")).toBe(true);
+    expect(isAnalyticsDatasetInScope(grants, "engagement-actions")).toBe(false);
+  });
+
+  it("Super Admin's scope is an explicit GLOBAL grant - not inferred from the role", async () => {
+    const superAdminGrants = await getActorScopeGrants(await actorFor("super_admin"));
+    expect(hasGlobalScope(superAdminGrants)).toBe(true);
+
+    // Partnership Head is nominally "senior" too, but has no GLOBAL grant.
+    const headGrants = await getActorScopeGrants(await actorFor("partnership_head"));
+    expect(hasGlobalScope(headGrants)).toBe(false);
   });
 });

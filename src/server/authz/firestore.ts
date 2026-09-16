@@ -1,12 +1,7 @@
 import type { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
-import {
-  accessGrantDocSchema,
-  scopeAssignmentDocSchema,
-  sensitiveAccessGrantDocSchema,
-  userDocSchema,
-} from "./types";
+import { accessGrantDocSchema, scopeGrantSchema, sensitiveAccessGrantDocSchema, userDocSchema, type ScopeGrant } from "./types";
 
 export const COLLECTIONS = {
   users: "users",
@@ -41,8 +36,23 @@ export function getAccessGrantDoc(role: string) {
   return getParsedDoc(COLLECTIONS.accessGrants, role, accessGrantDocSchema);
 }
 
-export function getScopeAssignmentDoc(uid: string) {
-  return getParsedDoc(COLLECTIONS.scopeAssignments, uid, scopeAssignmentDocSchema);
+// One flat scopeAssignments document per grant (see types.ts), so an
+// actor's grants are a bounded, indexed `where("uid", "==", uid)` query -
+// never a full collection scan - capped defensively at 500 so a runaway
+// number of grants for one user can never turn into an unbounded read.
+// A grant document that fails to parse (malformed or an unrecognized
+// `type`) is simply dropped from the result, not treated as poisoning
+// every other valid grant the actor has - each grant fails closed on its
+// own.
+export async function getActorScopeGrants(uid: string): Promise<ScopeGrant[]> {
+  const snapshot = await getAdminFirestore().collection(COLLECTIONS.scopeAssignments).where("uid", "==", uid).limit(500).get();
+
+  const grants: ScopeGrant[] = [];
+  for (const doc of snapshot.docs) {
+    const result = scopeGrantSchema.safeParse(doc.data());
+    if (result.success) grants.push(result.data);
+  }
+  return grants;
 }
 
 export function getSensitiveAccessGrantDoc(role: string) {

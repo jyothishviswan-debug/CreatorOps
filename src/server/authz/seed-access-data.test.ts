@@ -1,14 +1,16 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { isUsingEmulatorsMock, getServerEnvMock, getUserByEmailMock, setMock, docMock, collectionMock } = vi.hoisted(() => {
+const { isUsingEmulatorsMock, getServerEnvMock, getUserByEmailMock, setMock, deleteMock, docMock, collectionMock } = vi.hoisted(() => {
   const setMock = vi.fn().mockResolvedValue(undefined);
-  const docMock = vi.fn(() => ({ set: setMock }));
+  const deleteMock = vi.fn().mockResolvedValue(undefined);
+  const docMock = vi.fn(() => ({ set: setMock, delete: deleteMock }));
   const collectionMock = vi.fn(() => ({ doc: docMock }));
   return {
     isUsingEmulatorsMock: vi.fn(),
     getServerEnvMock: vi.fn(),
     getUserByEmailMock: vi.fn(),
     setMock,
+    deleteMock,
     docMock,
     collectionMock,
   };
@@ -27,6 +29,11 @@ vi.mock("@/server/firebase/admin", () => ({
 import { ROLES } from "./roles";
 import { seedAccessControlData, TEST_IDENTITIES } from "./seed-access-data";
 
+// Total individual scope grants across all five seeded identities - kept
+// in sync with the SCOPE_GRANTS matrix in seed-access-data.ts (Viewer 2,
+// Analyst 4, Partnership Manager 4, Partnership Head 8, Super Admin 1).
+const TOTAL_SCOPE_GRANTS = 2 + 4 + 4 + 8 + 1;
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -37,6 +44,7 @@ describe("seedAccessControlData", () => {
 
     await expect(seedAccessControlData()).rejects.toThrow(/refusing to run/i);
     expect(setMock).not.toHaveBeenCalled();
+    expect(deleteMock).not.toHaveBeenCalled();
   });
 
   it("refuses to run when the resolved project id isn't the local demo project", async () => {
@@ -47,7 +55,7 @@ describe("seedAccessControlData", () => {
     expect(setMock).not.toHaveBeenCalled();
   });
 
-  it("writes an accessGrants and sensitiveAccessGrants document for every role, and a users/scopeAssignments document for every test identity", async () => {
+  it("writes an accessGrants and sensitiveAccessGrants document for every role, and a users document for every test identity", async () => {
     isUsingEmulatorsMock.mockReturnValue(true);
     getServerEnvMock.mockReturnValue({ projectId: "demo-creatorops" });
     getUserByEmailMock.mockImplementation(async (email: string) => ({ uid: `uid-${email}` }));
@@ -62,10 +70,10 @@ describe("seedAccessControlData", () => {
     for (const identity of TEST_IDENTITIES) {
       expect(collectionMock).toHaveBeenCalledWith("users");
       expect(docMock).toHaveBeenCalledWith(`uid-${identity.email}`);
-      expect(collectionMock).toHaveBeenCalledWith("scopeAssignments");
     }
-    // 5 roles * 2 collections + 5 identities * 2 collections = 20 writes.
-    expect(setMock).toHaveBeenCalledTimes(ROLES.length * 2 + TEST_IDENTITIES.length * 2);
+    // 5 roles * 2 collections (accessGrants + sensitiveAccessGrants) +
+    // 5 identity user docs + every individual scope grant document.
+    expect(setMock).toHaveBeenCalledTimes(ROLES.length * 2 + TEST_IDENTITIES.length + TOTAL_SCOPE_GRANTS);
   });
 
   it("gives Super Admin's own document every feature explicitly, rather than deriving it from the other roles", async () => {
@@ -80,5 +88,49 @@ describe("seedAccessControlData", () => {
     const doc = superAdminCall![0];
     expect(Object.keys(doc.features).length).toBeGreaterThanOrEqual(15);
     expect(Object.values(doc.features).every((f: unknown) => (f as { view: boolean }).view === true)).toBe(true);
+  });
+
+  it("deletes the old Step 4B flat scopeAssignments/{uid} document for every identity as part of migrating to the new model", async () => {
+    isUsingEmulatorsMock.mockReturnValue(true);
+    getServerEnvMock.mockReturnValue({ projectId: "demo-creatorops" });
+    getUserByEmailMock.mockImplementation(async (email: string) => ({ uid: `uid-${email}` }));
+
+    await seedAccessControlData();
+
+    expect(deleteMock).toHaveBeenCalledTimes(TEST_IDENTITIES.length);
+    for (const identity of TEST_IDENTITIES) {
+      expect(collectionMock).toHaveBeenCalledWith("scopeAssignments");
+      expect(docMock).toHaveBeenCalledWith(`uid-${identity.email}`);
+    }
+  });
+
+  it("writes Super Admin's scope as an explicit GLOBAL grant document, not derived from any other role's data", async () => {
+    isUsingEmulatorsMock.mockReturnValue(true);
+    getServerEnvMock.mockReturnValue({ projectId: "demo-creatorops" });
+    getUserByEmailMock.mockImplementation(async (email: string) => ({ uid: `uid-${email}` }));
+
+    await seedAccessControlData();
+
+    const superAdminUid = "uid-admin@creatorops.com";
+    const globalGrantCall = setMock.mock.calls.find((call) => call[0]?.type === "GLOBAL" && call[0]?.uid === superAdminUid);
+    expect(globalGrantCall).toBeDefined();
+
+    // No other identity received a GLOBAL grant.
+    const otherGlobalGrants = setMock.mock.calls.filter((call) => call[0]?.type === "GLOBAL" && call[0]?.uid !== superAdminUid);
+    expect(otherGlobalGrants).toHaveLength(0);
+  });
+
+  it("writes multiple simultaneous scope grants of different types for the same identity", async () => {
+    isUsingEmulatorsMock.mockReturnValue(true);
+    getServerEnvMock.mockReturnValue({ projectId: "demo-creatorops" });
+    getUserByEmailMock.mockImplementation(async (email: string) => ({ uid: `uid-${email}` }));
+
+    await seedAccessControlData();
+
+    const headUid = "uid-head@creatorops.com";
+    // Exclude the users/{uid} document itself (uid matches too, but it has
+    // no `type` field - only actual scope grant documents do).
+    const headGrantTypes = setMock.mock.calls.filter((call) => call[0]?.uid === headUid && call[0]?.type).map((call) => call[0].type);
+    expect(new Set(headGrantTypes)).toEqual(new Set(["REGION", "TEAM", "CAMPAIGN", "EXPLICIT_RECORD"]));
   });
 });

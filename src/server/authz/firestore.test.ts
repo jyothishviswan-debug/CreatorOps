@@ -4,7 +4,7 @@ const { getAdminFirestoreMock } = vi.hoisted(() => ({ getAdminFirestoreMock: vi.
 vi.mock("@/server/firebase/admin", () => ({ getAdminFirestore: getAdminFirestoreMock }));
 
 import { makeFakeFirestore } from "./test-helpers/fake-firestore";
-import { getAccessGrantDoc, getScopeAssignmentDoc, getSensitiveAccessGrantDoc, getUserDoc } from "./firestore";
+import { getAccessGrantDoc, getActorScopeGrants, getSensitiveAccessGrantDoc, getUserDoc } from "./firestore";
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -52,20 +52,39 @@ describe("getAccessGrantDoc", () => {
   });
 });
 
-describe("getScopeAssignmentDoc", () => {
-  it("fails closed when regions is the wrong type", async () => {
-    getAdminFirestoreMock.mockReturnValue(makeFakeFirestore({ "scopeAssignments/uid-1": { uid: "uid-1", regions: "Kerala" } }));
-    await expect(getScopeAssignmentDoc("uid-1")).resolves.toBeNull();
+describe("getActorScopeGrants", () => {
+  it("returns an empty array when the actor has no grant documents", async () => {
+    getAdminFirestoreMock.mockReturnValue(makeFakeFirestore({}));
+    await expect(getActorScopeGrants("uid-1")).resolves.toEqual([]);
   });
 
-  it("fails closed when regions is an empty array", async () => {
-    getAdminFirestoreMock.mockReturnValue(makeFakeFirestore({ "scopeAssignments/uid-1": { uid: "uid-1", regions: [] } }));
-    await expect(getScopeAssignmentDoc("uid-1")).resolves.toBeNull();
+  it("drops a grant document that doesn't parse (unrecognized type), without affecting other valid grants", async () => {
+    getAdminFirestoreMock.mockReturnValue(
+      makeFakeFirestore({
+        "scopeAssignments/uid-1__REGION__Kerala": {
+          uid: "uid-1",
+          type: "REGION",
+          region: "Kerala",
+          grantedAt: "2026-01-01T00:00:00.000Z",
+          grantedBy: "system:seed",
+        },
+        "scopeAssignments/uid-1__WEIRD": { uid: "uid-1", type: "NOT_A_REAL_TYPE", grantedAt: "x", grantedBy: "y" },
+      }),
+    );
+    const grants = await getActorScopeGrants("uid-1");
+    expect(grants).toHaveLength(1);
+    expect(grants[0]).toMatchObject({ type: "REGION", region: "Kerala" });
   });
 
-  it("returns the parsed document when it's valid", async () => {
-    getAdminFirestoreMock.mockReturnValue(makeFakeFirestore({ "scopeAssignments/uid-1": { uid: "uid-1", regions: ["Kerala"] } }));
-    await expect(getScopeAssignmentDoc("uid-1")).resolves.toEqual({ uid: "uid-1", regions: ["Kerala"] });
+  it("only returns grants belonging to the requested uid", async () => {
+    getAdminFirestoreMock.mockReturnValue(
+      makeFakeFirestore({
+        "scopeAssignments/uid-1__GLOBAL": { uid: "uid-1", type: "GLOBAL", grantedAt: "x", grantedBy: "y" },
+        "scopeAssignments/uid-2__GLOBAL": { uid: "uid-2", type: "GLOBAL", grantedAt: "x", grantedBy: "y" },
+      }),
+    );
+    const grants = await getActorScopeGrants("uid-1");
+    expect(grants).toHaveLength(1);
   });
 });
 
