@@ -781,7 +781,7 @@ function KycPanel({ lead, onSaved }: StageProps) {
           </label>
         </div>
         {gstApplicable && (
-          <div className="field">
+          <div className="field full">
             <label htmlFor="kyc-gst-number">GST number</label>
             <input id="kyc-gst-number" type="text" value={gstNumber} onChange={(e) => setGstNumber(e.target.value)} required />
           </div>
