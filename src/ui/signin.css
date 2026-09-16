@@ -205,13 +205,13 @@
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 10px;
-  margin-bottom: 25px;
+  gap: 8px;
+  margin-bottom: 20px;
 }
 .signin-page .formbrand span {
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 700;
-  letter-spacing: -0.5px;
+  letter-spacing: -0.3px;
   color: var(--ink);
 }
 .signin-page h1 {
@@ -368,9 +368,6 @@
 }
 .signin-page .mobilebrand {
   display: none;
-  /* foundation.css's global .brand rule sets color:white for the dark
-     sidebar; this mobile-only brand mark sits on a light background. */
-  color: var(--ink);
 }
 .signin-page dialog {
   border: 1px solid var(--line);
@@ -447,12 +444,6 @@
   }
   .signin-page .mobilebrand {
     display: flex;
-    font-size: 19px;
-  }
-  .signin-page .mobilebrand .mark {
-    width: 28px;
-    height: 30px;
-    font-size: 21px;
   }
   .signin-page .formcontainer {
     padding: 55px 0;

@@ -98,8 +98,8 @@ export function SignInForm() {
   return (
     <main className="formside">
       <div className="top">
-        <div className="brand mobilebrand">
-          <span className="mark">c</span>CreatorOps
+        <div className="mobilebrand">
+          <Image src="/logo.png" alt="CreatorOps" width={28} height={28} priority />
         </div>
         <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
           <Icon name="shield" />
@@ -109,7 +109,7 @@ export function SignInForm() {
 
       <div className="formcontainer">
         <div className="formbrand">
-          <Image src="/logo.png" alt="" width={40} height={40} priority />
+          <Image src="/logo.png" alt="" width={28} height={28} priority />
           <span>CreatorOps</span>
         </div>
         <h1>Welcome back.</h1>
