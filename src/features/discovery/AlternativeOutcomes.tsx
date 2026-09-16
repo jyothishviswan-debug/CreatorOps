@@ -3,6 +3,7 @@
 import { useState } from "react";
 
 import { Panel, PanelBody, PanelHead } from "@/ui/Panel";
+import { Icon } from "@/ui/icons";
 import type { LeadDto } from "@/server/discovery/client-dto";
 import type { LeadLifecycle } from "@/server/discovery/types";
 import { restoreLead, transitionLifecycle } from "./api-client";
@@ -100,7 +101,7 @@ export function AlternativeOutcomes({ lead, onSaved, span = 12 }: { lead: LeadDt
               ))}
             {canRestore && (
               <button type="button" className="btn primary" onClick={() => startAction("restore")}>
-                Restore
+                <Icon name="check" /> Restore
               </button>
             )}
             {lead.lifecycle === "DUPLICATE" && <small>Duplicate is terminal - no restore action is available.</small>}

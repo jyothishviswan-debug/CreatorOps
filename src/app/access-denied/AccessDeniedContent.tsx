@@ -35,6 +35,7 @@ export function AccessDeniedContent() {
           <EmptyState
             title="Restricted by role"
             description="If you believe you should have access, contact your administrator. Access is granted explicitly per role, not inferred from any other permission you may already have."
+            icon="lock"
             action={
               <span style={{ display: "inline-flex", alignItems: "center", gap: 8, color: "var(--muted)", fontSize: 11 }}>
                 <Icon name="shield" />

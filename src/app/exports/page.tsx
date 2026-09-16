@@ -20,6 +20,7 @@ export default function ExportsPage() {
             <EmptyState
               title="No exports yet"
               description="Scoped export generation and history are a later build step — this skeleton only proves the route and navigation."
+              icon="download"
             />
           </div>
         </section>

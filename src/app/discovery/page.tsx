@@ -4,6 +4,7 @@ import { AppShell } from "@/ui/AppShell";
 import { ModuleTabs } from "@/ui/ModuleTabs";
 import { ContextBanner, OverviewKpiRow, OverviewPanels } from "@/ui/Overview";
 import { EmptyState } from "@/ui/States";
+import { Icon } from "@/ui/icons";
 import type { OverviewPanelData } from "@/features/shared/types";
 import { relativeTime } from "@/features/discovery/format";
 import { resolveRequestActor } from "@/server/discovery/http";
@@ -55,7 +56,7 @@ export default async function DiscoveryOverviewPage() {
         </div>
         <ModuleTabs tabs={TABS} />
         <section className="panel">
-          <EmptyState title="Access denied" description="You don't have permission to view Discovery data." />
+          <EmptyState title="Access denied" description="You don't have permission to view Discovery data." icon="lock" />
         </section>
       </AppShell>
     );
@@ -186,7 +187,7 @@ export default async function DiscoveryOverviewPage() {
           </div>
           <div className="actions">
             <Link href="/discovery/new" className="btn primary">
-              + Add lead
+              <Icon name="plus" /> Add lead
             </Link>
           </div>
         </div>

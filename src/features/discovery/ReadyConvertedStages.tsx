@@ -4,6 +4,7 @@ import { useState } from "react";
 
 import { DialogShell } from "@/ui/Dialog";
 import { Pill } from "@/ui/Badge";
+import { Icon } from "@/ui/icons";
 import type { LeadDto } from "@/server/discovery/client-dto";
 import type { ConversionDto } from "@/server/discovery/conversion-service";
 import type { ReadinessResult } from "@/server/discovery/types";
@@ -117,11 +118,11 @@ export function ReadyStage({ lead, readiness, onSaved }: Props) {
       <div className="actions" style={{ marginTop: 18 }}>
         {!alreadyReadyOrBeyond && (
           <button type="button" className="btn" disabled={!readiness.ready || markingReady} onClick={handleMarkReady}>
-            {markingReady ? "Marking…" : "Mark conversion ready"}
+            <Icon name="check" /> {markingReady ? "Marking…" : "Mark conversion ready"}
           </button>
         )}
         <button type="button" className="btn primary" disabled={lead.lifecycle !== "CONVERSION_READY"} onClick={() => setDialogOpen(true)}>
-          Convert to Partner
+          <Icon name="arrow" /> Convert to Partner
         </button>
       </div>
       {!readiness.ready && <small style={{ display: "block", marginTop: 8 }}>Resolve every blocker above before this Lead can be marked conversion ready.</small>}
@@ -169,7 +170,27 @@ function ConversionDialog({
   if (!open) return null;
 
   return (
-    <DialogShell open={open} title="Convert to Partner" onClose={onClose}>
+    <DialogShell
+      open={open}
+      title="Convert to Partner"
+      onClose={onClose}
+      footer={
+        result ? (
+          <button type="button" className="btn primary" onClick={onClose}>
+            Close
+          </button>
+        ) : (
+          <>
+            <button type="button" className="btn" onClick={onClose}>
+              Cancel
+            </button>
+            <button type="button" className="btn primary" disabled={converting} onClick={handleConfirm}>
+              {converting ? "Converting…" : "Confirm conversion"}
+            </button>
+          </>
+        )
+      }
+    >
       {result ? (
         <div>
           <div className="banner" role="status">
@@ -183,9 +204,6 @@ function ConversionDialog({
             <span>Partner Account</span>
             <b>{result.partnerAccountRef ? <span style={{ fontFamily: "monospace", fontSize: 11 }}>{result.partnerAccountRef}</span> : result.pendingPartnerAccountSetup ? "Setup pending (New Account)" : "None"}</b>
           </div>
-          <button type="button" className="btn primary" style={{ marginTop: 16 }} onClick={onClose}>
-            Close
-          </button>
         </div>
       ) : (
         <div>
@@ -236,15 +254,6 @@ function ConversionDialog({
               {error}
             </div>
           )}
-
-          <div className="actions" style={{ marginTop: 18 }}>
-            <button type="button" className="btn" onClick={onClose}>
-              Cancel
-            </button>
-            <button type="button" className="btn primary" disabled={converting} onClick={handleConfirm}>
-              {converting ? "Converting…" : "Confirm conversion"}
-            </button>
-          </div>
         </div>
       )}
     </DialogShell>

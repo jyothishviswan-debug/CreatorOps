@@ -31,7 +31,7 @@ export default async function AdministrationAccessPage({ searchParams }: { searc
         </div>
         <ModuleTabs tabs={TABS} />
         <section className="panel">
-          <EmptyState title="Access denied" description="You don't have permission to view access governance data." />
+          <EmptyState title="Access denied" description="You don't have permission to view access governance data." icon="lock" />
         </section>
       </AppShell>
     );

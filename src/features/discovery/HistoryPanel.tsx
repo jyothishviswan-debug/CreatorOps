@@ -48,7 +48,7 @@ export function HistoryPanel({ leadRef, refreshKey }: { leadRef: string; refresh
             {error}
           </div>
         ) : events.length === 0 ? (
-          <EmptyState title="No activity yet" />
+          <EmptyState title="No activity yet" icon="clock" />
         ) : (
           events.map((event) => (
             <div className="activity" key={event.id}>

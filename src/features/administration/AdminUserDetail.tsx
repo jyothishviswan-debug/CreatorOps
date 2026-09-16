@@ -262,7 +262,7 @@ export function AdminUserDetail({ initialUser, initialEffectiveAccess }: { initi
           <PanelHead title="Scope grants" description="Canonical Step 4C scope model." />
           <PanelBody>
             {chips.length === 0 ? (
-              <EmptyState title="No scope grants" description="This user cannot reach any records yet." />
+              <EmptyState title="No scope grants" description="This user cannot reach any records yet." icon="shield" />
             ) : (
               <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 16 }}>
                 {chips.map((chip) => {
@@ -356,7 +356,7 @@ export function AdminUserDetail({ initialUser, initialEffectiveAccess }: { initi
         </Panel>
       ) : (
         <section className="panel">
-          <EmptyState title="Effective access unavailable" description={effectiveAccessError ?? "Couldn't load effective access."} />
+          <EmptyState title="Effective access unavailable" description={effectiveAccessError ?? "Couldn't load effective access."} icon="alert" />
         </section>
       )}
     </>

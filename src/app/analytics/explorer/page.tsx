@@ -26,6 +26,7 @@ export default function AnalyticsExplorerPage() {
           <EmptyState
             title="Explorer preview"
             description="The full filterable metric explorer is a later build step — this skeleton only proves the route and navigation."
+            icon="chart"
           />
         </div>
       </div>

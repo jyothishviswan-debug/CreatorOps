@@ -33,7 +33,7 @@ export default async function EditDiscoveryLeadPage({ params }: { params: Promis
         <DiscoveryLeadForm mode="edit" lead={result.data} />
       ) : (
         <section className="panel">
-          <EmptyState title="Access denied" description="You don't have permission to edit this Lead." />
+          <EmptyState title="Access denied" description="You don't have permission to edit this Lead." icon="lock" />
         </section>
       )}
     </AppShell>

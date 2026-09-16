@@ -37,7 +37,7 @@ export default async function DiscoveryLeadsPage() {
         <DiscoveryWorkspace initialLeads={result.data.leads} initialNextCursor={result.data.nextCursor} />
       ) : (
         <section className="panel">
-          <EmptyState title="Access denied" description="You don't have permission to view the Discovery workspace." />
+          <EmptyState title="Access denied" description="You don't have permission to view the Discovery workspace." icon="lock" />
         </section>
       )}
     </AppShell>

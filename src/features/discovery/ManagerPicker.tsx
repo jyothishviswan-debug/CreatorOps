@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 
 import type { ManagerCandidateDto } from "@/server/discovery/user-picker";
 import { searchManagerCandidates } from "./api-client";
+import { SearchInput } from "@/ui/Table";
 
 // "Manager picker must use real active admitted users; never a
 // free-text/checkbox substitute" (Step 6B) - search-first over the real
@@ -41,7 +42,7 @@ export function ManagerPicker({ onSelect, placeholder = "Search by email…" }: 
 
   return (
     <div>
-      <input type="search" aria-label="Search active users by email" placeholder={placeholder} value={query} onChange={(e) => setQuery(e.target.value)} />
+      <SearchInput aria-label="Search active users by email" placeholder={placeholder} value={query} onChange={(e) => setQuery(e.target.value)} />
       {searching && <small>Searching…</small>}
       {error && (
         <div className="banner" role="alert" style={{ marginTop: 8 }}>

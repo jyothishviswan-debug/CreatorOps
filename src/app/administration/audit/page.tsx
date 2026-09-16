@@ -30,7 +30,7 @@ export default async function AdministrationAuditPage() {
         <AdministrationAuditWorkspace initialEvents={result.data.events} initialNextCursor={result.data.nextCursor} />
       ) : (
         <section className="panel">
-          <EmptyState title="Access denied" description="You don't have permission to view the audit trail." />
+          <EmptyState title="Access denied" description="You don't have permission to view the audit trail." icon="lock" />
         </section>
       )}
     </AppShell>

@@ -77,7 +77,7 @@ export function AdministrationAuditWorkspace({
           <Skeleton lines={5} />
         </div>
       ) : filtered.length === 0 ? (
-        <EmptyState title="No audit events on this page" description="Access-changing mutations will appear here as they happen." />
+        <EmptyState title="No audit events on this page" description="Access-changing mutations will appear here as they happen." icon="clock" />
       ) : (
         <div className="tablewrap">
           <table>

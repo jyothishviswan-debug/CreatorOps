@@ -151,6 +151,7 @@ export function AdministrationUsersWorkspace({ initialUsers, initialNextCursor }
         <EmptyState
           title={rows.length === 0 ? "No users yet" : "No matching records on this page"}
           description={rows.length === 0 ? "Provision the first user to get started." : "Try another name/email, or check another page."}
+          icon={rows.length === 0 ? "users" : "search"}
           action={
             rows.length === 0 ? (
               <Link href="/administration/users/new" className="btn primary">

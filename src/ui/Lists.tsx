@@ -1,5 +1,5 @@
 // List/feed primitives from the golden master's `.attention` / `.activity` rows.
-import { Icon, type IconName } from "./icons";
+import { Icon } from "./icons";
 
 export function AttentionList({
   items,
@@ -54,18 +54,5 @@ export function RankList({ items }: { items: { rank: number; name: string; value
         </div>
       ))}
     </>
-  );
-}
-
-export function ActionRow({ actions }: { actions: { label: string; icon: IconName }[] }) {
-  return (
-    <div className="actiongrid">
-      {actions.map((action) => (
-        <button className="btn" type="button" key={action.label}>
-          <Icon name={action.icon} />
-          {action.label}
-        </button>
-      ))}
-    </div>
   );
 }

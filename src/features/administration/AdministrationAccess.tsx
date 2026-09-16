@@ -262,7 +262,7 @@ export function AdministrationAccess({
             ) : (
               <Panel span={12}>
                 <PanelBody>
-                  <EmptyState title={accessError ?? "Couldn't load this user's access"} />
+                  <EmptyState title={accessError ?? "Couldn't load this user's access"} icon="alert" />
                 </PanelBody>
               </Panel>
             )}

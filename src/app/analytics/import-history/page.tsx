@@ -26,6 +26,7 @@ export default function AnalyticsImportHistoryPage() {
           <EmptyState
             title="Import history preview"
             description="Ingestion batch parsing and history are a later build step — this skeleton only proves the route and navigation."
+            icon="chart"
           />
         </div>
       </div>

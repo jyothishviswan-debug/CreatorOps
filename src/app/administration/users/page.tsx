@@ -39,7 +39,7 @@ export default async function AdministrationUsersPage() {
         <AdministrationUsersWorkspace initialUsers={result.data.users} initialNextCursor={result.data.nextCursor} />
       ) : (
         <section className="panel">
-          <EmptyState title="Access denied" description="You don't have permission to view the user directory." />
+          <EmptyState title="Access denied" description="You don't have permission to view the user directory." icon="lock" />
         </section>
       )}
     </AppShell>

@@ -20,6 +20,7 @@ export default function ImportsPage() {
             <EmptyState
               title="No imports yet"
               description="Upload, validation and review steps are a later build step — this skeleton only proves the route and navigation."
+              icon="upload"
             />
           </div>
         </section>

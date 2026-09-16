@@ -17,7 +17,7 @@ export default async function AdminUserDetailPage({ params }: { params: Promise<
     return (
       <AppShell>
         <section className="panel">
-          <EmptyState title="Access denied" description="You don't have permission to view this record." />
+          <EmptyState title="Access denied" description="You don't have permission to view this record." icon="lock" />
         </section>
       </AppShell>
     );

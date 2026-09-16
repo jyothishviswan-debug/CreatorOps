@@ -144,11 +144,11 @@ export function DiscoveryWorkspace({ initialLeads, initialNextCursor }: { initia
         </select>
         <input type="text" aria-label="Filter region" placeholder="Region…" value={regionInput} onChange={(e) => setRegionInput(e.target.value)} style={{ maxWidth: 140 }} />
         <input type="text" aria-label="Filter platform" placeholder="Platform…" value={platformInput} onChange={(e) => setPlatformInput(e.target.value)} style={{ maxWidth: 140 }} />
-        <button type="button" className="btn" aria-pressed={assignedToMe} onClick={() => setAssignedToMe((v) => !v)}>
-          Assigned to me
+        <button type="button" className={assignedToMe ? "btn primary" : "btn"} aria-pressed={assignedToMe} onClick={() => setAssignedToMe((v) => !v)}>
+          {assignedToMe && <Icon name="check" />} Assigned to me
         </button>
-        <button type="button" className="btn" aria-pressed={followUpDue} onClick={() => setFollowUpDue((v) => !v)}>
-          Follow-up due
+        <button type="button" className={followUpDue ? "btn primary" : "btn"} aria-pressed={followUpDue} onClick={() => setFollowUpDue((v) => !v)}>
+          {followUpDue && <Icon name="check" />} Follow-up due
         </button>
         <div className="segment">
           <button type="button" className={layout === "table" ? "active" : ""} aria-label="Table view" aria-pressed={layout === "table"} onClick={() => setLayout("table")}>
@@ -174,6 +174,7 @@ export function DiscoveryWorkspace({ initialLeads, initialNextCursor }: { initia
         <EmptyState
           title={anyFilterActive ? "No matching Leads" : "No Leads in scope yet"}
           description={anyFilterActive ? "Try a different search, or clear filters." : "Leads you're authorized to see will appear here."}
+          icon={anyFilterActive ? "search" : "users"}
           action={
             anyFilterActive ? (
               <button className="btn" type="button" onClick={clearFilters}>

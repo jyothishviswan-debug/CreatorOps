@@ -1,5 +1,7 @@
 import type { ReactNode } from "react";
 
+import { Icon, type IconName } from "./icons";
+
 export function StateGrid({ children }: { children: ReactNode }) {
   return <div className="stategrid">{children}</div>;
 }
@@ -27,13 +29,16 @@ export function EmptyState({
   title,
   description,
   action,
+  icon = "search",
 }: {
   title: string;
   description?: string;
   action?: ReactNode;
+  icon?: IconName;
 }) {
   return (
     <div className="stateempty">
+      <Icon name={icon} />
       <h2>{title}</h2>
       {description && <p>{description}</p>}
       {action}

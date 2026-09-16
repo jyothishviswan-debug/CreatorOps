@@ -18,7 +18,7 @@ export default async function DiscoveryLeadDetailPage({ params }: { params: Prom
     return (
       <AppShell>
         <section className="panel">
-          <EmptyState title="Access denied" description="You don't have permission to view this Lead." />
+          <EmptyState title="Access denied" description="You don't have permission to view this Lead." icon="lock" />
         </section>
       </AppShell>
     );

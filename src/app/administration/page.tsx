@@ -53,7 +53,7 @@ export default async function AdministrationOverviewPage() {
         </div>
         <ModuleTabs tabs={TABS} />
         <section className="panel">
-          <EmptyState title="Access denied" description="You don't have permission to view Administration governance data." />
+          <EmptyState title="Access denied" description="You don't have permission to view Administration governance data." icon="lock" />
         </section>
       </AppShell>
     );
