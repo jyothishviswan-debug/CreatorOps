@@ -170,7 +170,13 @@ test("a stale save (edited elsewhere first) is rejected with a reload prompt, no
 });
 
 test("sensitive-access category add/remove on the Access page", async ({ page }) => {
-  const category = `e2e_category_${Date.now()}`;
+  // The category picker is a fixed catalog dropdown, not free text (an
+  // admin shouldn't have to know the raw category id) - Viewer starts
+  // with no sensitive categories granted (seed-access-data.ts), so this
+  // exercises the full add/remove cycle without colliding with any other
+  // seeded identity's categories.
+  const category = "partner_contact_info";
+  const categoryLabel = "Partner contact info";
 
   await page.goto("/administration/access");
   // Exact match: the role-segment button's accessible name is exactly
@@ -180,17 +186,18 @@ test("sensitive-access category add/remove on the Access page", async ({ page })
   await page.getByRole("button", { name: "Viewer", exact: true }).click();
   await expect(page.getByText(`No sensitive categories granted to Viewer.`)).toBeVisible();
 
-  await page.getByLabel("New sensitive category").fill(category);
+  await page.getByLabel("New sensitive category").selectOption(category);
   await page.getByRole("button", { name: "+ Add" }).click();
-  // The category is unique per test run, so a plain substring match is
-  // unambiguous - the chip's own text node sits beside a "✕" remove
-  // button inside the same element, so an exact whole-element match
-  // wouldn't find it.
-  await expect(page.getByText(category)).toBeVisible();
+  // Scoped to the granted-category pill, not a page-wide text match - once
+  // removed, the category's label reappears as a plain <option> in the
+  // picker (no longer excluded from the available list), which a
+  // page-wide getByText would also match.
+  const categoryPill = page.locator(".pill.purple", { hasText: categoryLabel });
+  await expect(categoryPill).toBeVisible();
 
   page.once("dialog", (dialog) => dialog.accept());
   await page.getByLabel(`Remove ${category}`).click();
-  await expect(page.getByText(category)).toHaveCount(0);
+  await expect(categoryPill).toHaveCount(0);
 });
 
 test("an access-changing mutation is visible as an audit event immediately after", async ({ page }) => {

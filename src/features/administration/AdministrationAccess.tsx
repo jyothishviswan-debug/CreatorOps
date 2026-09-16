@@ -11,6 +11,7 @@ import { AccessMatrix } from "./AccessMatrix";
 import { getEffectiveAccess, addSensitiveGrant, listUsers, removeSensitiveGrant } from "./api-client";
 import { FEATURES } from "@/server/authz/features";
 import { ROLES, ROLE_LABELS, type Role } from "@/server/authz/roles";
+import { SENSITIVE_CATEGORIES } from "@/server/authz/sensitive-categories";
 import type { AdminUserDto } from "@/server/administration/types";
 import type { EffectiveAccessDto } from "@/server/administration/effective-access-service";
 
@@ -146,7 +147,7 @@ export function AdministrationAccess({
             <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 14 }}>
               {categories.map((value) => (
                 <span key={value} className="pill purple" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-                  {value}
+                  {SENSITIVE_CATEGORIES.find((c) => c.id === value)?.label ?? value}
                   <button type="button" aria-label={`Remove ${value}`} onClick={() => handleRemoveCategory(value)} style={{ padding: 0, lineHeight: 1 }}>
                     ✕
                   </button>
@@ -156,8 +157,15 @@ export function AdministrationAccess({
           )}
 
           <form onSubmit={handleAddCategory} style={{ display: "flex", gap: 8, maxWidth: 360 }}>
-            <input type="text" placeholder="e.g. finance_amounts" value={category} onChange={(e) => setCategory(e.target.value)} aria-label="New sensitive category" />
-            <button type="submit" className="btn" disabled={categoryBusy}>
+            <select value={category} onChange={(e) => setCategory(e.target.value)} aria-label="New sensitive category">
+              <option value="">Select a category…</option>
+              {SENSITIVE_CATEGORIES.filter((c) => !categories.includes(c.id)).map((c) => (
+                <option key={c.id} value={c.id} title={c.description}>
+                  {c.label}
+                </option>
+              ))}
+            </select>
+            <button type="submit" className="btn" disabled={categoryBusy || !category}>
               {categoryBusy ? "Adding…" : "+ Add"}
             </button>
           </form>

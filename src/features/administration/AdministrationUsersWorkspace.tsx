@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Toolbar, SearchInput } from "@/ui/Table";
 import { Pill } from "@/ui/Badge";
 import { EmptyState, Skeleton } from "@/ui/States";
+import { Icon } from "@/ui/icons";
 import { initialsOf } from "@/features/shared/types";
 import { Pager } from "./Pager";
 import { ROLES, ROLE_LABELS, type Role } from "@/server/authz/roles";
@@ -115,11 +116,23 @@ export function AdministrationUsersWorkspace({ initialUsers, initialNextCursor }
           {density ? "Comfortable" : "Compact"} rows
         </button>
         <div className="segment">
-          <button type="button" className={layout === "table" ? "active" : ""} onClick={() => setLayout("table")}>
-            Table
+          <button
+            type="button"
+            className={layout === "table" ? "active" : ""}
+            aria-label="Table view"
+            aria-pressed={layout === "table"}
+            onClick={() => setLayout("table")}
+          >
+            <Icon name="table" />
           </button>
-          <button type="button" className={layout === "cards" ? "active" : ""} onClick={() => setLayout("cards")}>
-            Cards
+          <button
+            type="button"
+            className={layout === "cards" ? "active" : ""}
+            aria-label="Cards view"
+            aria-pressed={layout === "cards"}
+            onClick={() => setLayout("cards")}
+          >
+            <Icon name="grid" />
           </button>
         </div>
       </Toolbar>

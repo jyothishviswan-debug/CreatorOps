@@ -6,6 +6,7 @@ import { useRouter } from "next/navigation";
 import { Toolbar, SearchInput } from "./Table";
 import { Pill } from "./Badge";
 import { EmptyState } from "./States";
+import { Icon } from "./icons";
 import type { ModuleWorkspace, RecordRow, Tone } from "@/features/shared/types";
 import { statusTone } from "@/features/shared/types";
 
@@ -54,11 +55,23 @@ export function WorkspaceView({ workspace, basePath }: { workspace: ModuleWorksp
           {density ? "Comfortable" : "Compact"} rows
         </button>
         <div className="segment">
-          <button type="button" className={layout === "table" ? "active" : ""} onClick={() => setLayout("table")}>
-            Table
+          <button
+            type="button"
+            className={layout === "table" ? "active" : ""}
+            aria-label="Table view"
+            aria-pressed={layout === "table"}
+            onClick={() => setLayout("table")}
+          >
+            <Icon name="table" />
           </button>
-          <button type="button" className={layout === "cards" ? "active" : ""} onClick={() => setLayout("cards")}>
-            Cards
+          <button
+            type="button"
+            className={layout === "cards" ? "active" : ""}
+            aria-label="Cards view"
+            aria-pressed={layout === "cards"}
+            onClick={() => setLayout("cards")}
+          >
+            <Icon name="grid" />
           </button>
         </div>
       </Toolbar>
