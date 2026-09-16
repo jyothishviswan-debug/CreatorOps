@@ -20,7 +20,9 @@ function StoryPanel() {
   return (
     <aside className="story">
       <div className="brand">
-        <span className="mark">c</span>
+        <span className="mark">
+          <Image src="/logo.png" alt="" width={20} height={20} style={{ filter: "brightness(0) invert(1)" }} priority />
+        </span>
         <div>
           CreatorOps
           <small>PARTNERSHIP WORKSPACE</small>
