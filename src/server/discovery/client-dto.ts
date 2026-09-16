@@ -45,6 +45,8 @@ export type LeadDto = {
   managerRef: string | null;
   managerDisplayName: string | null;
   kycPackageComplete: boolean;
+  proposalNumber: number | null;
+  proposalPlatformCode: string | null;
   duplicateCheck: DuplicateCheckResult | null;
   conversion: LeadConversionRecord | null;
   createdAt: string;
@@ -97,6 +99,8 @@ export async function toLeadDto(doc: LeadDoc): Promise<LeadDto> {
     managerRef: manager.ref,
     managerDisplayName: manager.displayName,
     kycPackageComplete: doc.kycPackageComplete,
+    proposalNumber: doc.proposalNumber,
+    proposalPlatformCode: doc.proposalPlatformCode,
     duplicateCheck: doc.duplicateCheck,
     conversion: doc.conversion,
     createdAt: doc.createdAt,

@@ -7,9 +7,22 @@ import { Pill } from "@/ui/Badge";
 import { Icon } from "@/ui/icons";
 import type { LeadDto } from "@/server/discovery/client-dto";
 import type { ManagerCandidateDto } from "@/server/discovery/user-picker";
-import { ASSET_DECISIONS, REVIEW_OUTCOMES, TARGET_AUDIENCES, type AssetDecisionKind, type ReviewOutcome, type TargetAudience } from "@/server/discovery/types";
+import { ASSET_DECISIONS, REVIEW_OUTCOMES, TARGET_AUDIENCES, type AssetDecisionKind, type LeadKycAttachment, type ReviewOutcome, type TargetAudience } from "@/server/discovery/types";
 import type { DiscoveryApiResult } from "./api-client";
-import { assignManager, checkLeadDuplicates, getLeadKyc, recordOutreach, recordReview, saveAssetDecision, saveCommercial, saveDiscoveryAgreement, saveLeadKyc, saveResearch } from "./api-client";
+import {
+  addKycLinkAttachment,
+  assignManager,
+  checkLeadDuplicates,
+  getLeadKyc,
+  recordOutreach,
+  recordReview,
+  saveAssetDecision,
+  saveCommercial,
+  saveDiscoveryAgreement,
+  saveLeadKyc,
+  saveResearch,
+  uploadKycAttachment,
+} from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
 import { REVIEW_OUTCOME_LABELS } from "./format";
 import { ManagerPicker } from "./ManagerPicker";
@@ -589,6 +602,7 @@ function KycPanel({ lead, onSaved }: StageProps) {
   const [gstNumber, setGstNumber] = useState("");
   const [gstCertificateRef, setGstCertificateRef] = useState("");
   const [existingKycVersion, setExistingKycVersion] = useState(0);
+  const [attachments, setAttachments] = useState<LeadKycAttachment[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -622,6 +636,7 @@ function KycPanel({ lead, onSaved }: StageProps) {
       setGstNumber(result.data.gst.number ?? "");
       setGstCertificateRef(result.data.gst.certificateRef ?? "");
       setExistingKycVersion(result.data.version);
+      setAttachments(result.data.attachments);
     }
   }
 
@@ -678,8 +693,9 @@ function KycPanel({ lead, onSaved }: StageProps) {
   }
 
   return (
+    <>
     <form onSubmit={handleSubmit}>
-      <p className="foundationnote">No postal address or address proof is collected. Evidence references are IDs/URLs recorded truthfully - this environment does not perform a live document upload.</p>
+      <p className="foundationnote">No postal address or address proof is collected. Evidence references above are plain IDs/URLs - use the attachments panel below for a real Drive-backed document link or upload.</p>
       <div className="fields">
         <div className="field">
           <label htmlFor="kyc-email">Email</label>
@@ -739,17 +755,148 @@ function KycPanel({ lead, onSaved }: StageProps) {
             </div>
           </>
         )}
-        <div className="field">
-          <label>Document upload</label>
-          <button type="button" className="btn" disabled title="Live document upload is unavailable in this environment - use the evidence-reference fields above.">
-            <Icon name="upload" /> Upload (unavailable)
-          </button>
-        </div>
       </div>
       <ErrorBanner message={saveError} />
       <button type="submit" className="btn primary" disabled={saving} style={{ marginTop: 14 }}>
         {saving ? "Saving…" : "Save KYC package"}
       </button>
-    </form>
+      </form>
+      {existingKycVersion > 0 ? (
+        <KycAttachments leadRef={lead.leadRef} version={existingKycVersion} attachments={attachments} onChanged={(version, next) => {
+          setExistingKycVersion(version);
+          setAttachments(next);
+        }} />
+      ) : (
+        <p className="foundationnote" style={{ marginTop: 18 }}>
+          Save the KYC package above before adding document links or uploads.
+        </p>
+      )}
+    </>
+  );
+}
+
+const DOC_TYPE_LABELS: Record<LeadKycAttachment["docType"], string> = {
+  aadhaar: "Aadhaar",
+  pan: "PAN",
+  bank: "Bank proof",
+  gst: "GST certificate",
+  other: "Other",
+};
+const DOC_TYPES = Object.keys(DOC_TYPE_LABELS) as LeadKycAttachment["docType"][];
+
+// Step 6B.1: a supplementary attachment manager, additional to (never a
+// replacement for) the plain evidence-reference text fields in the form
+// above. One document at a time: pick its type, choose link or upload,
+// submit - real uploads land in the Lead's own Drive subfolder (named
+// from its proposal number, allocated when Agreement was confirmed) and
+// only the real Drive link Drive returns is ever stored.
+function KycAttachments({
+  leadRef,
+  version,
+  attachments,
+  onChanged,
+}: {
+  leadRef: string;
+  version: number;
+  attachments: LeadKycAttachment[];
+  onChanged: (version: number, attachments: LeadKycAttachment[]) => void;
+}) {
+  const [docType, setDocType] = useState<LeadKycAttachment["docType"]>("aadhaar");
+  const [mode, setMode] = useState<"link" | "upload">("link");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleAdd(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    if (mode === "link") {
+      if (!linkUrl.trim()) return;
+      setBusy(true);
+      const result = await addKycLinkAttachment(leadRef, { docType, url: linkUrl.trim(), expectedKycVersion: version });
+      setBusy(false);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setLinkUrl("");
+      onChanged(result.data.version, [...attachments, result.data.attachment]);
+      return;
+    }
+
+    if (!file) return;
+    setBusy(true);
+    const result = await uploadKycAttachment(leadRef, { docType, file, expectedKycVersion: version });
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setFile(null);
+    onChanged(result.data.version, [...attachments, result.data.attachment]);
+  }
+
+  return (
+    <div className="panel" style={{ marginTop: 18 }}>
+      <div className="panelhead">
+        <h2>Document attachments</h2>
+      </div>
+      <div className="panelbody">
+        <p className="foundationnote">Add a link to an existing document, or upload a real file - uploads are stored in this Lead&rsquo;s own Drive folder, never simulated.</p>
+
+        <form onSubmit={handleAdd}>
+          <div className="fields">
+            <div className="field">
+              <label htmlFor="attach-doc-type">Document name</label>
+              <select id="attach-doc-type" value={docType} onChange={(e) => setDocType(e.target.value as LeadKycAttachment["docType"])}>
+                {DOC_TYPES.map((type) => (
+                  <option key={type} value={type}>
+                    {DOC_TYPE_LABELS[type]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="attach-mode">Source</label>
+              <select id="attach-mode" value={mode} onChange={(e) => setMode(e.target.value as "link" | "upload")}>
+                <option value="link">Doc link</option>
+                <option value="upload">Upload file</option>
+              </select>
+            </div>
+            {mode === "link" ? (
+              <div className="field full">
+                <label htmlFor="attach-url">Document link</label>
+                <input id="attach-url" type="url" placeholder="https://…" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} required />
+              </div>
+            ) : (
+              <div className="field full">
+                <label htmlFor="attach-file">Choose file</label>
+                <input id="attach-file" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
+              </div>
+            )}
+          </div>
+          <ErrorBanner message={error} />
+          <button type="submit" className="btn" disabled={busy} style={{ marginTop: 12 }}>
+            <Icon name="upload" /> {busy ? "Adding…" : mode === "link" ? "Add link" : "Upload"}
+          </button>
+        </form>
+
+        {attachments.length > 0 && (
+          <ul className="checklist" style={{ marginTop: 18 }}>
+            {attachments.map((a, i) => (
+              <li key={`${a.docType}-${a.addedAt}-${i}`}>
+                <b>{DOC_TYPE_LABELS[a.docType]}</b> ·{" "}
+                <a href={a.url} target="_blank" rel="noreferrer">
+                  {a.kind === "upload" ? a.fileName ?? "Uploaded file" : "Open link"}
+                </a>{" "}
+                <small>{a.kind === "upload" ? "uploaded to Drive" : "linked"}</small>
+              </li>
+            ))}
+          </ul>
+        )}
+      </div>
+    </div>
   );
 }

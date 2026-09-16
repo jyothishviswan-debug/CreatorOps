@@ -273,6 +273,14 @@ export const leadDocSchema = z.object({
   duplicateCheck: duplicateCheckResultSchema.nullable().default(null),
   conversion: conversionRecordSchema.nullable().default(null),
 
+  // Step 6B.1: allocated exactly once, the first time this Lead's
+  // Agreement evidence is confirmed (see lead-service.ts's
+  // saveDiscoveryAgreement) - never reassigned afterward, even if the
+  // platform is edited later, so every KYC document uploaded for this
+  // Lead always lands in the same Drive subfolder.
+  proposalNumber: z.number().int().positive().nullable().default(null),
+  proposalPlatformCode: z.string().min(1).max(10).nullable().default(null),
+
   createdAt: z.string().min(1),
   createdByUserRef: z.string().min(1),
   updatedAt: z.string().min(1),
@@ -306,10 +314,31 @@ export const leadRestrictedKycDocSchema = z.object({
     number: z.string().min(1).max(30).optional(),
     certificateRef: z.string().min(1).max(300).optional(),
   }),
+
+  // Step 6B.1: a supplementary attachment list, additional to (never a
+  // replacement for) the plain evidenceRef/proofRef/certificateRef text
+  // fields above. Each entry is either an operator-supplied link or a
+  // real file uploaded to the Lead's own Drive subfolder - see
+  // drive-client.ts. "upload" entries never fabricate success; the
+  // stored url is always the real Drive webViewLink returned by the API.
+  attachments: z
+    .array(
+      z.object({
+        docType: z.enum(["aadhaar", "pan", "bank", "gst", "other"]),
+        kind: z.enum(["link", "upload"]),
+        url: z.string().min(1).max(1000),
+        fileName: z.string().min(1).max(300).nullable().default(null),
+        addedAt: z.string().min(1),
+        addedByUserRef: z.string().min(1),
+      }),
+    )
+    .default([]),
+
   updatedAt: z.string().min(1),
   updatedByUserRef: z.string().min(1),
 });
 export type LeadRestrictedKycDoc = z.infer<typeof leadRestrictedKycDocSchema>;
+export type LeadKycAttachment = LeadRestrictedKycDoc["attachments"][number];
 
 // --- Canonical Partner / Partner Account (conversion targets) ------------
 // Deliberately minimal - Step 6A only needs enough of a canonical

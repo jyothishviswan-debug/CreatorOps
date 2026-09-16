@@ -7,7 +7,7 @@
 // `not_ready` code (readiness-blocked conversion/transition) that
 // carries structured `blockers` the caller needs to render.
 import type { LeadDto } from "@/server/discovery/client-dto";
-import type { LeadKycDto, SaveKycInput } from "@/server/discovery/kyc-service";
+import type { AddKycLinkAttachmentInput, LeadKycDto, SaveKycInput } from "@/server/discovery/kyc-service";
 import type { ConversionDto, ConvertLeadInput } from "@/server/discovery/conversion-service";
 import type {
   AssignManagerInput,
@@ -25,7 +25,7 @@ import type {
 } from "@/server/discovery/lead-service";
 import type { LeadListCursor } from "@/server/discovery/firestore";
 import type { LeadEventListCursor } from "@/server/discovery/lead-events";
-import type { LeadEvent, ReadinessResult, DuplicateCheckResult } from "@/server/discovery/types";
+import type { LeadEvent, ReadinessResult, DuplicateCheckResult, LeadKycAttachment } from "@/server/discovery/types";
 import type { RestoreLeadInput, TransitionLeadInput } from "@/server/discovery/lifecycle-service";
 import type { ManagerCandidateDto } from "@/server/discovery/user-picker";
 
@@ -165,6 +165,42 @@ export function saveLeadKyc(leadRef: string, input: SaveKycInput): Promise<Disco
   return call(`/api/discovery/leads/${encodeURIComponent(leadRef)}/kyc`, { method: "PUT", body: JSON.stringify(input) });
 }
 
+export function addKycLinkAttachment(leadRef: string, input: AddKycLinkAttachmentInput): Promise<DiscoveryApiResult<{ version: number; attachment: LeadKycAttachment }>> {
+  return call(`/api/discovery/leads/${encodeURIComponent(leadRef)}/kyc/attachments`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// A real file upload - deliberately bypasses `call`'s JSON Content-Type
+// header (FormData needs the browser to set its own multipart boundary)
+// and shares its response-parsing logic instead of duplicating it.
+export async function uploadKycAttachment(
+  leadRef: string,
+  input: { docType: string; file: File; expectedKycVersion: number },
+): Promise<DiscoveryApiResult<{ version: number; attachment: LeadKycAttachment }>> {
+  const form = new FormData();
+  form.set("docType", input.docType);
+  form.set("expectedKycVersion", String(input.expectedKycVersion));
+  form.set("file", input.file);
+
+  let res: Response;
+  try {
+    res = await fetch(`/api/discovery/leads/${encodeURIComponent(leadRef)}/kyc/attachments`, { method: "POST", body: form });
+  } catch {
+    return { ok: false, status: 0, code: "network_error", error: "Could not reach the server. Check your connection and try again." };
+  }
+
+  if (res.ok) return { ok: true, data: (await res.json()) as { version: number; attachment: LeadKycAttachment } };
+
+  let error = "Something went wrong.";
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (typeof body.error === "string") error = body.error;
+  } catch {
+    // No JSON body - keep the generic message.
+  }
+  const code: DiscoveryApiErrorCode = res.status === 401 || res.status === 403 ? "unauthorized" : res.status === 404 ? "not_found" : res.status === 400 ? "invalid_input" : res.status === 409 ? "stale_write" : "internal";
+  return { ok: false, status: res.status, code, error };
+}
+
 // ---- Duplicate check ----
 
 export function checkLeadDuplicates(leadRef: string, expectedVersion: number): Promise<DiscoveryApiResult<LeadDto>> {
@@ -187,7 +223,7 @@ export function convertLead(leadRef: string, input: ConvertLeadInput): Promise<D
 
 // ---- History ----
 
-export type ListLeadHistoryResult = { events: (LeadEvent & { id: string })[]; nextCursor: LeadEventListCursor | null };
+export type ListLeadHistoryResult = { events: (LeadEvent & { id: string; actorDisplayName: string | null })[]; nextCursor: LeadEventListCursor | null };
 
 export function getLeadHistory(leadRef: string, input: ListLeadHistoryInput = {}): Promise<DiscoveryApiResult<ListLeadHistoryResult>> {
   const qs = query({

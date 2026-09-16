@@ -73,21 +73,30 @@ export default async function DiscoveryOverviewPage() {
 
   const recentlyUpdated = [...leads].sort((a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime()).slice(0, 4);
 
+  // Golden master's own "Discovery Pipeline" panel (docs/reference/
+  // CreatorOps_UI_Golden_Master.html) is a 5-stage CUMULATIVE funnel -
+  // Identified/Shortlisted/Outreach sent/In conversation/Converted, each
+  // "reached this far or further" - never a flat per-lifecycle-state
+  // bar chart. Each bucket is a direct evidence signal (not a lifecycle
+  // guess), so a Lead parked in an alternative outcome (Watchlist etc.)
+  // still counts toward every stage it genuinely reached.
+  const shortlisted = leads.filter((l) => l.latestReview?.outcome === "SHORTLIST").length;
+  const outreachSent = leads.filter((l) => l.outreachSummary != null).length;
+  const inConversation = leads.filter((l) => l.respondedAt != null).length;
+
   const topPanels: OverviewPanelData[] = [
     {
       kind: "funnel",
       icon: "layers",
       title: "Discovery Pipeline",
-      note: "In-scope Leads by lifecycle stage",
-      foot: total > 0 ? `${converted} / ${total} converted · ${((converted / total) * 100).toFixed(1)}% conversion.` : "No Leads in scope yet.",
+      note: "Cumulative stage reach · current scope",
+      foot: total > 0 ? `${converted} / ${total} converted · ${((converted / total) * 100).toFixed(1)}% conversion · stages are cumulative.` : "No Leads in scope yet.",
       span: 6,
       rows: [
-        { label: "New", value: lifecycleCounts.get("NEW") ?? 0 },
-        { label: "Researching", value: lifecycleCounts.get("RESEARCHING") ?? 0 },
-        { label: "Contacted", value: lifecycleCounts.get("CONTACTED") ?? 0 },
-        { label: "Responded", value: lifecycleCounts.get("RESPONDED") ?? 0 },
-        { label: "Evaluating", value: lifecycleCounts.get("EVALUATING") ?? 0 },
-        { label: "Conversion ready", value: lifecycleCounts.get("CONVERSION_READY") ?? 0 },
+        { label: "Identified", value: total },
+        { label: "Shortlisted", value: shortlisted },
+        { label: "Outreach sent", value: outreachSent },
+        { label: "In conversation", value: inConversation },
         { label: "Converted", value: converted },
       ],
     },

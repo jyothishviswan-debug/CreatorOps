@@ -14,6 +14,9 @@ importers:
       firebase-admin:
         specifier: ^14.4.0
         version: 14.4.0(@firebase/app-compat@0.5.18)(@firebase/app@0.16.2)(supports-color@7.2.0)
+      googleapis:
+        specifier: ^181.0.0
+        version: 181.0.0(supports-color@7.2.0)
       next:
         specifier: 16.3.5
         version: 16.3.5(@babel/core@7.29.7(supports-color@7.2.0))(@opentelemetry/api@1.9.1)(@playwright/test@1.63.0)(@types/node@20.19.43)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
@@ -3038,6 +3041,10 @@ packages:
   googleapis-common@9.0.4:
     resolution: {integrity: sha512-fcI5bm1gN+9MNb+gvANRPFsxaJ07h/ZYvKCh6H3RoDJBUTwp5ySaCpCqnmX8gnGJUD/9bKmkacivRJT1g+xXyg==}
     engines: {node: '>=22'}
+
+  googleapis@181.0.0:
+    resolution: {integrity: sha512-fCzsqaVjA5FrA9DdXn4WlnmnLUvqjWx0JGZzcHbSC9iMfb8PK1lTxsvYpnaRf0j4b6usfKlW+YHSKjHnkgqmjQ==}
+    engines: {node: '>=22.0.0'}
 
   gopd@1.2.0:
     resolution: {integrity: sha512-ZUKRh6/kUFoAiTAtTYPZJ3hw9wNxx+BIBOijnlG9PnrJsCcSjs1wyyD6vJpaYtgnzDrKYRSqf3OO6Rfa93xsRg==}
@@ -8666,6 +8673,13 @@ snapshots:
       google-logging-utils: 2.0.1
       qs: 6.16.0
       url-template: 2.0.8
+    transitivePeerDependencies:
+      - supports-color
+
+  googleapis@181.0.0(supports-color@7.2.0):
+    dependencies:
+      google-auth-library: 11.0.2(supports-color@7.2.0)
+      googleapis-common: 9.0.4(supports-color@7.2.0)
     transitivePeerDependencies:
       - supports-color
 

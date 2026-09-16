@@ -4,12 +4,14 @@ import { getUserDocByRef } from "@/server/authz/firestore";
 import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import type { ActionId } from "@/server/authz/actions";
 import type { ActorContext } from "@/server/authz/types";
+import { getAdminFirestore } from "@/server/firebase/admin";
 import { toLeadDto, type LeadDto } from "./client-dto";
 import { checkForDuplicates } from "./duplicate-check";
 import { requireDiscoveryAccess, requireDiscoveryFeatureAccess, requireLeadInScope } from "./discovery-gate";
 import { generateLeadRef } from "./ids";
 import { getLeadDocByRef, leadsCollection, listLeadDocs, runLeadMutation, type LeadListCursor } from "./firestore";
 import { listLeadEvents, writeLeadEvent, type LeadEventListCursor } from "./lead-events";
+import { platformCodeFor, readNextProposalNumber } from "./proposal-number";
 import type { LeadEvent } from "./types";
 import {
   assetDecisionKindSchema,
@@ -18,6 +20,7 @@ import {
   discoveryInvalidInputResult,
   discoveryUnauthorizedResult,
   duplicateCheckResultSchema,
+  leadDocSchema,
   leadLifecycleSchema,
   leadSourceSchema,
   outreachDirectionSchema,
@@ -173,6 +176,8 @@ export async function createLead(actor: ActorContext | null, rawInput: unknown, 
     kycPackageComplete: false,
     duplicateCheck: null,
     conversion: null,
+    proposalNumber: null,
+    proposalPlatformCode: null,
     createdAt: now,
     createdByUserRef: actor.userRef,
     updatedAt: now,
@@ -420,6 +425,8 @@ const saveAgreementInputSchema = z.object({
 });
 export type SaveAgreementInput = z.input<typeof saveAgreementInputSchema>;
 
+type SaveAgreementTxResult = { kind: "ok"; doc: LeadDoc } | { kind: "stale" } | { kind: "not_found" };
+
 export async function saveDiscoveryAgreement(actor: ActorContext | null, leadRef: unknown, rawInput: unknown, requestId: string): Promise<DiscoveryServiceResult<LeadDto>> {
   const loaded = await loadAuthorizedLead(actor, leadRef, "manage_commercial");
   if (!loaded.ok) return loaded.error;
@@ -428,7 +435,25 @@ export async function saveDiscoveryAgreement(actor: ActorContext | null, leadRef
   if (!parsed.success) return discoveryInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
   const input = parsed.data;
 
-  const result = await runLeadMutation(loaded.lead.uid, input.expectedVersion, (current) => {
+  // A custom transaction, not the shared single-document runLeadMutation
+  // helper - the first time a Lead's Agreement evidence is confirmed,
+  // this also allocates its Drive proposal number from a SECOND
+  // document (a per-platform-code counter), which must happen inside
+  // the same transaction as the Agreement write itself so the two can
+  // never disagree. Firestore requires every read before any write, so
+  // the (conditional) counter read happens before either document is
+  // written.
+  const db = getAdminFirestore();
+  const leadDocRef = leadsCollection().doc(loaded.lead.uid);
+
+  const result = await db.runTransaction<SaveAgreementTxResult>(async (tx) => {
+    const snap = await tx.get(leadDocRef);
+    if (!snap.exists) return { kind: "not_found" };
+    const parsedLead = leadDocSchema.safeParse(snap.data());
+    if (!parsedLead.success) return { kind: "not_found" };
+    const current = parsedLead.data;
+    if (current.version !== input.expectedVersion) return { kind: "stale" };
+
     const now = new Date().toISOString();
     const discoveryAgreement = discoveryAgreementEvidenceSchema.parse({
       ...(input.summary !== undefined ? { summary: input.summary } : {}),
@@ -437,7 +462,20 @@ export async function saveDiscoveryAgreement(actor: ActorContext | null, leadRef
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
     });
-    return { ...current, discoveryAgreement, updatedAt: now, updatedByUserRef: actor!.userRef };
+
+    let proposalNumber = current.proposalNumber;
+    let proposalPlatformCode = current.proposalPlatformCode;
+    if (input.confirmed && proposalNumber == null) {
+      const code = platformCodeFor(current.platform);
+      const counter = await readNextProposalNumber(tx, db, code);
+      tx.set(counter.ref, { next: counter.next + 1 }, { merge: true });
+      proposalNumber = counter.next;
+      proposalPlatformCode = code;
+    }
+
+    const updated: LeadDoc = { ...current, discoveryAgreement, proposalNumber, proposalPlatformCode, version: current.version + 1, updatedAt: now, updatedByUserRef: actor!.userRef };
+    tx.set(leadDocRef, updated);
+    return { kind: "ok", doc: updated };
   });
 
   if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Lead not found." };
@@ -602,11 +640,13 @@ const listLeadHistoryInputSchema = z.object({
 });
 export type ListLeadHistoryInput = z.input<typeof listLeadHistoryInputSchema>;
 
+export type LeadHistoryEventDto = LeadEvent & { id: string; actorDisplayName: string | null };
+
 export async function getLeadHistory(
   actor: ActorContext | null,
   leadRef: unknown,
   rawInput: unknown,
-): Promise<DiscoveryServiceResult<{ events: (LeadEvent & { id: string })[]; nextCursor: LeadEventListCursor | null }>> {
+): Promise<DiscoveryServiceResult<{ events: LeadHistoryEventDto[]; nextCursor: LeadEventListCursor | null }>> {
   if (!actor) return discoveryUnauthorizedResult("not_authenticated");
   const gate = await requireDiscoveryFeatureAccess(actor);
   if (!gate.ok) return discoveryUnauthorizedResult(gate.reason);
@@ -622,5 +662,14 @@ export async function getLeadHistory(
   if (!parsed.success) return discoveryInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
 
   const page = await listLeadEvents(lead.uid, { limit: parsed.data.limit ?? 20, cursor: parsed.data.cursor });
-  return { ok: true, data: page };
+
+  // Resolve each distinct actor's display name once, not once per event
+  // - a short activity feed page usually has far fewer unique actors
+  // than events. Fails soft to null (a display concern only) rather
+  // than dropping the event if a user doc can no longer be found.
+  const uniqueActorRefs = [...new Set(page.events.map((e) => e.actorUserRef))];
+  const actorEntries = await Promise.all(uniqueActorRefs.map(async (ref) => [ref, (await getUserDocByRef(ref))?.displayName ?? null] as const));
+  const actorNames = new Map(actorEntries);
+
+  return { ok: true, data: { events: page.events.map((e) => ({ ...e, actorDisplayName: actorNames.get(e.actorUserRef) ?? null })), nextCursor: page.nextCursor } };
 }

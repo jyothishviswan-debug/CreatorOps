@@ -37,6 +37,8 @@ function fullyReadyLead(overrides: Partial<LeadDoc> = {}): LeadDoc {
     kycPackageComplete: true,
     duplicateCheck: { status: "none", matches: [], checkedAt: now },
     conversion: null,
+    proposalNumber: null,
+    proposalPlatformCode: null,
     createdAt: now,
     createdByUserRef: "ref-1",
     updatedAt: now,

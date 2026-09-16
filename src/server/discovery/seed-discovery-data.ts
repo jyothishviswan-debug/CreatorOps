@@ -61,6 +61,8 @@ export async function seedDiscoveryData(): Promise<void> {
       kycPackageComplete: false,
       duplicateCheck: null,
       conversion: null,
+      proposalNumber: null,
+      proposalPlatformCode: null,
       createdAt: now,
       createdByUserRef: headUserRef,
       updatedAt: now,

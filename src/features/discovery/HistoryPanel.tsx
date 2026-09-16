@@ -17,7 +17,7 @@ import { absoluteTime, eventLabel } from "./format";
 // never changes across those, so it can't be the only effect dependency
 // or this would fetch once at mount and never again.
 export function HistoryPanel({ leadRef, refreshKey }: { leadRef: string; refreshKey: number }) {
-  const [events, setEvents] = useState<(LeadEvent & { id: string })[]>([]);
+  const [events, setEvents] = useState<(LeadEvent & { id: string; actorDisplayName: string | null })[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -56,7 +56,7 @@ export function HistoryPanel({ leadRef, refreshKey }: { leadRef: string; refresh
               <div>
                 <b>{eventLabel(event.kind)}</b>
                 <small>
-                  {absoluteTime(event.createdAt)} · {event.actorUserRef}
+                  {absoluteTime(event.createdAt)} · {event.actorDisplayName ?? "Unknown actor"}
                 </small>
               </div>
             </div>
