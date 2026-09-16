@@ -781,7 +781,10 @@ function KycPanel({ lead, onSaved }: StageProps) {
           </label>
         </div>
         {gstApplicable && (
-          <div className="field full">
+          // Explicit column 1, not `.field.full` - this only needs to
+          // drop to its own row below the checkbox, not stretch across
+          // both columns (which would make the input oddly wide).
+          <div className="field" style={{ gridColumn: 1 }}>
             <label htmlFor="kyc-gst-number">GST number</label>
             <input id="kyc-gst-number" type="text" value={gstNumber} onChange={(e) => setGstNumber(e.target.value)} required />
           </div>
