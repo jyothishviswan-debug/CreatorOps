@@ -1,6 +1,7 @@
 "use client";
 
 import { useRef, useState, type FormEvent } from "react";
+import Image from "next/image";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FirebaseError } from "firebase/app";
 import { signInWithEmailAndPassword } from "firebase/auth";
@@ -53,7 +54,7 @@ export function SignInForm() {
     setFormError("");
 
     const nextErrors: FieldErrors = {};
-    if (!emailRef.current?.checkValidity()) nextErrors.email = "Enter a valid work email.";
+    if (!emailRef.current?.checkValidity()) nextErrors.email = "Enter a valid email address.";
     if (!passwordRef.current?.value) nextErrors.password = "Enter your password.";
     setFieldErrors(nextErrors);
 
@@ -107,15 +108,16 @@ export function SignInForm() {
       </div>
 
       <div className="formcontainer">
-        <div className="welcomemark">
-          <Icon name="signin" />
+        <div className="formbrand">
+          <Image src="/logo.png" alt="" width={40} height={40} priority />
+          <span>CreatorOps</span>
         </div>
         <h1>Welcome back.</h1>
         <p className="subtitle">Sign in to your CreatorOps workspace.</p>
 
         <form noValidate onSubmit={handleSubmit}>
           <div className="field">
-            <label htmlFor="email">Work email</label>
+            <label htmlFor="email">Email</label>
             <div className="inputwrap">
               <Icon name="mail" />
               <input
@@ -193,19 +195,13 @@ export function SignInForm() {
           </button>
         </form>
 
-        <div className="access">
-          Need access?
-          <button type="button" className="textbutton" onClick={() => openHelp("Request access")}>
-            Contact your administrator
-          </button>
-        </div>
+        <div className="access">&copy; {new Date().getFullYear()} CreatorOps. All rights reserved.</div>
         <p className="fineprint">
           Use your assigned work account.
           <br />
           Your workspace access is managed by your organisation.
         </p>
       </div>
-      <footer className="footer">CreatorOps &middot; Your programme, connected.</footer>
 
       <dialog ref={helpDialogRef} aria-labelledby="help-title">
         <h2 id="help-title">{helpTitle}</h2>

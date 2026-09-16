@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import Image from "next/image";
 
 import { Icon } from "@/ui/icons";
 import "@/ui/signin.css";
@@ -83,8 +84,9 @@ function FormSideFallback() {
         </div>
       </div>
       <div className="formcontainer">
-        <div className="welcomemark">
-          <Icon name="signin" />
+        <div className="formbrand">
+          <Image src="/logo.png" alt="" width={40} height={40} priority />
+          <span>CreatorOps</span>
         </div>
         <h1>Welcome back.</h1>
         <p className="subtitle">Sign in to your CreatorOps workspace.</p>
