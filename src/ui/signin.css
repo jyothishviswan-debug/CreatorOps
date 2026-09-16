@@ -1,0 +1,501 @@
+/* Ported from docs/reference/CreatorOps_Login.html. Scoped entirely under
+   .signin-page so it can never collide with foundation.css's own bare
+   element/class rules (input, dialog, .field, .brand, .eyebrow, etc.),
+   regardless of stylesheet import order. Reuses foundation.css's existing
+   --orange/--bright/--ink/--muted/--line tokens rather than redefining
+   them. */
+.signin-page {
+  color: var(--ink);
+}
+.signin-page button:focus-visible,
+.signin-page a:focus-visible,
+.signin-page input:focus-visible {
+  outline: 3px solid #e9a47e;
+  outline-offset: 3px;
+}
+.signin-page.page {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  min-height: 100svh;
+  padding: 18px;
+  gap: 18px;
+}
+.signin-page .story {
+  position: relative;
+  background: #19232f;
+  border-radius: 18px;
+  overflow: hidden;
+  color: white;
+  padding: 36px 44px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  min-height: 700px;
+}
+.signin-page .story:before {
+  content: "";
+  position: absolute;
+  width: 540px;
+  height: 540px;
+  border: 1px solid #ffffff09;
+  border-radius: 50%;
+  right: -235px;
+  top: 70px;
+  box-shadow: 0 0 0 70px #ffffff02, 0 0 0 140px #ffffff02;
+  pointer-events: none;
+}
+.signin-page .brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 22px;
+  font-weight: 700;
+  letter-spacing: -0.7px;
+}
+.signin-page .mark {
+  width: 34px;
+  height: 36px;
+  border-radius: 9px;
+  background: var(--bright);
+  display: grid;
+  place-items: center;
+  font-size: 25px;
+  color: #fff;
+}
+.signin-page .brand small {
+  display: block;
+  font-size: 8px;
+  color: #9eabba;
+  letter-spacing: 1.9px;
+  font-weight: 500;
+  margin-top: 1px;
+}
+.signin-page .storymain {
+  position: relative;
+  max-width: 500px;
+  margin: 50px 0;
+}
+.signin-page .eyebrow {
+  color: #f3a276;
+  font-size: 10px;
+  letter-spacing: 2.2px;
+  font-weight: 650;
+  margin-bottom: 17px;
+}
+.signin-page h1,
+.signin-page h2,
+.signin-page p {
+  margin: 0;
+}
+.signin-page .story h2 {
+  font-size: clamp(32px, 3.1vw, 47px);
+  font-weight: 600;
+  line-height: 1.18;
+  letter-spacing: -1.8px;
+}
+.signin-page .story h2 span {
+  color: #f3a276;
+}
+.signin-page .intro {
+  color: #aebac8;
+  font-size: 13px;
+  line-height: 1.8;
+  max-width: 385px;
+  margin-top: 20px;
+}
+.signin-page .preview {
+  margin-top: 37px;
+  border: 1px solid #ffffff15;
+  background: #ffffff06;
+  padding: 20px;
+  border-radius: 12px;
+  box-shadow: 0 15px 36px #00000012;
+}
+.signin-page .previewhead {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  font-size: 11px;
+  color: #d9e1e9;
+}
+.signin-page .tag {
+  color: #aebbc9;
+  border: 1px solid #ffffff1b;
+  border-radius: 4px;
+  padding: 2px 6px;
+  font-size: 8px;
+  letter-spacing: 1px;
+}
+.signin-page .journey {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-top: 18px;
+}
+.signin-page .journeystep {
+  padding: 14px 11px;
+  background: #ffffff05;
+  border: 1px solid #ffffff09;
+  border-radius: 7px;
+}
+.signin-page .journeystep svg {
+  width: 18px;
+  height: 18px;
+  color: #f3a276;
+  margin-bottom: 12px;
+}
+.signin-page .journeystep b {
+  display: block;
+  font-size: 11px;
+  font-weight: 550;
+}
+.signin-page .journeystep small {
+  display: block;
+  color: #93a3b5;
+  font-size: 9px;
+  margin-top: 4px;
+}
+.signin-page .previewfoot {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: #a5b5c5;
+  font-size: 10px;
+  margin-top: 16px;
+}
+.signin-page .dot {
+  background: #7bac96;
+  height: 5px;
+  width: 5px;
+  border-radius: 50%;
+}
+.signin-page .storyfoot {
+  color: #8e9dad;
+  font-size: 10px;
+  position: relative;
+  display: flex;
+  justify-content: space-between;
+  gap: 15px;
+}
+.signin-page .formside {
+  display: flex;
+  flex-direction: column;
+  padding: 24px 38px;
+  min-width: 0;
+}
+.signin-page .top {
+  display: flex;
+  justify-content: flex-end;
+  font-size: 10px;
+  color: #7b8793;
+  gap: 6px;
+  align-items: center;
+}
+.signin-page .top svg {
+  width: 13px;
+  height: 13px;
+}
+.signin-page .formcontainer {
+  width: 100%;
+  max-width: 368px;
+  margin: auto;
+  padding: 50px 0;
+}
+.signin-page .welcomemark {
+  display: grid;
+  place-items: center;
+  width: 45px;
+  height: 45px;
+  background: #fff0e6;
+  border: 1px solid #f2dfd2;
+  border-radius: 12px;
+  color: var(--orange);
+  margin-bottom: 25px;
+}
+.signin-page .welcomemark svg {
+  width: 21px;
+  height: 21px;
+}
+.signin-page h1 {
+  font-size: 29px;
+  letter-spacing: -0.9px;
+  font-weight: 650;
+}
+.signin-page .subtitle {
+  color: var(--muted);
+  font-size: 12px;
+  margin-top: 8px;
+  margin-bottom: 29px;
+}
+.signin-page .field {
+  /* foundation.css's global .field is a flex column (used by Form.tsx);
+     neutralize it back to a plain block here. */
+  display: block;
+  margin-bottom: 19px;
+}
+.signin-page .field label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 7px;
+}
+.signin-page .inputwrap {
+  /* foundation.css's global .inputwrap caps width for the app's search
+     boxes; this form needs the full formcontainer width instead. */
+  position: relative;
+  flex: none;
+  min-width: 0;
+  max-width: none;
+}
+.signin-page .inputwrap > svg {
+  position: absolute;
+  left: 13px;
+  top: 14px;
+  width: 15px;
+  height: 15px;
+  color: #8995a2;
+  pointer-events: none;
+}
+.signin-page input {
+  height: 44px;
+  border: 1px solid #dce1e6;
+  border-radius: 7px;
+  background: #fff;
+  padding: 0 40px;
+  width: 100%;
+  font-size: 12px;
+  color: var(--ink);
+  transition: border-color 0.15s;
+}
+.signin-page input::placeholder {
+  color: #9ba4ae;
+}
+.signin-page input:focus {
+  border-color: #ce784a;
+}
+.signin-page input[aria-invalid="true"] {
+  border-color: #b53e49;
+}
+.signin-page .eye {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+  border: 0;
+  background: transparent;
+  width: 36px;
+  height: 36px;
+  display: grid;
+  place-items: center;
+  color: #87929f;
+  border-radius: 4px;
+}
+.signin-page .eye svg {
+  width: 17px;
+  height: 17px;
+}
+.signin-page .help {
+  display: flex;
+  justify-content: flex-end;
+  margin: 0 0 23px;
+}
+.signin-page .textbutton {
+  border: 0;
+  background: none;
+  padding: 0;
+  font-size: 11px;
+  color: var(--orange);
+  font-weight: 550;
+}
+.signin-page .submit {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  height: 44px;
+  background: var(--orange);
+  color: white;
+  border: 0;
+  border-radius: 7px;
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 0.15s;
+}
+.signin-page .submit:hover {
+  background: #b44413;
+}
+.signin-page .submit svg {
+  width: 15px;
+  height: 15px;
+}
+.signin-page .submit:disabled {
+  cursor: wait;
+  opacity: 0.7;
+}
+.signin-page .error {
+  font-size: 11px;
+  color: #a13c43;
+  background: #fcedef;
+  border: 1px solid #f3d8dc;
+  padding: 10px 12px;
+  border-radius: 6px;
+  margin: 0 0 16px;
+}
+.signin-page .error:empty {
+  display: none;
+}
+.signin-page .fieldError {
+  font-size: 10px;
+  color: #a13c43;
+  margin-top: 5px;
+  display: block;
+}
+.signin-page .access {
+  border-top: 1px solid var(--line);
+  margin-top: 28px;
+  padding-top: 23px;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: center;
+}
+.signin-page .access button {
+  margin-left: 3px;
+}
+.signin-page .fineprint {
+  font-size: 10px;
+  line-height: 1.7;
+  text-align: center;
+  color: #88939f;
+  max-width: 310px;
+  margin: 17px auto 0;
+}
+.signin-page .footer {
+  /* foundation.css's global .footer is a flex row with a top border/
+     margin/padding for the app shell's page footer; this sign-in footer
+     is just a single centered line. */
+  display: block;
+  border-top: 0;
+  margin-top: 0;
+  padding-top: 0;
+  text-align: center;
+  font-size: 10px;
+  color: #8c96a1;
+}
+.signin-page .mobilebrand {
+  display: none;
+  /* foundation.css's global .brand rule sets color:white for the dark
+     sidebar; this mobile-only brand mark sits on a light background. */
+  color: var(--ink);
+}
+.signin-page dialog {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 25px;
+  max-width: 390px;
+  width: calc(100% - 32px);
+  color: var(--ink);
+  box-shadow: 0 22px 70px #0002;
+}
+.signin-page dialog::backdrop {
+  background: #19232f66;
+}
+.signin-page dialog h2 {
+  font-size: 18px;
+  letter-spacing: -0.4px;
+}
+.signin-page dialog p {
+  font-size: 12px;
+  color: var(--muted);
+  margin: 13px 0 22px;
+  line-height: 1.8;
+}
+.signin-page dialog button.textbutton {
+  background: var(--orange);
+  color: white;
+  border: 0;
+  border-radius: 6px;
+  padding: 9px 16px;
+  font-size: 12px;
+  float: right;
+}
+
+@media (min-width: 1600px) {
+  .signin-page.page {
+    max-width: 1700px;
+    margin: auto;
+  }
+  .signin-page .story {
+    padding: 50px 65px;
+  }
+}
+@media (max-width: 1050px) {
+  .signin-page .story {
+    padding: 28px;
+  }
+  .signin-page .formside {
+    padding: 24px;
+  }
+  .signin-page .story h2 {
+    font-size: 35px;
+  }
+  .signin-page .journey {
+    gap: 7px;
+  }
+  .signin-page .journeystep {
+    padding: 12px 8px;
+  }
+}
+@media (max-width: 760px) {
+  .signin-page.page {
+    display: block;
+    padding: 0;
+  }
+  .signin-page .story {
+    display: none;
+  }
+  .signin-page .formside {
+    min-height: 100svh;
+    padding: 25px;
+  }
+  .signin-page .top {
+    justify-content: space-between;
+  }
+  .signin-page .mobilebrand {
+    display: flex;
+    font-size: 19px;
+  }
+  .signin-page .mobilebrand .mark {
+    width: 28px;
+    height: 30px;
+    font-size: 21px;
+  }
+  .signin-page .formcontainer {
+    padding: 55px 0;
+    max-width: 368px;
+  }
+  .signin-page .welcomemark {
+    margin-bottom: 21px;
+  }
+  .signin-page .footer {
+    padding-bottom: 8px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .signin-page * {
+    transition: none !important;
+  }
+}
+@media (max-height: 760px) and (min-width: 761px) {
+  .signin-page .story {
+    min-height: 640px;
+  }
+  .signin-page .storymain {
+    margin: 30px 0;
+  }
+  .signin-page .preview {
+    margin-top: 25px;
+  }
+  .signin-page .formcontainer {
+    padding: 30px 0;
+  }
+}
