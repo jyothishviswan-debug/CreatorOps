@@ -1,13 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { requireAdministrationAccessMock, getUserDocByRefMock, getActorScopeGrantsMock, getAccessGrantDocMock, getSensitiveAccessGrantDocMock, getUserAccessOverrideDocMock } = vi.hoisted(
+const { requireAdministrationAccessMock, getUserDocByRefMock, getActorScopeGrantsMock, getAccessGrantDocMock, getSensitiveAccessGrantDocMock, getUserAccessOverrideLookupMock } = vi.hoisted(
   () => ({
     requireAdministrationAccessMock: vi.fn(),
     getUserDocByRefMock: vi.fn(),
     getActorScopeGrantsMock: vi.fn(),
     getAccessGrantDocMock: vi.fn(),
     getSensitiveAccessGrantDocMock: vi.fn(),
-    getUserAccessOverrideDocMock: vi.fn(),
+    getUserAccessOverrideLookupMock: vi.fn(),
   }),
 );
 
@@ -17,11 +17,11 @@ vi.mock("@/server/authz/firestore", () => ({
   getUserDocByRef: getUserDocByRefMock,
   getAccessGrantDoc: getAccessGrantDocMock,
   getSensitiveAccessGrantDoc: getSensitiveAccessGrantDocMock,
-  getUserAccessOverrideDoc: getUserAccessOverrideDocMock,
+  getUserAccessOverrideLookup: getUserAccessOverrideLookupMock,
 }));
 
 import { getEffectiveAccess } from "./effective-access-service";
-import type { ActorContext, UserDoc } from "@/server/authz/types";
+import type { ActorContext, OverrideLookup, UserDoc } from "@/server/authz/types";
 
 const actor: ActorContext = { uid: "uid-1", email: "admin@creatorops.com", role: "super_admin", displayName: "Admin", userRef: "ref-1" };
 
@@ -34,6 +34,9 @@ const targetDoc: UserDoc = {
   userRef: "ref-2",
   version: 1,
 };
+
+const ABSENT: OverrideLookup = { status: "absent" };
+const INVALID: OverrideLookup = { status: "invalid" };
 
 afterEach(() => {
   vi.clearAllMocks();
@@ -60,7 +63,7 @@ describe("getEffectiveAccess", () => {
     getActorScopeGrantsMock.mockResolvedValue([]);
     getAccessGrantDocMock.mockResolvedValue({ role: "partnership_manager", features: { partners: { view: true, actions: { create: true } } } });
     getSensitiveAccessGrantDocMock.mockResolvedValue(null);
-    getUserAccessOverrideDocMock.mockResolvedValue(null);
+    getUserAccessOverrideLookupMock.mockResolvedValue(ABSENT);
 
     const result = await getEffectiveAccess(actor, "ref-2");
     expect(result.ok).toBe(true);
@@ -69,6 +72,7 @@ describe("getEffectiveAccess", () => {
     expect(result.data.modules.partners.override).toBe("inherit");
     expect(result.data.modules.partners.effective).toEqual({ value: true, source: "role" });
     expect(result.data.overridesVersion).toBe(0);
+    expect(result.data.overrideProfileStatus).toBe("absent");
     expect(result.data.activeFeatures).toContain("partners");
   });
 
@@ -78,7 +82,7 @@ describe("getEffectiveAccess", () => {
     getActorScopeGrantsMock.mockResolvedValue([]);
     getAccessGrantDocMock.mockResolvedValue({ role: "partnership_manager", features: { partners: { view: true, actions: {} } } });
     getSensitiveAccessGrantDocMock.mockResolvedValue(null);
-    getUserAccessOverrideDocMock.mockResolvedValue({ uid: "uid-2", version: 3, features: { partners: { view: false, actions: {} } } });
+    getUserAccessOverrideLookupMock.mockResolvedValue({ status: "valid", doc: { uid: "uid-2", version: 3, features: { partners: { view: false, actions: {} } } } });
 
     const result = await getEffectiveAccess(actor, "ref-2");
     expect(result.ok).toBe(true);
@@ -87,6 +91,7 @@ describe("getEffectiveAccess", () => {
     expect(result.data.modules.partners.override).toBe("deny");
     expect(result.data.modules.partners.effective).toEqual({ value: false, source: "override_deny" });
     expect(result.data.overridesVersion).toBe(3);
+    expect(result.data.overrideProfileStatus).toBe("valid");
     expect(result.data.activeFeatures).not.toContain("partners");
   });
 
@@ -96,7 +101,7 @@ describe("getEffectiveAccess", () => {
     getActorScopeGrantsMock.mockResolvedValue([]);
     getAccessGrantDocMock.mockResolvedValue({ role: "partnership_manager", features: {} }); // no finance entry - role denies
     getSensitiveAccessGrantDocMock.mockResolvedValue(null);
-    getUserAccessOverrideDocMock.mockResolvedValue({ uid: "uid-2", version: 1, features: { finance: { view: true, actions: {} } } });
+    getUserAccessOverrideLookupMock.mockResolvedValue({ status: "valid", doc: { uid: "uid-2", version: 1, features: { finance: { view: true, actions: {} } } } });
 
     const result = await getEffectiveAccess(actor, "ref-2");
     expect(result.ok).toBe(true);
@@ -114,10 +119,9 @@ describe("getEffectiveAccess", () => {
     getAccessGrantDocMock.mockResolvedValue({ role: "partnership_manager", features: { finance: { view: true, actions: { approve_payables: false } } } });
     getSensitiveAccessGrantDocMock.mockResolvedValue(null);
     // Override: explicitly allow approve_payables, but also explicitly deny the module itself.
-    getUserAccessOverrideDocMock.mockResolvedValue({
-      uid: "uid-2",
-      version: 1,
-      features: { finance: { view: false, actions: { approve_payables: true } } },
+    getUserAccessOverrideLookupMock.mockResolvedValue({
+      status: "valid",
+      doc: { uid: "uid-2", version: 1, features: { finance: { view: false, actions: { approve_payables: true } } } },
     });
 
     const result = await getEffectiveAccess(actor, "ref-2");
@@ -137,7 +141,7 @@ describe("getEffectiveAccess", () => {
     getAccessGrantDocMock.mockResolvedValue({ role: "partnership_manager", features: { partners: { view: true, actions: {} } } });
     getSensitiveAccessGrantDocMock.mockResolvedValue(null);
     // No override entry for partners at all (as if reset was already applied).
-    getUserAccessOverrideDocMock.mockResolvedValue({ uid: "uid-2", version: 2, features: {} });
+    getUserAccessOverrideLookupMock.mockResolvedValue({ status: "valid", doc: { uid: "uid-2", version: 2, features: {} } });
 
     const result = await getEffectiveAccess(actor, "ref-2");
     expect(result.ok).toBe(true);
@@ -152,7 +156,7 @@ describe("getEffectiveAccess", () => {
     getActorScopeGrantsMock.mockResolvedValue([]);
     getAccessGrantDocMock.mockResolvedValue(null);
     getSensitiveAccessGrantDocMock.mockResolvedValue(null);
-    getUserAccessOverrideDocMock.mockResolvedValue(null);
+    getUserAccessOverrideLookupMock.mockResolvedValue(ABSENT);
 
     const result = await getEffectiveAccess(actor, "ref-2");
 
@@ -161,5 +165,29 @@ describe("getEffectiveAccess", () => {
     expect(result.data.activeFeatures).toEqual([]);
     expect(result.data.sensitiveCategories).toEqual([]);
     expect(result.data.modules.dashboard.effective).toEqual({ value: false, source: "role" });
+  });
+
+  // Step 5B.1A: a malformed override document must fail closed to an
+  // outright deny for every module/action - never fall back to "no
+  // overrides" and silently let the role baseline's own allow through.
+  it("an invalid override document denies every module, even one the role baseline would otherwise allow, sourced 'override_invalid'", async () => {
+    requireAdministrationAccessMock.mockResolvedValue({ ok: true });
+    getUserDocByRefMock.mockResolvedValue(targetDoc);
+    getActorScopeGrantsMock.mockResolvedValue([]);
+    getAccessGrantDocMock.mockResolvedValue({ role: "partnership_manager", features: { partners: { view: true, actions: { create: true } } } });
+    getSensitiveAccessGrantDocMock.mockResolvedValue(null);
+    getUserAccessOverrideLookupMock.mockResolvedValue(INVALID);
+
+    const result = await getEffectiveAccess(actor, "ref-2");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.overrideProfileStatus).toBe("invalid");
+    // overridesVersion falls back to 0, the same base a corrective write starts from.
+    expect(result.data.overridesVersion).toBe(0);
+    // The role baseline still genuinely allows "partners" - the denial is entirely the override profile's fault.
+    expect(result.data.modules.partners.roleBaseline).toBe(true);
+    expect(result.data.modules.partners.effective).toEqual({ value: false, source: "override_invalid" });
+    expect(result.data.modules.partners.actions.create?.effective).toEqual({ value: false, source: "override_invalid" });
+    expect(result.data.activeFeatures).toEqual([]);
   });
 });

@@ -22,13 +22,14 @@ type OverrideValue = "inherit" | "allow" | "deny";
 
 function sourceTone(source: EffectiveSource): "gray" | "default" | "red" {
   if (source === "override_allow") return "default";
-  if (source === "override_deny") return "red";
+  if (source === "override_deny" || source === "override_invalid") return "red";
   return "gray";
 }
 
 function sourceLabel(source: EffectiveSource): string {
   if (source === "override_allow") return "Explicit allow";
   if (source === "override_deny") return "Explicit deny";
+  if (source === "override_invalid") return "Denied - invalid override data";
   return "Role default";
 }
 
@@ -143,6 +144,12 @@ export function AccessMatrix({ userRef, data, onRefresh }: { userRef: string; da
             Reset All to Role Defaults
           </button>
         </div>
+
+        {data.overrideProfileStatus === "invalid" && (
+          <div className="banner" role="alert" style={{ marginBottom: 14 }}>
+            <b>This user&rsquo;s override data is invalid.</b> Every module and action below is denied until it&rsquo;s corrected - use Reset All to Role Defaults, or set any module/action here to replace it with a valid one.
+          </div>
+        )}
 
         {error && (
           <div className="banner" role="alert" style={{ marginBottom: 14 }}>

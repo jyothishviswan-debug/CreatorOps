@@ -45,6 +45,10 @@ export default defineConfig({
     // this config module (they run in separate threads/forks) - vitest's
     // own `env` option is what actually forwards the loaded values in.
     env: { ...dotEnvLocal, ...process.env },
+    // Step 5B.1A: wipes the emulator back to a known baseline once,
+    // before any *.emulator.test.ts file runs - see
+    // tests/emulator-global-setup.ts for why.
+    globalSetup: ["./tests/emulator-global-setup.ts"],
   },
   resolve: {
     alias: {

@@ -1,14 +1,14 @@
 import { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
-import { hasAnotherActiveAdminManager, loadAccessGrant, loadHasGlobalScope, readerFor, resolvesToAdminManagerCapability } from "@/server/authz/admin-manager-guard";
+import { hasAnotherActiveAdminManager, loadAccessGrant, loadHasGlobalScope, loadOverrideLookup, readerFor, resolvesToAdminManagerCapability } from "@/server/authz/admin-manager-guard";
 import { requireAdministrationAccess } from "@/server/authz/administration-gate";
 import { writeAuditEvent } from "@/server/authz/audit";
 import { COLLECTIONS, getUserDocByRef } from "@/server/authz/firestore";
 import { FEATURES, type FeatureId } from "@/server/authz/features";
 import { isValidModuleAction } from "@/server/authz/module-actions";
 import type { Role } from "@/server/authz/roles";
-import { userAccessOverrideDocSchema, type ActorContext, type FeatureOverride, type UserAccessOverrideDoc } from "@/server/authz/types";
+import type { ActorContext, FeatureOverride, OverrideLookup, UserAccessOverrideDoc } from "@/server/authz/types";
 import { invalidInputResult, unauthorizedResult, type ServiceResult } from "./types";
 
 const overrideValueSchema = z.enum(["allow", "deny", "inherit"]);
@@ -32,16 +32,18 @@ function emptyOverrideDoc(uid: string): UserAccessOverrideDoc {
   return { uid, features: {}, version: 0 };
 }
 
-async function loadCurrent(reader: { doc: (path: string) => Promise<FirebaseFirestore.DocumentSnapshot> }, uid: string): Promise<UserAccessOverrideDoc> {
-  const snap = await reader.doc(`${COLLECTIONS.userAccessOverrides}/${uid}`);
-  if (!snap.exists) return emptyOverrideDoc(uid);
-  const result = userAccessOverrideDocSchema.safeParse(snap.data());
-  // A malformed doc still has SOME version on disk (or doesn't parse
-  // enough to know it) - fail closed to "no overrides" for resolution
-  // purposes, but never silently reuse a stale/unknown version number as
-  // if it were 0, since that would let a stale-write check be bypassed.
-  if (!result.success) return emptyOverrideDoc(uid);
-  return result.data;
+// The mutation base is always a well-formed document to build the next
+// state from - both a genuinely absent doc and an existing-but-malformed
+// one start a fresh, empty override map at version 0, so this exact
+// mutation (however it's applied) becomes the correction write. This is
+// deliberately NOT the same thing as "is this actor's override profile
+// currently valid" (see loadOverrideLookup below, used separately for
+// the admin-manager-capability check) - a malformed doc still has SOME
+// version on disk (or doesn't parse enough to know it), so it's never
+// safe to silently reuse a stale/unknown version number as if it were 0
+// for anything other than this repair path.
+function mutationBase(lookup: OverrideLookup, uid: string): UserAccessOverrideDoc {
+  return lookup.status === "valid" ? lookup.doc : emptyOverrideDoc(uid);
 }
 
 function pruneEmptyFeatures(features: UserAccessOverrideDoc["features"]): UserAccessOverrideDoc["features"] {
@@ -88,15 +90,23 @@ async function runOverrideMutation(
 
   return db.runTransaction<MutationOutcome>(async (tx) => {
     const reader = readerFor(tx);
-    const current = await loadCurrent(reader, targetUid);
+    const currentLookup = await loadOverrideLookup(reader, targetUid);
+    const current = mutationBase(currentLookup, targetUid);
     if (current.version !== expectedVersion) return { kind: "stale" };
 
     const next = mutate(current);
     const nextPruned: UserAccessOverrideDoc = { uid: targetUid, features: pruneEmptyFeatures(next.features), version: current.version + 1 };
 
     const [accessGrant, hasGlobalScope] = await Promise.all([loadAccessGrant(reader, targetRole), loadHasGlobalScope(reader, targetUid)]);
-    const hadCapability = resolvesToAdminManagerCapability({ active: targetActive, accessGrant, override: current, hasGlobalScope });
-    const wouldStillHaveCapability = resolvesToAdminManagerCapability({ active: targetActive, accessGrant, override: nextPruned, hasGlobalScope });
+    // Deliberately uses the TRUE current status (absent/valid/invalid),
+    // not the normalized mutation base above - if the target's override
+    // doc is currently malformed, they already fail closed to no
+    // Administration capability (see resolveFeatureAccess), so this
+    // exact corrective write must never be blocked as "the last admin
+    // manager": there is no working capability to protect, and this is
+    // the repair path.
+    const hadCapability = resolvesToAdminManagerCapability({ active: targetActive, accessGrant, override: currentLookup, hasGlobalScope });
+    const wouldStillHaveCapability = resolvesToAdminManagerCapability({ active: targetActive, accessGrant, override: { status: "valid", doc: nextPruned }, hasGlobalScope });
 
     if (hadCapability && !wouldStillHaveCapability) {
       const another = await hasAnotherActiveAdminManager(targetUid, tx);

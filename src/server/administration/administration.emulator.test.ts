@@ -11,7 +11,8 @@ import { beforeAll, describe, expect, it } from "vitest";
 
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
 import { resolveActor } from "@/server/authz/actor";
-import { getAdminAuth } from "@/server/firebase/admin";
+import { canAccessFeature } from "@/server/authz/capabilities";
+import { getAdminAuth, getAdminFirestore } from "@/server/firebase/admin";
 import { seedAccessControlData, TEST_IDENTITIES } from "@/server/authz/seed-access-data";
 import type { ActorContext } from "@/server/authz/types";
 import { listAuditEventsForReview } from "./audit-service";
@@ -216,5 +217,37 @@ describe("Administration API boundary (real emulator)", () => {
     // No raw uid, password, or other secret-shaped value anywhere in the
     // reviewable audit trail.
     expect(JSON.stringify(page.data.events)).not.toContain("a-strong-password-3");
+  });
+
+  it("Step 5B.1A: a malformed override document denies effective access against real, live Firestore data - not just the unit-test fakes", async () => {
+    const admin = await actorFor("super_admin");
+    const email = `malformed-override-${runId}@creatorops.com`;
+    const created = await createUser(admin, { email, password: "a-strong-password-4", displayName: "Malformed Override Target", role: "viewer" }, "req-malformed-create");
+    if (!created.ok) throw new Error("failed to create malformed-override target user");
+    const userRef = created.data.userRef;
+
+    const auth = getAdminAuth();
+    const targetUser = await auth.getUserByEmail(email);
+
+    // Written directly, bypassing the trusted mutation service (which
+    // could never produce this) - missing the required `version` field,
+    // so it fails schema validation.
+    await getAdminFirestore().collection("userAccessOverrides").doc(targetUser.uid).set({ uid: targetUser.uid, features: {} });
+
+    const targetActor = await resolveActor(targetUser.uid);
+    if (!targetActor) throw new Error("resolveActor returned null for the malformed-override target");
+
+    // Viewer's role baseline genuinely allows "dashboard" (see
+    // seed-access-data.ts) - this proves the denial below is entirely
+    // the malformed override document's doing, not the role's.
+    await expect(canAccessFeature(targetActor, "dashboard")).resolves.toBe(false);
+
+    const review = await getEffectiveAccess(admin, userRef);
+    expect(review.ok).toBe(true);
+    if (!review.ok) throw new Error("unreachable");
+    expect(review.data.overrideProfileStatus).toBe("invalid");
+    expect(review.data.modules.dashboard.roleBaseline).toBe(true);
+    expect(review.data.modules.dashboard.effective).toEqual({ value: false, source: "override_invalid" });
+    expect(review.data.activeFeatures).toEqual([]);
   });
 });

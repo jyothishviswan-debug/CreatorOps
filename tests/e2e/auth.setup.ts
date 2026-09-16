@@ -1,20 +1,26 @@
 import { test as setup, expect } from "@playwright/test";
 
-import { EMULATOR_TEST_USERS, seedEmulatorTestUsers } from "@/server/auth/seed-users";
-import { seedAccessControlData } from "@/server/authz/seed-access-data";
+import { EMULATOR_TEST_USERS } from "@/server/auth/seed-users";
+import { resetEmulatorTestState } from "@/server/dev/emulator-reset";
 
 const STORAGE_STATE = "tests/e2e/.auth/user.json";
 const ADMIN_USER = EMULATOR_TEST_USERS.find((user) => user.email === "admin@creatorops.com")!;
 
-setup("seed emulator test users and sign in", async ({ page }) => {
+setup("reset emulator state and sign in", async ({ page }) => {
   const password = process.env.EMULATOR_TEST_USER_PASSWORD;
   if (!password) {
     throw new Error("EMULATOR_TEST_USER_PASSWORD is not set - check .env.local.");
   }
 
-  // Idempotent - safe even if a previous run already created these users.
-  await seedEmulatorTestUsers(password);
-  await seedAccessControlData();
+  // Step 5B.1A: this Playwright project's "setup" test runs exactly once
+  // before the whole suite - the right, and only, place to wipe the
+  // emulator back to a known baseline before an automated run. Every
+  // provisioned/lifecycle/audit user any spec creates afterward is
+  // deliberately NOT cleaned up per-test (several specs' own assertions
+  // rely on data created earlier in the same run being visible later),
+  // so without this the emulator would otherwise accumulate indefinitely
+  // across repeated `pnpm test:e2e` runs.
+  await resetEmulatorTestState(password);
 
   await page.goto("/sign-in");
   await page.getByPlaceholder("you@company.com").fill(ADMIN_USER.email);

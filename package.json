@@ -12,7 +12,8 @@
     "test:emulator": "vitest run --config vitest.emulator.config.mts",
     "test:e2e": "playwright test",
     "firebase:emulators": "firebase emulators:start --project demo-creatorops",
-    "seed:emulator": "tsx scripts/seed-emulator-users.ts"
+    "seed:emulator": "tsx scripts/seed-emulator-users.ts",
+    "reset:emulator": "tsx scripts/reset-emulator.ts"
   },
   "dependencies": {
     "firebase": "^12.19.0",

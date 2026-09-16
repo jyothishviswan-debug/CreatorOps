@@ -65,6 +65,20 @@ export const userAccessOverrideDocSchema = z.object({
 });
 export type UserAccessOverrideDoc = z.infer<typeof userAccessOverrideDocSchema>;
 
+// Step 5B.1A: a user's override document has THREE distinct states, not
+// two. "absent" (no doc at all) genuinely means "no explicit overrides -
+// inherit the role baseline", exactly as before. "invalid" (a doc exists
+// but fails schema validation) must NOT be collapsed into the same
+// behavior - silently treating corrupt override data as "no overrides"
+// is not fail-closed, since if the role baseline already allows a
+// module/action, ignoring a malformed override would accidentally
+// PRESERVE that access instead of protecting it. So "invalid" is its own
+// state: every caller that resolves access from this must deny outright
+// until the document is corrected, never fall back to the role baseline.
+// See resolveFeatureAccess/resolveActionAccess in capabilities.ts, the
+// only place this distinction is actually interpreted.
+export type OverrideLookup = { status: "absent" } | { status: "valid"; doc: UserAccessOverrideDoc } | { status: "invalid" };
+
 // Step 4C's canonical, multi-dimensional Record Scope model. Each grant is
 // its own flat document in the scopeAssignments collection (not nested
 // under the user, and not one array-valued doc per user) so a single

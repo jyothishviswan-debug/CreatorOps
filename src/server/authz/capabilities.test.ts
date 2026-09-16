@@ -159,16 +159,73 @@ describe("Step 5B.1: user-specific overrides", () => {
     await expect(canAccessFeature(actor("viewer"), "dashboard")).resolves.toBe(true);
   });
 
-  it("a malformed override document fails closed to pure role-baseline behavior, never granting more than the role allows", async () => {
-    getAdminFirestoreMock.mockReturnValue(
-      makeFakeFirestore({
-        "accessGrants/viewer": { role: "viewer", features: { dashboard: { view: true, actions: {} } } },
-        // Missing required `version` / wrong shape - fails schema validation.
-        "userAccessOverrides/uid-viewer": { uid: "uid-viewer", features: { finance: { view: true, actions: {} } } },
-      }),
-    );
-    await expect(canAccessFeature(actor("viewer"), "finance")).resolves.toBe(false);
-    // The role's own real grants are unaffected by the neighboring malformed override doc.
-    await expect(canAccessFeature(actor("viewer"), "dashboard")).resolves.toBe(true);
+  // Step 5B.1A: a malformed override document is its own third state, not
+  // silently collapsed into "no overrides". A missing document still
+  // means "inherit the role baseline" (see the next few tests); an
+  // *existing but corrupt* one must deny outright for every
+  // feature/action, even ones the role baseline would allow, since
+  // otherwise a corrupt document could accidentally preserve access it
+  // should never have been trusted to decide.
+  describe("Step 5B.1A: malformed override document fails closed", () => {
+    it("missing override doc + role allow => inherited allow", async () => {
+      getAdminFirestoreMock.mockReturnValue(
+        makeFakeFirestore({
+          "accessGrants/viewer": { role: "viewer", features: { dashboard: { view: true, actions: {} } } },
+          // No userAccessOverrides/uid-viewer document at all.
+        }),
+      );
+      await expect(canAccessFeature(actor("viewer"), "dashboard")).resolves.toBe(true);
+    });
+
+    it("malformed override doc + role allow => deny", async () => {
+      getAdminFirestoreMock.mockReturnValue(
+        makeFakeFirestore({
+          "accessGrants/viewer": { role: "viewer", features: { dashboard: { view: true, actions: {} } } },
+          // Missing required `version` / wrong shape - fails schema validation.
+          "userAccessOverrides/uid-viewer": { uid: "uid-viewer", features: {} },
+        }),
+      );
+      await expect(canAccessFeature(actor("viewer"), "dashboard")).resolves.toBe(false);
+    });
+
+    it("malformed override doc + role deny => deny", async () => {
+      getAdminFirestoreMock.mockReturnValue(
+        makeFakeFirestore({
+          "accessGrants/viewer": { role: "viewer", features: {} },
+          "userAccessOverrides/uid-viewer": { uid: "uid-viewer", features: {} },
+        }),
+      );
+      await expect(canAccessFeature(actor("viewer"), "finance")).resolves.toBe(false);
+    });
+
+    it("a malformed action override cannot widen access, even when it looks like an explicit allow", async () => {
+      getAdminFirestoreMock.mockReturnValue(
+        makeFakeFirestore({
+          "accessGrants/partnership_manager": { role: "partnership_manager", features: { finance: { view: true, actions: { approve_payables: false } } } },
+          // The document itself fails validation (missing version), even
+          // though the `features` payload alone, if it parsed, would look
+          // like a legitimate explicit allow of approve_payables.
+          "userAccessOverrides/uid-partnership_manager": {
+            uid: "uid-partnership_manager",
+            features: { finance: { actions: { approve_payables: true } } },
+          },
+        }),
+      );
+      await expect(canPerformAction(actor("partnership_manager"), "finance", "approve_payables")).resolves.toBe(false);
+      await expect(canAccessFeature(actor("partnership_manager"), "finance")).resolves.toBe(false);
+    });
+
+    it("the role's own real grants for OTHER actors are unaffected by one actor's malformed override doc", async () => {
+      getAdminFirestoreMock.mockReturnValue(
+        makeFakeFirestore({
+          "accessGrants/viewer": { role: "viewer", features: { dashboard: { view: true, actions: {} } } },
+          "userAccessOverrides/uid-viewer": { uid: "uid-viewer", features: {} },
+        }),
+      );
+      // A second viewer with no override document of their own still inherits normally.
+      await expect(canAccessFeature({ uid: "uid-other-viewer", email: "other@creatorops.com", role: "viewer", displayName: "Other Viewer", userRef: "ref-other" }, "dashboard")).resolves.toBe(
+        true,
+      );
+    });
   });
 });

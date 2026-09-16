@@ -10,7 +10,7 @@ import { resolveActionAccess, resolveFeatureAccess } from "./capabilities";
 import { COLLECTIONS, listUserDocs } from "./firestore";
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { Role } from "./roles";
-import { accessGrantDocSchema, scopeGrantSchema, userAccessOverrideDocSchema, type AccessGrantDoc, type UserAccessOverrideDoc } from "./types";
+import { accessGrantDocSchema, scopeGrantSchema, userAccessOverrideDocSchema, type AccessGrantDoc, type OverrideLookup } from "./types";
 
 // The full set of capabilities that together make someone able to
 // administer users/access - matches every action requireAdministrationAccess
@@ -22,7 +22,7 @@ const ADMIN_MANAGER_ACTIONS = ["manage_users", "manage_overrides", "manage_scope
 export function resolvesToAdminManagerCapability(params: {
   active: boolean;
   accessGrant: AccessGrantDoc | null;
-  override: UserAccessOverrideDoc | null;
+  override: OverrideLookup;
   hasGlobalScope: boolean;
 }): boolean {
   if (!params.active) return false;
@@ -62,11 +62,12 @@ export async function loadAccessGrant(reader: Reader, role: Role): Promise<Acces
   return result.success ? result.data : null;
 }
 
-async function loadOverride(reader: Reader, uid: string): Promise<UserAccessOverrideDoc | null> {
+export async function loadOverrideLookup(reader: Reader, uid: string): Promise<OverrideLookup> {
   const snap = await reader.doc(`${COLLECTIONS.userAccessOverrides}/${uid}`);
-  if (!snap.exists) return null;
+  if (!snap.exists) return { status: "absent" };
   const result = userAccessOverrideDocSchema.safeParse(snap.data());
-  return result.success ? result.data : null;
+  if (!result.success) return { status: "invalid" };
+  return { status: "valid", doc: result.data };
 }
 
 // GLOBAL scope grants have a deterministic doc id (see scope.ts's
@@ -83,7 +84,7 @@ export async function loadHasGlobalScope(reader: Reader, uid: string): Promise<b
 export async function resolveCandidateCapability(reader: Reader, candidate: { uid: string; role: Role; active: boolean }): Promise<boolean> {
   const [accessGrant, override, hasGlobalScope] = await Promise.all([
     loadAccessGrant(reader, candidate.role),
-    loadOverride(reader, candidate.uid),
+    loadOverrideLookup(reader, candidate.uid),
     loadHasGlobalScope(reader, candidate.uid),
   ]);
   return resolvesToAdminManagerCapability({ active: candidate.active, accessGrant, override, hasGlobalScope });

@@ -2,7 +2,7 @@ import type { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { Role } from "./roles";
-import { accessGrantDocSchema, scopeGrantSchema, sensitiveAccessGrantDocSchema, userAccessOverrideDocSchema, userDocSchema, type ScopeGrant, type UserAccessOverrideDoc, type UserDoc } from "./types";
+import { accessGrantDocSchema, scopeGrantSchema, sensitiveAccessGrantDocSchema, userAccessOverrideDocSchema, userDocSchema, type OverrideLookup, type ScopeGrant, type UserDoc } from "./types";
 
 export const COLLECTIONS = {
   users: "users",
@@ -67,13 +67,20 @@ export function getSensitiveAccessGrantDoc(role: string) {
   return getParsedDoc(COLLECTIONS.sensitiveAccessGrants, role, sensitiveAccessGrantDocSchema);
 }
 
-// A missing or malformed override document is not an error - it means
-// "no explicit overrides for this user", and every caller that resolves
-// access treats that identically to an empty override map (fail closed:
-// a corrupt override document can never grant more than the role
-// baseline already would).
-export function getUserAccessOverrideDoc(uid: string): Promise<UserAccessOverrideDoc | null> {
-  return getParsedDoc(COLLECTIONS.userAccessOverrides, uid, userAccessOverrideDocSchema);
+// Step 5B.1A: unlike every other lookup in this module, a missing
+// override document and a malformed one are NOT the same thing here, and
+// must not be collapsed together the way getParsedDoc does. "Absent"
+// means genuine inheritance of the role baseline. "Invalid" (exists but
+// fails schema validation) must fail closed to an outright deny for this
+// actor - see resolveFeatureAccess/resolveActionAccess in capabilities.ts,
+// the only place this three-way status is interpreted into a decision.
+export async function getUserAccessOverrideLookup(uid: string): Promise<OverrideLookup> {
+  const snapshot = await getAdminFirestore().collection(COLLECTIONS.userAccessOverrides).doc(uid).get();
+  if (!snapshot.exists) return { status: "absent" };
+
+  const result = userAccessOverrideDocSchema.safeParse(snapshot.data());
+  if (!result.success) return { status: "invalid" };
+  return { status: "valid", doc: result.data };
 }
 
 // Resolves a user by their opaque, browser-facing userRef instead of the
