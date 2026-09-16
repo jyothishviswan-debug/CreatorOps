@@ -205,7 +205,7 @@ export async function seedDiscoveryData(): Promise<void> {
     email: "kyc-test@example-creator.test",
     aadhaar: { number: "0000-0000-0000" },
     pan: { number: "ABCDE0000F" },
-    bank: { accountHolderName: "Test Creator", accountNumber: "000000000000", ifsc: "TEST0000000", bankName: "Test Bank" },
+    bank: { accountHolderName: "Test Creator", accountNumber: "000000000000", ifsc: "TEST0000000", bankName: "Test Bank", branchName: "Test Branch" },
     gst: { applicable: false },
     updatedAt: now,
     updatedByUserRef: headUserRef,

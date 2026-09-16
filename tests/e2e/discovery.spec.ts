@@ -360,6 +360,7 @@ test.describe("Restricted KYC", () => {
     await page.getByLabel("Account number").fill("000111222333");
     await page.getByLabel("IFSC").fill("TEST0000001");
     await page.getByLabel("Bank name").fill("Test Bank");
+    await page.getByLabel("Branch name").fill("Test Branch");
     await page.getByRole("button", { name: "Save KYC package" }).click();
     await expect(page.getByText("Save KYC package")).toBeEnabled({ timeout: 5000 });
   });
@@ -377,6 +378,7 @@ test.describe("Restricted KYC", () => {
     await page.getByLabel("Account number").fill("SECRETNUM123");
     await page.getByLabel("IFSC").fill("SECR0000001");
     await page.getByLabel("Bank name").fill("Secret Bank");
+    await page.getByLabel("Branch name").fill("Secret Branch");
     await page.getByRole("button", { name: "Save KYC package" }).click();
     await expect(page.getByText("Save KYC package")).toBeEnabled({ timeout: 5000 });
 
@@ -460,7 +462,7 @@ test.describe("Readiness and conversion", () => {
         email: "ready-state@example.com",
         aadhaar: { number: "0000-1111-2222", evidenceRef: "ref://a" },
         pan: { number: "READY1234F", evidenceRef: "ref://p" },
-        bank: { accountHolderName: "Ready State", accountNumber: "111122223333", ifsc: "REDY0000001", bankName: "Ready Bank", proofRef: "ref://b" },
+        bank: { accountHolderName: "Ready State", accountNumber: "111122223333", ifsc: "REDY0000001", bankName: "Ready Bank", branchName: "Ready Branch", proofRef: "ref://b" },
         gst: { applicable: false },
         expectedKycVersion: 0,
         expectedLeadVersion: version,
@@ -522,7 +524,7 @@ test.describe("Readiness and conversion", () => {
         email: "kyc@example.com",
         aadhaar: { number: "0000-1111-2222", evidenceRef: "ref://a" },
         pan: { number: "CONVT1234F", evidenceRef: "ref://p" },
-        bank: { accountHolderName: "Convert Flow", accountNumber: "111122223333", ifsc: "CONV0000001", bankName: "Convert Bank", proofRef: "ref://b" },
+        bank: { accountHolderName: "Convert Flow", accountNumber: "111122223333", ifsc: "CONV0000001", bankName: "Convert Bank", branchName: "Convert Branch", proofRef: "ref://b" },
         gst: { applicable: false },
         expectedKycVersion: 0,
         expectedLeadVersion: version,

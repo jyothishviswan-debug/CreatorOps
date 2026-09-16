@@ -652,6 +652,7 @@ function KycPanel({ lead, onSaved }: StageProps) {
   const [accountNumber, setAccountNumber] = useState("");
   const [ifsc, setIfsc] = useState("");
   const [bankName, setBankName] = useState("");
+  const [branchName, setBranchName] = useState("");
   const [gstApplicable, setGstApplicable] = useState(false);
   const [gstNumber, setGstNumber] = useState("");
   const [existingKycVersion, setExistingKycVersion] = useState(0);
@@ -682,6 +683,7 @@ function KycPanel({ lead, onSaved }: StageProps) {
       setAccountNumber(result.data.bank.accountNumber);
       setIfsc(result.data.bank.ifsc);
       setBankName(result.data.bank.bankName);
+      setBranchName(result.data.bank.branchName);
       setGstApplicable(result.data.gst.applicable);
       setGstNumber(result.data.gst.number ?? "");
       setExistingKycVersion(result.data.version);
@@ -727,7 +729,7 @@ function KycPanel({ lead, onSaved }: StageProps) {
       email,
       aadhaar: { number: aadhaarNumber },
       pan: { number: panNumber },
-      bank: { accountHolderName, accountNumber, ifsc, bankName },
+      bank: { accountHolderName, accountNumber, ifsc, bankName, branchName },
       gst: { applicable: gstApplicable, number: gstApplicable ? gstNumber.trim() : undefined },
       expectedKycVersion: existingKycVersion,
       expectedLeadVersion: lead.version,
@@ -773,6 +775,10 @@ function KycPanel({ lead, onSaved }: StageProps) {
         <div className="field">
           <label htmlFor="kyc-bank-name">Bank name</label>
           <input id="kyc-bank-name" type="text" value={bankName} onChange={(e) => setBankName(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label htmlFor="kyc-branch-name">Branch name</label>
+          <input id="kyc-branch-name" type="text" value={branchName} onChange={(e) => setBranchName(e.target.value)} required />
         </div>
         <div className="field">
           <label htmlFor="kyc-gst-applicable">

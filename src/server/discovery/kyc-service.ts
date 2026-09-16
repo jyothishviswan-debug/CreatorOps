@@ -28,7 +28,7 @@ export type LeadKycDto = {
   email: string;
   aadhaar: { number: string };
   pan: { number: string };
-  bank: { accountHolderName: string; accountNumber: string; ifsc: string; bankName: string };
+  bank: { accountHolderName: string; accountNumber: string; ifsc: string; bankName: string; branchName: string };
   gst: { applicable: boolean; number?: string };
   attachments: LeadKycAttachment[];
   updatedAt: string;
@@ -90,6 +90,7 @@ const saveKycInputSchema = z.object({
     accountNumber: z.string().min(1).max(40),
     ifsc: z.string().min(1).max(20),
     bankName: z.string().min(1).max(120),
+    branchName: z.string().min(1).max(120),
   }),
   gst: z.object({ applicable: z.boolean(), number: z.string().min(1).max(30).optional() }),
   // 0 means "no KYC document exists yet for this Lead".

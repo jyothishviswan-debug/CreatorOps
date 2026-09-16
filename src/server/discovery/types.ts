@@ -326,6 +326,7 @@ export const leadRestrictedKycDocSchema = z.object({
     accountNumber: z.string().min(1).max(40),
     ifsc: z.string().min(1).max(20),
     bankName: z.string().min(1).max(120),
+    branchName: z.string().min(1).max(120),
   }),
   gst: z.object({
     applicable: z.boolean(),
