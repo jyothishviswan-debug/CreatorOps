@@ -38,6 +38,12 @@ export function DiscoveryLeadDetail({ initialLead, initialReadiness }: { initial
   }
 
   const blockers = readiness?.blockers ?? [];
+  // AlternativeOutcomes itself already refuses to render for a
+  // CONVERTED Lead (there is nothing left to set aside), but the
+  // surrounding layout needs to know too - otherwise Manager is left
+  // paired with a gap where it used to sit, or an empty panel row
+  // renders below every other stage for no reason.
+  const showAlternativeOutcomes = lead.lifecycle !== "CONVERTED";
 
   return (
     <>
@@ -104,13 +110,13 @@ export function DiscoveryLeadDetail({ initialLead, initialReadiness }: { initial
       {selectedStage === "manager" ? (
         <>
           <PanelGrid>
-            <Panel span={6}>
+            <Panel span={showAlternativeOutcomes ? 6 : 12}>
               <PanelHead title="Manager" description={stageDescription(selectedStage, lead, blockers)} />
               <PanelBody>
                 <ManagerStage lead={lead} onSaved={handleLeadUpdated} />
               </PanelBody>
             </Panel>
-            <AlternativeOutcomes lead={lead} onSaved={handleLeadUpdated} span={6} />
+            {showAlternativeOutcomes && <AlternativeOutcomes lead={lead} onSaved={handleLeadUpdated} span={6} />}
           </PanelGrid>
           <PanelGrid>
             <Panel span={12}>
@@ -132,9 +138,11 @@ export function DiscoveryLeadDetail({ initialLead, initialReadiness }: { initial
             </Panel>
           </PanelGrid>
 
-          <PanelGrid>
-            <AlternativeOutcomes lead={lead} onSaved={handleLeadUpdated} />
-          </PanelGrid>
+          {showAlternativeOutcomes && (
+            <PanelGrid>
+              <AlternativeOutcomes lead={lead} onSaved={handleLeadUpdated} />
+            </PanelGrid>
+          )}
         </>
       )}
 

@@ -591,28 +591,43 @@ export function AssetStage({ lead, onSaved }: StageProps) {
 
 export function ManagerStage({ lead, onSaved }: StageProps) {
   const managerSave = useSaveHandler(onSaved);
+  // window.confirm() proved unreliable here (silently does nothing in
+  // some embedded browser contexts) - a plain inline Cancel/Confirm
+  // pair, the same idiom AlternativeOutcomes already uses for its own
+  // set-aside actions, works everywhere instead.
+  const [confirmingRemove, setConfirmingRemove] = useState(false);
 
   async function handleAssign(candidate: ManagerCandidateDto) {
     await managerSave.run(() => assignManager(lead.leadRef, { managerUserRef: candidate.userRef, expectedVersion: lead.version }));
   }
   async function handleClear() {
-    if (!window.confirm("Remove the assigned manager?")) return;
-    await managerSave.run(() => assignManager(lead.leadRef, { managerUserRef: null, expectedVersion: lead.version }));
+    const ok = await managerSave.run(() => assignManager(lead.leadRef, { managerUserRef: null, expectedVersion: lead.version }));
+    if (ok) setConfirmingRemove(false);
   }
 
   return (
     <div>
-      <div className="kv" style={{ borderBottom: "none" }}>
+      {!lead.managerRef && <ManagerPicker onSelect={handleAssign} />}
+      <div className="kv" style={{ borderBottom: "none", marginTop: lead.managerRef ? 0 : 12 }}>
         <span>Assigned manager</span>
         <b>{lead.managerDisplayName ?? "Unassigned"}</b>
       </div>
-      {lead.managerRef ? (
-        <button type="button" className="btn" style={{ marginTop: 10 }} disabled={managerSave.saving} onClick={handleClear}>
-          Remove manager
-        </button>
-      ) : (
-        <ManagerPicker onSelect={handleAssign} />
-      )}
+      {lead.managerRef &&
+        (confirmingRemove ? (
+          <div className="actions" style={{ marginTop: 10 }}>
+            <small>Remove the assigned manager?</small>
+            <button type="button" className="btn" disabled={managerSave.saving} onClick={() => setConfirmingRemove(false)}>
+              Cancel
+            </button>
+            <button type="button" className="btn primary" disabled={managerSave.saving} onClick={handleClear}>
+              {managerSave.saving ? "Removing…" : "Confirm"}
+            </button>
+          </div>
+        ) : (
+          <button type="button" className="btn" style={{ marginTop: 10 }} onClick={() => setConfirmingRemove(true)}>
+            Remove manager
+          </button>
+        ))}
       <ErrorBanner message={managerSave.error} />
     </div>
   );
@@ -879,12 +894,12 @@ function KycAttachments({
             </select>
           </div>
           {mode === "link" ? (
-            <div className="field full">
+            <div className="field full" key="link">
               <label htmlFor="attach-url">Document link</label>
               <input id="attach-url" type="url" placeholder="https://…" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} required />
             </div>
           ) : (
-            <div className="field full">
+            <div className="field full" key="upload">
               <label htmlFor="attach-file">Choose file</label>
               <input id="attach-file" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
             </div>
@@ -897,14 +912,18 @@ function KycAttachments({
       </form>
 
       {attachments.length > 0 && (
-        <ul className="checklist" style={{ marginTop: 18 }}>
+        // Fills the panel's full width instead of one entry per row -
+        // this panel is already full-width (see DiscoveryLeadDetail.tsx),
+        // no reason a short attachment list should scroll tall when
+        // several entries comfortably fit side by side.
+        <ul className="checklist" style={{ marginTop: 18, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
           {attachments.map((a, i) => (
             <li key={`${a.docType}-${a.addedAt}-${i}`}>
+              <Icon name={a.kind === "upload" ? "upload" : "link"} />
               <b>{DOC_TYPE_LABELS[a.docType]}</b> ·{" "}
               <a href={a.url} target="_blank" rel="noreferrer">
                 {a.kind === "upload" ? a.fileName ?? "Uploaded file" : "Open link"}
-              </a>{" "}
-              <small>{a.kind === "upload" ? "uploaded to Drive" : "linked"}</small>
+              </a>
             </li>
           ))}
         </ul>

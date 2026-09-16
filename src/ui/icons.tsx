@@ -22,6 +22,7 @@ const paths: Record<string, string> = {
   bell: '<path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M9 21h6"/>',
   upload: '<path d="M12 21V9m0 0-5 5m5-5 5 5M4 21h16"/>',
   download: '<path d="M12 3v12m0 0-5-5m5 5 5-5M4 21h16"/>',
+  link: '<path d="M9 15 15 9M8 13.5 5.5 16a3.5 3.5 0 0 0 5 5L13 18.5M16 10.5 18.5 8a3.5 3.5 0 0 0-5-5L11 5.5"/>',
   mail: '<rect x="3" y="5" width="18" height="14" rx="2"/><path d="m3 6 9 7 9-7"/>',
   table: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16M15 4v16"/>',
   lock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"/>',
