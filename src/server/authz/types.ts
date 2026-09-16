@@ -41,6 +41,30 @@ export const accessGrantDocSchema = z.object({
 });
 export type AccessGrantDoc = z.infer<typeof accessGrantDocSchema>;
 
+// Step 5B.1: per-user tri-state feature/action overrides on top of the
+// role baseline above. `view` is optional (not required, unlike
+// featureGrantSchema's) because a feature entry may only touch its
+// actions, or vice versa - a KEY ABSENT from `actions` (via
+// partialRecord) means "no override for that action", not "denied".
+// Tri-state precedence: key absent = inherit role baseline; `true` =
+// explicit allow; `false` = explicit deny. This is deliberately the same
+// shape family as featureGrantSchema/accessGrantDocSchema so the two can
+// be resolved by one shared precedence function (see capabilities.ts).
+const featureOverrideSchema = z.object({
+  view: z.boolean().optional(),
+  actions: z.partialRecord(z.enum(ACTIONS), z.boolean()).default({}),
+});
+export type FeatureOverride = z.infer<typeof featureOverrideSchema>;
+
+export const userAccessOverrideDocSchema = z.object({
+  uid: z.string().min(1),
+  features: z.partialRecord(z.enum(FEATURES), featureOverrideSchema).default({}),
+  // Optimistic concurrency - same convention as userDocSchema: starts at
+  // 1 on first write, increments by exactly 1 on every accepted mutation.
+  version: z.number().int().min(1),
+});
+export type UserAccessOverrideDoc = z.infer<typeof userAccessOverrideDocSchema>;
+
 // Step 4C's canonical, multi-dimensional Record Scope model. Each grant is
 // its own flat document in the scopeAssignments collection (not nested
 // under the user, and not one array-valued doc per user) so a single
@@ -135,6 +159,7 @@ export const auditOperationSchema = z.enum([
   "scope_grant.remove",
   "sensitive_grant.add",
   "sensitive_grant.remove",
+  "access_override.set",
 ]);
 export type AuditOperation = z.infer<typeof auditOperationSchema>;
 

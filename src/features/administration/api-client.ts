@@ -11,6 +11,7 @@ import type { CreateUserInput, ListUsersInput, UpdateUserInput } from "@/server/
 import type { ScopeGrantRequestInput } from "@/server/administration/scope-grants-service";
 import type { SensitiveGrantRequestInput } from "@/server/administration/sensitive-grants-service";
 import type { EffectiveAccessDto } from "@/server/administration/effective-access-service";
+import type { BulkOverrideInput, SetOverrideInput } from "@/server/administration/access-overrides-service";
 import type { AuditEventDto, ListAuditInput } from "@/server/administration/audit-service";
 import type { AuditEventListCursor } from "@/server/authz/audit";
 import type { Role } from "@/server/authz/roles";
@@ -70,6 +71,7 @@ export function listUsers(input: ListUsersInput = {}): Promise<ApiResult<ListUse
     cursorUserRef: input.cursor?.userRef,
     role: input.role,
     active: input.active !== undefined ? String(input.active) : undefined,
+    emailPrefix: input.emailPrefix,
   });
   return call(`/api/administration/users${qs}`);
 }
@@ -88,6 +90,14 @@ export function updateUser(userRef: string, patch: UpdateUserInput): Promise<Api
 
 export function getEffectiveAccess(userRef: string): Promise<ApiResult<EffectiveAccessDto>> {
   return call(`/api/administration/users/${encodeURIComponent(userRef)}/effective-access`);
+}
+
+export function setAccessOverride(userRef: string, input: SetOverrideInput): Promise<ApiResult<{ version: number }>> {
+  return call(`/api/administration/users/${encodeURIComponent(userRef)}/access-overrides`, { method: "PATCH", body: JSON.stringify(input) });
+}
+
+export function bulkSetAccessOverrides(userRef: string, input: BulkOverrideInput): Promise<ApiResult<{ version: number }>> {
+  return call(`/api/administration/users/${encodeURIComponent(userRef)}/access-overrides/bulk`, { method: "POST", body: JSON.stringify(input) });
 }
 
 export function addScopeGrant(userRef: string, grant: ScopeGrantRequestInput): Promise<ApiResult<{ created: boolean }>> {

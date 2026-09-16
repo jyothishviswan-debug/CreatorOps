@@ -6,9 +6,9 @@ import Link from "next/link";
 import { Panel, PanelBody, PanelHead, PanelGrid } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import { EmptyState } from "@/ui/States";
-import { EffectiveAccessPanel } from "./EffectiveAccessPanel";
 import { scopeChips } from "./format";
 import { addScopeGrant, getEffectiveAccess, removeScopeGrant, updateUser } from "./api-client";
+import { FEATURES } from "@/server/authz/features";
 import { ROLES, ROLE_LABELS, type Role } from "@/server/authz/roles";
 import type { AdminUserDto } from "@/server/administration/types";
 import type { EffectiveAccessDto } from "@/server/administration/effective-access-service";
@@ -336,9 +336,24 @@ export function AdminUserDetail({ initialUser, initialEffectiveAccess }: { initi
       </PanelGrid>
 
       {effectiveAccess ? (
-        <PanelGrid>
-          <EffectiveAccessPanel data={effectiveAccess} span={12} />
-        </PanelGrid>
+        <Panel span={12}>
+          <PanelHead title="Effective access" description="Module/action overrides are edited from the Access matrix, alongside every other user." />
+          <PanelBody>
+            <div className="kv">
+              <span>Effective modules</span>
+              <b>
+                {effectiveAccess.activeFeatures.length} of {FEATURES.length}
+              </b>
+            </div>
+            <div className="kv">
+              <span>Sensitive categories</span>
+              <b>{effectiveAccess.sensitiveCategories.length > 0 ? effectiveAccess.sensitiveCategories.join(", ") : "None"}</b>
+            </div>
+            <Link href={`/administration/access?user=${encodeURIComponent(user.userRef)}`} className="btn primary" style={{ marginTop: 14, display: "inline-flex" }}>
+              Manage module &amp; action access
+            </Link>
+          </PanelBody>
+        </Panel>
       ) : (
         <section className="panel">
           <EmptyState title="Effective access unavailable" description={effectiveAccessError ?? "Couldn't load effective access."} />

@@ -96,3 +96,79 @@ describe("getAllowedFeatures", () => {
     await expect(getAllowedFeatures(actor("viewer"))).resolves.toEqual(["dashboard"]);
   });
 });
+
+describe("Step 5B.1: user-specific overrides", () => {
+  it("role allow + no override (inherit) => allow", async () => {
+    getAdminFirestoreMock.mockReturnValue(
+      makeFakeFirestore({
+        "accessGrants/viewer": { role: "viewer", features: { dashboard: { view: true, actions: {} } } },
+      }),
+    );
+    await expect(canAccessFeature(actor("viewer"), "dashboard")).resolves.toBe(true);
+  });
+
+  it("role deny + no override (inherit) => deny", async () => {
+    getAdminFirestoreMock.mockReturnValue(makeFakeFirestore({ "accessGrants/viewer": { role: "viewer", features: {} } }));
+    await expect(canAccessFeature(actor("viewer"), "finance")).resolves.toBe(false);
+  });
+
+  it("role allow + explicit user deny => deny", async () => {
+    getAdminFirestoreMock.mockReturnValue(
+      makeFakeFirestore({
+        "accessGrants/viewer": { role: "viewer", features: { dashboard: { view: true, actions: {} } } },
+        "userAccessOverrides/uid-viewer": { uid: "uid-viewer", version: 1, features: { dashboard: { view: false, actions: {} } } },
+      }),
+    );
+    await expect(canAccessFeature(actor("viewer"), "dashboard")).resolves.toBe(false);
+  });
+
+  it("role deny + explicit user allow => allow", async () => {
+    getAdminFirestoreMock.mockReturnValue(
+      makeFakeFirestore({
+        "accessGrants/viewer": { role: "viewer", features: {} },
+        "userAccessOverrides/uid-viewer": { uid: "uid-viewer", version: 1, features: { finance: { view: true, actions: {} } } },
+      }),
+    );
+    await expect(canAccessFeature(actor("viewer"), "finance")).resolves.toBe(true);
+  });
+
+  it("an action override is independent of the module's own baseline value", async () => {
+    getAdminFirestoreMock.mockReturnValue(
+      makeFakeFirestore({
+        "accessGrants/partnership_manager": { role: "partnership_manager", features: { finance: { view: true, actions: { approve_payables: false } } } },
+        "userAccessOverrides/uid-partnership_manager": {
+          uid: "uid-partnership_manager",
+          version: 1,
+          features: { finance: { actions: { approve_payables: true } } },
+        },
+      }),
+    );
+    await expect(canPerformAction(actor("partnership_manager"), "finance", "approve_payables")).resolves.toBe(true);
+    // The module's own view override is untouched - still inherits the role baseline (true).
+    await expect(canAccessFeature(actor("partnership_manager"), "finance")).resolves.toBe(true);
+  });
+
+  it("resetting an override (no entry for that feature) restores the role's own behavior", async () => {
+    getAdminFirestoreMock.mockReturnValue(
+      makeFakeFirestore({
+        "accessGrants/viewer": { role: "viewer", features: { dashboard: { view: true, actions: {} } } },
+        // An override document exists, but has no entry for "dashboard" at all.
+        "userAccessOverrides/uid-viewer": { uid: "uid-viewer", version: 2, features: { finance: { view: true, actions: {} } } },
+      }),
+    );
+    await expect(canAccessFeature(actor("viewer"), "dashboard")).resolves.toBe(true);
+  });
+
+  it("a malformed override document fails closed to pure role-baseline behavior, never granting more than the role allows", async () => {
+    getAdminFirestoreMock.mockReturnValue(
+      makeFakeFirestore({
+        "accessGrants/viewer": { role: "viewer", features: { dashboard: { view: true, actions: {} } } },
+        // Missing required `version` / wrong shape - fails schema validation.
+        "userAccessOverrides/uid-viewer": { uid: "uid-viewer", features: { finance: { view: true, actions: {} } } },
+      }),
+    );
+    await expect(canAccessFeature(actor("viewer"), "finance")).resolves.toBe(false);
+    // The role's own real grants are unaffected by the neighboring malformed override doc.
+    await expect(canAccessFeature(actor("viewer"), "dashboard")).resolves.toBe(true);
+  });
+});

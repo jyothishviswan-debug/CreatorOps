@@ -3,7 +3,7 @@ import { ModuleTabs } from "@/ui/ModuleTabs";
 import { EmptyState } from "@/ui/States";
 import { AdministrationAccess } from "@/features/administration/AdministrationAccess";
 import { resolveRequestActor } from "@/server/administration/http";
-import { listUsers } from "@/server/administration/users-service";
+import { getUser } from "@/server/administration/users-service";
 import { getEffectiveAccess } from "@/server/administration/effective-access-service";
 import { getSensitiveGrants } from "@/server/administration/sensitive-grants-service";
 import { ROLES, type Role } from "@/server/authz/roles";
@@ -15,11 +15,12 @@ const TABS = [
   { label: "Audit", href: "/administration/audit" },
 ];
 
-export default async function AdministrationAccessPage() {
+export default async function AdministrationAccessPage({ searchParams }: { searchParams: Promise<{ user?: string }> }) {
+  const { user: requestedUserRef } = await searchParams;
   const actor = await resolveRequestActor();
-  const [usersResult, sensitiveResults] = await Promise.all([listUsers(actor, { limit: 50 }), Promise.all(ROLES.map((role) => getSensitiveGrants(actor, role)))]);
+  const sensitiveResults = await Promise.all(ROLES.map((role) => getSensitiveGrants(actor, role)));
 
-  if (!usersResult.ok) {
+  if (!sensitiveResults[0] || (sensitiveResults[0].ok === false && sensitiveResults[0].code === "unauthorized")) {
     return (
       <AppShell>
         <div className="head">
@@ -38,8 +39,13 @@ export default async function AdministrationAccessPage() {
 
   const sensitiveByRole = Object.fromEntries(ROLES.map((role, i) => [role, sensitiveResults[i]!.ok ? sensitiveResults[i]!.data.categories : []])) as Record<Role, string[]>;
 
-  const firstUser = usersResult.data.users[0] ?? null;
-  const effectiveAccessResult = firstUser ? await getEffectiveAccess(actor, firstUser.userRef) : null;
+  // Search-first by design: nothing is preloaded until an admin looks
+  // for someone, EXCEPT when deep-linked with a specific userRef (e.g.
+  // from a user's own detail page) - that one user's data is fetched
+  // server-side so landing here from a link has no data flash either.
+  const [initialUserResult, initialEffectiveAccessResult] = requestedUserRef
+    ? await Promise.all([getUser(actor, requestedUserRef), getEffectiveAccess(actor, requestedUserRef)])
+    : [null, null];
 
   return (
     <AppShell>
@@ -52,10 +58,9 @@ export default async function AdministrationAccessPage() {
       </div>
       <ModuleTabs tabs={TABS} />
       <AdministrationAccess
-        initialUsers={usersResult.data.users}
         initialSensitiveByRole={sensitiveByRole}
-        initialSelectedUserRef={firstUser?.userRef ?? null}
-        initialEffectiveAccess={effectiveAccessResult?.ok ? effectiveAccessResult.data : null}
+        initialSelectedUser={initialUserResult?.ok ? initialUserResult.data : null}
+        initialEffectiveAccess={initialEffectiveAccessResult?.ok ? initialEffectiveAccessResult.data : null}
       />
     </AppShell>
   );

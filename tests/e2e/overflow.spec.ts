@@ -8,7 +8,7 @@ const VIEWPORTS = [
 
 // A representative page per pattern: rich Overview, Workspace list, Detail,
 // and Create/Edit form.
-const REPRESENTATIVE_ROUTES = ["/dashboard", "/discovery/leads", "/finance", "/partners/new", "/administration/users"];
+const REPRESENTATIVE_ROUTES = ["/dashboard", "/discovery/leads", "/finance", "/partners/new", "/administration/users", "/administration/access"];
 
 for (const viewport of VIEWPORTS) {
   for (const route of REPRESENTATIVE_ROUTES) {

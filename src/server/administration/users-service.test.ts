@@ -28,7 +28,7 @@ const {
 
 vi.mock("@/server/authz/administration-gate", () => ({ requireAdministrationAccess: requireAdministrationAccessMock }));
 vi.mock("@/server/authz/firestore", () => ({
-  COLLECTIONS: { users: "users" },
+  COLLECTIONS: { users: "users", accessGrants: "accessGrants", userAccessOverrides: "userAccessOverrides", scopeAssignments: "scopeAssignments" },
   DEFAULT_LIST_PAGE_SIZE: 20,
   getUserDoc: getUserDocMock,
   getUserDocByRef: getUserDocByRefMock,
@@ -59,22 +59,41 @@ const targetUserDoc: UserDoc = {
   version: 3,
 };
 
-type FakeCollection = { doc: () => { set: typeof setMock }; where: (...args: unknown[]) => FakeCollection; limit: (...args: unknown[]) => FakeCollection };
+type FakeDocRef = { __collection: string; __id: string; set: typeof setMock };
+type FakeCollection = { doc: (id?: string) => FakeDocRef; where: (...args: unknown[]) => FakeCollection; limit: (...args: unknown[]) => FakeCollection };
 
 beforeEachSetup();
 function beforeEachSetup() {
-  collectionMock.mockImplementation(() => {
-    // Doubles as both a document-reference source (`.doc()`) and a
-    // chainable query builder (`.where().where().limit()`) for the
-    // last-Super-Admin count query - the mock only needs to be an opaque
-    // token that flows through to the per-test `tx.get()` stub, not a
-    // faithful Firestore query engine.
+  listUserDocsMock.mockResolvedValue({ users: [], nextCursor: null });
+  collectionMock.mockImplementation((name: string) => {
+    // Doubles as both a document-reference source (`.doc()`, tagged with
+    // its own collection/id so a routing tx.get() fake can answer based
+    // on WHAT was asked for) and a chainable query builder
+    // (`.where().where().limit()`, unused by admin-manager-guard's
+    // single-doc reads but still exercised by listUserDocs elsewhere) -
+    // not a faithful Firestore query engine, just enough to route reads.
     const self: FakeCollection = {
-      doc: vi.fn(() => ({ set: setMock })),
+      doc: vi.fn((id?: string) => ({ __collection: name, __id: id ?? "", set: setMock })),
       where: vi.fn(() => self),
       limit: vi.fn(() => self),
     };
     return self;
+  });
+}
+
+// A missing snapshot for every collection admin-manager-guard reads
+// (accessGrants/userAccessOverrides/scopeAssignments) by default, so a
+// test that doesn't care about admin-manager-capability guard behavior
+// doesn't have to configure it - the target simply resolves to "no
+// capability", and the guard never engages at all. Individual tests
+// override specific paths via `routes` to simulate a target who DOES
+// currently hold full Administration-manager capability.
+function makeTxGetRouter(routes: Record<string, unknown> = {}) {
+  const notExists = { exists: false, data: () => undefined };
+  return vi.fn(async (ref: FakeDocRef) => {
+    const key = `${ref.__collection}/${ref.__id}`;
+    if (key in routes) return routes[key];
+    return notExists;
   });
 }
 
@@ -177,10 +196,22 @@ describe("createUser", () => {
 });
 
 describe("updateUser", () => {
-  function makeTx(getResults: unknown[]) {
+  // A full accessGrants/{role} doc where every Administration-manager
+  // action is granted - the shape resolveCandidateCapability needs to
+  // resolve a candidate as "currently able to fully administer users and
+  // access".
+  const fullAdminGrant = {
+    role: "super_admin",
+    features: { administration: { view: true, actions: { manage_users: true, manage_overrides: true, manage_scope: true, manage_sensitive: true, view_audit: true } } },
+  };
+
+  function globalScopeSnap(uid: string) {
+    return { exists: true, data: () => ({ type: "GLOBAL", uid, grantedAt: "x", grantedBy: "system:seed" }) };
+  }
+
+  function makeTx(routes: Record<string, unknown> = {}) {
     const txSet = vi.fn();
-    const txGet = vi.fn();
-    for (const value of getResults) txGet.mockResolvedValueOnce(value);
+    const txGet = makeTxGetRouter(routes);
     runTransactionMock.mockImplementation(async (callback: (tx: { get: typeof txGet; set: typeof txSet }) => unknown) => callback({ get: txGet, set: txSet }));
     return { txSet, txGet };
   }
@@ -195,7 +226,7 @@ describe("updateUser", () => {
   it("rejects a stale expectedVersion (stale mutation rejected)", async () => {
     requireAdministrationAccessMock.mockResolvedValue({ ok: true });
     getUserDocByRefMock.mockResolvedValue(targetUserDoc);
-    makeTx([{ exists: true, data: () => targetUserDoc }]);
+    makeTx({ "users/uid-2": { exists: true, data: () => targetUserDoc } });
 
     const result = await updateUser(actor, "ref-2", { displayName: "New Name", expectedVersion: targetUserDoc.version - 1 }, "req-1");
     expect(result).toEqual({ ok: false, code: "stale_write", message: expect.any(String) });
@@ -204,7 +235,10 @@ describe("updateUser", () => {
   it("changes a role and writes a user.role_change audit event", async () => {
     requireAdministrationAccessMock.mockResolvedValue({ ok: true });
     getUserDocByRefMock.mockResolvedValue(targetUserDoc);
-    const { txSet } = makeTx([{ exists: true, data: () => targetUserDoc }]);
+    // targetUserDoc's role (partnership_manager) has no accessGrants
+    // route configured, so it resolves to "no capability" and the
+    // admin-manager guard never engages for this change.
+    const { txSet } = makeTx({ "users/uid-2": { exists: true, data: () => targetUserDoc } });
 
     const result = await updateUser(actor, "ref-2", { role: "partnership_head", expectedVersion: targetUserDoc.version }, "req-1");
 
@@ -219,7 +253,7 @@ describe("updateUser", () => {
   it("deactivates a non-Super-Admin user and writes a user.deactivate audit event", async () => {
     requireAdministrationAccessMock.mockResolvedValue({ ok: true });
     getUserDocByRefMock.mockResolvedValue(targetUserDoc);
-    makeTx([{ exists: true, data: () => targetUserDoc }]);
+    makeTx({ "users/uid-2": { exists: true, data: () => targetUserDoc } });
 
     const result = await updateUser(actor, "ref-2", { active: false, expectedVersion: targetUserDoc.version }, "req-1");
 
@@ -233,7 +267,7 @@ describe("updateUser", () => {
     const inactiveDoc: UserDoc = { ...targetUserDoc, active: false };
     requireAdministrationAccessMock.mockResolvedValue({ ok: true });
     getUserDocByRefMock.mockResolvedValue(inactiveDoc);
-    makeTx([{ exists: true, data: () => inactiveDoc }]);
+    makeTx({ "users/uid-2": { exists: true, data: () => inactiveDoc } });
 
     const result = await updateUser(actor, "ref-2", { active: true, expectedVersion: inactiveDoc.version }, "req-1");
 
@@ -241,13 +275,17 @@ describe("updateUser", () => {
     expect(writeAuditEventMock).toHaveBeenCalledWith(expect.objectContaining({ operation: "user.activate" }));
   });
 
-  it("blocks deactivating the last active Super Admin (final Super Admin protection)", async () => {
+  it("blocks deactivating the last active Super Admin (final usable Administration-manager protection)", async () => {
     const lastSuperAdmin: UserDoc = { ...targetUserDoc, uid: "uid-admin", role: "super_admin", active: true, version: 1 };
     requireAdministrationAccessMock.mockResolvedValue({ ok: true });
     getUserDocByRefMock.mockResolvedValue(lastSuperAdmin);
-    // First tx.get() = the target doc itself; second = the active-super-admin
-    // count query, capped at 2 results - only this one super admin exists.
-    makeTx([{ exists: true, data: () => lastSuperAdmin }, { size: 1 }]);
+    makeTx({
+      "users/uid-admin": { exists: true, data: () => lastSuperAdmin },
+      "accessGrants/super_admin": { exists: true, data: () => fullAdminGrant },
+      "scopeAssignments/uid-admin__GLOBAL": globalScopeSnap("uid-admin"),
+    });
+    // No other active users at all (default empty page from
+    // beforeEachSetup) - nobody else could pick up the capability.
 
     const result = await updateUser(actor, "ref-2", { active: false, expectedVersion: 1 }, "req-1");
     expect(result).toEqual({ ok: false, code: "conflict", message: expect.any(String) });
@@ -258,7 +296,13 @@ describe("updateUser", () => {
     const lastSuperAdmin: UserDoc = { ...targetUserDoc, uid: "uid-admin", role: "super_admin", active: true, version: 1 };
     requireAdministrationAccessMock.mockResolvedValue({ ok: true });
     getUserDocByRefMock.mockResolvedValue(lastSuperAdmin);
-    makeTx([{ exists: true, data: () => lastSuperAdmin }, { size: 1 }]);
+    makeTx({
+      "users/uid-admin": { exists: true, data: () => lastSuperAdmin },
+      "accessGrants/super_admin": { exists: true, data: () => fullAdminGrant },
+      "scopeAssignments/uid-admin__GLOBAL": globalScopeSnap("uid-admin"),
+      // "accessGrants/viewer" is not configured - the new role resolves
+      // to no Administration access at all, so capability is lost.
+    });
 
     const result = await updateUser(actor, "ref-2", { role: "viewer", expectedVersion: 1 }, "req-1");
     expect(result).toEqual({ ok: false, code: "conflict", message: expect.any(String) });
@@ -266,13 +310,31 @@ describe("updateUser", () => {
 
   it("allows deactivating a Super Admin when another active Super Admin still exists", async () => {
     const superAdmin: UserDoc = { ...targetUserDoc, uid: "uid-admin", role: "super_admin", active: true, version: 1 };
+    const otherAdmin: UserDoc = { ...targetUserDoc, uid: "uid-other-admin", userRef: "ref-other", email: "other@creatorops.com", role: "super_admin", active: true, version: 1 };
     requireAdministrationAccessMock.mockResolvedValue({ ok: true });
     getUserDocByRefMock.mockResolvedValue(superAdmin);
-    // Two active super admins exist, so removing one is fine.
-    makeTx([{ exists: true, data: () => superAdmin }, { size: 2 }]);
+    listUserDocsMock.mockResolvedValue({ users: [otherAdmin], nextCursor: null });
+    makeTx({
+      "users/uid-admin": { exists: true, data: () => superAdmin },
+      "accessGrants/super_admin": { exists: true, data: () => fullAdminGrant },
+      "scopeAssignments/uid-admin__GLOBAL": globalScopeSnap("uid-admin"),
+      "scopeAssignments/uid-other-admin__GLOBAL": globalScopeSnap("uid-other-admin"),
+    });
 
     const result = await updateUser(actor, "ref-2", { active: false, expectedVersion: 1 }, "req-1");
     expect(result.ok).toBe(true);
+  });
+
+  it("does not block deactivating a user who never had Administration-manager capability in the first place", async () => {
+    // targetUserDoc's role (partnership_manager) has no accessGrants
+    // route, so it never had the capability to lose.
+    requireAdministrationAccessMock.mockResolvedValue({ ok: true });
+    getUserDocByRefMock.mockResolvedValue(targetUserDoc);
+    makeTx({ "users/uid-2": { exists: true, data: () => targetUserDoc } });
+
+    const result = await updateUser(actor, "ref-2", { active: false, expectedVersion: targetUserDoc.version }, "req-1");
+    expect(result.ok).toBe(true);
+    expect(listUserDocsMock).not.toHaveBeenCalled();
   });
 
   it("returns not_found for a target userRef that doesn't resolve", async () => {

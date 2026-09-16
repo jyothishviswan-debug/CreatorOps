@@ -3,7 +3,7 @@ import { NextResponse } from "next/server";
 import { createUser, listUsers } from "@/server/administration/users-service";
 import { newRequestId, parseJsonBody, resolveRequestActor, toHttpResponse } from "@/server/administration/http";
 
-// GET /api/administration/users?limit=&cursor=&role=&active=
+// GET /api/administration/users?limit=&cursor=&role=&active=&emailPrefix=
 export async function GET(request: Request) {
   const actor = await resolveRequestActor();
 
@@ -13,12 +13,14 @@ export async function GET(request: Request) {
   const cursorUserRef = url.searchParams.get("cursorUserRef");
   const role = url.searchParams.get("role");
   const activeParam = url.searchParams.get("active");
+  const emailPrefix = url.searchParams.get("emailPrefix");
 
   const input = {
     limit: limitParam ? Number(limitParam) : undefined,
     cursor: cursorEmail && cursorUserRef ? { email: cursorEmail, userRef: cursorUserRef } : undefined,
     role: role ?? undefined,
     active: activeParam === null ? undefined : activeParam === "true",
+    emailPrefix: emailPrefix ?? undefined,
   };
 
   const result = await listUsers(actor, input);

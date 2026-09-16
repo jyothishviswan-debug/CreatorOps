@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getAdminAuth, getAdminFirestore } from "@/server/firebase/admin";
 import { requireAdministrationAccess } from "@/server/authz/administration-gate";
+import { hasAnotherActiveAdminManager, readerFor, resolveCandidateCapability } from "@/server/authz/admin-manager-guard";
 import { writeAuditEvent } from "@/server/authz/audit";
 import { COLLECTIONS, DEFAULT_LIST_PAGE_SIZE, getUserDoc, getUserDocByRef, listUserDocs, type UserListCursor } from "@/server/authz/firestore";
 import { roleSchema, userDocSchema, type ActorContext, type UserDoc } from "@/server/authz/types";
@@ -15,6 +16,11 @@ const listUsersInputSchema = z.object({
   cursor: z.object({ email: z.string().min(1), userRef: z.string().min(1) }).optional(),
   role: roleSchema.optional(),
   active: z.boolean().optional(),
+  // A bounded email-prefix search, not a substring filter over a
+  // preloaded page - see listUserDocs. Lowercased so a search box that
+  // doesn't itself normalize case still matches seeded/created
+  // lowercase emails.
+  emailPrefix: z.string().min(1).optional(),
 });
 
 export type ListUsersInput = z.input<typeof listUsersInputSchema>;
@@ -30,7 +36,13 @@ export async function listUsers(
   const parsed = listUsersInputSchema.safeParse(rawInput);
   if (!parsed.success) return invalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
 
-  const page = await listUserDocs({ limit: parsed.data.limit ?? DEFAULT_LIST_PAGE_SIZE, cursor: parsed.data.cursor, role: parsed.data.role, active: parsed.data.active });
+  const page = await listUserDocs({
+    limit: parsed.data.limit ?? DEFAULT_LIST_PAGE_SIZE,
+    cursor: parsed.data.cursor,
+    role: parsed.data.role,
+    active: parsed.data.active,
+    emailPrefix: parsed.data.emailPrefix?.toLowerCase(),
+  });
   return { ok: true, data: { users: page.users.map(toAdminUserDto), nextCursor: page.nextCursor } };
 }
 
@@ -162,7 +174,7 @@ export async function updateUser(actor: ActorContext | null, userRef: unknown, r
   const db = getAdminFirestore();
   const docRef = db.collection(COLLECTIONS.users).doc(targetDoc.uid);
 
-  type TxResult = { kind: "ok"; doc: UserDoc } | { kind: "stale" } | { kind: "last_super_admin" } | { kind: "not_found" };
+  type TxResult = { kind: "ok"; doc: UserDoc } | { kind: "stale" } | { kind: "last_admin_manager" } | { kind: "not_found" };
 
   const result = await db.runTransaction<TxResult>(async (tx) => {
     // Reads before writes, always - this is a hard Firestore transaction
@@ -176,17 +188,26 @@ export async function updateUser(actor: ActorContext | null, userRef: unknown, r
 
     if (current.version !== expectedVersion) return { kind: "stale" };
 
-    const willDeactivate = patch.active === false;
-    const willChangeRoleAwayFromSuperAdmin = patch.role !== undefined && patch.role !== "super_admin";
-    const isCurrentlyActiveSuperAdmin = current.role === "super_admin" && current.active;
+    const nextRole = patch.role ?? current.role;
+    const nextActive = patch.active ?? current.active;
+    const reader = readerFor(tx);
 
-    if (isCurrentlyActiveSuperAdmin && (willDeactivate || willChangeRoleAwayFromSuperAdmin)) {
-      // Read (still before any write in this transaction) - is there any
-      // OTHER active Super Admin besides this one? Capped at 2 results:
-      // we only need to know "is there more than just this one".
-      const superAdminsQuery = db.collection(COLLECTIONS.users).where("role", "==", "super_admin").where("active", "==", true).limit(2);
-      const superAdminsSnap = await tx.get(superAdminsQuery);
-      if (superAdminsSnap.size <= 1) return { kind: "last_super_admin" };
+    // Effective-access-based, not role-label-based: resolve whether this
+    // user currently has full Administration-manager capability (role
+    // baseline + their own overrides + GLOBAL scope, exactly like a live
+    // request would), and whether they'd still have it after this patch
+    // (a role change re-evaluates against the NEW role's baseline; their
+    // overrides/scope are unaffected by a profile update, so those are
+    // read once and reused for both the "before" and "after" check).
+    const hadCapability = await resolveCandidateCapability(reader, { uid: current.uid, role: current.role, active: current.active });
+    const wouldStillHaveCapability = patch.role === undefined && patch.active === undefined ? hadCapability : await resolveCandidateCapability(reader, { uid: current.uid, role: nextRole, active: nextActive });
+
+    if (hadCapability && !wouldStillHaveCapability) {
+      // Still reads, still before any write in this transaction - a
+      // bounded scan for any OTHER active user who currently resolves to
+      // full Administration-manager capability.
+      const another = await hasAnotherActiveAdminManager(current.uid, tx);
+      if (!another) return { kind: "last_admin_manager" };
     }
 
     const updated: UserDoc = {
@@ -202,8 +223,8 @@ export async function updateUser(actor: ActorContext | null, userRef: unknown, r
 
   if (result.kind === "not_found") return { ok: false, code: "not_found", message: "User not found." };
   if (result.kind === "stale") return { ok: false, code: "stale_write", message: "The user was modified by someone else. Reload and try again." };
-  if (result.kind === "last_super_admin") {
-    return { ok: false, code: "conflict", message: "Refusing to deactivate or reassign the last active Super Admin in this emulator dataset." };
+  if (result.kind === "last_admin_manager") {
+    return { ok: false, code: "conflict", message: "Refusing to change this user: they are the last active user who can fully administer users and access." };
   }
 
   const before: Record<string, unknown> = {};

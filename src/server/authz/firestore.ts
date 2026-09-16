@@ -2,13 +2,14 @@ import type { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { Role } from "./roles";
-import { accessGrantDocSchema, scopeGrantSchema, sensitiveAccessGrantDocSchema, userDocSchema, type ScopeGrant, type UserDoc } from "./types";
+import { accessGrantDocSchema, scopeGrantSchema, sensitiveAccessGrantDocSchema, userAccessOverrideDocSchema, userDocSchema, type ScopeGrant, type UserAccessOverrideDoc, type UserDoc } from "./types";
 
 export const COLLECTIONS = {
   users: "users",
   accessGrants: "accessGrants",
   scopeAssignments: "scopeAssignments",
   sensitiveAccessGrants: "sensitiveAccessGrants",
+  userAccessOverrides: "userAccessOverrides",
   auditEvents: "auditEvents",
 } as const;
 
@@ -66,6 +67,15 @@ export function getSensitiveAccessGrantDoc(role: string) {
   return getParsedDoc(COLLECTIONS.sensitiveAccessGrants, role, sensitiveAccessGrantDocSchema);
 }
 
+// A missing or malformed override document is not an error - it means
+// "no explicit overrides for this user", and every caller that resolves
+// access treats that identically to an empty override map (fail closed:
+// a corrupt override document can never grant more than the role
+// baseline already would).
+export function getUserAccessOverrideDoc(uid: string): Promise<UserAccessOverrideDoc | null> {
+  return getParsedDoc(COLLECTIONS.userAccessOverrides, uid, userAccessOverrideDocSchema);
+}
+
 // Resolves a user by their opaque, browser-facing userRef instead of the
 // real Firebase uid. A tampered or made-up token simply matches no
 // document - there is nothing to "almost match" against, since userRef
@@ -96,12 +106,19 @@ export async function listUserDocs(options: {
   cursor?: UserListCursor;
   role?: Role;
   active?: boolean;
+  // A bounded, indexed email-prefix range query (not a client-side
+  // substring filter over a preloaded page) - the same "search a user"
+  // idiom a real Administration console needs, without ever fetching an
+  // unbounded set to filter locally. Case-sensitive on the stored email
+  // (emails are seeded/created lowercase); callers normalize input.
+  emailPrefix?: string;
 }): Promise<ListUsersPage> {
   const pageSize = Math.max(1, Math.min(options.limit, MAX_LIST_PAGE_SIZE));
 
   let query = getAdminFirestore().collection(COLLECTIONS.users).orderBy("email").orderBy("userRef").limit(pageSize + 1);
   if (options.role) query = query.where("role", "==", options.role);
   if (options.active !== undefined) query = query.where("active", "==", options.active);
+  if (options.emailPrefix) query = query.where("email", ">=", options.emailPrefix).where("email", "<", `${options.emailPrefix}`);
   if (options.cursor) query = query.startAfter(options.cursor.email, options.cursor.userRef);
 
   const snapshot = await query.get();

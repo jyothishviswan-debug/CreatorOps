@@ -4,9 +4,12 @@ import { useState } from "react";
 
 import { EmptyState, Skeleton } from "@/ui/States";
 import { absoluteTime, changeSummary, operationLabel, relativeTime } from "./format";
+import { Pager } from "./Pager";
 import { listAuditEvents } from "./api-client";
 import type { AuditEventDto } from "@/server/administration/audit-service";
 import type { AuditEventListCursor } from "@/server/authz/audit";
+
+const PAGE_SIZE = 10;
 
 export function AdministrationAuditWorkspace({
   initialEvents,
@@ -15,27 +18,39 @@ export function AdministrationAuditWorkspace({
   initialEvents: AuditEventDto[];
   initialNextCursor: AuditEventListCursor | null;
 }) {
-  const [events, setEvents] = useState(initialEvents);
-  const [cursor, setCursor] = useState(initialNextCursor);
+  // pages[i] is page i+1's events; nextCursors[i] is the cursor to fetch
+  // page i+2 - same cursor-cache pattern as AdministrationUsersWorkspace.
+  const [pages, setPages] = useState<AuditEventDto[][]>([initialEvents]);
+  const [nextCursors, setNextCursors] = useState<(AuditEventListCursor | null)[]>([initialNextCursor]);
+  const [currentPage, setCurrentPage] = useState(1);
   const [operationFilter, setOperationFilter] = useState("all");
-  const [loadingMore, setLoadingMore] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const operations = [...new Set(events.map((event) => event.operation))];
-  const filtered = operationFilter === "all" ? events : events.filter((event) => event.operation === operationFilter);
+  const rows = pages[currentPage - 1] ?? [];
+  const operations = [...new Set(rows.map((event) => event.operation))];
+  const filtered = operationFilter === "all" ? rows : rows.filter((event) => event.operation === operationFilter);
+  const hasMore = nextCursors[currentPage - 1] != null;
 
-  async function loadMore() {
-    if (!cursor) return;
-    setLoadingMore(true);
+  async function goToPage(page: number) {
+    if (page < 1 || page === currentPage) return;
+    if (page <= pages.length) {
+      setCurrentPage(page);
+      return;
+    }
+    const cursor = nextCursors[page - 2];
+    if (page > pages.length + 1 || cursor === undefined || cursor === null) return;
+    setLoading(true);
     setError(null);
-    const result = await listAuditEvents({ limit: 20, cursor });
-    setLoadingMore(false);
+    const result = await listAuditEvents({ limit: PAGE_SIZE, cursor });
+    setLoading(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    setEvents((prev) => [...prev, ...result.data.events]);
-    setCursor(result.data.nextCursor);
+    setPages((prev) => [...prev, result.data.events]);
+    setNextCursors((prev) => [...prev, result.data.nextCursor]);
+    setCurrentPage(page);
   }
 
   return (
@@ -53,12 +68,16 @@ export function AdministrationAuditWorkspace({
 
       {error && (
         <div className="banner" role="alert" style={{ margin: "0 18px 15px" }}>
-          <b>Couldn&rsquo;t load more events.</b> {error}
+          <b>Couldn&rsquo;t load that page.</b> {error}
         </div>
       )}
 
-      {filtered.length === 0 ? (
-        <EmptyState title="No audit events yet" description="Access-changing mutations will appear here as they happen." />
+      {loading ? (
+        <div style={{ padding: "0 18px 18px" }}>
+          <Skeleton lines={5} />
+        </div>
+      ) : filtered.length === 0 ? (
+        <EmptyState title="No audit events on this page" description="Access-changing mutations will appear here as they happen." />
       ) : (
         <div className="tablewrap">
           <table>
@@ -89,21 +108,11 @@ export function AdministrationAuditWorkspace({
         </div>
       )}
 
-      {loadingMore && (
-        <div style={{ padding: "0 18px 18px" }}>
-          <Skeleton lines={2} />
-        </div>
-      )}
-
       <div className="panelfoot">
         <span>
-          {filtered.length} of {events.length} loaded{cursor ? " · more available" : ""}
+          Page {currentPage} · {filtered.length} shown
         </span>
-        {cursor && (
-          <button className="btn" type="button" onClick={loadMore} disabled={loadingMore}>
-            {loadingMore ? "Loading…" : "Load more"}
-          </button>
-        )}
+        <Pager currentPage={currentPage} knownPages={pages.length} hasMore={hasMore} busy={loading} onChange={goToPage} />
       </div>
     </section>
   );

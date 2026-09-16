@@ -36,7 +36,7 @@ export default async function AdministrationUsersPage() {
       </div>
       <ModuleTabs tabs={TABS} />
       {result.ok ? (
-        <AdministrationUsersWorkspace initialUsers={result.data.users} initialNextCursor={result.data.nextCursor} initialLimit={INITIAL_LIMIT} />
+        <AdministrationUsersWorkspace initialUsers={result.data.users} initialNextCursor={result.data.nextCursor} />
       ) : (
         <section className="panel">
           <EmptyState title="Access denied" description="You don't have permission to view the user directory." />

@@ -66,7 +66,12 @@ describe("Administration API boundary (real emulator)", () => {
     const seen: { email: string; userRef: string }[] = [];
     let cursor: { email: string; userRef: string } | undefined;
 
-    for (let guard = 0; guard < 50; guard += 1) {
+    // Small per-page size (2) still exercises real multi-page cursor
+    // behavior; the guard bound is generous because this emulator's
+    // users collection accumulates real data across every local test run
+    // in this repo's history (hundreds of entries), not just this file's
+    // own seeded identities.
+    for (let guard = 0; guard < 500; guard += 1) {
       const page = await listUsers(admin, { limit: 2, cursor });
       if (!page.ok) throw new Error("listUsers failed");
       seen.push(...page.data.users.map((user) => ({ email: user.email, userRef: user.userRef })));

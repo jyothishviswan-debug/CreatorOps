@@ -62,9 +62,23 @@ describe("seeded access-control data (real emulator)", () => {
     await expect(canAccessFeature(await actorFor("partnership_manager"), "finance")).resolves.toBe(true);
   });
 
-  it("Partnership Manager cannot approve Finance; Partnership Head can (explicit action allow/deny)", async () => {
-    await expect(canPerformAction(await actorFor("partnership_manager"), "finance", "approve")).resolves.toBe(false);
-    await expect(canPerformAction(await actorFor("partnership_head"), "finance", "approve")).resolves.toBe(true);
+  it("Partnership Head can approve_payables via role baseline; Partnership Manager's role baseline denies it (explicit action allow/deny)", async () => {
+    await expect(canPerformAction(await actorFor("partnership_head"), "finance", "approve_payables")).resolves.toBe(true);
+  });
+
+  it("Step 5B.1: Partnership Manager's approve_payables is explicitly overridden to allow, even though the role baseline denies it (non-monotonic user override)", async () => {
+    await expect(canPerformAction(await actorFor("partnership_manager"), "finance", "approve_payables")).resolves.toBe(true);
+  });
+
+  it("Step 5B.1: Viewer's role baseline denies Operations, but an explicit user override allows it (role-denied module explicitly allowed)", async () => {
+    await expect(canAccessFeature(await actorFor("viewer"), "operations")).resolves.toBe(true);
+  });
+
+  it("Step 5B.1: Analyst's role baseline includes Export Center, but an explicit user override denies it (role-allowed module explicitly denied)", async () => {
+    await expect(canAccessFeature(await actorFor("analyst"), "exports")).resolves.toBe(false);
+    // Every other Analyst identity behavior (Import Center, etc.) is
+    // untouched by this override - it targets exactly one module.
+    await expect(canAccessFeature(await actorFor("analyst"), "imports")).resolves.toBe(true);
   });
 
   it("Analyst has Import Center; Partnership Head - otherwise broader - does not (no role-rank fallback)", async () => {

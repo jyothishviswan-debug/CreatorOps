@@ -8,41 +8,37 @@ import { Toolbar, SearchInput } from "@/ui/Table";
 import { Pill } from "@/ui/Badge";
 import { EmptyState, Skeleton } from "@/ui/States";
 import { initialsOf } from "@/features/shared/types";
+import { Pager } from "./Pager";
 import { ROLES, ROLE_LABELS, type Role } from "@/server/authz/roles";
 import type { AdminUserDto } from "@/server/administration/types";
 import type { UserListCursor } from "@/server/authz/firestore";
 import { listUsers } from "./api-client";
 
 const ROW_TINTS = ["#f5e9e1", "#e6edf5", "#f0eafa"];
-const PAGE_SIZES = [10, 20, 50];
+const PAGE_SIZE = 10;
 
-export function AdministrationUsersWorkspace({
-  initialUsers,
-  initialNextCursor,
-  initialLimit,
-}: {
-  initialUsers: AdminUserDto[];
-  initialNextCursor: UserListCursor | null;
-  initialLimit: number;
-}) {
+export function AdministrationUsersWorkspace({ initialUsers, initialNextCursor }: { initialUsers: AdminUserDto[]; initialNextCursor: UserListCursor | null }) {
   const router = useRouter();
-  const [users, setUsers] = useState(initialUsers);
-  const [cursor, setCursor] = useState(initialNextCursor);
-  const [limit, setLimit] = useState(initialLimit);
+  // pages[i] is page i+1's rows; nextCursors[i] is the cursor to fetch
+  // page i+2 (i.e. the cursor returned when page i+1 was fetched).
+  const [pages, setPages] = useState<AdminUserDto[][]>([initialUsers]);
+  const [nextCursors, setNextCursors] = useState<(UserListCursor | null)[]>([initialNextCursor]);
+  const [currentPage, setCurrentPage] = useState(1);
   const [roleFilter, setRoleFilter] = useState<Role | "all">("all");
   const [statusFilter, setStatusFilter] = useState<"all" | "active" | "inactive">("all");
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [loadingMore, setLoadingMore] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [density, setDensity] = useState(false);
   const [layout, setLayout] = useState<"table" | "cards">("table");
   const skippedFirstEffect = useRef(false);
 
+  const filters = { role: roleFilter === "all" ? undefined : roleFilter, active: statusFilter === "all" ? undefined : statusFilter === "active" };
+
   useEffect(() => {
     // The initial page already arrived server-rendered as props (no
     // protected-data flash) - skip the redundant first fetch and only
-    // re-query when a filter/page-size actually changes.
+    // re-query when a filter actually changes.
     if (!skippedFirstEffect.current) {
       skippedFirstEffect.current = true;
       return;
@@ -50,36 +46,49 @@ export function AdministrationUsersWorkspace({
     let cancelled = false;
     setLoading(true);
     setError(null);
-    listUsers({ limit, role: roleFilter === "all" ? undefined : roleFilter, active: statusFilter === "all" ? undefined : statusFilter === "active" }).then((result) => {
+    listUsers({ limit: PAGE_SIZE, ...filters }).then((result) => {
       if (cancelled) return;
       setLoading(false);
       if (!result.ok) {
         setError(result.error);
         return;
       }
-      setUsers(result.data.users);
-      setCursor(result.data.nextCursor);
+      setPages([result.data.users]);
+      setNextCursors([result.data.nextCursor]);
+      setCurrentPage(1);
     });
     return () => {
       cancelled = true;
     };
-  }, [limit, roleFilter, statusFilter]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [roleFilter, statusFilter]);
 
-  async function loadMore() {
-    if (!cursor) return;
-    setLoadingMore(true);
+  async function goToPage(page: number) {
+    if (page < 1 || page === currentPage) return;
+    if (page <= pages.length) {
+      setCurrentPage(page);
+      return;
+    }
+    // Fetching the next not-yet-visited page: continue from the cursor
+    // the previous page returned.
+    const cursor = nextCursors[page - 2];
+    if (page > pages.length + 1 || cursor === undefined || cursor === null) return;
+    setLoading(true);
     setError(null);
-    const result = await listUsers({ limit, cursor, role: roleFilter === "all" ? undefined : roleFilter, active: statusFilter === "all" ? undefined : statusFilter === "active" });
-    setLoadingMore(false);
+    const result = await listUsers({ limit: PAGE_SIZE, cursor, ...filters });
+    setLoading(false);
     if (!result.ok) {
       setError(result.error);
       return;
     }
-    setUsers((prev) => [...prev, ...result.data.users]);
-    setCursor(result.data.nextCursor);
+    setPages((prev) => [...prev, result.data.users]);
+    setNextCursors((prev) => [...prev, result.data.nextCursor]);
+    setCurrentPage(page);
   }
 
-  const filtered = users.filter((user) => `${user.displayName} ${user.email}`.toLowerCase().includes(query.toLowerCase()));
+  const rows = pages[currentPage - 1] ?? [];
+  const filtered = rows.filter((user) => `${user.displayName} ${user.email}`.toLowerCase().includes(query.toLowerCase()));
+  const hasMore = nextCursors[currentPage - 1] != null;
 
   function openUser(userRef: string) {
     router.push(`/administration/users/${userRef}`);
@@ -88,7 +97,7 @@ export function AdministrationUsersWorkspace({
   return (
     <section className="panel">
       <Toolbar>
-        <SearchInput placeholder="Search name or email…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        <SearchInput placeholder="Filter this page by name or email…" value={query} onChange={(e) => setQuery(e.target.value)} />
         <select aria-label="Filter role" value={roleFilter} onChange={(e) => setRoleFilter(e.target.value as Role | "all")}>
           <option value="all">All roles</option>
           {ROLES.map((role) => (
@@ -101,13 +110,6 @@ export function AdministrationUsersWorkspace({
           <option value="all">All statuses</option>
           <option value="active">Active</option>
           <option value="inactive">Inactive</option>
-        </select>
-        <select aria-label="Rows per page" value={limit} onChange={(e) => setLimit(Number(e.target.value))}>
-          {PAGE_SIZES.map((size) => (
-            <option key={size} value={size}>
-              {size} per page
-            </option>
-          ))}
         </select>
         <button className="btn" aria-pressed={density} type="button" onClick={() => setDensity((value) => !value)}>
           {density ? "Comfortable" : "Compact"} rows
@@ -134,10 +136,10 @@ export function AdministrationUsersWorkspace({
         </div>
       ) : filtered.length === 0 ? (
         <EmptyState
-          title={users.length === 0 ? "No users yet" : "No matching records"}
-          description={users.length === 0 ? "Provision the first user to get started." : "Try another name, email, or clear the selected filters."}
+          title={rows.length === 0 ? "No users yet" : "No matching records on this page"}
+          description={rows.length === 0 ? "Provision the first user to get started." : "Try another name/email, or check another page."}
           action={
-            users.length === 0 ? (
+            rows.length === 0 ? (
               <Link href="/administration/users/new" className="btn primary">
                 + New user
               </Link>
@@ -164,13 +166,9 @@ export function AdministrationUsersWorkspace({
 
       <div className="panelfoot">
         <span>
-          {filtered.length} of {users.length} loaded{cursor ? " · more available" : ""}
+          Page {currentPage} · {filtered.length} shown
         </span>
-        {cursor && (
-          <button className="btn" type="button" onClick={loadMore} disabled={loadingMore}>
-            {loadingMore ? "Loading…" : "Load more"}
-          </button>
-        )}
+        <Pager currentPage={currentPage} knownPages={pages.length} hasMore={hasMore} busy={loading} onChange={goToPage} />
       </div>
     </section>
   );

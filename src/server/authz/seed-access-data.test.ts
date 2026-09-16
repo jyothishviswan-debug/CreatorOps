@@ -38,6 +38,13 @@ import { seedAccessControlData, TEST_IDENTITIES } from "./seed-access-data";
 // Analyst 4, Partnership Manager 4, Partnership Head 8, Super Admin 1).
 const TOTAL_SCOPE_GRANTS = 2 + 4 + 4 + 8 + 1;
 
+// Kept in sync with USER_OVERRIDES in seed-access-data.ts: viewer,
+// analyst and manager each get one representative override document
+// written; head and admin get none (and so get their override doc
+// deleted instead, in case a prior seed run left one behind).
+const IDENTITIES_WITH_OVERRIDES = 3;
+const IDENTITIES_WITHOUT_OVERRIDES = TEST_IDENTITIES.length - IDENTITIES_WITH_OVERRIDES;
+
 afterEach(() => {
   vi.clearAllMocks();
 });
@@ -76,8 +83,9 @@ describe("seedAccessControlData", () => {
       expect(docMock).toHaveBeenCalledWith(`uid-${identity.email}`);
     }
     // 5 roles * 2 collections (accessGrants + sensitiveAccessGrants) +
-    // 5 identity user docs + every individual scope grant document.
-    expect(setMock).toHaveBeenCalledTimes(ROLES.length * 2 + TEST_IDENTITIES.length + TOTAL_SCOPE_GRANTS);
+    // 5 identity user docs + every individual scope grant document +
+    // one userAccessOverrides doc per identity that has an override.
+    expect(setMock).toHaveBeenCalledTimes(ROLES.length * 2 + TEST_IDENTITIES.length + TOTAL_SCOPE_GRANTS + IDENTITIES_WITH_OVERRIDES);
   });
 
   it("gives Super Admin's own document every feature explicitly, rather than deriving it from the other roles", async () => {
@@ -101,7 +109,10 @@ describe("seedAccessControlData", () => {
 
     await seedAccessControlData();
 
-    expect(deleteMock).toHaveBeenCalledTimes(TEST_IDENTITIES.length);
+    // One old scopeAssignments/{uid} delete per identity, plus one
+    // userAccessOverrides/{uid} delete for every identity that has no
+    // representative override configured this run.
+    expect(deleteMock).toHaveBeenCalledTimes(TEST_IDENTITIES.length + IDENTITIES_WITHOUT_OVERRIDES);
     for (const identity of TEST_IDENTITIES) {
       expect(collectionMock).toHaveBeenCalledWith("scopeAssignments");
       expect(docMock).toHaveBeenCalledWith(`uid-${identity.email}`);

@@ -14,7 +14,7 @@ const TABS = [
 
 export default async function AdministrationAuditPage() {
   const actor = await resolveRequestActor();
-  const result = await listAuditEventsForReview(actor, { limit: 20 });
+  const result = await listAuditEventsForReview(actor, { limit: 10 });
 
   return (
     <AppShell>
