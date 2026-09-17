@@ -2,6 +2,11 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import type { ScopeGrant } from "@/server/authz/types";
+import { planPartnerListQuery } from "@/server/partners/firestore";
+import { planVendorListQuery } from "@/server/vendors/firestore";
+import type { FirestoreFieldFilter, FirestoreListBranchPlan } from "./scoped-list";
+
 // Step 8A.1: certifies that firestore.indexes.json actually declares the
 // exact composite index every active Partner/Vendor/VendorPartnerLink/
 // PartnerAccount query shape needs (derived from the real query
@@ -109,5 +114,109 @@ describe("firestore.indexes.json - VendorPartnerLinks and PartnerAccounts", () =
   // vendorPartnerLinks pair above.
   it("has partnerRef+createdAt for partnerAccounts", () => {
     expect(hasIndex("partnerAccounts", [{ fieldPath: "partnerRef", order: "ASCENDING" }, { fieldPath: "createdAt", order: "ASCENDING" }])).toBe(true);
+  });
+});
+
+// Step 8A.2: ties the REAL query planner's output directly to
+// firestore.indexes.json, rather than only asserting the index file
+// contains certain shapes in isolation (as the describe blocks above
+// do) - this is what section 4 of the 8A.2 correction asks for: "assert
+// the query planner's declared/certified active shapes map to
+// source-controlled indexes where a composite index is required." Field
+// order among the leading equality/array-type filters is irrelevant to
+// Firestore's own index matching (only their relative position before
+// the orderBy field matters), so this compares them as a set and only
+// requires the trailing orderBy field to match exactly - see
+// hasIndexForBranch below.
+const AUDIT = { uid: "grant-1", grantedAt: "2026-01-01T00:00:00.000Z", grantedBy: "seed" };
+function self(): ScopeGrant {
+  return { type: "SELF", ...AUDIT };
+}
+function region(r: string): ScopeGrant {
+  return { type: "REGION", region: r, ...AUDIT };
+}
+function team(t: string): ScopeGrant {
+  return { type: "TEAM", teamId: t, ...AUDIT };
+}
+
+function planFieldsToIndexFields(filters: FirestoreFieldFilter[]): IndexField[] {
+  return filters
+    .filter((f) => f.op === "==" || f.op === "array-contains" || f.op === "array-contains-any")
+    .map((f) => (f.op === "array-contains" || f.op === "array-contains-any" ? { fieldPath: f.field, arrayConfig: "CONTAINS" as const } : { fieldPath: f.field, order: "ASCENDING" as const }));
+}
+
+function indexFieldKey(f: IndexField): string {
+  return `${f.fieldPath}:${f.arrayConfig ?? f.order}`;
+}
+
+// A certified composite index "serves" a branch when: its trailing
+// field is exactly the branch's orderBy field/direction, and its
+// leading fields are exactly the SET of the branch's own equality/
+// array-type pushedFilters (order-independent, per Firestore's actual
+// index-matching rules).
+function hasIndexForBranch(collectionGroup: string, branch: FirestoreListBranchPlan): boolean {
+  const expectedLeading = new Set(planFieldsToIndexFields(branch.pushedFilters).map(indexFieldKey));
+  const expectedOrder: IndexField = { fieldPath: branch.orderField, order: branch.orderDirection === "asc" ? "ASCENDING" : "DESCENDING" };
+
+  return indexesFile.indexes.some((index) => {
+    if (index.collectionGroup !== collectionGroup || index.queryScope !== "COLLECTION") return false;
+    if (index.fields.length !== expectedLeading.size + 1) return false;
+    const last = index.fields[index.fields.length - 1]!;
+    if (indexFieldKey(last) !== indexFieldKey(expectedOrder)) return false;
+    const leading = new Set(index.fields.slice(0, -1).map(indexFieldKey));
+    if (leading.size !== expectedLeading.size) return false;
+    for (const key of expectedLeading) if (!leading.has(key)) return false;
+    return true;
+  });
+}
+
+function firestoreBranch(plan: { branches: Array<{ kind: string; name: string }> }, name: string): FirestoreListBranchPlan {
+  const branch = plan.branches.find((b) => b.name === name);
+  if (!branch || branch.kind !== "firestore-query") throw new Error(`Expected a firestore-query branch named "${name}"`);
+  return branch as FirestoreListBranchPlan;
+}
+
+describe("firestore.indexes.json - planner-to-index mapping", () => {
+  it("Partners: self/region/team branches (createdAt order) each map to a certified index", () => {
+    const grants: ScopeGrant[] = [self(), region("Kerala"), team("t1")];
+    const { plan } = planPartnerListQuery({ actorUid: "actor-uid", grants, hasGlobal: false });
+    expect(hasIndexForBranch("partners", firestoreBranch(plan, "self"))).toBe(true);
+    expect(hasIndexForBranch("partners", firestoreBranch(plan, "region"))).toBe(true);
+    expect(hasIndexForBranch("partners", firestoreBranch(plan, "team"))).toBe(true);
+  });
+
+  it("Partners: the same branches with a status filter and search order also map to certified indexes", () => {
+    const grants: ScopeGrant[] = [self(), region("Kerala"), team("t1")];
+    const { plan: withStatus } = planPartnerListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, status: "ACTIVE" });
+    expect(hasIndexForBranch("partners", firestoreBranch(withStatus, "self"))).toBe(true);
+    expect(hasIndexForBranch("partners", firestoreBranch(withStatus, "region"))).toBe(true);
+    expect(hasIndexForBranch("partners", firestoreBranch(withStatus, "team"))).toBe(true);
+
+    const { plan: withSearch } = planPartnerListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, displayNamePrefix: "cre" });
+    expect(hasIndexForBranch("partners", firestoreBranch(withSearch, "self"))).toBe(true);
+    expect(hasIndexForBranch("partners", firestoreBranch(withSearch, "region"))).toBe(true);
+    expect(hasIndexForBranch("partners", firestoreBranch(withSearch, "team"))).toBe(true);
+  });
+
+  it("Vendors: self/region/team branches (createdAt order, and with status) each map to a certified index", () => {
+    const grants: ScopeGrant[] = [self(), region("Kerala"), team("t1")];
+    const { plan } = planVendorListQuery({ actorUid: "actor-uid", grants, hasGlobal: false });
+    expect(hasIndexForBranch("vendors", firestoreBranch(plan, "self"))).toBe(true);
+    expect(hasIndexForBranch("vendors", firestoreBranch(plan, "region"))).toBe(true);
+    expect(hasIndexForBranch("vendors", firestoreBranch(plan, "team"))).toBe(true);
+
+    const { plan: withStatus } = planVendorListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, status: "ACTIVE" });
+    expect(hasIndexForBranch("vendors", firestoreBranch(withStatus, "self"))).toBe(true);
+    expect(hasIndexForBranch("vendors", firestoreBranch(withStatus, "region"))).toBe(true);
+    expect(hasIndexForBranch("vendors", firestoreBranch(withStatus, "team"))).toBe(true);
+  });
+
+  it("Partners/Vendors: a team branch with an active (ungranted) region filter needs only its own teamIds+createdAt index - the region condition never becomes a leading index field, since it's a postFilter, not pushed", () => {
+    const grants: ScopeGrant[] = [team("t1")];
+    const { plan: partnersPlan } = planPartnerListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, region: "Tamil Nadu" });
+    expect(hasIndexForBranch("partners", firestoreBranch(partnersPlan, "team"))).toBe(true);
+
+    const { plan: vendorsPlan } = planVendorListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, region: "Tamil Nadu" });
+    expect(hasIndexForBranch("vendors", firestoreBranch(vendorsPlan, "team"))).toBe(true);
   });
 });

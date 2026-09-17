@@ -1,7 +1,21 @@
-import { FieldPath, Filter } from "firebase-admin/firestore";
-
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ScopeGrant } from "@/server/authz/types";
+import {
+  assertProductionValidPlan,
+  executeBoundedIdsBranch,
+  executeFirestoreBranch,
+  mergeListBranches,
+  nextBoundedIdsBranchCursor,
+  nextFirestoreBranchCursor,
+  passesBranchPostFilters,
+  type BranchCursorState,
+  type CompoundListCursor,
+  type FirestoreFieldFilter,
+  type ListBranchPlan,
+  type ListQueryPlan,
+  type MergeCandidate,
+  type SortDirection,
+} from "@/server/shared/scoped-list";
 import {
   partnerAccountDocSchema,
   partnerAccountIdentityClaimDocSchema,
@@ -136,65 +150,16 @@ export async function runPartnerAccountMutation(
   });
 }
 
-// Opaque to callers - whichever field the active query mode is actually
-// ordered by (createdAt / displayNameLower). Echoed back unchanged.
-export type PartnerListCursor = { orderValue: string; uid: string };
+// Opaque to callers - one entry per active branch (see
+// planPartnerListQuery), keyed by branch name. Echoed back unchanged.
+export type PartnerListCursor = CompoundListCursor;
 export type ListPartnersPage = { partners: PartnerDoc[]; nextCursor: PartnerListCursor | null };
 
-// Builds the OR-combined scope filter for a non-GLOBAL actor's grants -
-// same construction as Discovery's buildLeadScopeFilter, adapted to the
-// Partner scope dimensions (SELF -> ownerUid ==, REGION -> regionIds
-// array-contains-any, TEAM -> teamIds array-contains-any, PARTNER ->
-// document id in [...] (a PARTNER-type grant's partnerId names the
-// Partner's own uid), EXPLICIT_RECORD(partner) -> document id in [...]).
-// Returns null when the actor holds none of these - the caller must
-// treat that as "return an empty page" (no missing-scope => global
-// fallback).
-function buildPartnerScopeFilter(actorUid: string, grants: ScopeGrant[]): Filter | null {
-  const branches: Filter[] = [];
-
-  if (grants.some((g) => g.type === "SELF")) {
-    branches.push(Filter.where("ownerUid", "==", actorUid));
-  }
-
-  const regions = [...new Set(grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
-  if (regions.length > 0) branches.push(Filter.where("regionIds", "array-contains-any", regions));
-
-  const teamIds = [...new Set(grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
-  if (teamIds.length > 0) branches.push(Filter.where("teamIds", "array-contains-any", teamIds));
-
-  const explicitPartnerUids = [
-    ...new Set([
-      ...grants.filter((g): g is Extract<ScopeGrant, { type: "PARTNER" }> => g.type === "PARTNER").map((g) => g.partnerId),
-      ...grants
-        .filter((g): g is Extract<ScopeGrant, { type: "EXPLICIT_RECORD" }> => g.type === "EXPLICIT_RECORD" && g.resourceType === "partner")
-        .map((g) => g.resourceId),
-    ]),
-  ].slice(0, MAX_SCOPE_IN_VALUES);
-  if (explicitPartnerUids.length > 0) branches.push(Filter.where(FieldPath.documentId(), "in", explicitPartnerUids));
-
-  if (branches.length === 0) return null;
-  return branches.length === 1 ? branches[0]! : Filter.or(...branches);
+function readPath(data: Record<string, unknown>, path: string): unknown {
+  return path.split(".").reduce<unknown>((acc, key) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined), data);
 }
 
-// Bounded cursor pagination, scope-constrained BEFORE retrieval - never a
-// browser or server fetch-all followed by in-memory filtering. Mirrors
-// Discovery's listLeadDocs exactly, and the same grid discipline as
-// Vendors' own listVendorDocs (see firestore.indexes.json's
-// "partners" entries, certified Step 8A.1): one composite index per
-// {SELF/REGION/TEAM scope branch} x {createdAt-desc order, displayName
-// search order}, one status+branch+createdAt layer, and one standalone
-// {filter}+createdAt entry each for tier/targetAudience/
-// pendingPartnerAccountSetup - never every possible filter combination
-// (the EXPLICIT_RECORD/PARTNER scope branch's documentId()-in and a
-// stacked region+extra-filter combo stay intentionally unindexed, same
-// accepted gap as Discovery's own region+lifecycle-adjacent combos - a
-// real Firestore project surfaces those as a clear "create this index"
-// error, never silently wrong results). The local emulator does not
-// enforce composite indexes at all.
-export async function listPartnerDocs(options: {
-  limit: number;
-  cursor?: PartnerListCursor;
+export type PartnerListQueryOptions = {
   actorUid: string;
   grants: ScopeGrant[];
   hasGlobal: boolean;
@@ -205,52 +170,231 @@ export async function listPartnerDocs(options: {
   tier?: string;
   targetAudience?: string;
   pendingPartnerAccountSetup?: boolean;
-}): Promise<ListPartnersPage> {
-  const pageSize = Math.max(1, Math.min(options.limit, MAX_PARTNER_PAGE_SIZE));
+};
 
-  let scopeFilter: Filter | null = null;
-  if (!options.hasGlobal) {
-    scopeFilter = buildPartnerScopeFilter(options.actorUid, options.grants);
-    if (!scopeFilter) return { partners: [], nextCursor: null };
-  }
-
-  const filters: Filter[] = [];
-  if (scopeFilter) filters.push(scopeFilter);
-  if (options.status) filters.push(Filter.where("status", "==", options.status));
-  if (options.region) filters.push(Filter.where("regionIds", "array-contains", options.region));
-  if (options.ownerUid) filters.push(Filter.where("ownerUid", "==", options.ownerUid));
-  if (options.tier) filters.push(Filter.where("tier", "==", options.tier));
-  if (options.targetAudience) filters.push(Filter.where("targetAudience", "==", options.targetAudience));
-  if (options.pendingPartnerAccountSetup) filters.push(Filter.where("pendingPartnerAccountSetup", "==", true));
+// Step 8A.2: pure query planner - builds the branch plan only, never
+// touches Firestore. Exported for unit tests (see
+// src/server/shared/scoped-list-plans.test.ts). Replaces the old single
+// Filter.or(...)-combined query - see Discovery's planLeadListQuery and
+// scoped-list.ts's header comment for the full design rationale.
+//
+// Unlike Discovery, Partners' regionIds/teamIds are ARRAY fields
+// (array-contains-any for a grant, array-contains for the operator's own
+// "region" filter) - Firestore allows at most one array-type filter per
+// query, full stop, regardless of field. That means a selected region
+// filter can never combine with EITHER the REGION branch's
+// array-contains-any (same field) OR the TEAM branch's
+// array-contains-any (a different field, but still a second array-type
+// filter) - so when a region filter is active and not already granted,
+// the REGION branch is dropped entirely and the TEAM branch pushes only
+// its own teamIds condition to Firestore, applying the region condition
+// as an in-memory postFilter instead (see the "team" branch below).
+export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: ListQueryPlan; orderField: string; orderDirection: SortDirection } {
+  const sharedFilters: FirestoreFieldFilter[] = [];
+  if (options.status) sharedFilters.push({ field: "status", op: "==", value: options.status });
+  if (options.ownerUid) sharedFilters.push({ field: "ownerUid", op: "==", value: options.ownerUid });
+  if (options.tier) sharedFilters.push({ field: "tier", op: "==", value: options.tier });
+  if (options.targetAudience) sharedFilters.push({ field: "targetAudience", op: "==", value: options.targetAudience });
+  if (options.pendingPartnerAccountSetup) sharedFilters.push({ field: "pendingPartnerAccountSetup", op: "==", value: true });
 
   let orderField = "createdAt";
-  let orderDirection: FirebaseFirestore.OrderByDirection = "desc";
+  let orderDirection: SortDirection = "desc";
   if (options.displayNamePrefix) {
     orderField = "displayNameLower";
     orderDirection = "asc";
-    filters.push(Filter.where("displayNameLower", ">=", options.displayNamePrefix));
-    filters.push(Filter.where("displayNameLower", "<", `${options.displayNamePrefix}`));
+    sharedFilters.push({ field: "displayNameLower", op: ">=", value: options.displayNamePrefix });
+    sharedFilters.push({ field: "displayNameLower", op: "<", value: options.displayNamePrefix });
   }
 
-  let query = partnersCollection().orderBy(orderField, orderDirection).orderBy(FieldPath.documentId()).limit(pageSize + 1);
-  if (filters.length === 1) query = query.where(filters[0]!);
-  else if (filters.length > 1) query = query.where(Filter.and(...filters));
-  if (options.cursor) query = query.startAfter(options.cursor.orderValue, options.cursor.uid);
+  const regionArrayContains: FirestoreFieldFilter | null = options.region ? { field: "regionIds", op: "array-contains", value: options.region } : null;
+  const branches: ListBranchPlan[] = [];
 
-  const snapshot = await query.get();
-  const pageDocs = snapshot.docs.slice(0, pageSize);
-  const hasMore = snapshot.docs.length > pageSize;
+  const explicitPartnerUids = [
+    ...new Set([
+      ...options.grants.filter((g): g is Extract<ScopeGrant, { type: "PARTNER" }> => g.type === "PARTNER").map((g) => g.partnerId),
+      ...options.grants.filter((g): g is Extract<ScopeGrant, { type: "EXPLICIT_RECORD" }> => g.type === "EXPLICIT_RECORD" && g.resourceType === "partner").map((g) => g.resourceId),
+    ]),
+  ].slice(0, MAX_SCOPE_IN_VALUES);
 
-  const partners: PartnerDoc[] = [];
-  for (const doc of pageDocs) {
-    const result = partnerDocSchema.safeParse(doc.data());
-    if (result.success) partners.push(result.data);
+  if (options.hasGlobal) {
+    branches.push({
+      kind: "firestore-query",
+      name: "main",
+      pushedFilters: [...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : [])],
+      postFilters: [],
+      excludePostFilters: [],
+      orderField,
+      orderDirection,
+    });
+    return { plan: { branches }, orderField, orderDirection };
   }
 
-  const last = pageDocs[pageDocs.length - 1];
-  const nextCursor = hasMore && last ? { orderValue: String((last.data() as Record<string, unknown>)[orderField] ?? ""), uid: last.id } : null;
+  const selfGranted = options.grants.some((g) => g.type === "SELF");
+  const grantedRegions = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
+  const grantedTeams = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
+  const regionFilterGranted = options.region ? grantedRegions.includes(options.region) : false;
 
-  return { partners, nextCursor };
+  if (options.region && regionFilterGranted) {
+    // The REGION grant alone authorizes every Partner in this region,
+    // regardless of ownerUid/teamIds - a strict superset of what
+    // SELF/TEAM/EXPLICIT could otherwise contribute once also filtered
+    // to this same region, so this fully replaces every other branch.
+    branches.push({ kind: "firestore-query", name: "main", pushedFilters: [...sharedFilters, regionArrayContains!], postFilters: [], excludePostFilters: [], orderField, orderDirection });
+    return { plan: { branches }, orderField, orderDirection };
+  }
+
+  const selfExclude: FirestoreFieldFilter = { field: "ownerUid", op: "==", value: options.actorUid };
+  const regionExclude: FirestoreFieldFilter | null = grantedRegions.length > 0 ? { field: "regionIds", op: "array-contains-any", value: grantedRegions } : null;
+  const teamExclude: FirestoreFieldFilter | null = grantedTeams.length > 0 ? { field: "teamIds", op: "array-contains-any", value: grantedTeams } : null;
+
+  if (selfGranted) {
+    branches.push({
+      kind: "firestore-query",
+      name: "self",
+      pushedFilters: [selfExclude, ...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : [])],
+      postFilters: [],
+      excludePostFilters: [],
+      orderField,
+      orderDirection,
+    });
+  }
+
+  // Only reachable when no region filter is active, or one is active
+  // but not covered by a REGION grant (the fully-granted case already
+  // returned above) - array-contains-any can't combine with a selected
+  // region's own array-contains on the same field. Excludes anything the
+  // higher-priority "self" branch would already surface.
+  if (!options.region && regionExclude) {
+    branches.push({
+      kind: "firestore-query",
+      name: "region",
+      pushedFilters: [regionExclude, ...sharedFilters],
+      postFilters: [],
+      excludePostFilters: selfGranted ? [selfExclude] : [],
+      orderField,
+      orderDirection,
+    });
+  }
+
+  // teamIds array-contains-any can never combine with a selected
+  // region's regionIds array-contains in one Firestore query (only one
+  // array-type filter per query, regardless of field) - so the region
+  // condition, when active, is applied as a postFilter here instead of
+  // being pushed alongside teamIds. This may under-fill a page relative
+  // to the requested size in the rare case of a TEAM-only actor
+  // combining a region filter with very few matching records in the
+  // fetched window - bounded and safe (never wrong data, at most an
+  // extra page turn), never a whole-collection scan.
+  if (teamExclude) {
+    branches.push({
+      kind: "firestore-query",
+      name: "team",
+      pushedFilters: [teamExclude, ...sharedFilters],
+      postFilters: options.region ? [regionArrayContains!] : [],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(!options.region && regionExclude ? [regionExclude] : [])],
+      orderField,
+      orderDirection,
+    });
+  }
+
+  if (explicitPartnerUids.length > 0) {
+    branches.push({
+      kind: "bounded-ids",
+      name: "explicit",
+      ids: explicitPartnerUids,
+      postFilters: [...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : [])],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(regionExclude ? [regionExclude] : []), ...(teamExclude ? [teamExclude] : [])],
+    });
+  }
+
+  return { plan: { branches }, orderField, orderDirection };
+}
+
+// Bounded cursor pagination, scope-constrained BEFORE retrieval - never a
+// browser or server fetch-all followed by in-memory filtering.
+// planPartnerListQuery decomposes scope into independent, individually-
+// valid branches (see its own comment), each executed and cursor-
+// paginated on its own, then merged here into one globally-ordered page.
+// A non-GLOBAL actor with zero relevant grants gets an empty page
+// without any Firestore read at all.
+export async function listPartnerDocs(options: PartnerListQueryOptions & { limit: number; cursor?: PartnerListCursor }): Promise<ListPartnersPage> {
+  const pageSize = Math.max(1, Math.min(options.limit, MAX_PARTNER_PAGE_SIZE));
+  const { plan, orderField, orderDirection } = planPartnerListQuery(options);
+  assertProductionValidPlan(plan);
+  if (plan.branches.length === 0) return { partners: [], nextCursor: null };
+
+  const collection = partnersCollection();
+  const cursorIn = options.cursor ?? {};
+  const branchBatches: Array<{ name: string; items: MergeCandidate<PartnerDoc>[] }> = [];
+  const nextCursorBuilders: Array<(consumed: number) => [string, BranchCursorState] | null> = [];
+
+  for (const branch of plan.branches) {
+    if (branch.kind === "bounded-ids") {
+      const previous = cursorIn[branch.name];
+      if (previous && "exhausted" in previous) continue;
+      const previousIndex = previous && "index" in previous ? previous.index : 0;
+
+      const rawDocs = await executeBoundedIdsBranch(collection, branch);
+      const survivors: MergeCandidate<PartnerDoc>[] = [];
+      for (const doc of rawDocs) {
+        const data = doc.data();
+        if (!passesBranchPostFilters(data, branch)) continue;
+        const parsed = partnerDocSchema.safeParse(data);
+        if (!parsed.success) continue;
+        survivors.push({ doc: parsed.data, sortValue: String(readPath(data, orderField) ?? ""), uid: doc.id });
+      }
+      survivors.sort((a, b) => {
+        if (a.sortValue !== b.sortValue) return orderDirection === "asc" ? (a.sortValue < b.sortValue ? -1 : 1) : a.sortValue < b.sortValue ? 1 : -1;
+        return a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0;
+      });
+
+      const remaining = survivors.slice(previousIndex);
+      branchBatches.push({ name: branch.name, items: remaining });
+      nextCursorBuilders.push((consumedHere: number) => [branch.name, nextBoundedIdsBranchCursor(previousIndex, consumedHere, survivors.length)]);
+      continue;
+    }
+
+    const previous = cursorIn[branch.name];
+    if (previous && "exhausted" in previous) continue;
+    const queryCursor = previous && "orderValue" in previous ? previous : undefined;
+
+    const { docs: rawDocs, hasMoreInBranch } = await executeFirestoreBranch(collection, branch, queryCursor, pageSize);
+    const survivorRawIndexes: number[] = [];
+    const survivors: MergeCandidate<PartnerDoc>[] = [];
+    rawDocs.forEach((doc, rawIndex) => {
+      const data = doc.data();
+      if (!passesBranchPostFilters(data, branch)) return;
+      const parsed = partnerDocSchema.safeParse(data);
+      if (!parsed.success) return;
+      survivorRawIndexes.push(rawIndex);
+      survivors.push({ doc: parsed.data, sortValue: String(readPath(data, orderField) ?? ""), uid: doc.id });
+    });
+
+    branchBatches.push({ name: branch.name, items: survivors });
+    nextCursorBuilders.push((consumedHere: number) => {
+      const state = nextFirestoreBranchCursor({
+        fetch: { rawDocs: rawDocs.map((d) => ({ orderValue: String(readPath(d.data(), orderField) ?? ""), uid: d.id })), hasMoreInBranch },
+        survivorRawIndexes,
+        consumed: consumedHere,
+        previousCursor: queryCursor,
+      });
+      return state === undefined ? null : [branch.name, state];
+    });
+  }
+
+  const { page, consumed } = mergeListBranches(branchBatches, pageSize, orderDirection);
+
+  const nextCursor: CompoundListCursor = {};
+  let anyResumable = false;
+  branchBatches.forEach((batch, i) => {
+    const entry = nextCursorBuilders[i]!(consumed[batch.name] ?? 0);
+    if (!entry) return;
+    const [name, state] = entry;
+    nextCursor[name] = state;
+    if (!("exhausted" in state)) anyResumable = true;
+  });
+
+  return { partners: page, nextCursor: page.length === pageSize && anyResumable ? nextCursor : null };
 }
 
 // Bounded list of one Partner's own accounts - never unbounded (a Partner

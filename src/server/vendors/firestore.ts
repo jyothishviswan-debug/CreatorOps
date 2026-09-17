@@ -1,7 +1,21 @@
-import { FieldPath, Filter } from "firebase-admin/firestore";
-
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ScopeGrant } from "@/server/authz/types";
+import {
+  assertProductionValidPlan,
+  executeBoundedIdsBranch,
+  executeFirestoreBranch,
+  mergeListBranches,
+  nextBoundedIdsBranchCursor,
+  nextFirestoreBranchCursor,
+  passesBranchPostFilters,
+  type BranchCursorState,
+  type CompoundListCursor,
+  type FirestoreFieldFilter,
+  type ListBranchPlan,
+  type ListQueryPlan,
+  type MergeCandidate,
+  type SortDirection,
+} from "@/server/shared/scoped-list";
 import { vendorDocSchema, vendorPartnerLinkDocSchema, type VendorDoc, type VendorPartnerLinkDoc } from "./types";
 
 // Step 8A.1: restricted financial identity moved to the one canonical,
@@ -118,58 +132,16 @@ export async function runVendorPartnerLinkMutation(
   });
 }
 
-// Opaque to callers - whichever field the active query mode is actually
-// ordered by (createdAt / displayNameLower). Echoed back unchanged.
-export type VendorListCursor = { orderValue: string; uid: string };
+// Opaque to callers - one entry per active branch (see
+// planVendorListQuery), keyed by branch name. Echoed back unchanged.
+export type VendorListCursor = CompoundListCursor;
 export type ListVendorsPage = { vendors: VendorDoc[]; nextCursor: VendorListCursor | null };
 
-// Builds the OR-combined scope filter for a non-GLOBAL actor's grants -
-// same construction as Partners' buildPartnerScopeFilter, adapted to the
-// Vendor scope dimensions (SELF -> ownerUid ==, REGION -> regionIds
-// array-contains-any, TEAM -> teamIds array-contains-any, EXPLICIT_RECORD
-// (resourceType "vendor") -> document id in [...]). Deliberately does
-// NOT include any PARTNER-type grant or "linked Partner in scope" check -
-// Step 8A section 7's critical rule: a visible Partner relationship must
-// never become a scope-escalation bridge into a Vendor's unrelated
-// portfolio, so only genuine Vendor-side scope grants this. Returns null
-// when the actor holds none of these - the caller must treat that as
-// "return an empty page" (no missing-scope => global fallback).
-function buildVendorScopeFilter(actorUid: string, grants: ScopeGrant[]): Filter | null {
-  const branches: Filter[] = [];
-
-  if (grants.some((g) => g.type === "SELF")) {
-    branches.push(Filter.where("ownerUid", "==", actorUid));
-  }
-
-  const regions = [...new Set(grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
-  if (regions.length > 0) branches.push(Filter.where("regionIds", "array-contains-any", regions));
-
-  const teamIds = [...new Set(grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
-  if (teamIds.length > 0) branches.push(Filter.where("teamIds", "array-contains-any", teamIds));
-
-  const explicitVendorUids = [
-    ...new Set(
-      grants.filter((g): g is Extract<ScopeGrant, { type: "EXPLICIT_RECORD" }> => g.type === "EXPLICIT_RECORD" && g.resourceType === "vendor").map((g) => g.resourceId),
-    ),
-  ].slice(0, MAX_SCOPE_IN_VALUES);
-  if (explicitVendorUids.length > 0) branches.push(Filter.where(FieldPath.documentId(), "in", explicitVendorUids));
-
-  if (branches.length === 0) return null;
-  return branches.length === 1 ? branches[0]! : Filter.or(...branches);
+function readPath(data: Record<string, unknown>, path: string): unknown {
+  return path.split(".").reduce<unknown>((acc, key) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined), data);
 }
 
-// Bounded cursor pagination, scope-constrained BEFORE retrieval - never a
-// browser or server fetch-all followed by in-memory filtering. Mirrors
-// Partners' listPartnerDocs exactly. Composite indexes: one per {SELF/
-// REGION/TEAM scope branch} x {createdAt-desc, displayName search order},
-// one status+branch+createdAt layer, one standalone vendorType+createdAt
-// entry - see firestore.indexes.json's "vendors" entries (certified Step
-// 8A.1). The EXPLICIT_RECORD scope branch's documentId()-in stays
-// intentionally unindexed here, same accepted gap as Partners' own
-// PARTNER/EXPLICIT_RECORD branch.
-export async function listVendorDocs(options: {
-  limit: number;
-  cursor?: VendorListCursor;
+export type VendorListQueryOptions = {
   actorUid: string;
   grants: ScopeGrant[];
   hasGlobal: boolean;
@@ -178,50 +150,197 @@ export async function listVendorDocs(options: {
   region?: string;
   ownerUid?: string;
   vendorType?: string;
-}): Promise<ListVendorsPage> {
-  const pageSize = Math.max(1, Math.min(options.limit, MAX_VENDOR_PAGE_SIZE));
+};
 
-  let scopeFilter: Filter | null = null;
-  if (!options.hasGlobal) {
-    scopeFilter = buildVendorScopeFilter(options.actorUid, options.grants);
-    if (!scopeFilter) return { vendors: [], nextCursor: null };
-  }
-
-  const filters: Filter[] = [];
-  if (scopeFilter) filters.push(scopeFilter);
-  if (options.status) filters.push(Filter.where("status", "==", options.status));
-  if (options.region) filters.push(Filter.where("regionIds", "array-contains", options.region));
-  if (options.ownerUid) filters.push(Filter.where("ownerUid", "==", options.ownerUid));
-  if (options.vendorType) filters.push(Filter.where("vendorType", "==", options.vendorType));
+// Step 8A.2: pure query planner - builds the branch plan only, never
+// touches Firestore. Exported for unit tests (see
+// src/server/shared/scoped-list-plans.test.ts). Mirrors Partners' own
+// planPartnerListQuery exactly (same array-field-conflict rationale for
+// the REGION/TEAM branches - see its comment), minus the PARTNER-type
+// grant (Vendors deliberately never grants scope via a linked Partner -
+// see buildVendorScopeFilter's old comment / Step 8A section 7) and
+// minus tier/targetAudience/pendingPartnerAccountSetup (Vendor has no
+// equivalent fields - only vendorType).
+export function planVendorListQuery(options: VendorListQueryOptions): { plan: ListQueryPlan; orderField: string; orderDirection: SortDirection } {
+  const sharedFilters: FirestoreFieldFilter[] = [];
+  if (options.status) sharedFilters.push({ field: "status", op: "==", value: options.status });
+  if (options.ownerUid) sharedFilters.push({ field: "ownerUid", op: "==", value: options.ownerUid });
+  if (options.vendorType) sharedFilters.push({ field: "vendorType", op: "==", value: options.vendorType });
 
   let orderField = "createdAt";
-  let orderDirection: FirebaseFirestore.OrderByDirection = "desc";
+  let orderDirection: SortDirection = "desc";
   if (options.displayNamePrefix) {
     orderField = "displayNameLower";
     orderDirection = "asc";
-    filters.push(Filter.where("displayNameLower", ">=", options.displayNamePrefix));
-    filters.push(Filter.where("displayNameLower", "<", `${options.displayNamePrefix}`));
+    sharedFilters.push({ field: "displayNameLower", op: ">=", value: options.displayNamePrefix });
+    sharedFilters.push({ field: "displayNameLower", op: "<", value: options.displayNamePrefix });
   }
 
-  let query = vendorsCollection().orderBy(orderField, orderDirection).orderBy(FieldPath.documentId()).limit(pageSize + 1);
-  if (filters.length === 1) query = query.where(filters[0]!);
-  else if (filters.length > 1) query = query.where(Filter.and(...filters));
-  if (options.cursor) query = query.startAfter(options.cursor.orderValue, options.cursor.uid);
+  const regionArrayContains: FirestoreFieldFilter | null = options.region ? { field: "regionIds", op: "array-contains", value: options.region } : null;
+  const branches: ListBranchPlan[] = [];
 
-  const snapshot = await query.get();
-  const pageDocs = snapshot.docs.slice(0, pageSize);
-  const hasMore = snapshot.docs.length > pageSize;
+  const explicitVendorUids = [
+    ...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "EXPLICIT_RECORD" }> => g.type === "EXPLICIT_RECORD" && g.resourceType === "vendor").map((g) => g.resourceId)),
+  ].slice(0, MAX_SCOPE_IN_VALUES);
 
-  const vendors: VendorDoc[] = [];
-  for (const doc of pageDocs) {
-    const result = vendorDocSchema.safeParse(doc.data());
-    if (result.success) vendors.push(result.data);
+  if (options.hasGlobal) {
+    branches.push({
+      kind: "firestore-query",
+      name: "main",
+      pushedFilters: [...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : [])],
+      postFilters: [],
+      excludePostFilters: [],
+      orderField,
+      orderDirection,
+    });
+    return { plan: { branches }, orderField, orderDirection };
   }
 
-  const last = pageDocs[pageDocs.length - 1];
-  const nextCursor = hasMore && last ? { orderValue: String((last.data() as Record<string, unknown>)[orderField] ?? ""), uid: last.id } : null;
+  const selfGranted = options.grants.some((g) => g.type === "SELF");
+  const grantedRegions = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
+  const grantedTeams = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
+  const regionFilterGranted = options.region ? grantedRegions.includes(options.region) : false;
 
-  return { vendors, nextCursor };
+  if (options.region && regionFilterGranted) {
+    branches.push({ kind: "firestore-query", name: "main", pushedFilters: [...sharedFilters, regionArrayContains!], postFilters: [], excludePostFilters: [], orderField, orderDirection });
+    return { plan: { branches }, orderField, orderDirection };
+  }
+
+  const selfExclude: FirestoreFieldFilter = { field: "ownerUid", op: "==", value: options.actorUid };
+  const regionExclude: FirestoreFieldFilter | null = grantedRegions.length > 0 ? { field: "regionIds", op: "array-contains-any", value: grantedRegions } : null;
+  const teamExclude: FirestoreFieldFilter | null = grantedTeams.length > 0 ? { field: "teamIds", op: "array-contains-any", value: grantedTeams } : null;
+
+  if (selfGranted) {
+    branches.push({
+      kind: "firestore-query",
+      name: "self",
+      pushedFilters: [selfExclude, ...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : [])],
+      postFilters: [],
+      excludePostFilters: [],
+      orderField,
+      orderDirection,
+    });
+  }
+
+  if (!options.region && regionExclude) {
+    branches.push({
+      kind: "firestore-query",
+      name: "region",
+      pushedFilters: [regionExclude, ...sharedFilters],
+      postFilters: [],
+      excludePostFilters: selfGranted ? [selfExclude] : [],
+      orderField,
+      orderDirection,
+    });
+  }
+
+  if (teamExclude) {
+    branches.push({
+      kind: "firestore-query",
+      name: "team",
+      pushedFilters: [teamExclude, ...sharedFilters],
+      postFilters: options.region ? [regionArrayContains!] : [],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(!options.region && regionExclude ? [regionExclude] : [])],
+      orderField,
+      orderDirection,
+    });
+  }
+
+  if (explicitVendorUids.length > 0) {
+    branches.push({
+      kind: "bounded-ids",
+      name: "explicit",
+      ids: explicitVendorUids,
+      postFilters: [...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : [])],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(regionExclude ? [regionExclude] : []), ...(teamExclude ? [teamExclude] : [])],
+    });
+  }
+
+  return { plan: { branches }, orderField, orderDirection };
+}
+
+// Bounded cursor pagination, scope-constrained BEFORE retrieval - never a
+// browser or server fetch-all followed by in-memory filtering. Mirrors
+// Partners' listPartnerDocs exactly - see planVendorListQuery's own
+// comment for the branch-decomposition rationale.
+export async function listVendorDocs(options: VendorListQueryOptions & { limit: number; cursor?: VendorListCursor }): Promise<ListVendorsPage> {
+  const pageSize = Math.max(1, Math.min(options.limit, MAX_VENDOR_PAGE_SIZE));
+  const { plan, orderField, orderDirection } = planVendorListQuery(options);
+  assertProductionValidPlan(plan);
+  if (plan.branches.length === 0) return { vendors: [], nextCursor: null };
+
+  const collection = vendorsCollection();
+  const cursorIn = options.cursor ?? {};
+  const branchBatches: Array<{ name: string; items: MergeCandidate<VendorDoc>[] }> = [];
+  const nextCursorBuilders: Array<(consumed: number) => [string, BranchCursorState] | null> = [];
+
+  for (const branch of plan.branches) {
+    if (branch.kind === "bounded-ids") {
+      const previous = cursorIn[branch.name];
+      if (previous && "exhausted" in previous) continue;
+      const previousIndex = previous && "index" in previous ? previous.index : 0;
+
+      const rawDocs = await executeBoundedIdsBranch(collection, branch);
+      const survivors: MergeCandidate<VendorDoc>[] = [];
+      for (const doc of rawDocs) {
+        const data = doc.data();
+        if (!passesBranchPostFilters(data, branch)) continue;
+        const parsed = vendorDocSchema.safeParse(data);
+        if (!parsed.success) continue;
+        survivors.push({ doc: parsed.data, sortValue: String(readPath(data, orderField) ?? ""), uid: doc.id });
+      }
+      survivors.sort((a, b) => {
+        if (a.sortValue !== b.sortValue) return orderDirection === "asc" ? (a.sortValue < b.sortValue ? -1 : 1) : a.sortValue < b.sortValue ? 1 : -1;
+        return a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0;
+      });
+
+      const remaining = survivors.slice(previousIndex);
+      branchBatches.push({ name: branch.name, items: remaining });
+      nextCursorBuilders.push((consumedHere: number) => [branch.name, nextBoundedIdsBranchCursor(previousIndex, consumedHere, survivors.length)]);
+      continue;
+    }
+
+    const previous = cursorIn[branch.name];
+    if (previous && "exhausted" in previous) continue;
+    const queryCursor = previous && "orderValue" in previous ? previous : undefined;
+
+    const { docs: rawDocs, hasMoreInBranch } = await executeFirestoreBranch(collection, branch, queryCursor, pageSize);
+    const survivorRawIndexes: number[] = [];
+    const survivors: MergeCandidate<VendorDoc>[] = [];
+    rawDocs.forEach((doc, rawIndex) => {
+      const data = doc.data();
+      if (!passesBranchPostFilters(data, branch)) return;
+      const parsed = vendorDocSchema.safeParse(data);
+      if (!parsed.success) return;
+      survivorRawIndexes.push(rawIndex);
+      survivors.push({ doc: parsed.data, sortValue: String(readPath(data, orderField) ?? ""), uid: doc.id });
+    });
+
+    branchBatches.push({ name: branch.name, items: survivors });
+    nextCursorBuilders.push((consumedHere: number) => {
+      const state = nextFirestoreBranchCursor({
+        fetch: { rawDocs: rawDocs.map((d) => ({ orderValue: String(readPath(d.data(), orderField) ?? ""), uid: d.id })), hasMoreInBranch },
+        survivorRawIndexes,
+        consumed: consumedHere,
+        previousCursor: queryCursor,
+      });
+      return state === undefined ? null : [branch.name, state];
+    });
+  }
+
+  const { page, consumed } = mergeListBranches(branchBatches, pageSize, orderDirection);
+
+  const nextCursor: CompoundListCursor = {};
+  let anyResumable = false;
+  branchBatches.forEach((batch, i) => {
+    const entry = nextCursorBuilders[i]!(consumed[batch.name] ?? 0);
+    if (!entry) return;
+    const [name, state] = entry;
+    nextCursor[name] = state;
+    if (!("exhausted" in state)) anyResumable = true;
+  });
+
+  return { vendors: page, nextCursor: page.length === pageSize && anyResumable ? nextCursor : null };
 }
 
 // Bounded list of one Vendor's own relationship links - never unbounded.

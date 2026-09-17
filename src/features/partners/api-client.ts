@@ -82,8 +82,9 @@ export type ListPartnersResult = { partners: PartnerDto[]; nextCursor: PartnerLi
 export function listPartners(input: ListPartnersInput = {}): Promise<PartnersApiResult<ListPartnersResult>> {
   const qs = query({
     limit: input.limit !== undefined ? String(input.limit) : undefined,
-    cursorOrderValue: input.cursor?.orderValue,
-    cursorUid: input.cursor?.uid,
+    // Opaque compound cursor (one entry per active scope branch, see
+    // src/server/shared/scoped-list.ts) - round-tripped unchanged.
+    cursor: input.cursor ? JSON.stringify(input.cursor) : undefined,
     status: input.status,
     displayNamePrefix: input.displayNamePrefix,
     region: input.region,

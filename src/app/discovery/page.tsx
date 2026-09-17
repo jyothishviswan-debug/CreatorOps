@@ -11,6 +11,7 @@ import { resolveRequestActor } from "@/server/discovery/http";
 import { listLeads } from "@/server/discovery/lead-service";
 import { LEAD_LIFECYCLE_STATES } from "@/server/discovery/types";
 import type { LeadDto } from "@/server/discovery/client-dto";
+import type { LeadListCursor } from "@/server/discovery/firestore";
 
 const TABS = [
   { label: "Overview", href: "/discovery" },
@@ -30,7 +31,7 @@ function countFollowUpsDue(leads: LeadDto[]): number {
 
 async function loadAllLeads(actor: Awaited<ReturnType<typeof resolveRequestActor>>): Promise<LeadDto[] | null> {
   const leads: LeadDto[] = [];
-  let cursor: { orderValue: string; uid: string } | undefined;
+  let cursor: LeadListCursor | undefined;
   for (let page = 0; page < 3; page += 1) {
     const result = await listLeads(actor, { limit: 100, cursor });
     if (!result.ok) return null;

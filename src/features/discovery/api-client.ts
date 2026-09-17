@@ -91,8 +91,11 @@ export type ListLeadsResult = { leads: LeadDto[]; nextCursor: LeadListCursor | n
 export function listLeads(input: ListLeadsInput = {}): Promise<DiscoveryApiResult<ListLeadsResult>> {
   const qs = query({
     limit: input.limit !== undefined ? String(input.limit) : undefined,
-    cursorValue: input.cursor?.orderValue,
-    cursorUid: input.cursor?.uid,
+    // Opaque compound cursor (one entry per active scope branch, see
+    // src/server/shared/scoped-list.ts) - this feature layer never
+    // inspects or constructs it, only round-trips whatever the server
+    // returned as `nextCursor`.
+    cursor: input.cursor ? JSON.stringify(input.cursor) : undefined,
     lifecycle: input.lifecycle,
     region: input.region,
     platform: input.platform,

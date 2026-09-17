@@ -12,7 +12,7 @@ import { getAdminFirestore } from "@/server/firebase/admin";
 import { partnerAccountDocSchema } from "@/server/partners/types";
 import { resolveRequestActor } from "@/server/partners/http";
 import { listPartners } from "@/server/partners/partner-service";
-import { PARTNERS_COLLECTIONS } from "@/server/partners/firestore";
+import { PARTNERS_COLLECTIONS, type PartnerListCursor } from "@/server/partners/firestore";
 import { Filter } from "firebase-admin/firestore";
 
 const TABS = [
@@ -25,7 +25,7 @@ const TABS = [
 // discipline as Discovery's own loadAllLeads.
 async function loadAllPartners(actor: Awaited<ReturnType<typeof resolveRequestActor>>): Promise<PartnerDto[] | null> {
   const partners: PartnerDto[] = [];
-  let cursor: { orderValue: string; uid: string } | undefined;
+  let cursor: PartnerListCursor | undefined;
   for (let page = 0; page < 3; page += 1) {
     const result = await listPartners(actor, { limit: 100, cursor });
     if (!result.ok) return null;

@@ -1,7 +1,21 @@
-import { FieldPath, Filter } from "firebase-admin/firestore";
-
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ScopeGrant } from "@/server/authz/types";
+import {
+  assertProductionValidPlan,
+  executeBoundedIdsBranch,
+  executeFirestoreBranch,
+  mergeListBranches,
+  nextBoundedIdsBranchCursor,
+  nextFirestoreBranchCursor,
+  passesBranchPostFilters,
+  type BranchCursorState,
+  type CompoundListCursor,
+  type FirestoreFieldFilter,
+  type ListBranchPlan,
+  type ListQueryPlan,
+  type MergeCandidate,
+  type SortDirection,
+} from "@/server/shared/scoped-list";
 import { leadDocSchema, leadRestrictedKycDocSchema, type LeadDoc, type LeadRestrictedKycDoc } from "./types";
 
 export const DISCOVERY_COLLECTIONS = {
@@ -87,79 +101,18 @@ export async function runLeadMutation(leadUid: string, expectedVersion: number, 
   });
 }
 
-// Opaque to callers - `orderValue` is whichever field the active query
-// mode is actually ordered by (createdAt / displayNameLower /
-// outreachSummary.nextFollowUpAt, see listLeadDocs) - the client only
-// ever echoes it back unchanged, never inspects or constructs it.
-export type LeadListCursor = { orderValue: string; uid: string };
+// Opaque to callers - one entry per active branch (see
+// planLeadListQuery), keyed by branch name. The client only ever echoes
+// it back unchanged, never inspects or constructs it.
+export type LeadListCursor = CompoundListCursor;
 
 export type ListLeadsPage = { leads: LeadDoc[]; nextCursor: LeadListCursor | null };
-
-// Builds the OR-combined scope filter for a non-GLOBAL actor's grants:
-// one branch per dimension the actor actually holds (SELF -> ownerUid
-// ==, REGION -> region in [...], TEAM -> teamId in [...],
-// EXPLICIT_RECORD(lead) -> document id in [...]). Returns null when the
-// actor holds none of these - the caller must treat that as "return an
-// empty page", never as "no filter" (no missing-scope => global
-// fallback).
-//
-// Combining Filter.or(...) with orderBy(createdAt, documentId) requires
-// a composite index per OR branch once deployed to a real (non-emulator)
-// Firestore project - documented in firestore.indexes.json at the repo
-// root (ownerUid+createdAt, region+createdAt, teamId+createdAt, and the
-// lifecycle-filtered variants of each). The local emulator - the only
-// thing any test in this repo runs against - does not enforce composite
-// indexes at all, so this is undocumented-but-working here and would
-// need those indexes deployed before going live.
-function buildLeadScopeFilter(actorUid: string, grants: ScopeGrant[]): Filter | null {
-  const branches: Filter[] = [];
-
-  if (grants.some((g) => g.type === "SELF")) {
-    branches.push(Filter.where("ownerUid", "==", actorUid));
-  }
-
-  const regions = [...new Set(grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
-  if (regions.length > 0) branches.push(Filter.where("region", "in", regions));
-
-  const teamIds = [...new Set(grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
-  if (teamIds.length > 0) branches.push(Filter.where("teamId", "in", teamIds));
-
-  const explicitLeadUids = [
-    ...new Set(
-      grants
-        .filter((g): g is Extract<ScopeGrant, { type: "EXPLICIT_RECORD" }> => g.type === "EXPLICIT_RECORD" && g.resourceType === "lead")
-        .map((g) => g.resourceId),
-    ),
-  ].slice(0, MAX_SCOPE_IN_VALUES);
-  if (explicitLeadUids.length > 0) branches.push(Filter.where(FieldPath.documentId(), "in", explicitLeadUids));
-
-  if (branches.length === 0) return null;
-  return branches.length === 1 ? branches[0]! : Filter.or(...branches);
-}
 
 function readPath(data: Record<string, unknown>, path: string): unknown {
   return path.split(".").reduce<unknown>((acc, key) => (acc && typeof acc === "object" ? (acc as Record<string, unknown>)[key] : undefined), data);
 }
 
-// Bounded cursor pagination, never a whole-collection fetch, never a
-// broad fetch followed by in-memory scope/filter narrowing. `hasGlobal`
-// short-circuits to no scope filter at all; otherwise the scope filter
-// is pushed into the Firestore query itself via Filter.or (see
-// buildLeadScopeFilter). A non-GLOBAL actor with zero relevant grants
-// gets an empty page without any Firestore read at all.
-//
-// Step 6B extends this with real server-side filters (lifecycle,
-// region, platform, "assigned to me", name search) plus a "follow-up
-// due" view. displayNamePrefix and followUpDue are mutually exclusive
-// alternate ORDERING modes, not stackable on top of the default - a
-// Firestore range/prefix filter must be the first orderBy field, so
-// searching by name orders by name (not recency), and the follow-up
-// view orders by due date (not recency) instead of the default
-// createdAt-desc ordering. Every mode still combines with the scope
-// filter and the plain-equality filters above via Filter.and.
-export async function listLeadDocs(options: {
-  limit: number;
-  cursor?: LeadListCursor;
+export type LeadListQueryOptions = {
   actorUid: string;
   grants: ScopeGrant[];
   hasGlobal: boolean;
@@ -169,52 +122,228 @@ export async function listLeadDocs(options: {
   assignedToMe?: boolean;
   displayNamePrefix?: string;
   followUpDue?: boolean;
-}): Promise<ListLeadsPage> {
-  const pageSize = Math.max(1, Math.min(options.limit, MAX_LEAD_PAGE_SIZE));
+};
 
-  let scopeFilter: Filter | null = null;
-  if (!options.hasGlobal) {
-    scopeFilter = buildLeadScopeFilter(options.actorUid, options.grants);
-    if (!scopeFilter) return { leads: [], nextCursor: null };
-  }
-
-  const filters: Filter[] = [];
-  if (scopeFilter) filters.push(scopeFilter);
-  if (options.lifecycle) filters.push(Filter.where("lifecycle", "==", options.lifecycle));
-  if (options.region) filters.push(Filter.where("region", "==", options.region));
-  if (options.platform) filters.push(Filter.where("platform", "==", options.platform));
-  if (options.assignedToMe) filters.push(Filter.where("ownerUid", "==", options.actorUid));
+// Step 8A.2: pure query planner - builds the branch plan only, never
+// touches Firestore. Exported so unit tests can assert on its shape
+// directly (see src/server/shared/scoped-list-plans.test.ts) without the
+// emulator. Replaces the old single Filter.or(...)-combined query: that
+// design could produce two Firestore-invalid shapes once a `region`
+// filter was combined with the REGION scope branch (two conditions on
+// the same field from one Filter.or arm) or once EXPLICIT_RECORD grants
+// were combined with orderBy (documentId() "in" has no valid composite
+// index alongside a different order field). Every branch below is
+// independently valid by construction (enforced by
+// assertProductionValidPlan, called from listLeadDocs before any read) -
+// see scoped-list.ts's own header comment for the full design rationale.
+//
+// Discovery's `region`/`teamId` are single scalar fields (`in` for scope
+// grants, `==` for the operator's own filter) - unlike Partners'/
+// Vendors' array-valued regionIds/teamIds, an `in` and a same-field `==`
+// filter don't hit Firestore's "one array/IN-type filter per query"
+// restriction, so only the REGION branch (not TEAM) ever needs the
+// simplify-or-drop treatment below.
+export function planLeadListQuery(options: LeadListQueryOptions): { plan: ListQueryPlan; orderField: string; orderDirection: SortDirection } {
+  const sharedFilters: FirestoreFieldFilter[] = [];
+  if (options.lifecycle) sharedFilters.push({ field: "lifecycle", op: "==", value: options.lifecycle });
+  if (options.platform) sharedFilters.push({ field: "platform", op: "==", value: options.platform });
+  if (options.assignedToMe) sharedFilters.push({ field: "ownerUid", op: "==", value: options.actorUid });
 
   let orderField = "createdAt";
-  let orderDirection: FirebaseFirestore.OrderByDirection = "desc";
+  let orderDirection: SortDirection = "desc";
   if (options.displayNamePrefix) {
     orderField = "displayNameLower";
     orderDirection = "asc";
-    filters.push(Filter.where("displayNameLower", ">=", options.displayNamePrefix));
-    filters.push(Filter.where("displayNameLower", "<", `${options.displayNamePrefix}`));
+    sharedFilters.push({ field: "displayNameLower", op: ">=", value: options.displayNamePrefix });
+    sharedFilters.push({ field: "displayNameLower", op: "<", value: options.displayNamePrefix });
   } else if (options.followUpDue) {
     orderField = "outreachSummary.nextFollowUpAt";
     orderDirection = "asc";
-    filters.push(Filter.where("outreachSummary.nextFollowUpAt", "<=", new Date().toISOString()));
+    sharedFilters.push({ field: "outreachSummary.nextFollowUpAt", op: "<=", value: new Date().toISOString() });
   }
 
-  let query = leadsCollection().orderBy(orderField, orderDirection).orderBy(FieldPath.documentId()).limit(pageSize + 1);
-  if (filters.length === 1) query = query.where(filters[0]!);
-  else if (filters.length > 1) query = query.where(Filter.and(...filters));
-  if (options.cursor) query = query.startAfter(options.cursor.orderValue, options.cursor.uid);
+  const regionEquality: FirestoreFieldFilter | null = options.region ? { field: "region", op: "==", value: options.region } : null;
+  const branches: ListBranchPlan[] = [];
 
-  const snapshot = await query.get();
-  const pageDocs = snapshot.docs.slice(0, pageSize);
-  const hasMore = snapshot.docs.length > pageSize;
+  const explicitLeadUids = [
+    ...new Set(
+      options.grants
+        .filter((g): g is Extract<ScopeGrant, { type: "EXPLICIT_RECORD" }> => g.type === "EXPLICIT_RECORD" && g.resourceType === "lead")
+        .map((g) => g.resourceId),
+    ),
+  ].slice(0, MAX_SCOPE_IN_VALUES);
 
-  const leads: LeadDoc[] = [];
-  for (const doc of pageDocs) {
-    const result = leadDocSchema.safeParse(doc.data());
-    if (result.success) leads.push(result.data);
+  if (options.hasGlobal) {
+    branches.push({
+      kind: "firestore-query",
+      name: "main",
+      pushedFilters: [...sharedFilters, ...(regionEquality ? [regionEquality] : [])],
+      postFilters: [],
+      excludePostFilters: [],
+      orderField,
+      orderDirection,
+    });
+    return { plan: { branches }, orderField, orderDirection };
   }
 
-  const last = pageDocs[pageDocs.length - 1];
-  const nextCursor = hasMore && last ? { orderValue: String(readPath(last.data() as Record<string, unknown>, orderField) ?? ""), uid: last.id } : null;
+  const selfGranted = options.grants.some((g) => g.type === "SELF");
+  const grantedRegions = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
+  const grantedTeams = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
+  const regionFilterGranted = options.region ? grantedRegions.includes(options.region) : false;
 
-  return { leads, nextCursor };
+  if (options.region && regionFilterGranted) {
+    // The REGION grant alone authorizes every Lead in this region,
+    // regardless of ownerUid/teamId - a strict superset of what
+    // SELF/TEAM/EXPLICIT_RECORD could otherwise contribute once also
+    // filtered to this same region, so this fully replaces every other
+    // branch instead of stacking a same-field `in` + `==` OR arm.
+    branches.push({ kind: "firestore-query", name: "main", pushedFilters: [...sharedFilters, regionEquality!], postFilters: [], excludePostFilters: [], orderField, orderDirection });
+    return { plan: { branches }, orderField, orderDirection };
+  }
+
+  const selfExclude: FirestoreFieldFilter = { field: "ownerUid", op: "==", value: options.actorUid };
+  const regionExclude: FirestoreFieldFilter | null = grantedRegions.length > 0 ? { field: "region", op: "in", value: grantedRegions } : null;
+  const teamExclude: FirestoreFieldFilter | null = grantedTeams.length > 0 ? { field: "teamId", op: "in", value: grantedTeams } : null;
+
+  if (selfGranted) {
+    branches.push({
+      kind: "firestore-query",
+      name: "self",
+      pushedFilters: [selfExclude, ...sharedFilters, ...(regionEquality ? [regionEquality] : [])],
+      postFilters: [],
+      excludePostFilters: [],
+      orderField,
+      orderDirection,
+    });
+  }
+
+  // Only reachable when no region filter is selected, or one is
+  // selected but not covered by a REGION grant (the fully-granted case
+  // already returned above) - so this branch is never redundant with
+  // "main". Excludes anything the (higher-priority) "self" branch would
+  // already surface, keeping branches disjoint without cross-branch
+  // dedup.
+  if (!options.region && regionExclude) {
+    branches.push({
+      kind: "firestore-query",
+      name: "region",
+      pushedFilters: [regionExclude, ...sharedFilters],
+      postFilters: [],
+      excludePostFilters: selfGranted ? [selfExclude] : [],
+      orderField,
+      orderDirection,
+    });
+  }
+
+  if (teamExclude) {
+    branches.push({
+      kind: "firestore-query",
+      name: "team",
+      pushedFilters: [teamExclude, ...sharedFilters, ...(regionEquality ? [regionEquality] : [])],
+      postFilters: [],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(!options.region && regionExclude ? [regionExclude] : [])],
+      orderField,
+      orderDirection,
+    });
+  }
+
+  if (explicitLeadUids.length > 0) {
+    branches.push({
+      kind: "bounded-ids",
+      name: "explicit",
+      ids: explicitLeadUids,
+      postFilters: [...sharedFilters, ...(regionEquality ? [regionEquality] : [])],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(regionExclude ? [regionExclude] : []), ...(teamExclude ? [teamExclude] : [])],
+    });
+  }
+
+  return { plan: { branches }, orderField, orderDirection };
+}
+
+// Bounded cursor pagination, never a whole-collection fetch, never a
+// broad fetch followed by in-memory scope/filter narrowing. `hasGlobal`
+// short-circuits to a single unscoped branch; otherwise planLeadListQuery
+// decomposes scope into independent, individually-valid branches (see
+// its own comment), each executed and cursor-paginated on its own, then
+// merged here into one globally-ordered page. A non-GLOBAL actor with
+// zero relevant grants gets an empty page without any Firestore read at
+// all.
+export async function listLeadDocs(options: LeadListQueryOptions & { limit: number; cursor?: LeadListCursor }): Promise<ListLeadsPage> {
+  const pageSize = Math.max(1, Math.min(options.limit, MAX_LEAD_PAGE_SIZE));
+  const { plan, orderField, orderDirection } = planLeadListQuery(options);
+  assertProductionValidPlan(plan);
+  if (plan.branches.length === 0) return { leads: [], nextCursor: null };
+
+  const collection = leadsCollection();
+  const cursorIn = options.cursor ?? {};
+  const branchBatches: Array<{ name: string; items: MergeCandidate<LeadDoc>[] }> = [];
+  const nextCursorBuilders: Array<(consumed: number) => [string, BranchCursorState] | null> = [];
+
+  for (const branch of plan.branches) {
+    if (branch.kind === "bounded-ids") {
+      const previous = cursorIn[branch.name];
+      if (previous && "exhausted" in previous) continue;
+      const previousIndex = previous && "index" in previous ? previous.index : 0;
+
+      const rawDocs = await executeBoundedIdsBranch(collection, branch);
+      const survivors: MergeCandidate<LeadDoc>[] = [];
+      for (const doc of rawDocs) {
+        const data = doc.data();
+        if (!passesBranchPostFilters(data, branch)) continue;
+        const parsed = leadDocSchema.safeParse(data);
+        if (!parsed.success) continue;
+        survivors.push({ doc: parsed.data, sortValue: String(readPath(data, orderField) ?? ""), uid: doc.id });
+      }
+      survivors.sort((a, b) => {
+        if (a.sortValue !== b.sortValue) return orderDirection === "asc" ? (a.sortValue < b.sortValue ? -1 : 1) : a.sortValue < b.sortValue ? 1 : -1;
+        return a.uid < b.uid ? -1 : a.uid > b.uid ? 1 : 0;
+      });
+
+      const remaining = survivors.slice(previousIndex);
+      branchBatches.push({ name: branch.name, items: remaining });
+      nextCursorBuilders.push((consumedHere: number) => [branch.name, nextBoundedIdsBranchCursor(previousIndex, consumedHere, survivors.length)]);
+      continue;
+    }
+
+    const previous = cursorIn[branch.name];
+    if (previous && "exhausted" in previous) continue;
+    const queryCursor = previous && "orderValue" in previous ? previous : undefined;
+
+    const { docs: rawDocs, hasMoreInBranch } = await executeFirestoreBranch(collection, branch, queryCursor, pageSize);
+    const survivorRawIndexes: number[] = [];
+    const survivors: MergeCandidate<LeadDoc>[] = [];
+    rawDocs.forEach((doc, rawIndex) => {
+      const data = doc.data();
+      if (!passesBranchPostFilters(data, branch)) return;
+      const parsed = leadDocSchema.safeParse(data);
+      if (!parsed.success) return;
+      survivorRawIndexes.push(rawIndex);
+      survivors.push({ doc: parsed.data, sortValue: String(readPath(data, orderField) ?? ""), uid: doc.id });
+    });
+
+    branchBatches.push({ name: branch.name, items: survivors });
+    nextCursorBuilders.push((consumedHere: number) => {
+      const state = nextFirestoreBranchCursor({
+        fetch: { rawDocs: rawDocs.map((d) => ({ orderValue: String(readPath(d.data(), orderField) ?? ""), uid: d.id })), hasMoreInBranch },
+        survivorRawIndexes,
+        consumed: consumedHere,
+        previousCursor: queryCursor,
+      });
+      return state === undefined ? null : [branch.name, state];
+    });
+  }
+
+  const { page, consumed } = mergeListBranches(branchBatches, pageSize, orderDirection);
+
+  const nextCursor: CompoundListCursor = {};
+  let anyResumable = false;
+  branchBatches.forEach((batch, i) => {
+    const entry = nextCursorBuilders[i]!(consumed[batch.name] ?? 0);
+    if (!entry) return;
+    const [name, state] = entry;
+    nextCursor[name] = state;
+    if (!("exhausted" in state)) anyResumable = true;
+  });
+
+  return { leads: page, nextCursor: page.length === pageSize && anyResumable ? nextCursor : null };
 }

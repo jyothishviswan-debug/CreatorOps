@@ -3,18 +3,28 @@ import { NextResponse } from "next/server";
 import { createLead, listLeads } from "@/server/discovery/lead-service";
 import { newRequestId, parseJsonBody, resolveRequestActor, toDiscoveryHttpResponse } from "@/server/discovery/http";
 
-// GET /api/discovery/leads?limit=&cursorValue=&cursorUid=&lifecycle=&region=&platform=&assignedToMe=&search=&followUpDue=
+// GET /api/discovery/leads?limit=&cursor=&lifecycle=&region=&platform=&assignedToMe=&search=&followUpDue=
+// `cursor` is an opaque JSON-encoded compound cursor (see
+// src/server/shared/scoped-list.ts) - listLeads itself re-validates its
+// shape (compoundListCursorSchema) before trusting it.
 export async function GET(request: Request) {
   const actor = await resolveRequestActor();
 
   const url = new URL(request.url);
   const limitParam = url.searchParams.get("limit");
-  const cursorValue = url.searchParams.get("cursorValue");
-  const cursorUid = url.searchParams.get("cursorUid");
+  const cursorRaw = url.searchParams.get("cursor");
+  let cursor: unknown;
+  if (cursorRaw) {
+    try {
+      cursor = JSON.parse(cursorRaw);
+    } catch {
+      cursor = undefined;
+    }
+  }
 
   const input = {
     limit: limitParam ? Number(limitParam) : undefined,
-    cursor: cursorValue !== null && cursorUid ? { orderValue: cursorValue, uid: cursorUid } : undefined,
+    cursor,
     lifecycle: url.searchParams.get("lifecycle") ?? undefined,
     region: url.searchParams.get("region") ?? undefined,
     platform: url.searchParams.get("platform") ?? undefined,

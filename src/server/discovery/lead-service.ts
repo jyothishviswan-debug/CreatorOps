@@ -11,6 +11,7 @@ import { requireDiscoveryAccess, requireDiscoveryFeatureAccess, requireLeadInSco
 import { generateLeadRef } from "./ids";
 import { getLeadDocByRef, leadsCollection, listLeadDocs, runLeadMutation, type LeadListCursor } from "./firestore";
 import { listLeadEvents, writeLeadEvent, type LeadEventListCursor } from "./lead-events";
+import { compoundListCursorSchema } from "@/server/shared/scoped-list";
 import { platformCodeFor, readNextProposalNumber } from "./proposal-number";
 import type { LeadEvent } from "./types";
 import {
@@ -56,7 +57,7 @@ async function loadAuthorizedLead(actor: ActorContext | null, leadRef: unknown, 
 
 const listLeadsInputSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
-  cursor: z.object({ orderValue: z.string(), uid: z.string().min(1) }).optional(),
+  cursor: compoundListCursorSchema.optional(),
   lifecycle: leadLifecycleSchema.optional(),
   region: z.string().min(1).max(80).optional(),
   platform: z.string().min(1).max(60).optional(),
