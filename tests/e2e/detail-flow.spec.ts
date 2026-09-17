@@ -32,11 +32,11 @@ for (const { workspace, back } of WORKSPACE_TO_DETAIL) {
 // explicit product direction). Their Overview's Recent Activity panel
 // links directly to real detail records, so the detail pattern is
 // exercised via those known hrefs instead of a workspace table.
-// Partners moved out of this list in Step 7B, and Vendors in Step 8B -
-// each now has a real dedicated Workspace and Detail page, covered by
-// tests/e2e/partners.spec.ts and tests/e2e/vendors.spec.ts respectively.
+// Partners moved out of this list in Step 7B, Vendors in Step 8B, and
+// Campaigns in Step 9B - each now has a real dedicated Workspace and
+// Detail page, covered by tests/e2e/partners.spec.ts, vendors.spec.ts
+// and campaigns.spec.ts respectively.
 const OVERVIEW_DETAIL_LINKS: { detail: string; back: string }[] = [
-  { detail: "/campaigns/civic-voices", back: "/campaigns" },
   { detail: "/partner-reviews/ananya-rao", back: "/partner-reviews" },
   { detail: "/reports/monthly-partner-review", back: "/reports" },
 ];
@@ -63,13 +63,7 @@ test("overview screen renders KPIs and panels: /partners", async ({ page }) => {
   await expect(page.locator(".ov-kpis").first()).toBeVisible();
 });
 
-// Partners' real create form (with real duplicate checking, validation
-// and persistence) is covered by tests/e2e/partners.spec.ts's own
-// "Create Partner" suite, not this generic fixture-form smoke test.
-
-test("create/edit form flow: /campaigns/new", async ({ page }) => {
-  await page.goto("/campaigns/new");
-  await page.getByPlaceholder("Civic Voices").fill("Test Campaign");
-  await page.locator('form.panel button[type="submit"]').click();
-  await expect(page).toHaveURL(/\/campaigns$/);
-});
+// Partners' and Campaigns' real create forms (with real duplicate
+// checking/validation/persistence) are covered by tests/e2e/partners.spec.ts's
+// and campaigns.spec.ts's own "Create" suites, not this generic
+// fixture-form smoke test.

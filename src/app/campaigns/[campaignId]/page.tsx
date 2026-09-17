@@ -1,21 +1,31 @@
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/ui/AppShell";
-import { DetailView } from "@/ui/DetailView";
-import { getCampaignDetail } from "@/features/campaigns/fixtures";
+import { EmptyState } from "@/ui/States";
+import { CampaignDetail } from "@/features/campaigns/CampaignDetail";
+import { resolveRequestActor } from "@/server/campaigns/http";
+import { getCampaign } from "@/server/campaigns/campaign-service";
 
-export default async function CampaignDetailPage({
-  params,
-}: {
-  params: Promise<{ campaignId: string }>;
-}) {
+export default async function CampaignDetailPage({ params }: { params: Promise<{ campaignId: string }> }) {
   const { campaignId } = await params;
-  const detail = getCampaignDetail(campaignId);
-  if (!detail) notFound();
+  const actor = await resolveRequestActor();
+  const result = await getCampaign(actor, campaignId);
+
+  if (!result.ok && result.code === "not_found") notFound();
+
+  if (!result.ok) {
+    return (
+      <AppShell>
+        <section className="panel">
+          <EmptyState title="Access denied" description="You don't have permission to view this Campaign." icon="lock" />
+        </section>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
-      <DetailView moduleLabel="Campaigns" workspaceHref="/campaigns" detail={detail} />
+      <CampaignDetail initialCampaign={result.data} />
     </AppShell>
   );
 }
