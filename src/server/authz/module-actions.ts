@@ -43,9 +43,14 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "export", label: "Export" },
   ],
   vendors: [
-    { id: "create", label: "Create" },
-    { id: "edit", label: "Edit" },
-    { id: "manage_relationships", label: "Manage accounts/relationships" },
+    { id: "create", label: "Create Vendor" },
+    { id: "edit", label: "Edit Vendor" },
+    { id: "manage_vendor_ownership", label: "Manage owner/team" },
+    { id: "manage_vendor_partner_relationships", label: "Manage Partner relationships" },
+    { id: "transition_vendor_lifecycle", label: "Activate/inactivate" },
+    { id: "archive_vendor", label: "Archive" },
+    { id: "restore_vendor", label: "Restore" },
+    { id: "manage_vendor_restricted_identity", label: "Manage restricted financial identity" },
     { id: "export", label: "Export" },
   ],
   campaigns: [

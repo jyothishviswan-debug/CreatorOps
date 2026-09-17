@@ -101,6 +101,23 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_partner_restricted_identity: true,
         manage_partner_governance: false,
       }),
+      // Step 8A: same day-to-day-but-not-governance split as Partners
+      // above - Partnership Manager can create/edit Vendors, manage
+      // their Partner relationships and operate the restricted-identity
+      // workflow, but archive/restore (governance) is Head-only. Has the
+      // manage_vendor_restricted_identity ACTION but not the
+      // "vendor_payment_details" sensitive CATEGORY (see
+      // SENSITIVE_GRANTS) - same independence proof as Partners'.
+      vendors: featureGrant(true, {
+        create: true,
+        edit: true,
+        manage_vendor_ownership: true,
+        manage_vendor_partner_relationships: true,
+        transition_vendor_lifecycle: true,
+        manage_vendor_restricted_identity: true,
+        archive_vendor: false,
+        restore_vendor: false,
+      }),
     },
   },
   partnership_head: {
@@ -130,6 +147,19 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_partner_ownership: true,
         manage_partner_restricted_identity: true,
         manage_partner_governance: true,
+      }),
+      // Step 8A: the only role (besides Super Admin) trusted with Vendor
+      // governance (archive/restore), matching Partners' own head-only
+      // governance split above.
+      vendors: featureGrant(true, {
+        create: true,
+        edit: true,
+        manage_vendor_ownership: true,
+        manage_vendor_partner_relationships: true,
+        transition_vendor_lifecycle: true,
+        manage_vendor_restricted_identity: true,
+        archive_vendor: true,
+        restore_vendor: true,
       }),
     },
   },
@@ -166,8 +196,11 @@ const SENSITIVE_GRANTS: Record<Role, string[]> = {
   // - Partnership Manager has the manage_partner_restricted_identity
   // ACTION (above) but not this category, so it can operate the workflow
   // without seeing the actual restricted values.
-  partnership_head: ["finance_amounts", "discovery_kyc", "payment_details"],
-  super_admin: ["finance_amounts", "discovery_kyc", "payment_details"],
+  // Step 8A: "vendor_payment_details" is its own category, deliberately
+  // separate from "payment_details" (Partners') - same non-monotonic
+  // independence proof, applied to Vendor restricted identity.
+  partnership_head: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details"],
+  super_admin: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details"],
 };
 
 // Explicit, per-role scope grants (Step 4C's canonical multi-dimensional

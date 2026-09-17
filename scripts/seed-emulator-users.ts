@@ -19,6 +19,7 @@ async function main() {
   const { seedAccessControlData } = await import("../src/server/authz/seed-access-data");
   const { seedDiscoveryData } = await import("../src/server/discovery/seed-discovery-data");
   const { seedPartnersData } = await import("../src/server/partners/seed-partners-data");
+  const { seedVendorsData } = await import("../src/server/vendors/seed-vendors-data");
 
   const password = process.env.EMULATOR_TEST_USER_PASSWORD;
   if (!password) {
@@ -48,6 +49,13 @@ async function main() {
   // Discovery-converted Partner above already existing.
   await seedPartnersData();
   console.log("Seeded Partners data (every status, multiple Partner Accounts, one restricted-identity subject).");
+
+  // Step 8A: a small, deterministic Vendors dataset (every status, M:N
+  // relationship links including one ended historical link and one
+  // payee relationship, one restricted-identity subject) - depends on
+  // the Partners above already existing.
+  await seedVendorsData();
+  console.log("Seeded Vendors data (every status, Vendor<->Partner relationship links, one restricted-identity subject).");
 }
 
 main().catch((error) => {

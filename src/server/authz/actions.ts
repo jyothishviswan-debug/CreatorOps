@@ -52,6 +52,18 @@ export const ACTIONS = [
   "manage_partner_ownership",
   "manage_partner_governance",
   "manage_partner_restricted_identity",
+  // Step 8A: Vendors' own granular actions, same "granular rather than
+  // one generic 'manage'" discipline as Partners' - deliberately its own
+  // ids (not reused from Partners) since a role's Vendor and Partner
+  // permissions are meant to be grantable independently. archive/restore
+  // are split into two distinct actions (unlike Partners' single
+  // manage_partner_governance) per Step 8A's own explicit action list.
+  "manage_vendor_ownership",
+  "manage_vendor_partner_relationships",
+  "transition_vendor_lifecycle",
+  "archive_vendor",
+  "restore_vendor",
+  "manage_vendor_restricted_identity",
   // Campaigns
   "manage_campaign_work",
   // Content

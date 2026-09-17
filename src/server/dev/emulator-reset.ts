@@ -27,6 +27,8 @@ import { DISCOVERY_COLLECTIONS } from "@/server/discovery/firestore";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
 import { PARTNERS_COLLECTIONS } from "@/server/partners/firestore";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
+import { VENDORS_COLLECTIONS } from "@/server/vendors/firestore";
+import { seedVendorsData } from "@/server/vendors/seed-vendors-data";
 
 const LOCAL_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 
@@ -114,6 +116,23 @@ async function deletePartnersCollectionWithEvents(): Promise<void> {
   }
 }
 
+// vendors/{uid}/events is a subcollection - same cascade concern as
+// leads/{uid}/events and partners/{uid}/events above.
+async function deleteVendorsCollectionWithEvents(): Promise<void> {
+  const db = getAdminFirestore();
+  const vendorsRef = db.collection(VENDORS_COLLECTIONS.vendors);
+  for (;;) {
+    const snapshot = await vendorsRef.limit(200).get();
+    if (snapshot.empty) return;
+    for (const doc of snapshot.docs) {
+      await deleteCollection(doc.ref.collection(VENDORS_COLLECTIONS.vendorEvents));
+    }
+    const batch = db.batch();
+    for (const doc of snapshot.docs) batch.delete(doc.ref);
+    await batch.commit();
+  }
+}
+
 // Wipes every Auth account and every Firestore collection this app
 // writes to, then reseeds the canonical baseline. Idempotent in effect
 // (running it twice in a row produces the same end state), but NOT a
@@ -134,9 +153,13 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await deleteCollection(db.collection(PARTNERS_COLLECTIONS.partnerAccounts));
   await deleteCollection(db.collection(PARTNERS_COLLECTIONS.partnerAccountIdentityClaims));
   await deleteCollection(db.collection(PARTNERS_COLLECTIONS.restrictedFinancialIdentities));
+  await deleteVendorsCollectionWithEvents();
+  await deleteCollection(db.collection(VENDORS_COLLECTIONS.vendorPartnerLinks));
+  await deleteCollection(db.collection(VENDORS_COLLECTIONS.restrictedVendorFinancialIdentities));
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();
   await seedDiscoveryData();
   await seedPartnersData();
+  await seedVendorsData();
 }

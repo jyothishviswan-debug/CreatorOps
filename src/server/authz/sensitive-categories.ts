@@ -11,4 +11,8 @@ export const SENSITIVE_CATEGORIES: SensitiveCategoryDef[] = [
   { id: "partner_contact_info", label: "Partner contact info", description: "Partner phone numbers, emails and direct contacts." },
   { id: "payment_details", label: "Payment details", description: "Bank/payout account details on file." },
   { id: "discovery_kyc", label: "Discovery KYC", description: "Restricted Discovery Lead KYC: Aadhaar, PAN, bank details and tax status." },
+  // Step 8A: deliberately separate from "payment_details" (which Partner
+  // restricted identity uses) - a role trusted with a Partner's bank/PAN
+  // details is not automatically trusted with a Vendor's, and vice versa.
+  { id: "vendor_payment_details", label: "Vendor payment details", description: "Restricted Vendor tax/bank/KYC identity: PAN, GST and bank account details on file." },
 ];
