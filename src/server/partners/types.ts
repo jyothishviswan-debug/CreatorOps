@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { assetDecisionKindSchema, leadSourceSchema, type AssetDecisionKind } from "@/server/discovery/types";
+import { assetDecisionKindSchema, leadSourceSchema, targetAudienceSchema, type AssetDecisionKind, type TargetAudience } from "@/server/discovery/types";
 
 // Step 7A: the canonical Partner + Partner Account domain. Partner = one
 // individual creator/influencer/person. Partner Account = one platform/
@@ -61,6 +61,12 @@ export const partnerDocSchema = z.object({
   categoryIds: z.array(z.string().min(1)).max(50).default([]),
   tier: z.string().min(1).max(60).nullable().default(null),
   priority: z.string().min(1).max(60).nullable().default(null),
+  // Same fixed list Discovery's Research stage uses (see
+  // targetAudienceSchema's own comment) - carried over verbatim from the
+  // origin Lead's research.targetAudience on Discovery conversion (when
+  // present), or captured directly at Partner creation/edit otherwise.
+  // Never re-derived or guessed - null simply means not yet tagged.
+  targetAudience: targetAudienceSchema.nullable().default(null),
 
   // Safe contact data only - never restricted financial/KYC values (see
   // restrictedFinancialIdentityDocSchema below for those).
@@ -145,7 +151,8 @@ export const partnerAccountDocSchema = z.object({
   updatedByUserRef: z.string().min(1),
 });
 export type PartnerAccountDoc = z.infer<typeof partnerAccountDocSchema>;
-export type { AssetDecisionKind };
+export type { AssetDecisionKind, TargetAudience };
+export { TARGET_AUDIENCES } from "@/server/discovery/types";
 
 // --- Concurrency-safe normalized-identity claim (partnerAccountIdentityClaims/{sha256(normalizedIdentity)}) ---
 // One document per claimed normalizedIdentity - its existence IS the

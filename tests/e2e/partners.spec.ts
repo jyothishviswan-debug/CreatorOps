@@ -97,6 +97,18 @@ test.describe("Workspace", () => {
     await page.goto("/partners/workspace");
     await page.getByLabel("Search partners by name").fill(partner.displayName);
     await expect(page.getByText(partner.displayName)).toBeVisible({ timeout: 5000 });
+  });
+
+  test("Target Audience filter auto-applies via a real bounded query", async ({ page }) => {
+    const partner = await createPartnerViaApi(page, { displayName: uniqueName("Tagged Workspace Partner"), targetAudience: "India Alpha" });
+
+    await page.goto("/partners/workspace");
+    await page.getByLabel("Search partners by name").fill(partner.displayName);
+    await expect(page.getByText(partner.displayName)).toBeVisible({ timeout: 5000 });
+
+    await page.getByLabel("Search partners by name").fill("");
+    await page.getByLabel("Filter target audience").selectOption("India Alpha");
+    await expect(page.getByText(partner.displayName)).toBeVisible({ timeout: 5000 });
 
     await page.getByLabel("Search partners by name").fill("");
     await page.getByLabel("Filter status").selectOption("ACTIVE");
@@ -175,6 +187,23 @@ test.describe("Create Partner", () => {
     for (const term of ["postal", "street", "pin code", "pincode", "zip code", "address proof", "city"]) {
       expect(labels.some((l) => l.includes(term))).toBe(false);
     }
+  });
+
+  test("captures Target Audience directly, and it can be changed via ordinary edit", async ({ page }) => {
+    await page.goto("/partners/new");
+    const name = uniqueName("Tagged Partner");
+    await formField(page, "Full name").fill(name);
+    await formField(page, "Target Audience").selectOption("India 2");
+    await page.getByRole("button", { name: "Create partner" }).click();
+
+    await expect(page.locator(".head p").first()).toHaveText("India 2");
+    await expect(page.locator(".kv", { hasText: "Target Audience" }).getByText("India 2")).toBeVisible();
+
+    const partnerRef = page.url().split("/partners/")[1];
+    await page.goto(`/partners/${partnerRef}/edit`);
+    await formField(page, "Target Audience").selectOption("India 4");
+    await page.getByRole("button", { name: "Save changes" }).click();
+    await expect(page.locator(".head p").first()).toHaveText("India 4");
   });
 });
 
@@ -385,6 +414,11 @@ test.describe("NEW_ACCOUNT pending setup", () => {
 
     await page.goto(`/partners/${conversion.partnerRef}`);
     await expect(page.getByText("Account setup pending.")).toBeVisible();
+    // Target Audience is carried over verbatim from the origin Lead's
+    // Research evidence (set above) - never left blank when it was
+    // already captured in Discovery.
+    await expect(page.locator(".head p").first()).toHaveText("India 1");
+    await expect(page.locator(".kv", { hasText: "Target Audience" }).getByText("India 1")).toBeVisible();
 
     await page.getByRole("tab", { name: "Accounts" }).click();
     await expect(page.getByText("Account setup pending.")).toBeVisible();

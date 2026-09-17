@@ -56,7 +56,7 @@ export function PartnerDetail({ initialPartner }: { initialPartner: PartnerDto }
         <div>
           <div className="eyebrow">PARTNERS / RECORD DETAIL</div>
           <h1>{partner.displayName}</h1>
-          <p>{partner.tier ?? "No tier on file"}</p>
+          <p>{partner.targetAudience ?? "Target Audience not yet tagged"}</p>
         </div>
         <div className="actions">
           <Link href="/partners/workspace" className="btn">
@@ -109,6 +109,12 @@ export function PartnerDetail({ initialPartner }: { initialPartner: PartnerDto }
                     <b>Account setup pending.</b> Created by Discovery conversion with no account yet - open the Accounts tab to resolve it.
                   </div>
                 )}
+                <div className="kv">
+                  <span>Target Audience</span>
+                  <span>
+                    <Pill tone={partner.targetAudience ? "default" : "red"}>{partner.targetAudience ?? "Not yet tagged"}</Pill>
+                  </span>
+                </div>
                 <div className="kv">
                   <span>Legal name</span>
                   <span>{partner.legalName ?? "—"}</span>

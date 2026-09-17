@@ -64,6 +64,7 @@ export async function seedPartnersData(): Promise<void> {
       categoryIds: [],
       tier: null,
       priority: null,
+      targetAudience: null,
       email: `${uid}@example-partner.test`,
       phone: "+91 90000 00001",
       originLeadRefs: [],

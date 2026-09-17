@@ -15,6 +15,7 @@ export async function GET(request: Request) {
   const displayNamePrefix = url.searchParams.get("displayNamePrefix") ?? undefined;
   const region = url.searchParams.get("region") ?? undefined;
   const tier = url.searchParams.get("tier") ?? undefined;
+  const targetAudience = url.searchParams.get("targetAudience") ?? undefined;
   const assignedToMe = url.searchParams.get("assignedToMe") === "true" ? true : undefined;
   const pendingPartnerAccountSetup = url.searchParams.get("pendingPartnerAccountSetup") === "true" ? true : undefined;
 
@@ -23,7 +24,7 @@ export async function GET(request: Request) {
   const cursorUid = url.searchParams.get("cursorUid");
   if (cursorOrderValue && cursorUid) cursor = { orderValue: cursorOrderValue, uid: cursorUid };
 
-  const result = await listPartners(actor, { limit, cursor, status, displayNamePrefix, region, tier, assignedToMe, pendingPartnerAccountSetup });
+  const result = await listPartners(actor, { limit, cursor, status, displayNamePrefix, region, tier, targetAudience, assignedToMe, pendingPartnerAccountSetup });
   return toPartnersHttpResponse(result);
 }
 

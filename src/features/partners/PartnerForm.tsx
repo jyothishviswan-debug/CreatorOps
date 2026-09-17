@@ -8,7 +8,7 @@ import { FormLayout, FormSection, Fields, Field, FormFoot, Checklist } from "@/u
 import { Icon } from "@/ui/icons";
 import type { PartnerDto } from "@/server/partners/client-dto";
 import type { PartnerOwnerCandidateDto } from "@/server/partners/user-picker";
-import { DISCOVERY_PLATFORMS, DISCOVERY_REGIONS } from "@/server/discovery/types";
+import { DISCOVERY_PLATFORMS, DISCOVERY_REGIONS, TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
 import { PARTNER_PRIORITIES, PARTNER_TIERS, type PartnerDuplicateCheckResult } from "@/server/partners/types";
 import { createPartner, createPartnerAccount, editPartner, precheckPartnerDuplicates } from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
@@ -33,6 +33,12 @@ export function PartnerForm(props: Props) {
   const initial = props.mode === "edit" ? props.partner : null;
 
   const [displayName, setDisplayName] = useState(initial?.displayName ?? "");
+  // Same fixed list Discovery's own Research stage uses - carried over
+  // automatically on Discovery conversion (see conversion-service.ts),
+  // captured here directly for a Partner created without a Discovery
+  // origin. One of the primary classification fields, not an optional
+  // afterthought like tier/priority - shown right under the name.
+  const [targetAudience, setTargetAudience] = useState<TargetAudience | "">((initial?.targetAudience as TargetAudience | null) ?? "");
   const [legalName, setLegalName] = useState(initial?.legalName ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
@@ -114,6 +120,7 @@ export function PartnerForm(props: Props) {
     if (props.mode === "create") {
       const result = await createPartner({
         displayName,
+        targetAudience: targetAudience || undefined,
         legalName: legalName.trim() || undefined,
         email: email.trim() || undefined,
         phone: phone.trim() || undefined,
@@ -150,6 +157,7 @@ export function PartnerForm(props: Props) {
     const partner = props.partner;
     const result = await editPartner(partner.partnerRef, {
       displayName,
+      targetAudience: targetAudience || null,
       legalName: legalName.trim() || null,
       email: email.trim() || null,
       phone: phone.trim() || null,
@@ -190,6 +198,16 @@ export function PartnerForm(props: Props) {
           <Fields>
             <Field label="Full name">
               <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={200} />
+            </Field>
+            <Field label="Target Audience" hint="Carried over automatically from Discovery when this Partner originates there.">
+              <select value={targetAudience} onChange={(e) => setTargetAudience(e.target.value as TargetAudience | "")}>
+                <option value="">Not yet tagged</option>
+                {TARGET_AUDIENCES.map((ta) => (
+                  <option key={ta} value={ta}>
+                    {ta}
+                  </option>
+                ))}
+              </select>
             </Field>
             <Field label="Legal name" hint="Optional - only if it differs from the display name.">
               <input type="text" value={legalName} onChange={(e) => setLegalName(e.target.value)} maxLength={200} />

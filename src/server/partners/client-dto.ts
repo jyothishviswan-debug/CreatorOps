@@ -1,5 +1,5 @@
 import { getUserDoc } from "@/server/authz/firestore";
-import type { PartnerAccountDoc, PartnerDoc, PartnerStatus } from "./types";
+import type { PartnerAccountDoc, PartnerDoc, PartnerStatus, TargetAudience } from "./types";
 
 // The safe subset of sourceDiscovery worth showing the browser - already
 // entirely non-restricted fields (see partnerDocSchema's own comment),
@@ -24,6 +24,7 @@ export type PartnerDto = {
   categoryIds: string[];
   tier: string | null;
   priority: string | null;
+  targetAudience: TargetAudience | null;
   email: string | null;
   phone: string | null;
   ownerRef: string | null;
@@ -62,6 +63,7 @@ export async function toPartnerDto(doc: PartnerDoc): Promise<PartnerDto> {
     categoryIds: doc.categoryIds,
     tier: doc.tier,
     priority: doc.priority,
+    targetAudience: doc.targetAudience,
     email: doc.email,
     phone: doc.phone,
     ownerRef: owner.ref,
@@ -99,6 +101,7 @@ export async function toPartnerDtos(docs: PartnerDoc[]): Promise<PartnerDto[]> {
       categoryIds: doc.categoryIds,
       tier: doc.tier,
       priority: doc.priority,
+      targetAudience: doc.targetAudience,
       email: doc.email,
       phone: doc.phone,
       ownerRef: owner.ref,

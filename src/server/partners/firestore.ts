@@ -205,6 +205,7 @@ export async function listPartnerDocs(options: {
   region?: string;
   ownerUid?: string;
   tier?: string;
+  targetAudience?: string;
   pendingPartnerAccountSetup?: boolean;
 }): Promise<ListPartnersPage> {
   const pageSize = Math.max(1, Math.min(options.limit, MAX_PARTNER_PAGE_SIZE));
@@ -221,6 +222,7 @@ export async function listPartnerDocs(options: {
   if (options.region) filters.push(Filter.where("regionIds", "array-contains", options.region));
   if (options.ownerUid) filters.push(Filter.where("ownerUid", "==", options.ownerUid));
   if (options.tier) filters.push(Filter.where("tier", "==", options.tier));
+  if (options.targetAudience) filters.push(Filter.where("targetAudience", "==", options.targetAudience));
   if (options.pendingPartnerAccountSetup) filters.push(Filter.where("pendingPartnerAccountSetup", "==", true));
 
   let orderField = "createdAt";

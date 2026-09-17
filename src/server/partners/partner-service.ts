@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import { targetAudienceSchema } from "@/server/discovery/types";
 import { getUserDocByRef } from "@/server/authz/firestore";
 import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import type { ActorContext } from "@/server/authz/types";
@@ -42,6 +43,7 @@ const createPartnerInputSchema = z.object({
   categoryIds: z.array(z.string().min(1)).max(50).optional(),
   tier: z.string().min(1).max(60).optional(),
   priority: z.string().min(1).max(60).optional(),
+  targetAudience: targetAudienceSchema.optional(),
   ownerUserRef: z.string().min(1).optional(),
   teamIds: z.array(z.string().min(1)).max(50).optional(),
   // Discovery provenance, when this Partner is known (by the caller) to
@@ -84,6 +86,7 @@ export async function createPartner(actor: ActorContext | null, rawInput: unknow
     categoryIds: input.categoryIds ?? [],
     tier: input.tier ?? null,
     priority: input.priority ?? null,
+    targetAudience: input.targetAudience ?? null,
     email: input.email ?? null,
     phone: input.phone ?? null,
     ownerUid,
@@ -130,6 +133,7 @@ export type ListPartnersInput = {
   displayNamePrefix?: string;
   region?: string;
   tier?: string;
+  targetAudience?: string;
   // Resolved to the actor's own uid server-side - the browser never
   // supplies a raw uid, only the boolean intent (same idiom as
   // Discovery's listLeads assignedToMe).
@@ -152,6 +156,7 @@ export async function listPartners(actor: ActorContext | null, input: ListPartne
     displayNamePrefix: input.displayNamePrefix?.toLowerCase(),
     region: input.region,
     tier: input.tier,
+    targetAudience: input.targetAudience,
     ownerUid: input.assignedToMe ? actor!.uid : undefined,
     pendingPartnerAccountSetup: input.pendingPartnerAccountSetup,
   });
@@ -172,6 +177,7 @@ const editPartnerInputSchema = z
     categoryIds: z.array(z.string().min(1)).max(50).optional(),
     tier: z.string().min(1).max(60).nullable().optional(),
     priority: z.string().min(1).max(60).nullable().optional(),
+    targetAudience: targetAudienceSchema.nullable().optional(),
     expectedVersion: z.number().int().min(1),
   })
   .strict();
@@ -197,6 +203,7 @@ export async function editPartner(actor: ActorContext | null, partnerRef: unknow
     categoryIds: input.categoryIds ?? current.categoryIds,
     tier: input.tier !== undefined ? input.tier : current.tier,
     priority: input.priority !== undefined ? input.priority : current.priority,
+    targetAudience: input.targetAudience !== undefined ? input.targetAudience : current.targetAudience,
     updatedAt: new Date().toISOString(),
     updatedByUserRef: actor!.userRef,
   }));

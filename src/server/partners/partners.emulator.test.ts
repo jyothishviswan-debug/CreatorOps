@@ -203,6 +203,25 @@ describe("Partners domain (real emulator)", () => {
       expect(partnerDocSchema.safeParse(doc).success).toBe(true);
     });
 
+    it("Target Audience can be captured directly at create, changed via ordinary edit, and filtered on in listPartners", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Tagged Direct"), regionIds: ["Kerala"], targetAudience: "India 2" }, "req-ta-create");
+      expect(created.ok).toBe(true);
+      if (!created.ok) throw new Error("unreachable");
+      expect(created.data.targetAudience).toBe("India 2");
+
+      const edited = await editPartner(head, created.data.partnerRef, { targetAudience: "India 4", expectedVersion: created.data.version }, "req-ta-edit");
+      expect(edited.ok).toBe(true);
+      if (!edited.ok) throw new Error("unreachable");
+      expect(edited.data.targetAudience).toBe("India 4");
+
+      const filtered = await listPartners(head, { limit: 50, targetAudience: "India 4" });
+      expect(filtered.ok).toBe(true);
+      if (!filtered.ok) throw new Error("unreachable");
+      expect(filtered.data.partners.some((p) => p.partnerRef === created.data.partnerRef)).toBe(true);
+      expect(filtered.data.partners.every((p) => p.targetAudience === "India 4")).toBe(true);
+    });
+
     it("the ordinary DTO never includes restricted financial identity fields", async () => {
       const head = await actorFor("partnership_head");
       const result = await getPartner(head, "creator-house");
@@ -816,6 +835,10 @@ describe("Partners domain (real emulator)", () => {
       expect(partnerDoc?.originLeadRefs).toContain(lead.leadRef);
       expect(partnerDoc?.sourceDiscovery?.leadRef).toBe(lead.leadRef);
       expect(partnerDoc?.pendingPartnerAccountSetup).toBe(true);
+      // Carried over verbatim from the origin Lead's own Research
+      // evidence (convertFreshLeadToPartner always sets "India 1") -
+      // never left blank when Discovery already captured it.
+      expect(partnerDoc?.targetAudience).toBe("India 1");
     });
 
     it("pending account setup can later be resolved by creating a real Partner Account", async () => {

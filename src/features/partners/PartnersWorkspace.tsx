@@ -12,6 +12,7 @@ import { Pager } from "@/features/administration/Pager";
 import type { PartnerDto } from "@/server/partners/client-dto";
 import type { PartnerListCursor } from "@/server/partners/firestore";
 import { PARTNER_STATUSES, type PartnerStatus } from "@/server/partners/types";
+import { TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
 import { listPartners } from "./api-client";
 import { STATUS_LABELS, statusTone } from "./format";
 
@@ -42,6 +43,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
   const tier = useDebouncedValue(tierInput, DEBOUNCE_MS);
 
   const [status, setStatus] = useState<PartnerStatus | "all">("all");
+  const [targetAudience, setTargetAudience] = useState<TargetAudience | "all">("all");
   const [assignedToMe, setAssignedToMe] = useState(false);
   const [pendingSetup, setPendingSetup] = useState(false);
   const [layout, setLayout] = useState<"table" | "cards">("table");
@@ -53,6 +55,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
     status: status === "all" ? undefined : status,
     region: region.trim() || undefined,
     tier: tier.trim() || undefined,
+    targetAudience: targetAudience === "all" ? undefined : targetAudience,
     assignedToMe: assignedToMe || undefined,
     displayNamePrefix: search.trim() || undefined,
     pendingPartnerAccountSetup: pendingSetup || undefined,
@@ -85,7 +88,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, region, tier, assignedToMe, search, pendingSetup]);
+  }, [status, region, tier, targetAudience, assignedToMe, search, pendingSetup]);
 
   async function goToPage(page: number) {
     if (page < 1 || page === currentPage) return;
@@ -120,11 +123,12 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
     setRegionInput("");
     setTierInput("");
     setStatus("all");
+    setTargetAudience("all");
     setAssignedToMe(false);
     setPendingSetup(false);
   }
 
-  const anyFilterActive = Boolean(searchInput || regionInput || tierInput || status !== "all" || assignedToMe || pendingSetup);
+  const anyFilterActive = Boolean(searchInput || regionInput || tierInput || status !== "all" || targetAudience !== "all" || assignedToMe || pendingSetup);
 
   return (
     <section className="panel">
@@ -135,6 +139,14 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
           {PARTNER_STATUSES.map((s) => (
             <option key={s} value={s}>
               {STATUS_LABELS[s]}
+            </option>
+          ))}
+        </select>
+        <select aria-label="Filter target audience" value={targetAudience} onChange={(e) => setTargetAudience(e.target.value as TargetAudience | "all")}>
+          <option value="all">All target audiences</option>
+          {TARGET_AUDIENCES.map((ta) => (
+            <option key={ta} value={ta}>
+              {ta}
             </option>
           ))}
         </select>
@@ -204,7 +216,7 @@ function RecordCards({ rows, onOpen }: { rows: PartnerDto[]; onOpen: (partnerRef
             <span className="avatar">{initialsOf(partner.displayName)}</span>
             <span>
               <b>{partner.displayName}</b>
-              <small>{partner.tier ?? "No tier on file"}</small>
+              <small>{partner.targetAudience ?? "Target Audience not tagged"}</small>
             </span>
           </button>
           <div style={{ marginTop: 13 }}>
@@ -230,6 +242,7 @@ function RecordTable({ rows, onOpen }: { rows: PartnerDto[]; onOpen: (partnerRef
           <tr>
             <th>Partner</th>
             <th>Status</th>
+            <th>Target Audience</th>
             <th>Region</th>
             <th>Owner</th>
             <th>
@@ -253,6 +266,9 @@ function RecordTable({ rows, onOpen }: { rows: PartnerDto[]; onOpen: (partnerRef
               </td>
               <td>
                 <Pill tone={statusTone(partner.status)}>{STATUS_LABELS[partner.status]}</Pill>
+              </td>
+              <td>
+                <Pill tone={partner.targetAudience ? "default" : "red"}>{partner.targetAudience ?? "Not tagged"}</Pill>
               </td>
               <td>{partner.regionIds[0] ?? "—"}</td>
               <td>{partner.ownerDisplayName ?? "Unassigned"}</td>

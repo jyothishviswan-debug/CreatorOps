@@ -240,6 +240,7 @@ export async function seedDiscoveryData(): Promise<void> {
     categoryIds: [],
     tier: null,
     priority: null,
+    targetAudience: convertedLead.research?.targetAudience ?? null,
     email: convertedLead.email,
     phone: convertedLead.phone,
     ownerUid: convertedLead.ownerUid,

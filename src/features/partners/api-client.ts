@@ -88,6 +88,7 @@ export function listPartners(input: ListPartnersInput = {}): Promise<PartnersApi
     displayNamePrefix: input.displayNamePrefix,
     region: input.region,
     tier: input.tier,
+    targetAudience: input.targetAudience,
     assignedToMe: input.assignedToMe ? "true" : undefined,
     pendingPartnerAccountSetup: input.pendingPartnerAccountSetup ? "true" : undefined,
   });
