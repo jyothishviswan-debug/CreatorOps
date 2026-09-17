@@ -51,7 +51,7 @@ export function VendorsHome({
   }, [view]);
 
   return (
-    <div className="ov-page">
+    <>
       <div className="tabsbar">
         <div className="tabs">
           <button type="button" className={view === "overview" ? "tab active" : "tab"} aria-current={view === "overview" ? "page" : undefined} onClick={() => setView("overview")}>
@@ -77,6 +77,6 @@ export function VendorsHome({
       ) : (
         <VendorsWorkspace initialVendors={initialVendors} initialNextCursor={initialNextCursor} />
       )}
-    </div>
+    </>
   );
 }

@@ -183,7 +183,6 @@ export default async function VendorsOverviewPage() {
       rows: [
         { label: "Owner assigned", detail: `${ownerAssigned} / ${total}`, badge: "Coverage" },
         { label: "Profile complete", detail: `${profileComplete} / ${total}`, badge: "Coverage" },
-        { label: "Has active relationship", detail: `${withActiveRelationship} / ${total}`, badge: "Coverage" },
         { label: "Partners with an active Vendor", detail: String(representedPartners), badge: "Current" },
         { label: "Active payee relationships", detail: String(payeeActive), badge: "Current" },
       ],
@@ -249,34 +248,36 @@ export default async function VendorsOverviewPage() {
 
   return (
     <AppShell>
-      <div className="head">
-        <div>
-          <div className="eyebrow">FIND &amp; ONBOARD</div>
-          <h1>Vendors</h1>
-          <p>Agency, manager, representative and payee relationships associated with your Partners.</p>
+      <div className="ov-page">
+        <div className="head">
+          <div>
+            <div className="eyebrow">FIND &amp; ONBOARD</div>
+            <h1>Vendors</h1>
+            <p>Agency, manager, representative and payee relationships associated with your Partners.</p>
+          </div>
+          <div className="actions">
+            <Link href="/vendors/new" className="btn primary">
+              + Add vendor
+            </Link>
+          </div>
         </div>
-        <div className="actions">
-          <Link href="/vendors/new" className="btn primary">
-            + Add vendor
-          </Link>
-        </div>
-      </div>
 
-      <VendorsHome
-        kpis={[
-          { icon: "brief", label: "Total vendors", value: String(total), hint: "canonical identities" },
-          { icon: "check", label: "Active vendors", value: String(active), hint: `${activePct}% of roster` },
-          { icon: "link", label: "Active relationships", value: String(withActiveRelationship), hint: "vendors with a Partner link" },
-          { icon: "flag", label: "Campaign engaged", value: "—", hint: "not yet available" },
-          { icon: "alert", label: "Needs attention", value: String(needsAttentionRefs.size), hint: "unique vendors" },
-        ]}
-        topPanels={topPanels}
-        bottomPanels={bottomPanels}
-        summary="What is happening, what needs attention, and where to act next."
-        chips={["Real scoped emulator data", `${total} Vendor${total === 1 ? "" : "s"} in scope`]}
-        initialVendors={initialVendors}
-        initialNextCursor={initialNextCursor}
-      />
+        <VendorsHome
+          kpis={[
+            { icon: "brief", label: "Total vendors", value: String(total), hint: "canonical identities" },
+            { icon: "check", label: "Active vendors", value: String(active), hint: `${activePct}% of roster` },
+            { icon: "link", label: "Active relationships", value: String(withActiveRelationship), hint: "vendors with a Partner link" },
+            { icon: "flag", label: "Campaign engaged", value: "—", hint: "not yet available" },
+            { icon: "alert", label: "Needs attention", value: String(needsAttentionRefs.size), hint: "unique vendors" },
+          ]}
+          topPanels={topPanels}
+          bottomPanels={bottomPanels}
+          summary="What is happening, what needs attention, and where to act next."
+          chips={["Real scoped emulator data", `${total} Vendor${total === 1 ? "" : "s"} in scope`]}
+          initialVendors={initialVendors}
+          initialNextCursor={initialNextCursor}
+        />
+      </div>
     </AppShell>
   );
 }
