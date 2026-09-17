@@ -17,6 +17,10 @@ import { PARTNER_GOVERNANCE_STATUSES, partnersInvalidInputResult, partnersNotRea
 export async function checkPartnerDependencies(partner: Pick<PartnerDoc, "uid" | "partnerRef">): Promise<PartnerDependencyResult> {
   const blockers: string[] = [];
   try {
+    // Two equality filters, no orderBy - Firestore's automatic per-field
+    // indexes cover this via merge join, no composite index required
+    // (certified Step 8A.1; see firestore.indexes.json's comment header
+    // for the collections that DO need one).
     const activeAccounts = await partnerAccountsCollection().where("partnerRef", "==", partner.partnerRef).where("status", "==", "ACTIVE").limit(1).get();
     if (!activeAccounts.empty) blockers.push("This Partner has at least one active Partner Account - inactivate it first.");
 

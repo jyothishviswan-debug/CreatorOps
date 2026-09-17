@@ -6,19 +6,20 @@ import {
   partnerAccountDocSchema,
   partnerAccountIdentityClaimDocSchema,
   partnerDocSchema,
-  restrictedFinancialIdentityDocSchema,
   type PartnerAccountDoc,
   type PartnerAccountIdentityClaimDoc,
   type PartnerDoc,
-  type RestrictedFinancialIdentityDoc,
 } from "./types";
 
+// Step 8A.1: restrictedFinancialIdentities moved to the one canonical,
+// cross-domain collection - see
+// @/server/shared/restricted-financial-identity.ts. No longer listed
+// here; this module never owns it.
 export const PARTNERS_COLLECTIONS = {
   partners: "partners",
   partnerEvents: "events", // subcollection name under partners/{uid}
   partnerAccounts: "partnerAccounts",
   partnerAccountIdentityClaims: "partnerAccountIdentityClaims",
-  restrictedFinancialIdentities: "restrictedFinancialIdentities",
 } as const;
 
 export const MAX_PARTNER_PAGE_SIZE = 100;
@@ -43,10 +44,6 @@ export function partnerAccountsCollection() {
 
 export function partnerAccountIdentityClaimsCollection() {
   return getAdminFirestore().collection(PARTNERS_COLLECTIONS.partnerAccountIdentityClaims);
-}
-
-export function restrictedFinancialIdentitiesCollection() {
-  return getAdminFirestore().collection(PARTNERS_COLLECTIONS.restrictedFinancialIdentities);
 }
 
 export async function getPartnerDocByUid(uid: string): Promise<PartnerDoc | null> {
@@ -85,13 +82,6 @@ export async function getPartnerAccountIdentityClaim(claimId: string): Promise<P
   const snapshot = await partnerAccountIdentityClaimsCollection().doc(claimId).get();
   if (!snapshot.exists) return null;
   const result = partnerAccountIdentityClaimDocSchema.safeParse(snapshot.data());
-  return result.success ? result.data : null;
-}
-
-export async function getRestrictedFinancialIdentityDoc(partnerUid: string): Promise<RestrictedFinancialIdentityDoc | null> {
-  const snapshot = await restrictedFinancialIdentitiesCollection().doc(partnerUid).get();
-  if (!snapshot.exists) return null;
-  const result = restrictedFinancialIdentityDocSchema.safeParse(snapshot.data());
   return result.success ? result.data : null;
 }
 
@@ -189,11 +179,19 @@ function buildPartnerScopeFilter(actorUid: string, grants: ScopeGrant[]): Filter
 
 // Bounded cursor pagination, scope-constrained BEFORE retrieval - never a
 // browser or server fetch-all followed by in-memory filtering. Mirrors
-// Discovery's listLeadDocs exactly. Composite indexes this needs once
-// deployed to a real (non-emulator) Firestore project are documented in
-// firestore.indexes.json (ownerUid+createdAt, regionIds(array)+createdAt,
-// teamIds(array)+createdAt, status-filtered variants of each) - the
-// local emulator does not enforce composite indexes at all.
+// Discovery's listLeadDocs exactly, and the same grid discipline as
+// Vendors' own listVendorDocs (see firestore.indexes.json's
+// "partners" entries, certified Step 8A.1): one composite index per
+// {SELF/REGION/TEAM scope branch} x {createdAt-desc order, displayName
+// search order}, one status+branch+createdAt layer, and one standalone
+// {filter}+createdAt entry each for tier/targetAudience/
+// pendingPartnerAccountSetup - never every possible filter combination
+// (the EXPLICIT_RECORD/PARTNER scope branch's documentId()-in and a
+// stacked region+extra-filter combo stay intentionally unindexed, same
+// accepted gap as Discovery's own region+lifecycle-adjacent combos - a
+// real Firestore project surfaces those as a clear "create this index"
+// error, never silently wrong results). The local emulator does not
+// enforce composite indexes at all.
 export async function listPartnerDocs(options: {
   limit: number;
   cursor?: PartnerListCursor;
@@ -257,7 +255,10 @@ export async function listPartnerDocs(options: {
 
 // Bounded list of one Partner's own accounts - never unbounded (a Partner
 // realistically has a handful of accounts, but the cap keeps this
-// provably safe regardless).
+// provably safe regardless). partnerRef== combined with an orderBy on a
+// different field (createdAt) needs its own composite index - see
+// firestore.indexes.json's "partnerAccounts" entry (partnerRef ASC,
+// createdAt ASC), certified Step 8A.1.
 const MAX_ACCOUNTS_PER_PARTNER = 200;
 export async function listPartnerAccountDocs(partnerRef: string): Promise<PartnerAccountDoc[]> {
   const snapshot = await partnerAccountsCollection().where("partnerRef", "==", partnerRef).orderBy("createdAt", "asc").limit(MAX_ACCOUNTS_PER_PARTNER).get();

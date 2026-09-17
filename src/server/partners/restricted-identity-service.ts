@@ -2,18 +2,32 @@ import { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ActorContext } from "@/server/authz/types";
-import { getPartnerDocByRef, getRestrictedFinancialIdentityDoc, restrictedFinancialIdentitiesCollection } from "./firestore";
+import {
+  getRestrictedFinancialIdentityDoc,
+  restrictedFinancialIdentitiesCollection,
+  restrictedFinancialIdentityDocSchema,
+  restrictedIdentityDocId,
+  type RestrictedFinancialIdentityDoc,
+} from "@/server/shared/restricted-financial-identity";
+import { getPartnerDocByRef } from "./firestore";
 import { writePartnerEvent } from "./partner-events";
 import { requirePartnerInScope, requirePartnerRestrictedIdentitySensitiveAccess, requirePartnersAccess } from "./partners-gate";
-import { partnersInvalidInputResult, partnersUnauthorizedResult, restrictedFinancialIdentityDocSchema, type PartnerDoc, type PartnersServiceResult, type RestrictedFinancialIdentityDoc } from "./types";
+import { partnersInvalidInputResult, partnersUnauthorizedResult, type PartnerDoc, type PartnersServiceResult } from "./types";
 
-// Never exposes the raw Partner uid to the browser - partnerRef already
-// identifies the record.
-export type RestrictedFinancialIdentityDto = Omit<RestrictedFinancialIdentityDoc, "uid">;
-function toRestrictedIdentityDto(doc: RestrictedFinancialIdentityDoc): RestrictedFinancialIdentityDto {
+// Step 8A.1: persists into the ONE canonical restrictedFinancialIdentities
+// collection (see src/server/shared/restricted-financial-identity.ts),
+// discriminated by subjectType "PARTNER" and a deterministic
+// type-prefixed doc id - never a parallel Partner-only collection. The
+// browser-facing DTO stays exactly as narrow as before: never exposes
+// the raw doc id, subjectType, or subjectRef, only the restricted
+// fields the UI actually needs.
+export type PartnerRestrictedIdentityDto = Omit<RestrictedFinancialIdentityDoc, "uid" | "subjectType" | "subjectRef">;
+function toRestrictedIdentityDto(doc: RestrictedFinancialIdentityDoc): PartnerRestrictedIdentityDto {
   const rest: Partial<RestrictedFinancialIdentityDoc> = { ...doc };
   delete rest.uid;
-  return rest as RestrictedFinancialIdentityDto;
+  delete rest.subjectType;
+  delete rest.subjectRef;
+  return rest as PartnerRestrictedIdentityDto;
 }
 
 // Restricted identity is gated by BOTH the manage_partner_restricted_identity
@@ -38,11 +52,11 @@ async function requireRestrictedAccess(actor: ActorContext | null, partnerRef: u
   return { ok: true, partner };
 }
 
-export async function getPartnerRestrictedIdentity(actor: ActorContext | null, partnerRef: unknown): Promise<PartnersServiceResult<RestrictedFinancialIdentityDto | null>> {
+export async function getPartnerRestrictedIdentity(actor: ActorContext | null, partnerRef: unknown): Promise<PartnersServiceResult<PartnerRestrictedIdentityDto | null>> {
   const loaded = await requireRestrictedAccess(actor, partnerRef);
   if (!loaded.ok) return loaded.error;
 
-  const doc = await getRestrictedFinancialIdentityDoc(loaded.partner.uid);
+  const doc = await getRestrictedFinancialIdentityDoc("PARTNER", loaded.partner.uid);
   return { ok: true, data: doc ? toRestrictedIdentityDto(doc) : null };
 }
 
@@ -71,7 +85,7 @@ type SaveTxResult = { kind: "ok"; doc: RestrictedFinancialIdentityDoc } | { kind
 // addRestrictedIdentityEvidence), never silently dropped by a core-field
 // save. Never logs a raw restricted value into the append-only event
 // log - only that a save happened (same discipline as Discovery's KYC).
-export async function savePartnerRestrictedIdentity(actor: ActorContext | null, partnerRef: unknown, rawInput: unknown, requestId: string): Promise<PartnersServiceResult<RestrictedFinancialIdentityDto>> {
+export async function savePartnerRestrictedIdentity(actor: ActorContext | null, partnerRef: unknown, rawInput: unknown, requestId: string): Promise<PartnersServiceResult<PartnerRestrictedIdentityDto>> {
   const loaded = await requireRestrictedAccess(actor, partnerRef);
   if (!loaded.ok) return loaded.error;
 
@@ -84,7 +98,8 @@ export async function savePartnerRestrictedIdentity(actor: ActorContext | null, 
   }
 
   const db = getAdminFirestore();
-  const docRef = restrictedFinancialIdentitiesCollection().doc(loaded.partner.uid);
+  const docId = restrictedIdentityDocId("PARTNER", loaded.partner.uid);
+  const docRef = restrictedFinancialIdentitiesCollection().doc(docId);
   const now = new Date().toISOString();
 
   const result = await db.runTransaction<SaveTxResult>(async (tx) => {
@@ -94,8 +109,9 @@ export async function savePartnerRestrictedIdentity(actor: ActorContext | null, 
     if (currentVersion !== input.expectedVersion) return { kind: "stale" };
 
     const next: RestrictedFinancialIdentityDoc = restrictedFinancialIdentityDocSchema.parse({
-      uid: loaded.partner.uid,
-      partnerRef: loaded.partner.partnerRef,
+      uid: docId,
+      subjectType: "PARTNER",
+      subjectRef: loaded.partner.partnerRef,
       version: currentVersion + 1,
       pan: input.pan !== undefined ? input.pan : (existing?.success ? existing.data.pan : null),
       aadhaar: input.aadhaar !== undefined ? input.aadhaar : (existing?.success ? existing.data.aadhaar : null),

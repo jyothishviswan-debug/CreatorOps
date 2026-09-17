@@ -107,6 +107,9 @@ export async function createPartnerAccount(actor: ActorContext | null, partnerRe
 
     let existingPrimarySnap: FirebaseFirestore.QuerySnapshot | null = null;
     if (input.primary) {
+      // Two equality filters, no orderBy - no composite index required
+      // (Firestore's automatic per-field indexes merge-join this;
+      // certified Step 8A.1).
       existingPrimarySnap = await tx.get(partnerAccountsCollection().where("partnerRef", "==", partner.partnerRef).where("primary", "==", true).limit(5));
     }
 
@@ -415,6 +418,9 @@ export async function setPrimaryPartnerAccount(actor: ActorContext | null, partn
     if (target.data.version !== input.expectedVersion) return { kind: "stale" };
     if (target.data.status !== "ACTIVE") return { kind: "inactive" };
 
+    // Two equality filters, no orderBy - no composite index required
+    // (Firestore's automatic per-field indexes merge-join this;
+    // certified Step 8A.1).
     const othersSnap = await tx.get(partnerAccountsCollection().where("partnerRef", "==", target.data.partnerRef).where("primary", "==", true).limit(5));
 
     for (const doc of othersSnap.docs) {

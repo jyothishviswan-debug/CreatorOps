@@ -52,7 +52,7 @@ export const vendorDocSchema = z.object({
   statusReason: z.string().min(1).max(1000).nullable().default(null),
 
   // Safe ordinary contact/business metadata only - never restricted tax/
-  // bank/KYC values (see restrictedVendorFinancialIdentityDocSchema).
+  // bank/KYC values (see @/server/shared/restricted-financial-identity.ts).
   email: z.string().min(1).max(300).nullable().default(null),
   phone: z.string().min(1).max(40).nullable().default(null),
   // Optional ordinary business references/links (e.g. a public website,
@@ -106,46 +106,17 @@ export const vendorPartnerLinkDocSchema = z.object({
 });
 export type VendorPartnerLinkDoc = z.infer<typeof vendorPartnerLinkDocSchema>;
 
-// --- Restricted Vendor financial identity (restrictedVendorFinancialIdentities/{vendorUid}) ---
-// The same trusted-server-only boundary as Partners' own restricted
-// identity - direct browser Firestore access denied, explicit sensitive
-// access required ("vendor_payment_details", never Partners'
-// "payment_details" - see partners-gate.ts's Partner equivalent and
-// sensitive-categories.ts's own comment for why they're kept separate).
-// A dedicated collection, never the Partner one - Step 8A section 5 is
-// explicit that Partner and Vendor restricted identity must never be
-// duplicated into each other.
-export const vendorRestrictedIdentityEvidenceSchema = z.object({
-  docType: z.enum(["pan", "gst", "bank", "other"]),
-  kind: z.enum(["link", "upload"]),
-  url: z.string().min(1).max(1000),
-  fileName: z.string().min(1).max(200).nullable(),
-  addedAt: z.string().min(1),
-  addedByUserRef: z.string().min(1),
-});
-export type VendorRestrictedIdentityEvidence = z.infer<typeof vendorRestrictedIdentityEvidenceSchema>;
-
-export const restrictedVendorFinancialIdentityDocSchema = z.object({
-  uid: z.string().min(1), // == vendor uid, 1:1
-  vendorRef: z.string().min(1),
-  version: z.number().int().min(1),
-  pan: z.object({ number: z.string().min(1).max(20) }).nullable().default(null),
-  gst: z.object({ applicable: z.boolean(), number: z.string().min(1).max(30).optional() }).nullable().default(null),
-  bank: z
-    .object({
-      accountHolderName: z.string().min(1).max(200),
-      accountNumber: z.string().min(1).max(40),
-      ifsc: z.string().min(1).max(20),
-      bankName: z.string().min(1).max(120),
-      branchName: z.string().min(1).max(120),
-    })
-    .nullable()
-    .default(null),
-  evidence: z.array(vendorRestrictedIdentityEvidenceSchema).default([]),
-  updatedAt: z.string().min(1),
-  updatedByUserRef: z.string().min(1),
-});
-export type RestrictedVendorFinancialIdentityDoc = z.infer<typeof restrictedVendorFinancialIdentityDocSchema>;
+// --- Restricted Vendor financial identity ---------------------------------
+// Step 8A.1: moved to the one canonical, cross-domain
+// restrictedFinancialIdentities collection - see
+// @/server/shared/restricted-financial-identity.ts for the schema,
+// collection accessor, and subjectType-prefixed doc-id scheme (subject
+// discriminator "VENDOR", never colliding with a Partner subject). The
+// trusted-server boundary itself is unchanged: still gated by
+// "vendor_payment_details" (never Partners' own "payment_details" - see
+// sensitive-categories.ts's own comment), still a dedicated Vendor-
+// specific service (restricted-identity-service.ts) - only the
+// underlying persistence family is shared now, not duplicated.
 
 // --- Append-only Vendor event/audit history (vendors/{uid}/events) -----
 // A single combined stream per Vendor - covers both Vendor-level changes

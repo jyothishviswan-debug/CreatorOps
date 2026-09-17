@@ -167,43 +167,14 @@ export const partnerAccountIdentityClaimDocSchema = z.object({
 });
 export type PartnerAccountIdentityClaimDoc = z.infer<typeof partnerAccountIdentityClaimDocSchema>;
 
-// --- Restricted financial identity (restrictedFinancialIdentities/{partnerUid}) ---
-// The same trusted-server-only boundary as Discovery's restricted KYC:
-// direct browser Firestore access denied, explicit sensitive-access class
-// required (see partners-gate.ts), ordinary Partner DTOs/notes/history/
-// export never contain these values, no masking-as-security.
-export const partnerRestrictedIdentityEvidenceSchema = z.object({
-  docType: z.enum(["pan", "aadhaar", "bank", "gst", "other"]),
-  kind: z.enum(["link", "upload"]),
-  url: z.string().min(1).max(1000),
-  fileName: z.string().min(1).max(200).nullable(),
-  addedAt: z.string().min(1),
-  addedByUserRef: z.string().min(1),
-});
-export type PartnerRestrictedIdentityEvidence = z.infer<typeof partnerRestrictedIdentityEvidenceSchema>;
-
-export const restrictedFinancialIdentityDocSchema = z.object({
-  uid: z.string().min(1), // == partner uid, 1:1
-  partnerRef: z.string().min(1),
-  version: z.number().int().min(1),
-  pan: z.object({ number: z.string().min(1).max(20) }).nullable().default(null),
-  aadhaar: z.object({ number: z.string().min(1).max(40) }).nullable().default(null),
-  bank: z
-    .object({
-      accountHolderName: z.string().min(1).max(200),
-      accountNumber: z.string().min(1).max(40),
-      ifsc: z.string().min(1).max(20),
-      bankName: z.string().min(1).max(120),
-      branchName: z.string().min(1).max(120),
-    })
-    .nullable()
-    .default(null),
-  gst: z.object({ applicable: z.boolean(), number: z.string().min(1).max(30).optional() }).nullable().default(null),
-  evidence: z.array(partnerRestrictedIdentityEvidenceSchema).default([]),
-  updatedAt: z.string().min(1),
-  updatedByUserRef: z.string().min(1),
-});
-export type RestrictedFinancialIdentityDoc = z.infer<typeof restrictedFinancialIdentityDocSchema>;
+// --- Restricted financial identity ---------------------------------------
+// Step 8A.1: moved to the one canonical, cross-domain
+// restrictedFinancialIdentities collection - see
+// @/server/shared/restricted-financial-identity.ts for the schema,
+// collection accessor, and deterministic subjectType-prefixed doc-id
+// scheme (Partner and Vendor subjects share the family, discriminated,
+// never colliding). Kept out of this file entirely so Partners never
+// "owns" a shape Vendor also depends on.
 
 // --- Append-only Partner event/audit history (partners/{uid}/events) ---
 export const PARTNER_EVENT_KINDS = [

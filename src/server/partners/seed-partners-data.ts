@@ -16,9 +16,10 @@
 import { getAdminAuth } from "@/server/firebase/admin";
 import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
 import { getUserDoc } from "@/server/authz/firestore";
-import { partnerAccountIdentityClaimsCollection, partnerAccountsCollection, partnersCollection, restrictedFinancialIdentitiesCollection } from "./firestore";
+import { restrictedFinancialIdentitiesCollection, restrictedIdentityDocId, type RestrictedFinancialIdentityDoc } from "@/server/shared/restricted-financial-identity";
+import { partnerAccountIdentityClaimsCollection, partnerAccountsCollection, partnersCollection } from "./firestore";
 import { claimIdFor, computeNormalizedIdentity } from "./identity";
-import type { PartnerAccountDoc, PartnerAccountIdentityClaimDoc, PartnerDoc, RestrictedFinancialIdentityDoc } from "./types";
+import type { PartnerAccountDoc, PartnerAccountIdentityClaimDoc, PartnerDoc } from "./types";
 
 async function uidFor(email: string): Promise<string> {
   const user = await getAdminAuth().getUserByEmail(email);
@@ -189,8 +190,9 @@ export async function seedPartnersData(): Promise<void> {
   // idiom as Discovery's own seeded KYC fixture (never real PAN/Aadhaar/
   // bank data).
   const restrictedIdentity: RestrictedFinancialIdentityDoc = {
-    uid: "creator-house",
-    partnerRef: "creator-house",
+    uid: restrictedIdentityDocId("PARTNER", "creator-house"),
+    subjectType: "PARTNER",
+    subjectRef: "creator-house",
     version: 1,
     pan: { number: "ABCDE0000F" },
     aadhaar: { number: "0000-0000-0000" },

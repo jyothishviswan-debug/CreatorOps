@@ -17,6 +17,12 @@ import { VENDOR_GOVERNANCE_STATUSES, vendorsInvalidInputResult, vendorsNotReadyR
 export async function checkVendorDependencies(vendor: Pick<VendorDoc, "uid" | "vendorRef">): Promise<VendorDependencyResult> {
   const blockers: string[] = [];
   try {
+    // Two equality filters, no orderBy - Firestore's automatic per-field
+    // indexes cover this via merge join, no composite index required
+    // (certified Step 8A.1 - this is why vendorPartnerLinks does NOT
+    // carry a vendorRef+status composite entry in firestore.indexes.json,
+    // unlike its two genuinely-required vendorRef/partnerRef+createdAt
+    // entries below).
     const activeLinks = await vendorPartnerLinksCollection().where("vendorRef", "==", vendor.vendorRef).where("status", "==", "ACTIVE").limit(1).get();
     if (!activeLinks.empty) blockers.push("This Vendor has at least one active Partner relationship - end it first.");
 

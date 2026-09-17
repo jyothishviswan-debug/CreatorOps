@@ -2,20 +2,17 @@ import { FieldPath, Filter } from "firebase-admin/firestore";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ScopeGrant } from "@/server/authz/types";
-import {
-  restrictedVendorFinancialIdentityDocSchema,
-  vendorDocSchema,
-  vendorPartnerLinkDocSchema,
-  type RestrictedVendorFinancialIdentityDoc,
-  type VendorDoc,
-  type VendorPartnerLinkDoc,
-} from "./types";
+import { vendorDocSchema, vendorPartnerLinkDocSchema, type VendorDoc, type VendorPartnerLinkDoc } from "./types";
 
+// Step 8A.1: restricted financial identity moved to the one canonical,
+// cross-domain restrictedFinancialIdentities collection - see
+// @/server/shared/restricted-financial-identity.ts. No longer listed
+// here; this module never owns it (the old
+// "restrictedVendorFinancialIdentities" parallel collection is gone).
 export const VENDORS_COLLECTIONS = {
   vendors: "vendors",
   vendorEvents: "events", // subcollection name under vendors/{uid}
   vendorPartnerLinks: "vendorPartnerLinks",
-  restrictedVendorFinancialIdentities: "restrictedVendorFinancialIdentities",
 } as const;
 
 export const MAX_VENDOR_PAGE_SIZE = 100;
@@ -36,10 +33,6 @@ export function vendorEventsCollection(vendorUid: string) {
 
 export function vendorPartnerLinksCollection() {
   return getAdminFirestore().collection(VENDORS_COLLECTIONS.vendorPartnerLinks);
-}
-
-export function restrictedVendorFinancialIdentitiesCollection() {
-  return getAdminFirestore().collection(VENDORS_COLLECTIONS.restrictedVendorFinancialIdentities);
 }
 
 export async function getVendorDocByUid(uid: string): Promise<VendorDoc | null> {
@@ -71,13 +64,6 @@ export async function getVendorPartnerLinkDocByRef(vendorPartnerLinkRef: string)
   const snapshot = await vendorPartnerLinksCollection().where("vendorPartnerLinkRef", "==", vendorPartnerLinkRef).limit(1).get();
   if (snapshot.empty) return null;
   const result = vendorPartnerLinkDocSchema.safeParse(snapshot.docs[0]!.data());
-  return result.success ? result.data : null;
-}
-
-export async function getRestrictedVendorFinancialIdentityDoc(vendorUid: string): Promise<RestrictedVendorFinancialIdentityDoc | null> {
-  const snapshot = await restrictedVendorFinancialIdentitiesCollection().doc(vendorUid).get();
-  if (!snapshot.exists) return null;
-  const result = restrictedVendorFinancialIdentityDocSchema.safeParse(snapshot.data());
   return result.success ? result.data : null;
 }
 
@@ -174,7 +160,13 @@ function buildVendorScopeFilter(actorUid: string, grants: ScopeGrant[]): Filter 
 
 // Bounded cursor pagination, scope-constrained BEFORE retrieval - never a
 // browser or server fetch-all followed by in-memory filtering. Mirrors
-// Partners' listPartnerDocs exactly.
+// Partners' listPartnerDocs exactly. Composite indexes: one per {SELF/
+// REGION/TEAM scope branch} x {createdAt-desc, displayName search order},
+// one status+branch+createdAt layer, one standalone vendorType+createdAt
+// entry - see firestore.indexes.json's "vendors" entries (certified Step
+// 8A.1). The EXPLICIT_RECORD scope branch's documentId()-in stays
+// intentionally unindexed here, same accepted gap as Partners' own
+// PARTNER/EXPLICIT_RECORD branch.
 export async function listVendorDocs(options: {
   limit: number;
   cursor?: VendorListCursor;
@@ -233,6 +225,9 @@ export async function listVendorDocs(options: {
 }
 
 // Bounded list of one Vendor's own relationship links - never unbounded.
+// vendorRef== combined with an orderBy on a different field (createdAt)
+// needs its own composite index - see firestore.indexes.json's
+// "vendorPartnerLinks" vendorRef+createdAt entry (certified Step 8A.1).
 const MAX_LINKS_PER_VENDOR = 200;
 export async function listVendorPartnerLinkDocsForVendor(vendorRef: string): Promise<VendorPartnerLinkDoc[]> {
   const snapshot = await vendorPartnerLinksCollection().where("vendorRef", "==", vendorRef).orderBy("createdAt", "asc").limit(MAX_LINKS_PER_VENDOR).get();
@@ -248,7 +243,10 @@ export async function listVendorPartnerLinkDocsForVendor(vendorRef: string): Pro
 // Partner-side relationship slice (Step 8A section 10). Callers MUST
 // gate this with the Partner's own scope check (requirePartnerInScope),
 // never a Vendor-scope check - a Partner being visible must never expose
-// more than that Partner's own link rows.
+// more than that Partner's own link rows. partnerRef== combined with an
+// orderBy on a different field (createdAt) needs its own composite index
+// - see firestore.indexes.json's "vendorPartnerLinks" partnerRef+
+// createdAt entry (certified Step 8A.1).
 const MAX_LINKS_PER_PARTNER = 200;
 export async function listVendorPartnerLinkDocsForPartner(partnerRef: string): Promise<VendorPartnerLinkDoc[]> {
   const snapshot = await vendorPartnerLinksCollection().where("partnerRef", "==", partnerRef).orderBy("createdAt", "asc").limit(MAX_LINKS_PER_PARTNER).get();

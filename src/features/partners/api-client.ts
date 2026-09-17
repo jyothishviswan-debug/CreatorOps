@@ -14,7 +14,7 @@
 // own state list), and the message text itself already says which one
 // happened.
 import type { PartnerDto, PartnerAccountDto } from "@/server/partners/client-dto";
-import type { RestrictedFinancialIdentityDto } from "@/server/partners/restricted-identity-service";
+import type { PartnerRestrictedIdentityDto } from "@/server/partners/restricted-identity-service";
 import type { PartnerOwnerCandidateDto } from "@/server/partners/user-picker";
 import type { CreatePartnerInput, EditPartnerInput, ListPartnersInput, ListPartnerHistoryInput, PartnerHistoryEventDto, SetPartnerOwnerTeamInput, SetPartnerStatusInput } from "@/server/partners/partner-service";
 import type { BlacklistPartnerInput, ArchivePartnerInput, RestorePartnerInput } from "@/server/partners/partner-lifecycle-service";
@@ -170,11 +170,11 @@ export function setPrimaryPartnerAccount(partnerAccountRef: string, input: SetPr
 
 // ---- Restricted identity ----
 
-export function getPartnerRestrictedIdentity(partnerRef: string): Promise<PartnersApiResult<RestrictedFinancialIdentityDto | null>> {
+export function getPartnerRestrictedIdentity(partnerRef: string): Promise<PartnersApiResult<PartnerRestrictedIdentityDto | null>> {
   return call(`/api/partners/${encodeURIComponent(partnerRef)}/restricted-identity`);
 }
 
-export function savePartnerRestrictedIdentity(partnerRef: string, input: SavePartnerRestrictedIdentityInput): Promise<PartnersApiResult<RestrictedFinancialIdentityDto>> {
+export function savePartnerRestrictedIdentity(partnerRef: string, input: SavePartnerRestrictedIdentityInput): Promise<PartnersApiResult<PartnerRestrictedIdentityDto>> {
   return call(`/api/partners/${encodeURIComponent(partnerRef)}/restricted-identity`, { method: "PUT", body: JSON.stringify(input) });
 }
 

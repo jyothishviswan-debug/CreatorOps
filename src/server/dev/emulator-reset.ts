@@ -27,6 +27,7 @@ import { DISCOVERY_COLLECTIONS } from "@/server/discovery/firestore";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
 import { PARTNERS_COLLECTIONS } from "@/server/partners/firestore";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
+import { RESTRICTED_FINANCIAL_IDENTITIES_COLLECTION } from "@/server/shared/restricted-financial-identity";
 import { VENDORS_COLLECTIONS } from "@/server/vendors/firestore";
 import { seedVendorsData } from "@/server/vendors/seed-vendors-data";
 
@@ -152,10 +153,11 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await deletePartnersCollectionWithEvents();
   await deleteCollection(db.collection(PARTNERS_COLLECTIONS.partnerAccounts));
   await deleteCollection(db.collection(PARTNERS_COLLECTIONS.partnerAccountIdentityClaims));
-  await deleteCollection(db.collection(PARTNERS_COLLECTIONS.restrictedFinancialIdentities));
   await deleteVendorsCollectionWithEvents();
   await deleteCollection(db.collection(VENDORS_COLLECTIONS.vendorPartnerLinks));
-  await deleteCollection(db.collection(VENDORS_COLLECTIONS.restrictedVendorFinancialIdentities));
+  // Step 8A.1: the one canonical, cross-domain restricted-identity
+  // collection - covers both Partner and Vendor subjects, deleted once.
+  await deleteCollection(db.collection(RESTRICTED_FINANCIAL_IDENTITIES_COLLECTION));
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();

@@ -2,18 +2,32 @@ import { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ActorContext } from "@/server/authz/types";
-import { getVendorDocByRef, getRestrictedVendorFinancialIdentityDoc, restrictedVendorFinancialIdentitiesCollection } from "./firestore";
+import {
+  getRestrictedFinancialIdentityDoc,
+  restrictedFinancialIdentitiesCollection,
+  restrictedFinancialIdentityDocSchema,
+  restrictedIdentityDocId,
+  type RestrictedFinancialIdentityDoc,
+} from "@/server/shared/restricted-financial-identity";
+import { getVendorDocByRef } from "./firestore";
 import { writeVendorEvent } from "./vendor-events";
 import { requireVendorInScope, requireVendorRestrictedIdentitySensitiveAccess, requireVendorsAccess } from "./vendors-gate";
-import { restrictedVendorFinancialIdentityDocSchema, vendorsInvalidInputResult, vendorsUnauthorizedResult, type RestrictedVendorFinancialIdentityDoc, type VendorDoc, type VendorsServiceResult } from "./types";
+import { vendorsInvalidInputResult, vendorsUnauthorizedResult, type VendorDoc, type VendorsServiceResult } from "./types";
 
-// Never exposes the raw Vendor uid to the browser - vendorRef already
-// identifies the record.
-export type RestrictedVendorFinancialIdentityDto = Omit<RestrictedVendorFinancialIdentityDoc, "uid">;
-function toRestrictedIdentityDto(doc: RestrictedVendorFinancialIdentityDoc): RestrictedVendorFinancialIdentityDto {
-  const rest: Partial<RestrictedVendorFinancialIdentityDoc> = { ...doc };
+// Step 8A.1: persists into the ONE canonical restrictedFinancialIdentities
+// collection (see src/server/shared/restricted-financial-identity.ts),
+// discriminated by subjectType "VENDOR" and a deterministic
+// type-prefixed doc id - never the old parallel
+// "restrictedVendorFinancialIdentities" collection. The browser-facing
+// DTO stays exactly as narrow as before: never exposes the raw doc id,
+// subjectType, or subjectRef, only the restricted fields the UI needs.
+export type VendorRestrictedIdentityDto = Omit<RestrictedFinancialIdentityDoc, "uid" | "subjectType" | "subjectRef">;
+function toRestrictedIdentityDto(doc: RestrictedFinancialIdentityDoc): VendorRestrictedIdentityDto {
+  const rest: Partial<RestrictedFinancialIdentityDoc> = { ...doc };
   delete rest.uid;
-  return rest as RestrictedVendorFinancialIdentityDto;
+  delete rest.subjectType;
+  delete rest.subjectRef;
+  return rest as VendorRestrictedIdentityDto;
 }
 
 // Restricted identity is gated by BOTH the manage_vendor_restricted_identity
@@ -38,11 +52,11 @@ async function requireRestrictedAccess(actor: ActorContext | null, vendorRef: un
   return { ok: true, vendor };
 }
 
-export async function getVendorRestrictedIdentity(actor: ActorContext | null, vendorRef: unknown): Promise<VendorsServiceResult<RestrictedVendorFinancialIdentityDto | null>> {
+export async function getVendorRestrictedIdentity(actor: ActorContext | null, vendorRef: unknown): Promise<VendorsServiceResult<VendorRestrictedIdentityDto | null>> {
   const loaded = await requireRestrictedAccess(actor, vendorRef);
   if (!loaded.ok) return loaded.error;
 
-  const doc = await getRestrictedVendorFinancialIdentityDoc(loaded.vendor.uid);
+  const doc = await getRestrictedFinancialIdentityDoc("VENDOR", loaded.vendor.uid);
   return { ok: true, data: doc ? toRestrictedIdentityDto(doc) : null };
 }
 
@@ -63,19 +77,21 @@ const saveRestrictedIdentityInputSchema = z.object({
 });
 export type SaveVendorRestrictedIdentityInput = z.input<typeof saveRestrictedIdentityInputSchema>;
 
-type SaveTxResult = { kind: "ok"; doc: RestrictedVendorFinancialIdentityDoc } | { kind: "stale" };
+type SaveTxResult = { kind: "ok"; doc: RestrictedFinancialIdentityDoc } | { kind: "stale" };
 
 // Full-document overwrite of the restricted fields only - `evidence` is
 // always carried forward untouched (never silently dropped by a core-
 // field save). Never logs a raw restricted value into the append-only
 // event log - only that a save happened. When a GST number is supplied,
 // this also runs a bounded, safe exact-collision check against every
-// OTHER Vendor's restricted GST (Step 8A section 6: "Restricted GST/tax
-// identifiers, if used for exact collision detection, remain inside the
-// restricted trusted service and return only safe collision results") -
-// the raw value of the colliding record is never returned, only the
-// fact of the collision.
-export async function saveVendorRestrictedIdentity(actor: ActorContext | null, vendorRef: unknown, rawInput: unknown, requestId: string): Promise<VendorsServiceResult<RestrictedVendorFinancialIdentityDto>> {
+// OTHER VENDOR's restricted GST (Step 8A section 6, unchanged by Step
+// 8A.1's section 6: "advisory/safe collision check, not a transactional
+// global uniqueness lock... no GST claim collection") - scoped to
+// subjectType "VENDOR" only, since the collection is now shared with
+// Partner subjects and a Partner's own GST must never false-positive a
+// Vendor collision (or vice versa). The raw value of the colliding
+// record is never returned, only the fact of the collision.
+export async function saveVendorRestrictedIdentity(actor: ActorContext | null, vendorRef: unknown, rawInput: unknown, requestId: string): Promise<VendorsServiceResult<VendorRestrictedIdentityDto>> {
   const loaded = await requireRestrictedAccess(actor, vendorRef);
   if (!loaded.ok) return loaded.error;
 
@@ -87,27 +103,34 @@ export async function saveVendorRestrictedIdentity(actor: ActorContext | null, v
     return vendorsInvalidInputResult("gst.number is required when GST is applicable.");
   }
 
+  const docId = restrictedIdentityDocId("VENDOR", loaded.vendor.uid);
+
   if (input.gst?.number) {
-    const collision = await restrictedVendorFinancialIdentitiesCollection().where("gst.number", "==", input.gst.number).limit(2).get();
-    const collidesWithAnother = collision.docs.some((doc) => doc.id !== loaded.vendor.uid);
+    const collision = await restrictedFinancialIdentitiesCollection()
+      .where("subjectType", "==", "VENDOR")
+      .where("gst.number", "==", input.gst.number)
+      .limit(2)
+      .get();
+    const collidesWithAnother = collision.docs.some((doc) => doc.id !== docId);
     if (collidesWithAnother) {
       return { ok: false, code: "conflict", message: "This GST number is already on file for another Vendor." };
     }
   }
 
   const db = getAdminFirestore();
-  const docRef = restrictedVendorFinancialIdentitiesCollection().doc(loaded.vendor.uid);
+  const docRef = restrictedFinancialIdentitiesCollection().doc(docId);
   const now = new Date().toISOString();
 
   const result = await db.runTransaction<SaveTxResult>(async (tx) => {
     const snap = await tx.get(docRef);
-    const existing = snap.exists ? restrictedVendorFinancialIdentityDocSchema.safeParse(snap.data()) : null;
+    const existing = snap.exists ? restrictedFinancialIdentityDocSchema.safeParse(snap.data()) : null;
     const currentVersion = existing?.success ? existing.data.version : 0;
     if (currentVersion !== input.expectedVersion) return { kind: "stale" };
 
-    const next: RestrictedVendorFinancialIdentityDoc = restrictedVendorFinancialIdentityDocSchema.parse({
-      uid: loaded.vendor.uid,
-      vendorRef: loaded.vendor.vendorRef,
+    const next: RestrictedFinancialIdentityDoc = restrictedFinancialIdentityDocSchema.parse({
+      uid: docId,
+      subjectType: "VENDOR",
+      subjectRef: loaded.vendor.vendorRef,
       version: currentVersion + 1,
       pan: input.pan !== undefined ? input.pan : (existing?.success ? existing.data.pan : null),
       gst: input.gst !== undefined ? input.gst : (existing?.success ? existing.data.gst : null),

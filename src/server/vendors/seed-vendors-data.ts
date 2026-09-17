@@ -11,8 +11,9 @@
 import { getAdminAuth } from "@/server/firebase/admin";
 import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
 import { getUserDoc } from "@/server/authz/firestore";
-import { restrictedVendorFinancialIdentitiesCollection, vendorPartnerLinksCollection, vendorsCollection } from "./firestore";
-import type { RestrictedVendorFinancialIdentityDoc, VendorDoc, VendorPartnerLinkDoc } from "./types";
+import { restrictedFinancialIdentitiesCollection, restrictedIdentityDocId, type RestrictedFinancialIdentityDoc } from "@/server/shared/restricted-financial-identity";
+import { vendorPartnerLinksCollection, vendorsCollection } from "./firestore";
+import type { VendorDoc, VendorPartnerLinkDoc } from "./types";
 
 async function uidFor(email: string): Promise<string> {
   const user = await getAdminAuth().getUserByEmail(email);
@@ -214,16 +215,18 @@ export async function seedVendorsData(): Promise<void> {
   // The one restricted-identity subject - safe fake values only, same
   // idiom as Partners' own seeded restricted identity fixture (never
   // real PAN/GST/bank data).
-  const restrictedIdentity: RestrictedVendorFinancialIdentityDoc = {
-    uid: "seed-vendor-agency",
-    vendorRef: "seed-vendor-agency",
+  const restrictedIdentity: RestrictedFinancialIdentityDoc = {
+    uid: restrictedIdentityDocId("VENDOR", "seed-vendor-agency"),
+    subjectType: "VENDOR",
+    subjectRef: "seed-vendor-agency",
     version: 1,
     pan: { number: "ABCDE1111F" },
+    aadhaar: null,
     gst: { applicable: true, number: "29ABCDE1111F1Z5" },
     bank: { accountHolderName: "Northline Talent Agency", accountNumber: "000000000002", ifsc: "TEST0000002", bankName: "Test Bank", branchName: "Test Branch" },
     evidence: [],
     updatedAt: nowIso,
     updatedByUserRef: headUserRef,
   };
-  await restrictedVendorFinancialIdentitiesCollection().doc(restrictedIdentity.uid).set(restrictedIdentity);
+  await restrictedFinancialIdentitiesCollection().doc(restrictedIdentity.uid).set(restrictedIdentity);
 }
