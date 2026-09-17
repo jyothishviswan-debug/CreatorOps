@@ -200,6 +200,7 @@ export const PARTNER_EVENT_KINDS = [
   "restored",
   "account_created",
   "account_edited",
+  "account_identity_changed",
   "account_status_changed",
   "primary_account_changed",
   "restricted_identity_saved",

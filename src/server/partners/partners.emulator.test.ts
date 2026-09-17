@@ -65,6 +65,67 @@ function uniqueName(prefix: string): string {
   return `${prefix} ${runId}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Shared by "Discovery handoff" and the identity-evolution MAINTAIN_EXISTING
+// test - walks a brand-new Lead all the way through the real workflow to a
+// real convertLead call, exactly the way an operator would through the UI.
+async function convertFreshLeadToPartner(assetDecision: "NEW_ACCOUNT" | "MAINTAIN_EXISTING", existingPartnerAccountRef?: string) {
+  const head = await actorFor("partnership_head");
+  const email = `${uniqueName("handoff").replace(/\s+/g, "")}@example.com`;
+  const lead = await createLead(head, { displayName: uniqueName("Handoff Lead"), source: { type: "referral" }, region: "Kerala", email, platform: "Instagram", handle: uniqueName("handofflead").replace(/\s+/g, "") }, "req-handoff-create");
+  if (!lead.ok) throw new Error("unreachable");
+  let version = lead.data.version;
+
+  const research = await saveResearch(head, lead.data.leadRef, { targetAudience: "India 1", expectedVersion: version }, "req-handoff-research");
+  if (!research.ok) throw new Error("unreachable");
+  version = research.data.version;
+  const outbound = await recordOutreach(head, lead.data.leadRef, { direction: "OUTBOUND", channel: "email", summary: "hi", outcome: "sent", expectedVersion: version }, "req-handoff-out");
+  if (!outbound.ok) throw new Error("unreachable");
+  version = outbound.data.version;
+  const inbound = await recordOutreach(head, lead.data.leadRef, { direction: "INBOUND", channel: "email", summary: "reply", outcome: "interested", meaningfulResponse: true, expectedVersion: version }, "req-handoff-in");
+  if (!inbound.ok) throw new Error("unreachable");
+  version = inbound.data.version;
+  const evaluating = await transitionLeadLifecycle(head, lead.data.leadRef, { to: "EVALUATING", expectedVersion: version }, "req-handoff-eval");
+  if (!evaluating.ok) throw new Error("unreachable");
+  version = evaluating.data.version;
+  const review = await recordReview(head, lead.data.leadRef, { outcome: "SHORTLIST", expectedVersion: version }, "req-handoff-review");
+  if (!review.ok) throw new Error("unreachable");
+  version = review.data.version;
+  const commercial = await saveCommercial(head, lead.data.leadRef, { alignmentConfirmed: true, expectedVersion: version }, "req-handoff-commercial");
+  if (!commercial.ok) throw new Error("unreachable");
+  version = commercial.data.version;
+  const agreement = await saveDiscoveryAgreement(head, lead.data.leadRef, { confirmed: true, expectedVersion: version }, "req-handoff-agreement");
+  if (!agreement.ok) throw new Error("unreachable");
+  version = agreement.data.version;
+  const asset = await saveAssetDecision(head, lead.data.leadRef, { decision: assetDecision, existingPartnerAccountRef, expectedVersion: version }, "req-handoff-asset");
+  if (!asset.ok) throw new Error("unreachable");
+  version = asset.data.version;
+  const manager = await assignManager(head, lead.data.leadRef, { managerUserRef: head.userRef, expectedVersion: version }, "req-handoff-manager");
+  if (!manager.ok) throw new Error("unreachable");
+  version = manager.data.version;
+
+  const { saveLeadKyc } = await import("@/server/discovery/kyc-service");
+  const kyc = await saveLeadKyc(
+    head,
+    lead.data.leadRef,
+    { email, aadhaar: { number: "0000-1111-2222" }, pan: { number: "HAND01234F" }, bank: { accountHolderName: "Handoff", accountNumber: "111122223333", ifsc: "HAND0000001", bankName: "Handoff Bank", branchName: "Handoff Branch" }, gst: { applicable: false }, expectedKycVersion: 0, expectedLeadVersion: version },
+    "req-handoff-kyc",
+  );
+  if (!kyc.ok) throw new Error("unreachable");
+
+  const { getLeadDocByRef } = await import("@/server/discovery/firestore");
+  const freshLead = await getLeadDocByRef(lead.data.leadRef);
+  if (!freshLead) throw new Error("unreachable");
+  version = freshLead.version;
+
+  const ready = await transitionLeadLifecycle(head, lead.data.leadRef, { to: "CONVERSION_READY", expectedVersion: version }, "req-handoff-ready");
+  if (!ready.ok) throw new Error(`unreachable: ${JSON.stringify(ready)}`);
+  version = ready.data.version;
+
+  const idempotencyKey = `handoff-${runId}-${Math.random().toString(36).slice(2, 8)}`;
+  const converted = await convertLead(head, lead.data.leadRef, { idempotencyKey, expectedVersion: version }, "req-handoff-convert");
+  return { head, lead: lead.data, converted };
+}
+
 describe("Partners domain (real emulator)", () => {
   describe("authorization", () => {
     it("an unauthenticated actor is denied every operation (fails closed)", async () => {
@@ -385,22 +446,264 @@ describe("Partners domain (real emulator)", () => {
       expect(claim).toBeTruthy();
     });
 
-    it("handle rename retains account identity - normalizedIdentity never changes on edit", async () => {
+    it("partnerAccountRef - the durable canonical identity - never changes across any edit, identity-evolving or not", async () => {
       const head = await actorFor("partnership_head");
-      const created = await createPartner(head, { displayName: uniqueName("Rename Retain"), regionIds: ["Kerala"] }, "req-rename-create");
+      const created = await createPartner(head, { displayName: uniqueName("Durable Ref"), regionIds: ["Kerala"] }, "req-durableref-create");
       if (!created.ok) throw new Error("unreachable");
-      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", handle: `original${runId}` }, "req-rename-account");
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", handle: `durable${runId}` }, "req-durableref-account");
+      if (!account.ok) throw new Error("unreachable");
+      const ref = account.data.partnerAccountRef;
+
+      const renamed = await editPartnerAccount(head, ref, { handle: `durable-renamed${runId}`, expectedVersion: account.data.version }, "req-durableref-edit");
+      expect(renamed.ok).toBe(true);
+      if (!renamed.ok) throw new Error("unreachable");
+      expect(renamed.data.partnerAccountRef).toBe(ref);
+    });
+  });
+
+  describe("Partner Account identity evolution (Step 7A.1)", () => {
+    it("a display-name-only edit leaves normalizedIdentity unchanged", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Display Name Only"), regionIds: ["Kerala"] }, "req-dnonly-create");
+      if (!created.ok) throw new Error("unreachable");
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", handle: `dnonly${runId}` }, "req-dnonly-account");
+      if (!account.ok) throw new Error("unreachable");
+
+      const edited = await editPartnerAccount(head, account.data.partnerAccountRef, { displayName: "A Nicer Display Name", expectedVersion: account.data.version }, "req-dnonly-edit");
+      expect(edited.ok).toBe(true);
+      if (!edited.ok) throw new Error("unreachable");
+      expect(edited.data.displayName).toBe("A Nicer Display Name");
+      expect(edited.data.normalizedIdentity).toBe(account.data.normalizedIdentity);
+
+      // No account_identity_changed event for a pure display-name edit.
+      const history = await getPartnerHistory(head, created.data.partnerRef, {});
+      if (!history.ok) throw new Error("unreachable");
+      expect(history.data.events.some((e) => e.kind === "account_identity_changed")).toBe(false);
+    });
+
+    it("a handle-only rename moves the claim from the old handle to the new one - old claim is released, new claim collides immediately", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Handle Rename"), regionIds: ["Kerala"] }, "req-handlerename-create");
+      if (!created.ok) throw new Error("unreachable");
+      const oldHandle = `oldhandle${runId}`;
+      const newHandle = `newhandle${runId}`;
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", handle: oldHandle }, "req-handlerename-account");
+      if (!account.ok) throw new Error("unreachable");
+      const oldIdentity = account.data.normalizedIdentity;
+
+      const edited = await editPartnerAccount(head, account.data.partnerAccountRef, { handle: newHandle, expectedVersion: account.data.version }, "req-handlerename-edit");
+      expect(edited.ok).toBe(true);
+      if (!edited.ok) throw new Error("unreachable");
+      const newIdentity = edited.data.normalizedIdentity;
+      expect(newIdentity).not.toBe(oldIdentity);
+      expect(newIdentity).toBe(computeNormalizedIdentity({ platform: "Instagram", handle: newHandle }));
+
+      // Old claim released - a lookup by the old handle no longer identifies this account.
+      const oldClaim = await getPartnerAccountIdentityClaim(claimIdFor(oldIdentity));
+      expect(oldClaim).toBeNull();
+      const oldLookup = await checkForPartnerDuplicates({ accountIdentity: { platform: "Instagram", handle: oldHandle } });
+      expect(oldLookup.status).toBe("none");
+
+      // New claim exists and immediately collides against a duplicate create attempt.
+      const newClaim = await getPartnerAccountIdentityClaim(claimIdFor(newIdentity));
+      expect(newClaim?.partnerAccountUid).toBeTruthy();
+      const newLookup = await checkForPartnerDuplicates({ accountIdentity: { platform: "Instagram", handle: newHandle } });
+      expect(newLookup.status).toBe("confirmed");
+
+      // Domain history still records that the change happened.
+      const history = await getPartnerHistory(head, created.data.partnerRef, {});
+      if (!history.ok) throw new Error("unreachable");
+      const event = history.data.events.find((e) => e.kind === "account_identity_changed");
+      expect(event).toBeTruthy();
+      expect(event?.metadata).toMatchObject({ oldNormalizedIdentity: oldIdentity, newNormalizedIdentity: newIdentity });
+    });
+
+    it("a profile-URL fallback change moves the claim correctly", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("URL Fallback Change"), regionIds: ["Kerala"] }, "req-urlchange-create");
+      if (!created.ok) throw new Error("unreachable");
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", profileUrl: `https://instagram.com/urlfallback${runId}` }, "req-urlchange-account");
+      if (!account.ok) throw new Error("unreachable");
+      const oldIdentity = account.data.normalizedIdentity;
+
+      const newUrl = `https://instagram.com/urlfallback${runId}-changed`;
+      const edited = await editPartnerAccount(head, account.data.partnerAccountRef, { profileUrl: newUrl, expectedVersion: account.data.version }, "req-urlchange-edit");
+      expect(edited.ok).toBe(true);
+      if (!edited.ok) throw new Error("unreachable");
+      expect(edited.data.normalizedIdentity).not.toBe(oldIdentity);
+      expect(edited.data.normalizedIdentity).toBe(computeNormalizedIdentity({ platform: "Instagram", profileUrl: newUrl }));
+
+      expect(await getPartnerAccountIdentityClaim(claimIdFor(oldIdentity))).toBeNull();
+      expect((await getPartnerAccountIdentityClaim(claimIdFor(edited.data.normalizedIdentity)))?.partnerAccountUid).toBeTruthy();
+    });
+
+    it("a stable-ID account's handle rename leaves normalizedIdentity unchanged (the ID still wins priority)", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Stable ID Rename"), regionIds: ["Kerala"] }, "req-stableidrename-create");
+      if (!created.ok) throw new Error("unreachable");
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "YouTube", platformAccountId: `UCstable${runId}`, handle: "originalhandle" }, "req-stableidrename-account");
+      if (!account.ok) throw new Error("unreachable");
+      const identity = account.data.normalizedIdentity;
+
+      const edited = await editPartnerAccount(head, account.data.partnerAccountRef, { handle: "brandnewhandle", expectedVersion: account.data.version }, "req-stableidrename-edit");
+      expect(edited.ok).toBe(true);
+      if (!edited.ok) throw new Error("unreachable");
+      expect(edited.data.handle).toBe("brandnewhandle");
+      expect(edited.data.normalizedIdentity).toBe(identity); // unchanged - the stable id still wins priority
+    });
+
+    it("a fallback identity can upgrade to a stable platform id, keeping the same partnerAccountRef", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Upgrade To Stable"), regionIds: ["Kerala"] }, "req-upgrade-create");
+      if (!created.ok) throw new Error("unreachable");
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "YouTube", handle: `upgrademe${runId}` }, "req-upgrade-account");
+      if (!account.ok) throw new Error("unreachable");
+      const fallbackIdentity = account.data.normalizedIdentity;
+      const ref = account.data.partnerAccountRef;
+
+      const stableId = `UCupgraded${runId}`;
+      const edited = await editPartnerAccount(head, ref, { platformAccountId: stableId, expectedVersion: account.data.version }, "req-upgrade-edit");
+      expect(edited.ok).toBe(true);
+      if (!edited.ok) throw new Error("unreachable");
+      expect(edited.data.partnerAccountRef).toBe(ref); // same canonical account
+      expect(edited.data.platformAccountId).toBe(stableId);
+      const upgradedIdentity = edited.data.normalizedIdentity;
+      expect(upgradedIdentity).toBe(computeNormalizedIdentity({ platform: "YouTube", platformAccountId: stableId }));
+      expect(upgradedIdentity).not.toBe(fallbackIdentity);
+
+      expect(await getPartnerAccountIdentityClaim(claimIdFor(fallbackIdentity))).toBeNull(); // old fallback claim released
+      expect((await getPartnerAccountIdentityClaim(claimIdFor(upgradedIdentity)))?.partnerAccountUid).toBeTruthy();
+    });
+
+    it("an ordinary attempt to replace one stable platform id with a different one is rejected", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Reject ID Swap"), regionIds: ["Kerala"] }, "req-idswap-create");
+      if (!created.ok) throw new Error("unreachable");
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "YouTube", platformAccountId: `UCoriginal${runId}` }, "req-idswap-account");
+      if (!account.ok) throw new Error("unreachable");
+
+      const attempt = await editPartnerAccount(head, account.data.partnerAccountRef, { platformAccountId: `UCdifferent${runId}`, expectedVersion: account.data.version }, "req-idswap-edit");
+      expect(attempt.ok).toBe(false);
+      if (attempt.ok) throw new Error("unreachable");
+      expect(attempt.code).toBe("invalid_input");
+
+      // Clearing an already-set stable id is rejected the same way.
+      const clearAttempt = await editPartnerAccount(head, account.data.partnerAccountRef, { platformAccountId: null, expectedVersion: account.data.version }, "req-idswap-clear");
+      expect(clearAttempt.ok).toBe(false);
+      if (clearAttempt.ok) throw new Error("unreachable");
+      expect(clearAttempt.code).toBe("invalid_input");
+
+      // The account is untouched by either rejected attempt.
+      const stillOriginal = await getPartnerAccountDocByRef(account.data.partnerAccountRef);
+      expect(stillOriginal?.platformAccountId).toBe(`UCoriginal${runId}`);
+      expect(stillOriginal?.version).toBe(account.data.version);
+    });
+
+    it("a collision on the new identity rejects the edit and preserves the old account and old claim untouched", async () => {
+      const head = await actorFor("partnership_head");
+      const partnerA = await createPartner(head, { displayName: uniqueName("Collision Edit A"), regionIds: ["Kerala"] }, "req-collideedit-a");
+      const partnerB = await createPartner(head, { displayName: uniqueName("Collision Edit B"), regionIds: ["Kerala"] }, "req-collideedit-b");
+      if (!partnerA.ok || !partnerB.ok) throw new Error("unreachable");
+
+      const takenHandle = `taken${runId}`;
+      const taken = await createPartnerAccount(head, partnerA.data.partnerRef, { platform: "Instagram", handle: takenHandle }, "req-collideedit-taken");
+      if (!taken.ok) throw new Error("unreachable");
+      const mine = await createPartnerAccount(head, partnerB.data.partnerRef, { platform: "Instagram", handle: `mine${runId}` }, "req-collideedit-mine");
+      if (!mine.ok) throw new Error("unreachable");
+      const myOldIdentity = mine.data.normalizedIdentity;
+
+      const attempt = await editPartnerAccount(head, mine.data.partnerAccountRef, { handle: takenHandle, expectedVersion: mine.data.version }, "req-collideedit-attempt");
+      expect(attempt.ok).toBe(false);
+      if (attempt.ok) throw new Error("unreachable");
+      expect(attempt.code).toBe("conflict");
+
+      // My own account and its old claim are completely untouched.
+      const stillMine = await getPartnerAccountDocByRef(mine.data.partnerAccountRef);
+      expect(stillMine?.normalizedIdentity).toBe(myOldIdentity);
+      expect(stillMine?.version).toBe(mine.data.version);
+      expect((await getPartnerAccountIdentityClaim(claimIdFor(myOldIdentity)))?.partnerAccountUid).toBe(stillMine?.uid);
+
+      // The other account's claim is untouched too.
+      const stillTaken = await getPartnerAccountDocByRef(taken.data.partnerAccountRef);
+      expect(stillTaken?.normalizedIdentity).toBe(taken.data.normalizedIdentity);
+    });
+
+    it("a stale edit is rejected before any identity migration happens", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Stale Identity Edit"), regionIds: ["Kerala"] }, "req-staleid-create");
+      if (!created.ok) throw new Error("unreachable");
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", handle: `staleid${runId}` }, "req-staleid-account");
       if (!account.ok) throw new Error("unreachable");
       const originalIdentity = account.data.normalizedIdentity;
 
-      const edited = await editPartnerAccount(head, account.data.partnerAccountRef, { handle: `renamed${runId}`, expectedVersion: account.data.version }, "req-rename-edit");
-      expect(edited.ok).toBe(true);
-      if (!edited.ok) throw new Error("unreachable");
-      expect(edited.data.handle).toBe(`renamed${runId}`);
-      expect(edited.data.normalizedIdentity).toBe(originalIdentity); // unchanged despite the rename
+      // Bump the version out from under the stale attempt with an unrelated edit first.
+      const unrelated = await editPartnerAccount(head, account.data.partnerAccountRef, { displayName: "Bump Version", expectedVersion: account.data.version }, "req-staleid-bump");
+      if (!unrelated.ok) throw new Error("unreachable");
 
-      const stillFindableByOldIdentity = await getPartnerAccountDocByRef(account.data.partnerAccountRef);
-      expect(stillFindableByOldIdentity?.normalizedIdentity).toBe(originalIdentity);
+      const staleAttempt = await editPartnerAccount(head, account.data.partnerAccountRef, { handle: `staleid-renamed${runId}`, expectedVersion: account.data.version }, "req-staleid-stale");
+      expect(staleAttempt.ok).toBe(false);
+      if (staleAttempt.ok) throw new Error("unreachable");
+      expect(staleAttempt.code).toBe("stale_write");
+
+      // Identity never migrated - old claim still stands, no new claim was created.
+      const stillOriginal = await getPartnerAccountDocByRef(account.data.partnerAccountRef);
+      expect(stillOriginal?.normalizedIdentity).toBe(originalIdentity);
+      const attemptedNewIdentity = computeNormalizedIdentity({ platform: "Instagram", handle: `staleid-renamed${runId}` })!;
+      expect(await getPartnerAccountIdentityClaim(claimIdFor(attemptedNewIdentity))).toBeNull();
+    });
+
+    it("a new claim from a rename blocks a concurrent duplicate create for the same target identity - exactly one owner", async () => {
+      const head = await actorFor("partnership_head");
+      const renamingPartner = await createPartner(head, { displayName: uniqueName("Concurrent Rename A"), regionIds: ["Kerala"] }, "req-concrename-a");
+      const creatingPartner = await createPartner(head, { displayName: uniqueName("Concurrent Rename B"), regionIds: ["Kerala"] }, "req-concrename-b");
+      if (!renamingPartner.ok || !creatingPartner.ok) throw new Error("unreachable");
+
+      const targetHandle = `racetarget${runId}`;
+      const renamingAccount = await createPartnerAccount(head, renamingPartner.data.partnerRef, { platform: "Instagram", handle: `racestart${runId}` }, "req-concrename-start");
+      if (!renamingAccount.ok) throw new Error("unreachable");
+
+      const [renameResult, createResult] = await Promise.all([
+        editPartnerAccount(head, renamingAccount.data.partnerAccountRef, { handle: targetHandle, expectedVersion: renamingAccount.data.version }, "req-concrename-rename"),
+        createPartnerAccount(head, creatingPartner.data.partnerRef, { platform: "Instagram", handle: targetHandle }, "req-concrename-create"),
+      ]);
+
+      const outcomes = [renameResult.ok, createResult.ok];
+      expect(outcomes.filter(Boolean).length).toBe(1); // exactly one of the two wins the target identity
+
+      // Exactly one claim exists for the target identity regardless of
+      // which of the two concurrent calls won it - the claim doc itself
+      // is the single source of truth for ownership.
+      const targetIdentity = computeNormalizedIdentity({ platform: "Instagram", handle: targetHandle })!;
+      const claim = await getPartnerAccountIdentityClaim(claimIdFor(targetIdentity));
+      expect(claim).toBeTruthy();
+    });
+
+    it("a MAINTAIN_EXISTING conversion reassigns an existing Partner Account to the new Partner - it still parses under the canonical schema and its claim is untouched (normalizedIdentity never changes on reassignment)", async () => {
+      const head = await actorFor("partnership_head");
+
+      // A real, directly-created Partner + Account to be reassigned.
+      const originalOwner = await createPartner(head, { displayName: uniqueName("Original Account Owner"), regionIds: ["Kerala"] }, "req-maintain-owner");
+      if (!originalOwner.ok) throw new Error("unreachable");
+      const existingAccount = await createPartnerAccount(head, originalOwner.data.partnerRef, { platform: "Instagram", handle: `maintainexisting${runId}` }, "req-maintain-account");
+      if (!existingAccount.ok) throw new Error("unreachable");
+      const originalIdentity = existingAccount.data.normalizedIdentity;
+
+      const { lead, converted } = await convertFreshLeadToPartner("MAINTAIN_EXISTING", existingAccount.data.partnerAccountRef);
+      expect(converted.ok).toBe(true);
+      if (!converted.ok) throw new Error("unreachable");
+      expect(converted.data.partnerAccountRef).toBe(existingAccount.data.partnerAccountRef);
+
+      const reassigned = await getPartnerAccountDocByRef(existingAccount.data.partnerAccountRef);
+      expect(reassigned).toBeTruthy();
+      expect(partnerAccountDocSchema.safeParse(reassigned).success).toBe(true);
+      expect(reassigned?.partnerRef).toBe(converted.data.partnerRef); // reassigned to the NEW Partner
+      expect(reassigned?.partnerRef).not.toBe(originalOwner.data.partnerRef);
+      expect(reassigned?.normalizedIdentity).toBe(originalIdentity); // unchanged by the reassignment
+
+      const claim = await getPartnerAccountIdentityClaim(claimIdFor(originalIdentity));
+      expect(claim?.partnerAccountRef).toBe(existingAccount.data.partnerAccountRef); // still points at the same account
+
+      expect(lead.leadRef).toBeTruthy();
     });
 
     it("at most one active primary account per Partner - creating a second primary demotes the first, transactionally", async () => {
@@ -500,64 +803,6 @@ describe("Partners domain (real emulator)", () => {
   });
 
   describe("Discovery handoff", () => {
-    async function convertFreshLeadToPartner(assetDecision: "NEW_ACCOUNT" | "MAINTAIN_EXISTING", existingPartnerAccountRef?: string) {
-      const head = await actorFor("partnership_head");
-      const email = `${uniqueName("handoff").replace(/\s+/g, "")}@example.com`;
-      const lead = await createLead(head, { displayName: uniqueName("Handoff Lead"), source: { type: "referral" }, region: "Kerala", email, platform: "Instagram", handle: uniqueName("handofflead").replace(/\s+/g, "") }, "req-handoff-create");
-      if (!lead.ok) throw new Error("unreachable");
-      let version = lead.data.version;
-
-      const research = await saveResearch(head, lead.data.leadRef, { targetAudience: "India 1", expectedVersion: version }, "req-handoff-research");
-      if (!research.ok) throw new Error("unreachable");
-      version = research.data.version;
-      const outbound = await recordOutreach(head, lead.data.leadRef, { direction: "OUTBOUND", channel: "email", summary: "hi", outcome: "sent", expectedVersion: version }, "req-handoff-out");
-      if (!outbound.ok) throw new Error("unreachable");
-      version = outbound.data.version;
-      const inbound = await recordOutreach(head, lead.data.leadRef, { direction: "INBOUND", channel: "email", summary: "reply", outcome: "interested", meaningfulResponse: true, expectedVersion: version }, "req-handoff-in");
-      if (!inbound.ok) throw new Error("unreachable");
-      version = inbound.data.version;
-      const evaluating = await transitionLeadLifecycle(head, lead.data.leadRef, { to: "EVALUATING", expectedVersion: version }, "req-handoff-eval");
-      if (!evaluating.ok) throw new Error("unreachable");
-      version = evaluating.data.version;
-      const review = await recordReview(head, lead.data.leadRef, { outcome: "SHORTLIST", expectedVersion: version }, "req-handoff-review");
-      if (!review.ok) throw new Error("unreachable");
-      version = review.data.version;
-      const commercial = await saveCommercial(head, lead.data.leadRef, { alignmentConfirmed: true, expectedVersion: version }, "req-handoff-commercial");
-      if (!commercial.ok) throw new Error("unreachable");
-      version = commercial.data.version;
-      const agreement = await saveDiscoveryAgreement(head, lead.data.leadRef, { confirmed: true, expectedVersion: version }, "req-handoff-agreement");
-      if (!agreement.ok) throw new Error("unreachable");
-      version = agreement.data.version;
-      const asset = await saveAssetDecision(head, lead.data.leadRef, { decision: assetDecision, existingPartnerAccountRef, expectedVersion: version }, "req-handoff-asset");
-      if (!asset.ok) throw new Error("unreachable");
-      version = asset.data.version;
-      const manager = await assignManager(head, lead.data.leadRef, { managerUserRef: head.userRef, expectedVersion: version }, "req-handoff-manager");
-      if (!manager.ok) throw new Error("unreachable");
-      version = manager.data.version;
-
-      const { saveLeadKyc } = await import("@/server/discovery/kyc-service");
-      const kyc = await saveLeadKyc(
-        head,
-        lead.data.leadRef,
-        { email, aadhaar: { number: "0000-1111-2222" }, pan: { number: "HAND01234F" }, bank: { accountHolderName: "Handoff", accountNumber: "111122223333", ifsc: "HAND0000001", bankName: "Handoff Bank", branchName: "Handoff Branch" }, gst: { applicable: false }, expectedKycVersion: 0, expectedLeadVersion: version },
-        "req-handoff-kyc",
-      );
-      if (!kyc.ok) throw new Error("unreachable");
-
-      const { getLeadDocByRef } = await import("@/server/discovery/firestore");
-      const freshLead = await getLeadDocByRef(lead.data.leadRef);
-      if (!freshLead) throw new Error("unreachable");
-      version = freshLead.version;
-
-      const ready = await transitionLeadLifecycle(head, lead.data.leadRef, { to: "CONVERSION_READY", expectedVersion: version }, "req-handoff-ready");
-      if (!ready.ok) throw new Error(`unreachable: ${JSON.stringify(ready)}`);
-      version = ready.data.version;
-
-      const idempotencyKey = `handoff-${runId}-${Math.random().toString(36).slice(2, 8)}`;
-      const converted = await convertLead(head, lead.data.leadRef, { idempotencyKey, expectedVersion: version }, "req-handoff-convert");
-      return { head, lead: lead.data, converted };
-    }
-
     it("NEW_ACCOUNT still creates no fake account, and the resulting Partner parses under the canonical schema with Discovery provenance retained", async () => {
       const { lead, converted } = await convertFreshLeadToPartner("NEW_ACCOUNT");
       expect(converted.ok).toBe(true);

@@ -1,20 +1,28 @@
 import { createHash } from "node:crypto";
 
 // The canonical normalized-account-identity algorithm (Step 7A section
-// 3). Computed ONCE, at Partner Account creation, from whichever
-// evidence is strongest at that moment - and never recomputed on a later
-// edit. This is deliberate, not an oversight:
+// 3, corrected in Step 7A.1). Represents the CURRENT strongest external
+// identity evidence available for an account - not a value frozen at
+// creation. Step 7A originally froze this permanently at creation, on
+// the theory that a handle rename should never fragment identity. That
+// protection was real but too broad: when an account was only ever
+// identified by a fallback (profile URL or handle, never a stable
+// platform id), freezing it meant a legitimate rename left the OLD
+// value permanently squatting on a uniqueness claim no one could ever
+// release, while the account's own current identity was no longer
+// discoverable by anyone matching against its real, current handle.
 //
-// - "Account identity must survive handle/display-name changes... do not
-//   treat cosmetic display-name changes as a new account" - if identity
-//   were recomputed from the current handle on every edit, a rename
-//   would silently change which claim the account holds, which is
-//   exactly the kind of consequential identity change the spec calls
-//   out separately ("transfer is not a casual edit"). Freezing identity
-//   at creation and letting handle/profileUrl/platformAccountId remain
-//   freely editable as plain metadata afterward satisfies both rules at
-//   once: a rename never fragments identity, and an edit never silently
-//   reclaims a different identity out from under the account.
+// The durable canonical identity of an account is its own
+// partnerAccountRef - never this value. normalizedIdentity is allowed to
+// evolve (see partner-account-service.ts's editPartnerAccount, which
+// transactionally re-claims the new value and releases the old one) so
+// it keeps meaning "the current strongest identity evidence", exactly
+// as durable as whatever platform evidence backs it. A stable platform
+// id, once set, is NOT allowed to be casually replaced by a different
+// one through the ordinary edit path (that IS a consequential,
+// identity-sensitive change, distinct from an ordinary rename) - see
+// editPartnerAccount's own comment for why that one case is rejected
+// rather than evolved.
 //
 // Priority: a stable platform/channel id is the strongest evidence
 // (survives every cosmetic change); a profile URL is next (usually

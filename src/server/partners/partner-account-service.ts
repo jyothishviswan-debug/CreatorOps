@@ -194,7 +194,7 @@ export async function listPartnerAccounts(actor: ActorContext | null, partnerRef
   return { ok: true, data: accounts.map(toPartnerAccountDto) };
 }
 
-// ---- Edit ordinary fields (never normalizedIdentity/primary/status) ----
+// ---- Edit (identity-bearing fields may evolve normalizedIdentity - see below) ----
 
 const editPartnerAccountInputSchema = z
   .object({
@@ -208,6 +208,28 @@ const editPartnerAccountInputSchema = z
   .strict();
 export type EditPartnerAccountInput = z.input<typeof editPartnerAccountInputSchema>;
 
+type EditAccountTxResult = { kind: "ok"; doc: PartnerAccountDoc; oldNormalizedIdentity: string } | { kind: "not_found" } | { kind: "stale" } | { kind: "collision" };
+
+// Step 7A.1: normalizedIdentity is allowed to evolve - it represents the
+// CURRENT strongest identity evidence, not a value frozen at creation
+// (see identity.ts's own comment for the full rationale). Plain
+// display-name/follower-count edits never touch it at all. When an
+// identity-bearing field (handle/profileUrl/platformAccountId) actually
+// changes the computed identity, this transactionally: verifies the new
+// claim is free (or already owned by this same account), claims it,
+// updates the account, and releases the old claim - so the obsolete
+// value never remains a permanent uniqueness lock, and the new value
+// collides against duplicate creation immediately. All reads happen
+// before any write (a hard Firestore transaction requirement).
+//
+// One case is deliberately NOT evolved through this ordinary path:
+// replacing an already-set stable platform id with a DIFFERENT one (or
+// clearing it once set). That is a materially different kind of
+// identity-sensitive change than a rename/upgrade - a real stable id
+// changing usually means "this is now a different underlying account",
+// not "the same account got a better handle" - and there is no governed
+// correction workflow for that yet, so it is rejected outright rather
+// than silently allowed through the same evolution path a rename uses.
 export async function editPartnerAccount(actor: ActorContext | null, partnerAccountRef: unknown, rawInput: unknown, requestId: string): Promise<PartnersServiceResult<PartnerAccountDto>> {
   const loaded = await loadAuthorizedAccount(actor, partnerAccountRef, "manage_partner_accounts");
   if (!loaded.ok) return loaded.error;
@@ -216,22 +238,115 @@ export async function editPartnerAccount(actor: ActorContext | null, partnerAcco
   if (!parsed.success) return partnersInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
   const input = parsed.data;
 
+  const current = loaded.account;
+  const effectivePlatformAccountId = input.platformAccountId !== undefined ? input.platformAccountId : current.platformAccountId;
+  const effectiveProfileUrl = input.profileUrl !== undefined ? input.profileUrl : current.profileUrl;
+  const effectiveHandle = input.handle !== undefined ? input.handle : current.handle;
+
+  // Replacing (or clearing) an already-set stable platform id is
+  // rejected in this ordinary edit path - see the function doc comment.
+  if (current.platformAccountId && input.platformAccountId !== undefined && input.platformAccountId !== current.platformAccountId) {
+    return partnersInvalidInputResult(
+      "This account already has a stable platform account id - changing it to a different value (or clearing it) is an identity-sensitive change not supported through an ordinary edit.",
+    );
+  }
+
+  const candidateIdentity = computeNormalizedIdentity({ platform: current.platform, platformAccountId: effectivePlatformAccountId, profileUrl: effectiveProfileUrl, handle: effectiveHandle });
+  if (!candidateIdentity) return partnersInvalidInputResult("At least one of platformAccountId, profileUrl, or handle is required to establish account identity.");
+
   const now = new Date().toISOString();
-  const result = await runPartnerAccountMutation(loaded.account.uid, input.expectedVersion, (current) => ({
-    ...current,
-    handle: input.handle !== undefined ? input.handle : current.handle,
-    displayName: input.displayName !== undefined ? input.displayName : current.displayName,
-    profileUrl: input.profileUrl !== undefined ? input.profileUrl : current.profileUrl,
-    platformAccountId: input.platformAccountId !== undefined ? input.platformAccountId : current.platformAccountId,
-    followerSnapshot: input.followerCount !== undefined ? (input.followerCount === null ? null : { count: input.followerCount, asOf: now }) : current.followerSnapshot,
-    updatedAt: now,
-    updatedByUserRef: actor!.userRef,
-  }));
+
+  // Fast path: no identity-bearing field actually changed the computed
+  // identity (a pure display-name/follower-count edit, or a
+  // handle/profileUrl edit that a stable id already overrides in
+  // priority) - ordinary versioned edit, no claim collection involved.
+  if (candidateIdentity === current.normalizedIdentity) {
+    const result = await runPartnerAccountMutation(current.uid, input.expectedVersion, (fresh) => ({
+      ...fresh,
+      handle: effectiveHandle,
+      displayName: input.displayName !== undefined ? input.displayName : fresh.displayName,
+      profileUrl: effectiveProfileUrl,
+      platformAccountId: effectivePlatformAccountId,
+      followerSnapshot: input.followerCount !== undefined ? (input.followerCount === null ? null : { count: input.followerCount, asOf: now }) : fresh.followerSnapshot,
+      updatedAt: now,
+      updatedByUserRef: actor!.userRef,
+    }));
+
+    if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Partner Account not found." };
+    if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This Partner Account was changed elsewhere. Reload and try again." };
+
+    await writePartnerEvent({ partnerUid: loaded.partner.uid, kind: "account_edited", actorUserRef: actor!.userRef, metadata: { partnerAccountRef: current.partnerAccountRef }, requestId });
+    return { ok: true, data: toPartnerAccountDto(result.doc) };
+  }
+
+  // Identity evolution path: the computed identity actually changed -
+  // claim the new one and release the old one, transactionally.
+  const db = getAdminFirestore();
+  const accountRef = partnerAccountsCollection().doc(current.uid);
+  const newClaimId = claimIdFor(candidateIdentity);
+  const newClaimRef = partnerAccountIdentityClaimsCollection().doc(newClaimId);
+  const oldClaimId = claimIdFor(current.normalizedIdentity);
+  const oldClaimRef = partnerAccountIdentityClaimsCollection().doc(oldClaimId);
+
+  const result = await db.runTransaction<EditAccountTxResult>(async (tx) => {
+    // All reads before any write.
+    const accountSnap = await tx.get(accountRef);
+    if (!accountSnap.exists) return { kind: "not_found" };
+    const freshAccount = partnerAccountDocSchema.safeParse(accountSnap.data());
+    if (!freshAccount.success) return { kind: "not_found" };
+    if (freshAccount.data.version !== input.expectedVersion) return { kind: "stale" };
+
+    const newClaimSnap = await tx.get(newClaimRef);
+    if (newClaimSnap.exists) {
+      const existingClaim = partnerAccountIdentityClaimDocSchema.safeParse(newClaimSnap.data());
+      // Free to proceed only if the new identity is already owned by
+      // THIS same account (a defensive idempotency allowance - in
+      // practice unreachable via a fresh request, since a prior success
+      // would already show candidateIdentity === current.normalizedIdentity
+      // on the next attempt); owned by any other account is a real
+      // collision.
+      if (!existingClaim.success || existingClaim.data.partnerAccountUid !== freshAccount.data.uid) return { kind: "collision" };
+    }
+
+    const oldClaimSnap = await tx.get(oldClaimRef);
+    const oldClaimBelongsToThisAccount = oldClaimSnap.exists && (() => {
+      const parsedOld = partnerAccountIdentityClaimDocSchema.safeParse(oldClaimSnap.data());
+      return parsedOld.success && parsedOld.data.partnerAccountUid === freshAccount.data.uid;
+    })();
+
+    // Writes.
+    const updated: PartnerAccountDoc = {
+      ...freshAccount.data,
+      handle: effectiveHandle,
+      displayName: input.displayName !== undefined ? input.displayName : freshAccount.data.displayName,
+      profileUrl: effectiveProfileUrl,
+      platformAccountId: effectivePlatformAccountId,
+      normalizedIdentity: candidateIdentity,
+      followerSnapshot: input.followerCount !== undefined ? (input.followerCount === null ? null : { count: input.followerCount, asOf: now }) : freshAccount.data.followerSnapshot,
+      version: freshAccount.data.version + 1,
+      updatedAt: now,
+      updatedByUserRef: actor!.userRef,
+    };
+    tx.set(accountRef, updated);
+    tx.set(newClaimRef, partnerAccountIdentityClaimDocSchema.parse({ normalizedIdentity: candidateIdentity, partnerAccountUid: freshAccount.data.uid, partnerAccountRef: freshAccount.data.partnerAccountRef, claimedAt: now }));
+    if (oldClaimBelongsToThisAccount) tx.delete(oldClaimRef);
+
+    return { kind: "ok", doc: updated, oldNormalizedIdentity: freshAccount.data.normalizedIdentity };
+  });
 
   if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Partner Account not found." };
   if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This Partner Account was changed elsewhere. Reload and try again." };
+  if (result.kind === "collision") return { ok: false, code: "conflict", message: "This account identity is already claimed by another Partner Account." };
 
-  await writePartnerEvent({ partnerUid: loaded.partner.uid, kind: "account_edited", actorUserRef: actor!.userRef, metadata: { partnerAccountRef: loaded.account.partnerAccountRef }, requestId });
+  // Safe labels only (normalized platform:type:value strings) - never a
+  // secret, same discipline as every other partner event.
+  await writePartnerEvent({
+    partnerUid: loaded.partner.uid,
+    kind: "account_identity_changed",
+    actorUserRef: actor!.userRef,
+    metadata: { partnerAccountRef: current.partnerAccountRef, oldNormalizedIdentity: result.oldNormalizedIdentity, newNormalizedIdentity: candidateIdentity },
+    requestId,
+  });
   return { ok: true, data: toPartnerAccountDto(result.doc) };
 }
 
