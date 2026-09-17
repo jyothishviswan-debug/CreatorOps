@@ -65,20 +65,31 @@ const createLinkInputSchema = z
   .object({
     partnerRef: z.string().min(1),
     relationshipType: relationshipTypeSchema,
-    payeeRole: z.boolean().optional(),
     effectiveFrom: z.string().min(1),
     effectiveTo: z.string().min(1).optional(),
   })
   .strict();
 export type CreateVendorPartnerLinkInput = z.input<typeof createLinkInputSchema>;
 
-// No uniqueness lock, deliberately - Step 8A section 4: "multiple active
-// Vendor links per Partner are allowed... overlapping links of different
-// types may be valid." This is an ordinary create, not a transactional
-// claim like Partner Account identity. The Partner side is validated for
-// real existence only (getPartnerDocByRef) - creating a link does not
-// require the actor to independently hold Partner-side scope, only
-// Vendor-side manage_vendor_partner_relationships on the owning Vendor.
+// Company policy: a Partner may have at most ONE ACTIVE Vendor
+// relationship at a time - the one Vendor handles that Partner's
+// operations and payments in full, never split across simultaneous
+// Vendors. Enforced here, not by a Firestore-level constraint: a bounded
+// equality-only query (partnerRef==+status=="ACTIVE", no orderBy - no
+// composite index required, same discipline as
+// checkVendorDependencies'/checkPartnerDependencies' own dependency
+// checks) run BEFORE the write, inside the same request. This is a
+// policy precondition, not a concurrency-safe uniqueness lock (two
+// simultaneous creates could theoretically both pass the check before
+// either writes) - acceptable here the same way Partner Account primary-
+// account selection already accepts that same narrow window, since a
+// human operator, not a high-frequency system, drives this action. The
+// Vendor-side (a Vendor may have many simultaneously-active Partners) is
+// deliberately unrestricted - only the Partner-side is policy-limited.
+// The Partner side is validated for real existence only
+// (getPartnerDocByRef) - creating a link does not require the actor to
+// independently hold Partner-side scope, only Vendor-side
+// manage_vendor_partner_relationships on the owning Vendor.
 export async function createVendorPartnerLink(actor: ActorContext | null, vendorRef: unknown, rawInput: unknown, requestId: string): Promise<VendorsServiceResult<VendorPartnerLinkDto>> {
   const loaded = await loadAuthorizedVendorForLinks(actor, vendorRef);
   if (!loaded.ok) return loaded.error;
@@ -93,6 +104,17 @@ export async function createVendorPartnerLink(actor: ActorContext | null, vendor
   const partner = await getPartnerDocByRef(input.partnerRef);
   if (!partner) return vendorsInvalidInputResult("partnerRef does not resolve to a real Partner.");
 
+  const existingActive = await vendorPartnerLinksCollection().where("partnerRef", "==", partner.partnerRef).where("status", "==", "ACTIVE").limit(1).get();
+  if (!existingActive.empty) {
+    const existingVendorRef = existingActive.docs[0]!.data().vendorRef as string;
+    const existingVendor = existingVendorRef === loaded.vendor.vendorRef ? loaded.vendor : await getVendorDocByRef(existingVendorRef);
+    return {
+      ok: false,
+      code: "conflict",
+      message: `This Partner already has an active Vendor relationship (${existingVendor?.displayName ?? "another Vendor"}). End it before linking a new one.`,
+    };
+  }
+
   const now = new Date().toISOString();
   const uid = vendorPartnerLinksCollection().doc().id;
 
@@ -103,7 +125,6 @@ export async function createVendorPartnerLink(actor: ActorContext | null, vendor
     vendorRef: loaded.vendor.vendorRef,
     partnerRef: partner.partnerRef,
     relationshipType: input.relationshipType,
-    payeeRole: input.payeeRole ?? false,
     effectiveFrom: input.effectiveFrom,
     effectiveTo: input.effectiveTo ?? null,
     status: "ACTIVE",
@@ -118,7 +139,7 @@ export async function createVendorPartnerLink(actor: ActorContext | null, vendor
     vendorUid: loaded.vendor.uid,
     kind: "link_created",
     actorUserRef: actor!.userRef,
-    metadata: { partnerRef: partner.partnerRef, relationshipType: input.relationshipType, payeeRole: input.payeeRole ?? false },
+    metadata: { partnerRef: partner.partnerRef, relationshipType: input.relationshipType },
     requestId,
   });
 
@@ -130,7 +151,6 @@ export async function createVendorPartnerLink(actor: ActorContext | null, vendor
 const editLinkInputSchema = z
   .object({
     relationshipType: relationshipTypeSchema.optional(),
-    payeeRole: z.boolean().optional(),
     effectiveFrom: z.string().min(1).optional(),
     expectedVersion: z.number().int().min(1),
   })
@@ -152,7 +172,6 @@ export async function editVendorPartnerLink(actor: ActorContext | null, linkRef:
   const result = await runVendorPartnerLinkMutation(loaded.link.uid, input.expectedVersion, (current) => ({
     ...current,
     relationshipType: input.relationshipType ?? current.relationshipType,
-    payeeRole: input.payeeRole ?? current.payeeRole,
     effectiveFrom,
     updatedAt: new Date().toISOString(),
     updatedByUserRef: actor!.userRef,

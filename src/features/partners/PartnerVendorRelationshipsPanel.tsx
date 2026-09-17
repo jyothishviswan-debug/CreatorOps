@@ -44,7 +44,7 @@ export function PartnerVendorRelationshipsPanel({ partnerRef }: { partnerRef: st
 
   return (
     <Panel span={12}>
-      <PanelHead title="Vendor Relationships" description="Agency, manager, representative and payee relationships involving this Partner - this Partner's own rows only, never a Vendor's unrelated portfolio." />
+      <PanelHead title="Vendor Relationships" description="This Partner's own Vendor relationship history - at most one active at a time - never a Vendor's unrelated portfolio." />
       <PanelBody>
         {loading ? (
           <Skeleton lines={3} />
@@ -62,7 +62,6 @@ export function PartnerVendorRelationshipsPanel({ partnerRef }: { partnerRef: st
                   <b>{link.vendor.displayName}</b>
                   <Pill tone={linkStatusTone(link.status)}> {LINK_STATUS_LABELS[link.status]}</Pill>
                   <Pill tone="default"> {RELATIONSHIP_TYPE_LABELS[link.relationshipType]}</Pill>
-                  {link.payeeRole && <Pill tone="orange"> Payee</Pill>}
                   <div>
                     <small>{VENDOR_TYPE_LABELS[link.vendor.vendorType]}</small>
                   </div>

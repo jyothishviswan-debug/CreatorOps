@@ -11,10 +11,15 @@ import { listVendorPartnerLinks } from "./api-client";
 import { effectiveDateLabel, LINK_STATUS_LABELS, linkStatusTone, RELATIONSHIP_TYPE_LABELS } from "./format";
 
 // Step 8B section 8: truthful payee/commercial CONTEXT only, derived
-// entirely from this Vendor's own real relationship rows
-// (payeeRole=true) - never Finance truth. Agreements/Payables/Invoices/
-// Payments don't exist yet, so those are shown as an honest "not yet
-// built" state rather than a fabricated number, count, or amount.
+// entirely from this Vendor's own real relationship rows - never Finance
+// truth. Company policy caps a Partner to at most one ACTIVE Vendor at a
+// time (see vendorPartnerLinkDocSchema's own comment), so every ACTIVE
+// relationship on this Vendor IS, by construction, the one party
+// currently handling that Partner's operations and payments - there is
+// no separate "payee" sub-flag to filter by anymore. Agreements/
+// Payables/Invoices/Payments don't exist yet, so those are shown as an
+// honest "not yet built" state rather than a fabricated number, count,
+// or amount.
 export function VendorPayeeContextPanel({ vendorRef }: { vendorRef: string }) {
   const [links, setLinks] = useState<VendorPartnerLinkWithPartnerDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -36,7 +41,7 @@ export function VendorPayeeContextPanel({ vendorRef }: { vendorRef: string }) {
     };
   }, [vendorRef]);
 
-  const payeeLinks = links.filter((l) => l.payeeRole);
+  const activeLinks = links.filter((l) => l.status === "ACTIVE");
 
   return (
     <>
@@ -44,7 +49,7 @@ export function VendorPayeeContextPanel({ vendorRef }: { vendorRef: string }) {
         <Panel span={12}>
           <PanelHead
             title="Payee / Commercial Context"
-            description="Which Partner relationships carry the payee role, and their effective state - context for future Agreement/Finance truth, not Finance truth itself."
+            description="This Vendor's currently active Partner relationships - each one is the sole party handling that Partner's operations and payments. Context for future Agreement/Finance truth, not Finance truth itself."
           />
           <PanelBody>
             {loading ? (
@@ -53,10 +58,10 @@ export function VendorPayeeContextPanel({ vendorRef }: { vendorRef: string }) {
               <div className="banner" role="alert">
                 {error}
               </div>
-            ) : payeeLinks.length === 0 ? (
-              <EmptyState title="No payee relationships on file" description="No linked Partner relationship on this Vendor is currently marked as payee." icon="wallet" />
+            ) : activeLinks.length === 0 ? (
+              <EmptyState title="No active relationships on file" description="This Vendor has no currently active Partner relationship." icon="wallet" />
             ) : (
-              payeeLinks.map((link) => (
+              activeLinks.map((link) => (
                 <div className="record" key={link.vendorPartnerLinkRef} style={{ marginBottom: 10 }}>
                   <div className="recordmeta" style={{ justifyContent: "space-between", alignItems: "center" }}>
                     <div>
@@ -65,7 +70,6 @@ export function VendorPayeeContextPanel({ vendorRef }: { vendorRef: string }) {
                       </Link>
                       <Pill tone={linkStatusTone(link.status)}> {LINK_STATUS_LABELS[link.status]}</Pill>
                       <Pill tone="default"> {RELATIONSHIP_TYPE_LABELS[link.relationshipType]}</Pill>
-                      <Pill tone="orange"> Payee</Pill>
                       <div>
                         <small>
                           Effective {effectiveDateLabel(link.effectiveFrom)}

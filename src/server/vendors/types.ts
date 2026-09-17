@@ -72,9 +72,18 @@ export const vendorDocSchema = z.object({
 export type VendorDoc = z.infer<typeof vendorDocSchema>;
 
 // --- Vendor <-> Partner relationship link (vendorPartnerLinks/{uid}) ----
-// M:N by construction - a Partner may have zero, one, or many active
-// links; a Vendor may link to many Partners. Never hard-deleted; ending a
-// relationship sets status=ENDED and effectiveTo, the row itself stays.
+// A Vendor may link to many Partners at once (one agency can represent
+// many creators) - that side of the M:N stays wide open. The other
+// direction is policy-constrained: a Partner may have at most ONE
+// ACTIVE Vendor relationship at a time (company policy - one agency/
+// company handles a Partner's operations and payments in full; no
+// splitting a Partner's representation across simultaneous Vendors).
+// Enforced server-side in vendor-partner-link-service.ts's
+// createVendorPartnerLink, not by a Firestore-level constraint. A
+// Partner with zero active links is simply handled directly, with no
+// Vendor intermediary. Never hard-deleted; ending a relationship sets
+// status=ENDED and effectiveTo, the row itself stays - which is also
+// how a Partner becomes free for a new active Vendor link.
 export const RELATIONSHIP_TYPES = ["REPRESENTATION", "MANAGEMENT", "AGENCY", "PAYEE", "OTHER"] as const;
 export const relationshipTypeSchema = z.enum(RELATIONSHIP_TYPES);
 export type RelationshipType = z.infer<typeof relationshipTypeSchema>;
@@ -89,11 +98,11 @@ export const vendorPartnerLinkDocSchema = z.object({
 
   vendorRef: z.string().min(1),
   partnerRef: z.string().min(1),
+  // The one Vendor's role for this Partner - since a Partner has at most
+  // one ACTIVE Vendor, this single field now stands for that Vendor's
+  // whole relationship (there is no separate payee flag; the Partner's
+  // one active Vendor is always the one handling payments too).
   relationshipType: relationshipTypeSchema,
-  // Explicit, never inferred from Vendor name/type or relationshipType -
-  // a link can be e.g. AGENCY and also the payee, or AGENCY and NOT the
-  // payee if a separate PAYEE-type Vendor is on file for that Partner.
-  payeeRole: z.boolean().default(false),
 
   effectiveFrom: z.string().min(1),
   effectiveTo: z.string().min(1).nullable().default(null),

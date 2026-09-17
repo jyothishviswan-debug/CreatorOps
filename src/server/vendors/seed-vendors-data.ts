@@ -1,5 +1,7 @@
 // Step 8A section 13: a small, deterministic Vendors dataset covering
-// every canonical status, the M:N relationship shape, payee role,
+// every canonical status, the M:N relationship shape (one Vendor, many
+// simultaneously-active Partners; one Partner, at most one active
+// Vendor - see vendorPartnerLinkDocSchema's own comment for the policy),
 // historical (ended) relationships, and same-scope/cross-scope Vendors -
 // mirrors Partners' own seed-partners-data.ts idiom exactly (fixed doc
 // ids, full overwrite, safe synthetic values only, idempotent across
@@ -124,7 +126,7 @@ export async function seedVendorsData(): Promise<void> {
     await vendorsCollection().doc(vendor.uid).set(vendor);
   }
 
-  function linkBase(uid: string, vendorRef: string, partnerRef: string): Omit<VendorPartnerLinkDoc, "relationshipType" | "payeeRole" | "effectiveFrom" | "effectiveTo" | "status"> {
+  function linkBase(uid: string, vendorRef: string, partnerRef: string): Omit<VendorPartnerLinkDoc, "relationshipType" | "effectiveFrom" | "effectiveTo" | "status"> {
     return {
       uid,
       vendorPartnerLinkRef: uid,
@@ -138,70 +140,67 @@ export async function seedVendorsData(): Promise<void> {
     };
   }
 
+  // Company policy (see vendorPartnerLinkDocSchema's own comment): a
+  // Partner has at most ONE ACTIVE Vendor relationship at a time - so no
+  // partnerRef below appears twice with status ACTIVE. The OTHER
+  // direction stays wide open: seed-vendor-agency alone demonstrates
+  // "one Vendor, multiple simultaneously-ACTIVE Partners" (creator-house
+  // + seed-partner-blacklisted), which is exactly the real "an agency
+  // manages many creators" shape this policy is meant to support.
   const links: VendorPartnerLinkDoc[] = [
-    // creator-house ends up with TWO active Vendor relationships (this
-    // link + the manager one below) - "one Partner with multiple active
-    // Vendor relationships."
     {
       ...linkBase("seed-link-agency-creatorhouse", "seed-vendor-agency", "creator-house"),
       relationshipType: "AGENCY",
-      payeeRole: true,
       effectiveFrom: daysAgoIso(now, 400),
       effectiveTo: null,
       status: "ACTIVE",
     },
-    // seed-vendor-agency ends up linked to two Partners while ACTIVE -
     // "ACTIVE agency linked to multiple Partners" / "one Vendor with
-    // multiple Partner relationships."
+    // multiple simultaneously-active Partner relationships" - Vendor-side
+    // relationship governance is independent of the linked Partner's own
+    // lifecycle status.
     {
-      ...linkBase("seed-link-agency-direct", "seed-vendor-agency", "seed-partner-direct"),
+      ...linkBase("seed-link-agency-blacklisted", "seed-vendor-agency", "seed-partner-blacklisted"),
       relationshipType: "AGENCY",
-      payeeRole: false,
       effectiveFrom: daysAgoIso(now, 200),
       effectiveTo: null,
       status: "ACTIVE",
     },
     // A real ended historical relationship, effectiveTo set, preserved
     // (never hard-deleted) - "one ended historical relationship with
-    // effectiveTo."
+    // effectiveTo, restorable." Ending this (rather than seed-vendor-
+    // agency's other links) is also what leaves seed-partner-inactive
+    // free for its own separate ACTIVE link below.
     {
       ...linkBase("seed-link-agency-inactive-partner-ended", "seed-vendor-agency", "seed-partner-inactive"),
       relationshipType: "AGENCY",
-      payeeRole: false,
       effectiveFrom: daysAgoIso(now, 365),
       effectiveTo: daysAgoIso(now, 180),
       status: "ENDED",
     },
-    // "ACTIVE manager/representative linked to one Partner" - its only link.
+    // "ACTIVE manager/representative linked to one Partner" - its only
+    // link. Uses seed-partner-direct, which is otherwise unused by seed
+    // data (deliberately left free for tests that create their own
+    // throwaway links against a known-real Partner).
     {
-      ...linkBase("seed-link-manager-creatorhouse", "seed-vendor-manager", "creator-house"),
+      ...linkBase("seed-link-manager-direct", "seed-vendor-manager", "seed-partner-direct"),
       relationshipType: "MANAGEMENT",
-      payeeRole: false,
       effectiveFrom: daysAgoIso(now, 300),
       effectiveTo: null,
       status: "ACTIVE",
     },
-    // "one PAYEE relationship" - payeeRole explicit, never inferred.
-    {
-      ...linkBase("seed-link-payee-direct", "seed-vendor-payee", "seed-partner-direct"),
-      relationshipType: "PAYEE",
-      payeeRole: true,
-      effectiveFrom: daysAgoIso(now, 150),
-      effectiveTo: null,
-      status: "ACTIVE",
-    },
-    // Scope-escalation-bridge proof, the other direction from the
-    // creator-house/Manager one above: seed-vendor-inactive (Kerala) IS
-    // in Partnership Manager's Vendor scope, but the Partner it links to
+    // Scope-escalation-bridge proof: seed-vendor-inactive (Kerala) IS in
+    // Partnership Manager's Vendor scope, but the Partner it links to
     // here (seed-partner-inactive, Tamil Nadu) is NOT in Manager's
     // Partner scope. Manager can see this link row (an opaque
     // partnerRef) from the Vendor side without that ever granting
     // Partner-side access to seed-partner-inactive itself, or to
-    // listVendorLinksForPartner("seed-partner-inactive").
+    // listVendorLinksForPartner("seed-partner-inactive"). Doesn't
+    // conflict with seed-partner-inactive's own ENDED link above (only
+    // ACTIVE links count against the one-Vendor policy).
     {
       ...linkBase("seed-link-inactive-vendor-inactive-partner", "seed-vendor-inactive", "seed-partner-inactive"),
       relationshipType: "OTHER",
-      payeeRole: false,
       effectiveFrom: daysAgoIso(now, 90),
       effectiveTo: null,
       status: "ACTIVE",

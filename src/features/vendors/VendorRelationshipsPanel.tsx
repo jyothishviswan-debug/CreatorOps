@@ -18,13 +18,17 @@ function todayIso(): string {
 }
 
 // Step 8B section 6 - the core Vendor workflow: the real M:N
-// vendorPartnerLinks list, scoped to this one Vendor. A Partner may have
-// multiple Vendor relationships and a Vendor may represent multiple
-// Partners - this list shows every relationship this Vendor has, active
-// and historical, never collapsed into a single "owns" concept.
-// relationshipType and payeeRole are edited independently, and ending a
-// relationship never deletes the row (see endVendorPartnerLink's own
-// comment) - the ended row stays visible here, tagged "Ended".
+// vendorPartnerLinks list, scoped to this one Vendor. A Vendor may
+// represent multiple Partners at once, but company policy caps the
+// OTHER direction: a Partner may have at most one ACTIVE Vendor at a
+// time (enforced server-side in createVendorPartnerLink) - so linking a
+// Partner who already has an active Vendor elsewhere is rejected with a
+// clear message, surfaced inline below. This list shows every
+// relationship this Vendor has, active and historical, never collapsed
+// into a single "owns" concept. Ending a relationship never deletes the
+// row (see endVendorPartnerLink's own comment) - the ended row stays
+// visible here, tagged "Ended", and is what frees that Partner up for a
+// new active Vendor elsewhere.
 export function VendorRelationshipsPanel({ vendorRef }: { vendorRef: string }) {
   const [links, setLinks] = useState<VendorPartnerLinkWithPartnerDto[]>([]);
   const [loading, setLoading] = useState(true);
@@ -62,7 +66,7 @@ export function VendorRelationshipsPanel({ vendorRef }: { vendorRef: string }) {
     <Panel span={12}>
       <PanelHead
         title="Partner Relationships"
-        description="Every Vendor <-> Partner relationship this Vendor has, active and historical - relationship type and payee role are always explicit, never inferred."
+        description="Every Vendor <-> Partner relationship this Vendor has, active and historical. A Partner may have at most one active Vendor at a time."
         link={
           !creating && (
             <button type="button" className="btn" onClick={() => setCreating(true)}>
@@ -140,7 +144,6 @@ function LinkRow({ link, onEdit, onChanged }: { link: VendorPartnerLinkWithPartn
           <b>{link.partner.displayName}</b>
           <Pill tone={linkStatusTone(link.status)}> {LINK_STATUS_LABELS[link.status]}</Pill>
           <Pill tone="default"> {RELATIONSHIP_TYPE_LABELS[link.relationshipType]}</Pill>
-          {link.payeeRole && <Pill tone="orange"> Payee</Pill>}
           <div>
             <small>
               Effective {effectiveDateLabel(link.effectiveFrom)}
@@ -200,7 +203,6 @@ function LinkForm(props: LinkFormProps) {
   const initial = props.mode === "edit" ? props.link : null;
   const [partner, setPartner] = useState<PartnerDto | null>(null);
   const [relationshipType, setRelationshipType] = useState<RelationshipType>(initial?.relationshipType ?? "REPRESENTATION");
-  const [payeeRole, setPayeeRole] = useState(initial?.payeeRole ?? false);
   const [effectiveFrom, setEffectiveFrom] = useState(initial?.effectiveFrom ?? todayIso());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -216,7 +218,7 @@ function LinkForm(props: LinkFormProps) {
         setError("Select a Partner to link.");
         return;
       }
-      const result = await createVendorPartnerLink(props.vendorRef, { partnerRef: partner.partnerRef, relationshipType, payeeRole, effectiveFrom });
+      const result = await createVendorPartnerLink(props.vendorRef, { partnerRef: partner.partnerRef, relationshipType, effectiveFrom });
       setSaving(false);
       if (!result.ok) {
         setError(result.error);
@@ -226,7 +228,7 @@ function LinkForm(props: LinkFormProps) {
       return;
     }
 
-    const result = await editVendorPartnerLink(props.link.vendorPartnerLinkRef, { relationshipType, payeeRole, effectiveFrom, expectedVersion: props.link.version });
+    const result = await editVendorPartnerLink(props.link.vendorPartnerLinkRef, { relationshipType, effectiveFrom, expectedVersion: props.link.version });
     setSaving(false);
     if (!result.ok) {
       setError(result.error);
@@ -272,12 +274,6 @@ function LinkForm(props: LinkFormProps) {
         <div className="field">
           <label htmlFor="link-effective-from">Effective from</label>
           <input id="link-effective-from" type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} required />
-        </div>
-        <div className="field">
-          <label>
-            <input type="checkbox" checked={payeeRole} onChange={(e) => setPayeeRole(e.target.checked)} style={{ marginRight: 8 }} />
-            Payee role (explicit - independent of relationship type)
-          </label>
         </div>
       </div>
 

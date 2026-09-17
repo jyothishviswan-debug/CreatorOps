@@ -33,11 +33,11 @@ async function loadAllVendors(actor: Awaited<ReturnType<typeof resolveRequestAct
 // checked vendorRefs (never an unbounded/cross-scope collection scan) -
 // Firestore's `in` operator caps at 30 values per query, so this batches
 // into chunks of 30, same idiom as Partners' own loadAccountCountsByPartner.
-async function loadRelationshipCountsByVendor(vendorRefs: string[]): Promise<{ activeByVendorRef: Map<string, number>; payeeActive: number; ended: number }> {
+async function loadRelationshipCountsByVendor(vendorRefs: string[]): Promise<{ activeByVendorRef: Map<string, number>; totalActiveLinks: number; ended: number }> {
   const db = getAdminFirestore();
   const collection = db.collection(VENDORS_COLLECTIONS.vendorPartnerLinks);
   const activeByVendorRef = new Map<string, number>();
-  let payeeActive = 0;
+  let totalActiveLinks = 0;
   let ended = 0;
 
   for (let i = 0; i < vendorRefs.length; i += 30) {
@@ -49,14 +49,14 @@ async function loadRelationshipCountsByVendor(vendorRefs: string[]): Promise<{ a
       if (!parsed.success) continue;
       if (parsed.data.status === "ACTIVE") {
         activeByVendorRef.set(parsed.data.vendorRef, (activeByVendorRef.get(parsed.data.vendorRef) ?? 0) + 1);
-        if (parsed.data.payeeRole) payeeActive += 1;
+        totalActiveLinks += 1;
       } else {
         ended += 1;
       }
     }
   }
 
-  return { activeByVendorRef, payeeActive, ended };
+  return { activeByVendorRef, totalActiveLinks, ended };
 }
 
 export default async function VendorsOverviewPage() {
@@ -85,7 +85,7 @@ export default async function VendorsOverviewPage() {
   const archived = vendors.filter((v) => v.status === "ARCHIVED").length;
   const activePct = total > 0 ? ((active / total) * 100).toFixed(1) : "0.0";
 
-  const { activeByVendorRef, payeeActive, ended } = await loadRelationshipCountsByVendor(vendors.map((v) => v.vendorRef));
+  const { activeByVendorRef, totalActiveLinks, ended } = await loadRelationshipCountsByVendor(vendors.map((v) => v.vendorRef));
   const withActiveRelationship = vendors.filter((v) => (activeByVendorRef.get(v.vendorRef) ?? 0) > 0).length;
   const noActiveRelationship = total - withActiveRelationship;
 
@@ -170,7 +170,7 @@ export default async function VendorsOverviewPage() {
         { label: "Owner assigned", detail: `${ownerAssigned} / ${total}`, badge: "Coverage" },
         { label: "Profile complete", detail: `${profileComplete} / ${total}`, badge: "Coverage" },
         { label: "Has active relationship", detail: `${withActiveRelationship} / ${total}`, badge: "Coverage" },
-        { label: "Payee relationships (active)", detail: String(payeeActive), badge: "Current" },
+        { label: "Active relationships (total)", detail: String(totalActiveLinks), badge: "Current" },
       ],
     },
   ];

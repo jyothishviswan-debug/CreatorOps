@@ -12,6 +12,7 @@ import { saveLeadKyc } from "@/server/discovery/kyc-service";
 import { transitionLeadLifecycle } from "@/server/discovery/lifecycle-service";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
 import { getPartnerDocByRef } from "@/server/partners/firestore";
+import { createPartner } from "@/server/partners/partner-service";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
 import { partnerDocSchema } from "@/server/partners/types";
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
@@ -66,10 +67,18 @@ function uniqueName(prefix: string): string {
   return `${prefix} ${runId}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+// Company policy caps a Partner to at most one ACTIVE Vendor at a time
+// (see vendorPartnerLinkDocSchema's own comment) - reusing a seeded
+// Partner like "seed-partner-direct" across many independent link-
+// creation tests would make them fight over that one slot. A fresh
+// Partner, created for real through the trusted service, is free of any
+// other Vendor relationship by construction.
 async function createVendorAndPartnerPair(head: ActorContext) {
   const vendor = await createVendor(head, { displayName: uniqueName("Rel Vendor"), vendorType: "AGENCY", regionIds: ["Kerala"] }, "req-rel-vendor");
   if (!vendor.ok) throw new Error("unreachable");
-  return vendor.data;
+  const partner = await createPartner(head, { displayName: uniqueName("Rel Partner") }, "req-rel-partner");
+  if (!partner.ok) throw new Error("unreachable");
+  return { vendor: vendor.data, partner: partner.data };
 }
 
 describe("Vendor model", () => {
@@ -229,8 +238,10 @@ describe("Vendor lifecycle", () => {
     const head = await actorFor("partnership_head");
     const vendor = await createVendor(head, { displayName: uniqueName("Blocked Archive"), vendorType: "AGENCY", regionIds: ["Kerala"] }, "req-blocked-create");
     if (!vendor.ok) throw new Error("unreachable");
+    const partner = await createPartner(head, { displayName: uniqueName("Blocked Archive Partner") }, "req-blocked-partner");
+    if (!partner.ok) throw new Error("unreachable");
 
-    const link = await createVendorPartnerLink(head, vendor.data.vendorRef, { partnerRef: "seed-partner-direct", relationshipType: "AGENCY", effectiveFrom: new Date().toISOString() }, "req-blocked-link");
+    const link = await createVendorPartnerLink(head, vendor.data.vendorRef, { partnerRef: partner.data.partnerRef, relationshipType: "AGENCY", effectiveFrom: new Date().toISOString() }, "req-blocked-link");
     expect(link.ok).toBe(true);
 
     const deps = await checkVendorDependencies({ uid: vendor.data.vendorRef, vendorRef: vendor.data.vendorRef });
@@ -245,7 +256,7 @@ describe("Vendor lifecycle", () => {
     // Archive never cascades to the Partner - it remains completely
     // untouched by the (blocked, but let's also prove it for a
     // successful archive below) attempt.
-    const partnerBefore = await getPartnerDocByRef("seed-partner-direct");
+    const partnerBefore = await getPartnerDocByRef(partner.data.partnerRef);
     expect(partnerBefore?.status).toBe("ACTIVE");
 
     if (!link.ok) throw new Error("unreachable");
@@ -258,7 +269,7 @@ describe("Vendor lifecycle", () => {
     expect(archived.data.status).toBe("ARCHIVED");
     expect(archived.data.previousStatus).toBe("ACTIVE");
 
-    const partnerAfter = await getPartnerDocByRef("seed-partner-direct");
+    const partnerAfter = await getPartnerDocByRef(partner.data.partnerRef);
     expect(partnerAfter?.status).toBe("ACTIVE");
     expect(partnerAfter?.version).toBe(partnerBefore?.version); // literally untouched
   });
@@ -307,34 +318,58 @@ describe("Vendor lifecycle", () => {
 });
 
 describe("Vendor <-> Partner relationships", () => {
-  it("is a real M:N shape - one Vendor to many Partners, and one Partner to many Vendors, both readable from either side", async () => {
+  it("is a real M:N shape on the Vendor side - one Vendor can have many simultaneously-ACTIVE Partners, readable from either side", async () => {
     const head = await actorFor("partnership_head");
     const vendorLinks = await listLinksForVendor(head, "seed-vendor-agency");
     expect(vendorLinks.ok).toBe(true);
     if (!vendorLinks.ok) throw new Error("unreachable");
     const distinctPartners = new Set(vendorLinks.data.map((l) => l.partnerRef));
-    expect(distinctPartners.size).toBeGreaterThanOrEqual(2); // multiple Partners per Vendor
+    expect(distinctPartners.size).toBeGreaterThanOrEqual(2); // multiple Partners per Vendor - the Vendor side is unrestricted
+    expect(vendorLinks.data.filter((l) => l.status === "ACTIVE").length).toBeGreaterThanOrEqual(2); // more than one can be ACTIVE at once
 
     const partnerLinks = await listVendorLinksForPartner(head, "creator-house");
     expect(partnerLinks.ok).toBe(true);
     if (!partnerLinks.ok) throw new Error("unreachable");
-    const distinctVendors = new Set(partnerLinks.data.map((l) => l.vendorRef));
-    expect(distinctVendors.size).toBeGreaterThanOrEqual(2); // multiple active Vendors per Partner (agency + manager)
     expect(partnerLinks.data.every((l) => l.status === "ACTIVE" || l.status === "ENDED")).toBe(true);
-    // No silent single-Vendor collapse - the real distinct set survives.
     for (const link of partnerLinks.data) {
       expect(typeof link.vendor.displayName).toBe("string");
       expect(link.vendor.displayName.length).toBeGreaterThan(0);
     }
   });
 
+  it("the Partner side is policy-limited to at most one ACTIVE Vendor at a time", async () => {
+    const head = await actorFor("partnership_head");
+    const { vendor: vendorA, partner } = await createVendorAndPartnerPair(head);
+    const first = await createVendorPartnerLink(head, vendorA.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "AGENCY", effectiveFrom: new Date().toISOString() }, "req-onevendor-first");
+    expect(first.ok).toBe(true);
+
+    const vendorB = await createVendor(head, { displayName: uniqueName("Second Vendor For Same Partner"), vendorType: "MANAGEMENT_COMPANY", regionIds: ["Kerala"] }, "req-onevendor-vendorb");
+    if (!vendorB.ok) throw new Error("unreachable");
+
+    // A second ACTIVE link for the SAME Partner, from a DIFFERENT Vendor,
+    // is rejected - company policy, not a scope/validation edge case.
+    const second = await createVendorPartnerLink(head, vendorB.data.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "MANAGEMENT", effectiveFrom: new Date().toISOString() }, "req-onevendor-second");
+    expect(second.ok).toBe(false);
+    if (second.ok) throw new Error("unreachable");
+    expect(second.code).toBe("conflict");
+    expect(second.message).toContain(vendorA.displayName); // names the CURRENT vendor, so the operator knows who to end first
+
+    // Ending the first relationship frees the Partner for a new one.
+    if (!first.ok) throw new Error("unreachable");
+    const ended = await endVendorPartnerLink(head, first.data.vendorPartnerLinkRef, { effectiveTo: new Date().toISOString(), expectedVersion: first.data.version }, "req-onevendor-end");
+    expect(ended.ok).toBe(true);
+
+    const third = await createVendorPartnerLink(head, vendorB.data.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "MANAGEMENT", effectiveFrom: new Date().toISOString() }, "req-onevendor-third");
+    expect(third.ok).toBe(true);
+  });
+
   it("creating a link validates effective dates - effectiveTo before effectiveFrom is rejected", async () => {
     const head = await actorFor("partnership_head");
-    const vendor = await createVendorAndPartnerPair(head);
+    const { vendor, partner } = await createVendorAndPartnerPair(head);
     const result = await createVendorPartnerLink(
       head,
       vendor.vendorRef,
-      { partnerRef: "seed-partner-direct", relationshipType: "AGENCY", effectiveFrom: "2026-06-01T00:00:00.000Z", effectiveTo: "2026-01-01T00:00:00.000Z" },
+      { partnerRef: partner.partnerRef, relationshipType: "AGENCY", effectiveFrom: "2026-06-01T00:00:00.000Z", effectiveTo: "2026-01-01T00:00:00.000Z" },
       "req-bad-dates",
     );
     expect(result.ok).toBe(false);
@@ -342,25 +377,10 @@ describe("Vendor <-> Partner relationships", () => {
     expect(result.code).toBe("invalid_input");
   });
 
-  it("payee role is explicit and independent of relationshipType - an AGENCY link can also be the payee, or not", async () => {
-    const head = await actorFor("partnership_head");
-    const vendor = await createVendorAndPartnerPair(head);
-    const link = await createVendorPartnerLink(
-      head,
-      vendor.vendorRef,
-      { partnerRef: "seed-partner-direct", relationshipType: "AGENCY", payeeRole: true, effectiveFrom: new Date().toISOString() },
-      "req-payee-explicit",
-    );
-    expect(link.ok).toBe(true);
-    if (!link.ok) throw new Error("unreachable");
-    expect(link.data.relationshipType).toBe("AGENCY");
-    expect(link.data.payeeRole).toBe(true);
-  });
-
   it("ending a relationship preserves the row (never hard-deleted) and sets status/effectiveTo, restore reopens it", async () => {
     const head = await actorFor("partnership_head");
-    const vendor = await createVendorAndPartnerPair(head);
-    const link = await createVendorPartnerLink(head, vendor.vendorRef, { partnerRef: "seed-partner-direct", relationshipType: "MANAGEMENT", effectiveFrom: new Date().toISOString() }, "req-end-create");
+    const { vendor, partner } = await createVendorAndPartnerPair(head);
+    const link = await createVendorPartnerLink(head, vendor.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "MANAGEMENT", effectiveFrom: new Date().toISOString() }, "req-end-create");
     if (!link.ok) throw new Error("unreachable");
 
     const ended = await endVendorPartnerLink(head, link.data.vendorPartnerLinkRef, { effectiveTo: new Date().toISOString(), expectedVersion: link.data.version }, "req-end-end");
@@ -383,8 +403,8 @@ describe("Vendor <-> Partner relationships", () => {
 
   it("editing safe metadata never touches vendorRef/partnerRef, and a stale version is rejected", async () => {
     const head = await actorFor("partnership_head");
-    const vendor = await createVendorAndPartnerPair(head);
-    const link = await createVendorPartnerLink(head, vendor.vendorRef, { partnerRef: "seed-partner-direct", relationshipType: "OTHER", effectiveFrom: new Date().toISOString() }, "req-edit-link-create");
+    const { vendor, partner } = await createVendorAndPartnerPair(head);
+    const link = await createVendorPartnerLink(head, vendor.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "OTHER", effectiveFrom: new Date().toISOString() }, "req-edit-link-create");
     if (!link.ok) throw new Error("unreachable");
 
     const edited = await editVendorPartnerLink(head, link.data.vendorPartnerLinkRef, { relationshipType: "REPRESENTATION", expectedVersion: link.data.version }, "req-edit-link-1");
@@ -392,7 +412,7 @@ describe("Vendor <-> Partner relationships", () => {
     if (!edited.ok) throw new Error("unreachable");
     expect(edited.data.relationshipType).toBe("REPRESENTATION");
     expect(edited.data.vendorRef).toBe(vendor.vendorRef);
-    expect(edited.data.partnerRef).toBe("seed-partner-direct");
+    expect(edited.data.partnerRef).toBe(partner.partnerRef);
 
     const stale = await editVendorPartnerLink(head, link.data.vendorPartnerLinkRef, { relationshipType: "PAYEE", expectedVersion: link.data.version }, "req-edit-link-2");
     expect(stale.ok).toBe(false);
@@ -436,9 +456,10 @@ describe("Scope: Partner-side relationship query never bridges into a Vendor's u
   it("direct Vendor scope is required even for a Vendor linked to an in-scope Partner - PARTNER-type scope never substitutes for Vendor scope", async () => {
     const manager = await actorFor("partnership_manager");
     // creator-house is Manager-visible via its own PARTNER grant, and
-    // seed-vendor-manager is linked to creator-house - but that link
-    // must never grant Manager direct Vendor access to seed-vendor-manager.
-    const result = await getVendor(manager, "seed-vendor-manager");
+    // seed-vendor-agency (Karnataka) is creator-house's real active
+    // Vendor - but that link must never grant Manager direct Vendor
+    // access to seed-vendor-agency itself.
+    const result = await getVendor(manager, "seed-vendor-agency");
     expect(result.ok).toBe(false);
     if (result.ok) throw new Error("unreachable");
     expect(result.reason).toBe("scope_denied");

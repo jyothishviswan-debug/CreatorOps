@@ -239,7 +239,7 @@ test.describe("Relationships", () => {
     await expect(page.getByText("Representation")).toBeVisible();
   });
 
-  test("one Vendor can be linked to multiple Partners, and one Partner to multiple Vendors", async ({ page }) => {
+  test("one Vendor can be linked to multiple Partners at once (the Vendor side is unrestricted)", async ({ page }) => {
     const vendor = await createVendorViaApi(page);
     const partnerA = await createPartnerViaApi(page);
     const partnerB = await createPartnerViaApi(page);
@@ -250,25 +250,45 @@ test.describe("Relationships", () => {
     await page.getByRole("tab", { name: "Partner Relationships" }).click();
     await expect(page.getByText(partnerA.displayName)).toBeVisible({ timeout: 5000 });
     await expect(page.getByText(partnerB.displayName)).toBeVisible();
-
-    const vendorB = await createVendorViaApi(page);
-    await createLinkViaApi(page, vendorB.vendorRef, { partnerRef: partnerA.partnerRef });
-
-    await page.goto(`/partners/${partnerA.partnerRef}`);
-    await page.getByRole("tab", { name: "Relationships" }).click();
-    await expect(page.getByText(vendor.displayName)).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText(vendorB.displayName)).toBeVisible();
   });
 
-  test("explicit payeeRole is independent of relationship type", async ({ page }) => {
-    const vendor = await createVendorViaApi(page);
+  test("a Partner may have at most one active Vendor at a time (company policy) - a second active Vendor is rejected until the first ends", async ({ page }) => {
+    const vendorA = await createVendorViaApi(page, { displayName: uniqueName("First Vendor") });
+    const vendorB = await createVendorViaApi(page, { displayName: uniqueName("Second Vendor") });
     const partner = await createPartnerViaApi(page);
-    await createLinkViaApi(page, vendor.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "MANAGEMENT", payeeRole: true });
+    await createLinkViaApi(page, vendorA.vendorRef, { partnerRef: partner.partnerRef });
 
-    await page.goto(`/vendors/${vendor.vendorRef}`);
+    // Attempting to link a second, DIFFERENT Vendor while the first is
+    // still active is rejected server-side - never silently allowed.
+    const rejected = await page.request.post(`/api/vendors/${vendorB.vendorRef}/links`, {
+      data: { partnerRef: partner.partnerRef, relationshipType: "MANAGEMENT", effectiveFrom: "2026-01-01" },
+    });
+    expect(rejected.ok()).toBeFalsy();
+    expect(rejected.status()).toBe(409);
+    const body = (await rejected.json()) as { error: string };
+    expect(body.error).toContain(vendorA.displayName);
+
+    // The UI surfaces this the same way - via the ordinary error banner
+    // on the Link Partner form.
+    await page.goto(`/vendors/${vendorB.vendorRef}`);
     await page.getByRole("tab", { name: "Partner Relationships" }).click();
-    await expect(page.getByText("Management")).toBeVisible({ timeout: 5000 });
-    await expect(page.getByText("Payee", { exact: true })).toBeVisible();
+    await page.getByRole("button", { name: "Link a Partner" }).click();
+    await page.getByPlaceholder("Search partners by name…").fill(partner.displayName);
+    await page.getByRole("button", { name: partner.displayName }).click();
+    await page.getByRole("button", { name: "Link Partner" }).click();
+    await expect(page.getByText(/already has an active Vendor relationship/)).toBeVisible({ timeout: 5000 });
+
+    // Ending the first relationship frees the Partner for vendorB.
+    await page.goto(`/vendors/${vendorA.vendorRef}`);
+    await page.getByRole("tab", { name: "Partner Relationships" }).click();
+    await page.getByRole("button", { name: "End relationship" }).first().click();
+    await page.getByRole("button", { name: "End relationship" }).nth(1).click();
+    await expect(page.locator(".pill", { hasText: "Ended" })).toBeVisible({ timeout: 5000 });
+
+    const allowed = await page.request.post(`/api/vendors/${vendorB.vendorRef}/links`, {
+      data: { partnerRef: partner.partnerRef, relationshipType: "MANAGEMENT", effectiveFrom: "2026-01-01" },
+    });
+    expect(allowed.ok()).toBeTruthy();
   });
 
   test("effectiveFrom is required to link, and an end date before it is rejected", async ({ page }) => {
@@ -478,13 +498,16 @@ test.describe("Restricted identity", () => {
 // ---- Truthful future context ----
 
 test.describe("Truthful future context", () => {
-  test("payee context derives only from relationship rows, and Agreements/Finance are shown as unavailable, not fabricated", async ({ page }) => {
+  test("payee context derives only from active relationship rows, and Agreements/Finance are shown as unavailable, not fabricated", async ({ page }) => {
     const vendor = await createVendorViaApi(page);
-    await createLinkViaApi(page, vendor.vendorRef, { payeeRole: true });
+    await createLinkViaApi(page, vendor.vendorRef);
 
     await page.goto(`/vendors/${vendor.vendorRef}`);
     await page.getByRole("tab", { name: "Payee / Commercial Context" }).click();
-    await expect(page.locator(".pill", { hasText: "Payee" })).toBeVisible({ timeout: 5000 });
+    // Every ACTIVE relationship is now, by construction, the one Vendor
+    // handling that Partner's operations and payments - no separate
+    // payee flag to check.
+    await expect(page.locator(".pill", { hasText: "Active" }).first()).toBeVisible({ timeout: 5000 });
     await expect(page.getByText("Not yet built").first()).toBeVisible();
     for (const label of ["Agreements", "Payables", "Invoices", "Payments"]) {
       await expect(page.getByRole("heading", { name: label })).toBeVisible();
