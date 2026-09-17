@@ -86,6 +86,21 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         transition_lifecycle: true,
         convert_lead: true,
       }),
+      // Step 7A: day-to-day Partner/account operation, but NOT governance
+      // (blacklist/archive/restore) - Partnership Head only, same
+      // non-monotonic shape as Finance's approve_payables. Has the
+      // manage_partner_restricted_identity ACTION (can operate the
+      // workflow) but not the "payment_details" sensitive CATEGORY (see
+      // SENSITIVE_GRANTS) - proves the two gates are independent, same as
+      // Discovery's manage_kyc/discovery_kyc pattern above.
+      partners: featureGrant(true, {
+        create: true,
+        edit: true,
+        manage_partner_accounts: true,
+        manage_partner_ownership: true,
+        manage_partner_restricted_identity: true,
+        manage_partner_governance: false,
+      }),
     },
   },
   partnership_head: {
@@ -104,6 +119,17 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_kyc: true,
         transition_lifecycle: true,
         convert_lead: true,
+      }),
+      // Step 7A: the only role (besides Super Admin) trusted with
+      // governance (blacklist/archive/restore), matching Finance's
+      // approve_payables being Head-only.
+      partners: featureGrant(true, {
+        create: true,
+        edit: true,
+        manage_partner_accounts: true,
+        manage_partner_ownership: true,
+        manage_partner_restricted_identity: true,
+        manage_partner_governance: true,
       }),
     },
   },
@@ -135,8 +161,13 @@ const SENSITIVE_GRANTS: Record<Role, string[]> = {
   viewer: [],
   analyst: [],
   partnership_manager: [],
-  partnership_head: ["finance_amounts", "discovery_kyc"],
-  super_admin: ["finance_amounts", "discovery_kyc"],
+  // Step 7A: "payment_details" gates Partner restricted financial
+  // identity, same non-monotonic shape as finance_amounts/discovery_kyc
+  // - Partnership Manager has the manage_partner_restricted_identity
+  // ACTION (above) but not this category, so it can operate the workflow
+  // without seeing the actual restricted values.
+  partnership_head: ["finance_amounts", "discovery_kyc", "payment_details"],
+  super_admin: ["finance_amounts", "discovery_kyc", "payment_details"],
 };
 
 // Explicit, per-role scope grants (Step 4C's canonical multi-dimensional

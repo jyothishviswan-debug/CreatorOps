@@ -360,57 +360,11 @@ export const leadRestrictedKycDocSchema = z.object({
 export type LeadRestrictedKycDoc = z.infer<typeof leadRestrictedKycDocSchema>;
 export type LeadKycAttachment = LeadRestrictedKycDoc["attachments"][number];
 
-// --- Canonical Partner / Partner Account (conversion targets) ------------
-// Deliberately minimal - Step 6A only needs enough of a canonical
-// Partner/Partner Account model for controlled conversion to create or
-// reuse one; the full Partners domain (CRUD, UI, relationships) is out
-// of scope here. No Creator/Partner polymorphism, no Vendor created by
-// ordinary individual-Partner conversion.
-export const partnerDocSchema = z.object({
-  uid: z.string().min(1),
-  partnerRef: z.string().min(1),
-  version: z.number().int().min(1),
-  displayName: z.string().min(1).max(200),
-  email: z.string().min(1).max(300).nullable().default(null),
-  phone: z.string().min(1).max(40).nullable().default(null),
-  region: z.string().min(1).max(80).nullable().default(null),
-  // Immutable provenance/snapshot from the Discovery Lead this Partner
-  // was created from - preserved forever, never edited after conversion.
-  sourceDiscovery: z.object({
-    leadRef: z.string().min(1),
-    convertedAt: z.string().min(1),
-    snapshot: z.object({
-      displayName: z.string().min(1),
-      email: z.string().min(1).nullable(),
-      phone: z.string().min(1).nullable(),
-      profileUrl: z.string().min(1).nullable(),
-      platform: z.string().min(1).nullable(),
-      handle: z.string().min(1).nullable(),
-      source: leadSourceSchema,
-    }),
-  }),
-  // NEW_ACCOUNT conversions never fabricate a Partner Account - this
-  // records the pending setup requirement instead, on the Partner
-  // itself, so it isn't lost once the Lead's own record is CONVERTED.
-  pendingPartnerAccountSetup: z.boolean().default(false),
-  createdAt: z.string().min(1),
-  createdByUserRef: z.string().min(1),
-});
-export type PartnerDoc = z.infer<typeof partnerDocSchema>;
-
-export const partnerAccountDocSchema = z.object({
-  uid: z.string().min(1),
-  partnerAccountRef: z.string().min(1),
-  version: z.number().int().min(1),
-  partnerRef: z.string().min(1),
-  platform: z.string().min(1).max(60),
-  handle: z.string().min(1).max(120).nullable().default(null),
-  profileUrl: z.string().min(1).max(500).nullable().default(null),
-  assetPath: assetDecisionKindSchema,
-  createdAt: z.string().min(1),
-  createdByUserRef: z.string().min(1),
-});
-export type PartnerAccountDoc = z.infer<typeof partnerAccountDocSchema>;
+// --- Canonical Partner / Partner Account -------------------------------
+// Moved to @/server/partners/types.ts (Step 7A) - Partners is its own
+// canonical domain now, used identically by Discovery conversion
+// (conversion-service.ts) and by direct Partner/account creation. There
+// is deliberately no separate "conversion-only" Partner shape.
 
 // --- Append-only Lead event/evidence history (leads/{uid}/events) --------
 export const LEAD_EVENT_KINDS = [

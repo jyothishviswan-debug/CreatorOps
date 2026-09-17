@@ -2,23 +2,12 @@ import { FieldPath, Filter } from "firebase-admin/firestore";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ScopeGrant } from "@/server/authz/types";
-import {
-  leadDocSchema,
-  leadRestrictedKycDocSchema,
-  partnerAccountDocSchema,
-  partnerDocSchema,
-  type LeadDoc,
-  type LeadRestrictedKycDoc,
-  type PartnerAccountDoc,
-  type PartnerDoc,
-} from "./types";
+import { leadDocSchema, leadRestrictedKycDocSchema, type LeadDoc, type LeadRestrictedKycDoc } from "./types";
 
 export const DISCOVERY_COLLECTIONS = {
   leads: "leads",
   leadEvents: "events", // subcollection name under leads/{uid}
   leadRestrictedKyc: "leadRestrictedKyc",
-  partners: "partners",
-  partnerAccounts: "partnerAccounts",
 } as const;
 
 // Bounded pagination default/ceiling - same discipline as
@@ -42,14 +31,6 @@ export function leadRestrictedKycCollection() {
   return getAdminFirestore().collection(DISCOVERY_COLLECTIONS.leadRestrictedKyc);
 }
 
-export function partnersCollection() {
-  return getAdminFirestore().collection(DISCOVERY_COLLECTIONS.partners);
-}
-
-export function partnerAccountsCollection() {
-  return getAdminFirestore().collection(DISCOVERY_COLLECTIONS.partnerAccounts);
-}
-
 export async function getLeadDocByUid(uid: string): Promise<LeadDoc | null> {
   const snapshot = await leadsCollection().doc(uid).get();
   if (!snapshot.exists) return null;
@@ -71,20 +52,6 @@ export async function getLeadRestrictedKycDoc(leadUid: string): Promise<LeadRest
   const snapshot = await leadRestrictedKycCollection().doc(leadUid).get();
   if (!snapshot.exists) return null;
   const result = leadRestrictedKycDocSchema.safeParse(snapshot.data());
-  return result.success ? result.data : null;
-}
-
-export async function getPartnerDocByRef(partnerRef: string): Promise<PartnerDoc | null> {
-  const snapshot = await partnersCollection().where("partnerRef", "==", partnerRef).limit(1).get();
-  if (snapshot.empty) return null;
-  const result = partnerDocSchema.safeParse(snapshot.docs[0]!.data());
-  return result.success ? result.data : null;
-}
-
-export async function getPartnerAccountDocByRef(partnerAccountRef: string): Promise<PartnerAccountDoc | null> {
-  const snapshot = await partnerAccountsCollection().where("partnerAccountRef", "==", partnerAccountRef).limit(1).get();
-  if (snapshot.empty) return null;
-  const result = partnerAccountDocSchema.safeParse(snapshot.docs[0]!.data());
   return result.success ? result.data : null;
 }
 

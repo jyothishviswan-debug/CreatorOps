@@ -25,6 +25,8 @@ import { COLLECTIONS } from "@/server/authz/firestore";
 import { seedAccessControlData } from "@/server/authz/seed-access-data";
 import { DISCOVERY_COLLECTIONS } from "@/server/discovery/firestore";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
+import { PARTNERS_COLLECTIONS } from "@/server/partners/firestore";
+import { seedPartnersData } from "@/server/partners/seed-partners-data";
 
 const LOCAL_HOST_PATTERN = /^(127\.0\.0\.1|localhost|\[::1\])(:\d+)?$/;
 
@@ -95,6 +97,23 @@ async function deleteLeadsCollectionWithEvents(): Promise<void> {
   }
 }
 
+// partners/{uid}/events is a subcollection - same cascade concern as
+// leads/{uid}/events (see deleteLeadsCollectionWithEvents above).
+async function deletePartnersCollectionWithEvents(): Promise<void> {
+  const db = getAdminFirestore();
+  const partnersRef = db.collection(PARTNERS_COLLECTIONS.partners);
+  for (;;) {
+    const snapshot = await partnersRef.limit(200).get();
+    if (snapshot.empty) return;
+    for (const doc of snapshot.docs) {
+      await deleteCollection(doc.ref.collection(PARTNERS_COLLECTIONS.partnerEvents));
+    }
+    const batch = db.batch();
+    for (const doc of snapshot.docs) batch.delete(doc.ref);
+    await batch.commit();
+  }
+}
+
 // Wipes every Auth account and every Firestore collection this app
 // writes to, then reseeds the canonical baseline. Idempotent in effect
 // (running it twice in a row produces the same end state), but NOT a
@@ -111,10 +130,13 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   }
   await deleteLeadsCollectionWithEvents();
   await deleteCollection(db.collection(DISCOVERY_COLLECTIONS.leadRestrictedKyc));
-  await deleteCollection(db.collection(DISCOVERY_COLLECTIONS.partners));
-  await deleteCollection(db.collection(DISCOVERY_COLLECTIONS.partnerAccounts));
+  await deletePartnersCollectionWithEvents();
+  await deleteCollection(db.collection(PARTNERS_COLLECTIONS.partnerAccounts));
+  await deleteCollection(db.collection(PARTNERS_COLLECTIONS.partnerAccountIdentityClaims));
+  await deleteCollection(db.collection(PARTNERS_COLLECTIONS.restrictedFinancialIdentities));
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();
   await seedDiscoveryData();
+  await seedPartnersData();
 }

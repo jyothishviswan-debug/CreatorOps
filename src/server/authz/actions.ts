@@ -44,6 +44,14 @@ export const ACTIONS = [
   "transition_lifecycle",
   // Partners / Vendors
   "manage_relationships",
+  // Step 7A: Partners' own granular actions, deliberately distinct from
+  // the shared manage_relationships placeholder Vendors still uses (kept
+  // as-is - Vendors is out of scope here) - same "granular rather than
+  // one generic 'manage'" discipline as Discovery's own action list.
+  "manage_partner_accounts",
+  "manage_partner_ownership",
+  "manage_partner_governance",
+  "manage_partner_restricted_identity",
   // Campaigns
   "manage_campaign_work",
   // Content

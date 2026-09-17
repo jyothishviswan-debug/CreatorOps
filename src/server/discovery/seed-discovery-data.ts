@@ -8,8 +8,10 @@
 import { getAdminAuth } from "@/server/firebase/admin";
 import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
 import { getUserDoc } from "@/server/authz/firestore";
-import { leadRestrictedKycCollection, leadsCollection, partnersCollection } from "./firestore";
-import type { LeadDoc, PartnerDoc } from "./types";
+import { partnersCollection } from "@/server/partners/firestore";
+import type { PartnerDoc } from "@/server/partners/types";
+import { leadRestrictedKycCollection, leadsCollection } from "./firestore";
+import type { LeadDoc } from "./types";
 
 async function uidFor(email: string): Promise<string> {
   const user = await getAdminAuth().getUserByEmail(email);
@@ -216,15 +218,33 @@ export async function seedDiscoveryData(): Promise<void> {
       .set({ uid, version: 1, ...fakeKyc });
   }
 
+  // The one Partner Discovery itself seeds - a NEW_ACCOUNT conversion
+  // with pending account setup and no fabricated account, matching
+  // exactly what a real convertLead(..., { decision: "NEW_ACCOUNT" })
+  // produces. seed-partners-data.ts (Step 7A) seeds the rest of the
+  // Partners fixture set (every status, multiple accounts, etc.) - kept
+  // here, not there, since it's this Lead's own conversion provenance.
   const convertedLead = leads.find((l) => l.uid === "seed-lead-converted")!;
   const partner: PartnerDoc = {
     uid: "seed-partner-converted",
     partnerRef: "seed-partner-converted",
     version: 1,
     displayName: convertedLead.displayName,
+    displayNameLower: convertedLead.displayName.toLowerCase(),
+    legalName: null,
+    status: "ACTIVE",
+    previousStatus: null,
+    statusReason: null,
+    regionIds: convertedLead.region ? [convertedLead.region] : [],
+    languageIds: [],
+    categoryIds: [],
+    tier: null,
+    priority: null,
     email: convertedLead.email,
     phone: convertedLead.phone,
-    region: convertedLead.region,
+    ownerUid: convertedLead.ownerUid,
+    teamIds: convertedLead.teamId ? [convertedLead.teamId] : [],
+    originLeadRefs: [convertedLead.leadRef],
     sourceDiscovery: {
       leadRef: convertedLead.leadRef,
       convertedAt: now,
@@ -241,6 +261,8 @@ export async function seedDiscoveryData(): Promise<void> {
     pendingPartnerAccountSetup: true,
     createdAt: now,
     createdByUserRef: headUserRef,
+    updatedAt: now,
+    updatedByUserRef: headUserRef,
   };
   await partnersCollection().doc(partner.uid).set(partner);
 }

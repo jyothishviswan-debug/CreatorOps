@@ -14,7 +14,8 @@ import { seedAccessControlData, TEST_IDENTITIES } from "@/server/authz/seed-acce
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminAuth } from "@/server/firebase/admin";
 import { convertLead, getLeadReadiness } from "./conversion-service";
-import { getLeadDocByRef, getPartnerDocByRef } from "./firestore";
+import { getPartnerDocByRef } from "@/server/partners/firestore";
+import { getLeadDocByRef } from "./firestore";
 import { listLeadEvents } from "./lead-events";
 import { assignManager, createLead, getLead, listLeads, precheckDuplicates, recordOutreach, recordReview, saveAssetDecision, saveCommercial, saveDiscoveryAgreement, saveResearch, updateLead } from "./lead-service";
 import { getLeadKyc, saveLeadKyc } from "./kyc-service";
@@ -463,8 +464,8 @@ describe("Discovery domain (real emulator)", () => {
 
       const partner = await getPartnerDocByRef(first.data.partnerRef);
       expect(partner).toBeTruthy();
-      expect(partner?.sourceDiscovery.leadRef).toBe(leadRef);
-      expect(partner?.sourceDiscovery.snapshot.displayName).toBe(`Convert Flow ${runId}`);
+      expect(partner?.sourceDiscovery?.leadRef).toBe(leadRef);
+      expect(partner?.sourceDiscovery?.snapshot.displayName).toBe(`Convert Flow ${runId}`);
       expect(partner?.pendingPartnerAccountSetup).toBe(true);
 
       const finalLead = await getLead(head, leadRef);
@@ -483,7 +484,7 @@ describe("Discovery domain (real emulator)", () => {
 
       const partner = await getPartnerDocByRef("seed-partner-converted");
       expect(partner).toBeTruthy();
-      expect(partner?.sourceDiscovery.leadRef).toBe("seed-lead-converted");
+      expect(partner?.sourceDiscovery?.leadRef).toBe("seed-lead-converted");
     });
   });
 });

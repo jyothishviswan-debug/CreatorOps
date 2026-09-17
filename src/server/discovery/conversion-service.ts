@@ -2,22 +2,17 @@ import { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ActorContext } from "@/server/authz/types";
+import { getPartnerAccountDocByRef, partnerAccountIdentityClaimsCollection, partnerAccountsCollection, partnersCollection } from "@/server/partners/firestore";
+import { claimIdFor, computeNormalizedIdentity } from "@/server/partners/identity";
+import { generatePartnerAccountRef, generatePartnerRef } from "@/server/partners/ids";
+import { writePartnerEvent } from "@/server/partners/partner-events";
+import { partnerAccountDocSchema, partnerAccountIdentityClaimDocSchema, partnerDocSchema, type PartnerAccountDoc, type PartnerDoc } from "@/server/partners/types";
 import { requireDiscoveryAccess, requireDiscoveryFeatureAccess, requireLeadInScope } from "./discovery-gate";
 import { checkForDuplicates } from "./duplicate-check";
-import { getLeadDocByRef, getPartnerAccountDocByRef, leadsCollection, partnerAccountsCollection, partnersCollection } from "./firestore";
-import { generatePartnerAccountRef, generatePartnerRef } from "./ids";
+import { getLeadDocByRef, leadsCollection } from "./firestore";
 import { writeLeadEvent } from "./lead-events";
 import { evaluateLeadReadiness } from "./readiness";
-import {
-  discoveryInvalidInputResult,
-  discoveryUnauthorizedResult,
-  leadDocSchema,
-  partnerAccountDocSchema,
-  partnerDocSchema,
-  type DiscoveryServiceResult,
-  type LeadDoc,
-  type ReadinessResult,
-} from "./types";
+import { discoveryInvalidInputResult, discoveryUnauthorizedResult, leadDocSchema, type DiscoveryServiceResult, type LeadDoc, type ReadinessResult } from "./types";
 
 // ---- Readiness endpoint ----
 // Read-only - gated by Feature Access + Record Scope, same as get/list.
@@ -56,23 +51,29 @@ export type ConversionDto = {
 };
 
 type ConvertTxResult =
-  | { kind: "ok"; dto: ConversionDto }
+  | { kind: "ok"; dto: ConversionDto; newPartnerDoc: PartnerDoc | null }
   | { kind: "stale" }
   | { kind: "not_ready"; blockers: { code: string; message: string }[] }
   | { kind: "not_found" }
-  | { kind: "account_not_found" };
+  | { kind: "account_not_found" }
+  | { kind: "account_identity_collision" };
 
-// Step 6A section 10: trusted-server-only, idempotent conversion. Every
-// attempt reloads the Lead, re-checks authentication/effective action
-// permission/scope, re-checks lifecycle/version, recomputes readiness,
-// and reruns duplicate/canonical-account resolution - nothing about a
-// prior check is trusted to still hold. If the Lead is ALREADY
-// CONVERTED, this returns the exact same stored result instead of
-// re-evaluating anything or creating a second Partner - true for ANY
-// retry, whether or not the supplied idempotencyKey matches the one
-// recorded the first time, since the actually-enforced guarantee is "a
-// Lead converts at most once", not "one idempotency key produces one
-// result".
+// Step 6A section 10 / Step 7A section 4: trusted-server-only, idempotent
+// conversion. Every attempt reloads the Lead, re-checks authentication/
+// effective action permission/scope, re-checks lifecycle/version,
+// recomputes readiness, and reruns duplicate/canonical-account
+// resolution - nothing about a prior check is trusted to still hold. If
+// the Lead is ALREADY CONVERTED, this returns the exact same stored
+// result instead of re-evaluating anything or creating a second Partner
+// - true for ANY retry, whether or not the supplied idempotencyKey
+// matches the one recorded the first time, since the actually-enforced
+// guarantee is "a Lead converts at most once", not "one idempotency key
+// produces one result".
+//
+// This is the SAME canonical Partner/Partner Account schema, id
+// generators, and identity-claim collection direct Partner/account
+// creation uses (partner-service.ts / partner-account-service.ts) -
+// there is deliberately no separate "conversion-only" Partner shape.
 export async function convertLead(actor: ActorContext | null, leadRef: unknown, rawInput: unknown, requestId: string): Promise<DiscoveryServiceResult<ConversionDto>> {
   if (!actor) return discoveryUnauthorizedResult("not_authenticated");
   const gate = await requireDiscoveryAccess(actor, "convert_lead");
@@ -155,6 +156,16 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
     existingAccountUid = existing.uid;
   }
 
+  // For a NEW canonical Partner Account created from the Lead's own
+  // confirmed platform/handle/profile evidence - computed outside the
+  // transaction (pure), the identity-claim lock itself is what's
+  // actually checked/written transactionally below.
+  const willCreateNewAccount = lead.assetDecision.decision === "NEW_ACCOUNT" ? false : !existingAccountUid && Boolean(lead.platform);
+  const newAccountNormalizedIdentity = willCreateNewAccount && lead.platform ? computeNormalizedIdentity({ platform: lead.platform, profileUrl: lead.profileUrl, handle: lead.handle }) : null;
+  const newAccountClaimId = newAccountNormalizedIdentity ? claimIdFor(newAccountNormalizedIdentity) : null;
+  const newAccountUid = willCreateNewAccount ? partnerAccountsCollection().doc().id : null;
+  const newAccountRef = willCreateNewAccount ? generatePartnerAccountRef() : null;
+
   const result = await db.runTransaction<ConvertTxResult>(async (tx) => {
     const leadSnap = await tx.get(leadDocRef);
     if (!leadSnap.exists) return { kind: "not_found" };
@@ -168,6 +179,7 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
     if (freshLead.lifecycle === "CONVERTED" && freshLead.conversion) {
       return {
         kind: "ok",
+        newPartnerDoc: null,
         dto: {
           leadRef: freshLead.leadRef,
           partnerRef: freshLead.conversion.partnerRef,
@@ -181,8 +193,7 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
     if (!freshLead.assetDecision) return { kind: "not_ready", blockers: [{ code: "ASSET_DECISION_MISSING", message: "An asset decision is required." }] };
 
     // All transactional reads happen before any transactional write - a
-    // hard Firestore requirement, not just a style preference (see
-    // users-service.ts for the same discipline).
+    // hard Firestore requirement, not just a style preference.
     let accountRef: FirebaseFirestore.DocumentReference | null = null;
     let existingAccount: { partnerAccountRef: string; version: number } | null = null;
     if (existingAccountUid) {
@@ -194,16 +205,35 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
       existingAccount = { partnerAccountRef: existingParsed.data.partnerAccountRef, version: existingParsed.data.version };
     }
 
+    let newAccountClaimExists = false;
+    if (newAccountClaimId) {
+      const claimSnap = await tx.get(partnerAccountIdentityClaimsCollection().doc(newAccountClaimId));
+      newAccountClaimExists = claimSnap.exists;
+    }
+    if (newAccountClaimExists) return { kind: "account_identity_collision" };
+
     const now = new Date().toISOString();
 
-    const partnerDoc = partnerDocSchema.parse({
+    const partnerDoc: PartnerDoc = partnerDocSchema.parse({
       uid: newPartnerUid,
       partnerRef: newPartnerRef,
       version: 1,
       displayName: freshLead.displayName,
+      displayNameLower: freshLead.displayName.toLowerCase(),
+      legalName: null,
+      status: "ACTIVE",
+      previousStatus: null,
+      statusReason: null,
+      regionIds: freshLead.region ? [freshLead.region] : [],
+      languageIds: [],
+      categoryIds: [],
+      tier: null,
+      priority: null,
       email: freshLead.email,
       phone: freshLead.phone,
-      region: freshLead.region,
+      ownerUid: freshLead.ownerUid,
+      teamIds: freshLead.teamId ? [freshLead.teamId] : [],
+      originLeadRefs: [freshLead.leadRef],
       sourceDiscovery: {
         leadRef: freshLead.leadRef,
         convertedAt: now,
@@ -220,6 +250,8 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
       pendingPartnerAccountSetup: freshLead.assetDecision.decision === "NEW_ACCOUNT",
       createdAt: now,
       createdByUserRef: actor!.userRef,
+      updatedAt: now,
+      updatedByUserRef: actor!.userRef,
     });
     tx.set(partnersCollection().doc(newPartnerUid), partnerDoc);
 
@@ -227,28 +259,39 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
     if (freshLead.assetDecision.decision !== "NEW_ACCOUNT") {
       if (accountRef && existingAccount) {
         // Reuse the existing canonical Partner Account - reassign it to
-        // the new Partner.
-        tx.update(accountRef, { partnerRef: newPartnerRef, version: existingAccount.version + 1 });
+        // the new Partner. normalizedIdentity is never touched by this
+        // (or any) edit - identity is claimed once, at that account's
+        // own creation, and this is a reassignment of ownership, not a
+        // re-derivation of identity.
+        tx.update(accountRef, { partnerRef: newPartnerRef, primary: true, version: existingAccount.version + 1, updatedAt: now, updatedByUserRef: actor!.userRef });
         partnerAccountRef = existingAccount.partnerAccountRef;
-      } else if (freshLead.platform) {
-        // Create a new canonical Partner Account from the Lead's own
-        // confirmed platform/handle/profile evidence - only when that
-        // evidence actually exists on the Lead.
-        const newAccountUid = partnerAccountsCollection().doc().id;
-        const newAccountRef = generatePartnerAccountRef();
-        const accountDoc = partnerAccountDocSchema.parse({
+      } else if (newAccountUid && newAccountRef && newAccountNormalizedIdentity && newAccountClaimId) {
+        const accountDoc: PartnerAccountDoc = partnerAccountDocSchema.parse({
           uid: newAccountUid,
           partnerAccountRef: newAccountRef,
           version: 1,
           partnerRef: newPartnerRef,
           platform: freshLead.platform,
           handle: freshLead.handle,
+          displayName: freshLead.displayName,
           profileUrl: freshLead.profileUrl,
-          assetPath: freshLead.assetDecision.decision,
+          platformAccountId: null,
+          normalizedIdentity: newAccountNormalizedIdentity,
+          primary: true,
+          status: "ACTIVE",
+          followerSnapshot: null,
+          originAssetDecision: freshLead.assetDecision.decision,
+          originLeadRef: freshLead.leadRef,
           createdAt: now,
           createdByUserRef: actor!.userRef,
+          updatedAt: now,
+          updatedByUserRef: actor!.userRef,
         });
         tx.set(partnerAccountsCollection().doc(newAccountUid), accountDoc);
+        tx.set(
+          partnerAccountIdentityClaimsCollection().doc(newAccountClaimId),
+          partnerAccountIdentityClaimDocSchema.parse({ normalizedIdentity: newAccountNormalizedIdentity, partnerAccountUid: newAccountUid, partnerAccountRef: newAccountRef, claimedAt: now }),
+        );
         partnerAccountRef = newAccountRef;
       }
     }
@@ -259,6 +302,7 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
 
     return {
       kind: "ok",
+      newPartnerDoc: partnerDoc,
       dto: { leadRef: freshLead.leadRef, partnerRef: newPartnerRef, partnerAccountRef, pendingPartnerAccountSetup: freshLead.assetDecision.decision === "NEW_ACCOUNT", convertedAt: now },
     };
   });
@@ -266,6 +310,14 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
   if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Lead not found." };
   if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This Lead was changed elsewhere. Reload and try again." };
   if (result.kind === "account_not_found") return discoveryInvalidInputResult("The referenced existing Partner Account no longer resolves.");
+  if (result.kind === "account_identity_collision") {
+    return {
+      ok: false,
+      code: "not_ready",
+      message: "This Lead's own platform account is already claimed by another Partner Account.",
+      blockers: [{ code: "ACCOUNT_IDENTITY_COLLISION", message: "Resolve the conflicting Partner Account before converting, or choose an existing-account asset decision instead." }],
+    };
+  }
   if (result.kind === "not_ready") return { ok: false, code: "not_ready", message: "This Lead is not ready for conversion.", blockers: result.blockers };
 
   await writeLeadEvent({
@@ -275,6 +327,13 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
     metadata: { partnerRef: result.dto.partnerRef, partnerAccountRef: result.dto.partnerAccountRef, pendingPartnerAccountSetup: result.dto.pendingPartnerAccountSetup },
     requestId,
   });
+
+  if (result.newPartnerDoc) {
+    await writePartnerEvent({ partnerUid: result.newPartnerDoc.uid, kind: "created", actorUserRef: actor.userRef, metadata: { displayName: result.newPartnerDoc.displayName, fromDiscoveryLead: lead.leadRef }, requestId });
+    if (result.dto.partnerAccountRef && !result.dto.pendingPartnerAccountSetup) {
+      await writePartnerEvent({ partnerUid: result.newPartnerDoc.uid, kind: "account_created", actorUserRef: actor.userRef, metadata: { partnerAccountRef: result.dto.partnerAccountRef, fromDiscoveryLead: lead.leadRef }, requestId });
+    }
+  }
 
   return { ok: true, data: result.dto };
 }

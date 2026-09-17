@@ -1,4 +1,5 @@
-import { leadsCollection, partnerAccountsCollection, partnersCollection } from "./firestore";
+import { partnerAccountsCollection, partnersCollection } from "@/server/partners/firestore";
+import { leadsCollection } from "./firestore";
 import type { DuplicateCheckResult, DuplicateMatch } from "./types";
 
 // Bounded per-field lookup limit - "check relevant existing records", not

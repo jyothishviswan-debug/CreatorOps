@@ -18,6 +18,7 @@ async function main() {
   const { seedEmulatorTestUsers, EMULATOR_TEST_USERS } = await import("../src/server/auth/seed-users");
   const { seedAccessControlData } = await import("../src/server/authz/seed-access-data");
   const { seedDiscoveryData } = await import("../src/server/discovery/seed-discovery-data");
+  const { seedPartnersData } = await import("../src/server/partners/seed-partners-data");
 
   const password = process.env.EMULATOR_TEST_USER_PASSWORD;
   if (!password) {
@@ -41,6 +42,12 @@ async function main() {
   // above already existing.
   await seedDiscoveryData();
   console.log("Seeded Discovery data (leads across every lifecycle state, one converted Partner).");
+
+  // Step 7A: a small, deterministic Partners dataset (every status,
+  // multiple accounts, one restricted-identity subject) - depends on the
+  // Discovery-converted Partner above already existing.
+  await seedPartnersData();
+  console.log("Seeded Partners data (every status, multiple Partner Accounts, one restricted-identity subject).");
 }
 
 main().catch((error) => {
