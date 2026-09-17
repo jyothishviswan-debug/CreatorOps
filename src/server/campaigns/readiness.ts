@@ -1,5 +1,5 @@
 import { getUserDoc } from "@/server/authz/firestore";
-import { CAMPAIGN_PLATFORMS, campaignCriteriaSchema, campaignResourceSchema, reviewPolicySchema, type CampaignDoc, type CampaignReadinessIssue, type CampaignReadinessResult } from "./types";
+import { campaignCriteriaSchema, campaignResourceSchema, reviewPolicySchema, type CampaignDoc, type CampaignReadinessIssue, type CampaignReadinessResult } from "./types";
 
 function blocker(code: string, message: string): CampaignReadinessIssue {
   return { code, message };
@@ -25,9 +25,12 @@ export async function evaluateCampaignReadiness(campaign: CampaignDoc): Promise<
     blockers.push(blocker("OBJECTIVE_MISSING", "A Campaign objective/description is required."));
   }
 
-  const validPlatforms = campaign.platforms.filter((p) => (CAMPAIGN_PLATFORMS as readonly string[]).includes(p));
-  if (validPlatforms.length === 0) {
-    blockers.push(blocker("PLATFORM_MISSING", "At least one supported platform is required."));
+  // Step 9A.1: "supported" no longer means "in an invented catalog" - a
+  // stored platform entry is, by construction, already a normalized,
+  // non-empty identifier (see @/server/shared/platform), so this only
+  // needs to check that at least one exists.
+  if (campaign.platforms.length === 0) {
+    blockers.push(blocker("PLATFORM_MISSING", "At least one platform is required."));
   }
 
   if (!campaign.startDate || !campaign.endDate) {

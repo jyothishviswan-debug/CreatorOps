@@ -8,6 +8,14 @@ import { z } from "zod";
 import { targetAudienceSchema } from "@/server/discovery/types";
 export { TARGET_AUDIENCES, targetAudienceSchema, type TargetAudience } from "@/server/discovery/types";
 
+// Step 9A.1: Campaign platform identity reuses Partner Account's own
+// accepted platform-identifier contract (extracted to
+// @/server/shared/platform) instead of a Campaign-local closed enum -
+// see that module's own comment. Never a fixed catalog; a normalized,
+// bounded, de-duplicated string array.
+import { platformIdentifierArraySchema } from "@/server/shared/platform";
+export { normalizePlatformIdentifier, platformIdentifierSchema } from "@/server/shared/platform";
+
 // Step 9A: the canonical Campaign domain. Campaign owns programme-wide
 // planning and default review policy ONLY - never Partner-specific
 // obligation truth (that is the future Assignment's own job), never
@@ -32,17 +40,12 @@ export type CampaignStatus = z.infer<typeof campaignStatusSchema>;
 // Targets that require an explicit reason - CANCELLED and ARCHIVED only.
 export const CAMPAIGN_REASON_REQUIRED_STATUSES = ["CANCELLED", "ARCHIVED"] as const satisfies readonly CampaignStatus[];
 
-// No canonical platform catalog exists elsewhere in the repo - Discovery's
-// own Lead.platform is deliberately free text (see proposal-number.ts's
-// own comment). Campaign's own readiness rule explicitly requires "at
-// least one SUPPORTED platform", which is only a meaningful check against
-// a closed catalog, so this is a Campaign-local closed enum (a judgment
-// call - see the Step 9A completion report's own "authority conflicts"
-// section), built from the same informal set Discovery's platformCodeFor
-// already recognizes.
-export const CAMPAIGN_PLATFORMS = ["INSTAGRAM", "YOUTUBE", "FACEBOOK", "X", "TIKTOK", "LINKEDIN", "SNAPCHAT", "PINTEREST", "OTHER"] as const;
-export const campaignPlatformSchema = z.enum(CAMPAIGN_PLATFORMS);
-export type CampaignPlatform = z.infer<typeof campaignPlatformSchema>;
+// Step 9A.1: "at least one supported platform" is now checked structurally
+// (a non-empty, normalized platform identifier - see readiness.ts),
+// never against an invented catalog. MAX_CAMPAIGN_PLATFORMS bounds the
+// array the same way every other bounded array field on this doc does.
+export const MAX_CAMPAIGN_PLATFORMS = 20;
+export const campaignPlatformsArraySchema = platformIdentifierArraySchema(MAX_CAMPAIGN_PLATFORMS);
 
 export const REVIEW_POLICIES = ["REVIEW_REQUIRED", "NO_PREPOST_REVIEW"] as const;
 export const reviewPolicySchema = z.enum(REVIEW_POLICIES);
@@ -60,14 +63,16 @@ export type ReviewPolicy = z.infer<typeof reviewPolicySchema>;
 // platforms this programme actually runs/publishes on) -
 // criteria.platforms describes which Partners are being targeted (e.g.
 // "Partners active on YouTube"), which is not always identical to where
-// the Campaign itself publishes.
+// the Campaign itself publishes. Uses the EXACT same shared platform-
+// identifier contract as the top-level field (Step 9A.1 section 3) -
+// never a second representation.
 export const campaignCriteriaSchema = z
   .object({
     targetAudience: targetAudienceSchema.nullable().default(null),
     regionIds: z.array(z.string().min(1)).max(50).default([]),
     languageIds: z.array(z.string().min(1)).max(50).default([]),
     categoryIds: z.array(z.string().min(1)).max(50).default([]),
-    platforms: z.array(campaignPlatformSchema).max(20).default([]),
+    platforms: campaignPlatformsArraySchema.default([]),
   })
   .strict();
 export type CampaignCriteria = z.infer<typeof campaignCriteriaSchema>;
@@ -113,8 +118,9 @@ export const campaignDocSchema = z.object({
 
   // Which platforms this programme actually runs on - an operational
   // fact, not a targeting preference (see campaignCriteriaSchema's own
-  // comment for the distinction).
-  platforms: z.array(campaignPlatformSchema).max(20).default([]),
+  // comment for the distinction). Normalized platform identifiers, same
+  // shared contract Partner Account uses - never a closed enum.
+  platforms: campaignPlatformsArraySchema.default([]),
   startDate: z.string().min(1),
   endDate: z.string().min(1),
   regionIds: z.array(z.string().min(1)).max(50).default([]),

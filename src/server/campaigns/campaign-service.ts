@@ -9,10 +9,11 @@ import { generateCampaignRef, generateCampaignResourceRef } from "./ids";
 import { evaluateCampaignReadiness } from "./readiness";
 import { requireCampaignInScope, requireCampaignsAccess, requireCampaignsFeatureAccess } from "./campaigns-gate";
 import { listCampaignEvents, writeCampaignEvent, type CampaignEventListCursor } from "./campaign-events";
+import { normalizePlatformIdentifier } from "@/server/shared/platform";
 import {
   campaignCriteriaSchema,
   campaignDocSchema,
-  campaignPlatformSchema,
+  campaignPlatformsArraySchema,
   campaignResourceTypeSchema,
   campaignsInvalidInputResult,
   campaignsUnauthorizedResult,
@@ -49,7 +50,7 @@ const createCampaignInputSchema = z
   .object({
     name: z.string().min(1).max(200),
     objective: z.string().min(1).max(2000),
-    platforms: z.array(campaignPlatformSchema).max(20).optional(),
+    platforms: campaignPlatformsArraySchema.optional(),
     startDate: z.string().min(1),
     endDate: z.string().min(1),
     regionIds: z.array(z.string().min(1)).max(50).optional(),
@@ -151,7 +152,10 @@ export async function listCampaigns(actor: ActorContext | null, input: ListCampa
     status: input.status,
     namePrefix: input.namePrefix?.toLowerCase(),
     region: input.region,
-    platform: input.platform,
+    // Stored platform values are always normalized (see
+    // @/server/shared/platform) - an un-normalized filter value would
+    // silently never match.
+    platform: input.platform ? normalizePlatformIdentifier(input.platform) : undefined,
     ownerUid: input.assignedToMe ? actor!.uid : undefined,
   });
 
@@ -164,7 +168,7 @@ const editCampaignInputSchema = z
   .object({
     name: z.string().min(1).max(200).optional(),
     objective: z.string().min(1).max(2000).optional(),
-    platforms: z.array(campaignPlatformSchema).max(20).optional(),
+    platforms: campaignPlatformsArraySchema.optional(),
     startDate: z.string().min(1).optional(),
     endDate: z.string().min(1).optional(),
     regionIds: z.array(z.string().min(1)).max(50).optional(),

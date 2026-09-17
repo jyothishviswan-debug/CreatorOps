@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 
+import { normalizePlatformIdentifier } from "@/server/shared/platform";
+
 // The canonical normalized-account-identity algorithm (Step 7A section
 // 3, corrected in Step 7A.1). Represents the CURRENT strongest external
 // identity evidence available for an account - not a value frozen at
@@ -36,9 +38,10 @@ export type IdentityEvidence = {
   handle?: string | null;
 };
 
-function normalizePlatform(value: string): string {
-  return value.trim().toLowerCase();
-}
+// Step 9A.1: extracted to @/server/shared/platform so Campaigns can speak
+// the exact same platform-identifier language - re-exported under its
+// original local name here so nothing else in this file changes.
+const normalizePlatform = normalizePlatformIdentifier;
 
 function normalizePlatformAccountId(value: string): string {
   return value.trim().toLowerCase();

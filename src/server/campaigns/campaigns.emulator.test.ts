@@ -69,7 +69,7 @@ async function createRealCampaign(head: ActorContext, overrides: Record<string, 
     {
       name: uniqueName("Real Campaign"),
       objective: "A real objective for a real Campaign.",
-      platforms: ["INSTAGRAM"],
+      platforms: ["instagram"],
       startDate: "2026-01-01",
       endDate: "2026-06-01",
       regionIds: ["Kerala"],
@@ -123,21 +123,66 @@ describe("Campaign contract", () => {
     expect(badEdit.code).toBe("invalid_input");
   });
 
-  it("rejects an invalid platform and an invalid review policy", async () => {
+  it("platform identity: normalizes case/whitespace, is stable, rejects whitespace-only and post-normalization duplicates, and never rejects an ordinary un-catalogued platform name", async () => {
     const head = await actorFor("partnership_head");
-    const badPlatform = await createCampaign(
-      head,
-      { name: uniqueName("Bad Platform"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", platforms: ["MYSPACE"], defaultReviewPolicy: "REVIEW_REQUIRED" },
-      "req-bad-platform",
-    );
-    expect(badPlatform.ok).toBe(false);
 
+    // No invented catalog - "myspace" is not a "known" platform anywhere
+    // in this repo, and must still be accepted (Step 9A.1's whole point).
+    const uncatalogued = await createCampaign(
+      head,
+      { name: uniqueName("Uncatalogued Platform"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", platforms: ["  MySpace  "], defaultReviewPolicy: "REVIEW_REQUIRED" },
+      "req-uncatalogued-platform",
+    );
+    expect(uncatalogued.ok).toBe(true);
+    if (!uncatalogued.ok) throw new Error("unreachable");
+    expect(uncatalogued.data.platforms).toEqual(["myspace"]); // trimmed + lowercased
+
+    const whitespaceOnly = await createCampaign(
+      head,
+      { name: uniqueName("Whitespace Platform"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", platforms: ["   "], defaultReviewPolicy: "REVIEW_REQUIRED" },
+      "req-whitespace-platform",
+    );
+    expect(whitespaceOnly.ok).toBe(false);
+    if (whitespaceOnly.ok) throw new Error("unreachable");
+    expect(whitespaceOnly.code).toBe("invalid_input");
+
+    const duplicate = await createCampaign(
+      head,
+      { name: uniqueName("Duplicate Platform"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", platforms: ["Instagram", "instagram"], defaultReviewPolicy: "REVIEW_REQUIRED" },
+      "req-duplicate-platform",
+    );
+    expect(duplicate.ok).toBe(false);
+    if (duplicate.ok) throw new Error("unreachable");
+    expect(duplicate.code).toBe("invalid_input");
+  });
+
+  it("rejects an invalid review policy", async () => {
+    const head = await actorFor("partnership_head");
     const badPolicy = await createCampaign(
       head,
       { name: uniqueName("Bad Policy"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "SOMETIMES" },
       "req-bad-policy",
     );
     expect(badPolicy.ok).toBe(false);
+  });
+
+  it("criteria.platforms shares the exact same normalization/validation as top-level platforms", async () => {
+    const head = await actorFor("partnership_head");
+    const result = await createCampaign(
+      head,
+      { name: uniqueName("Criteria Platform"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "REVIEW_REQUIRED", criteria: { platforms: ["  YouTube  "] } },
+      "req-criteria-platform",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.criteria.platforms).toEqual(["youtube"]);
+
+    const badCriteriaPlatform = await createCampaign(
+      head,
+      { name: uniqueName("Bad Criteria Platform"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "REVIEW_REQUIRED", criteria: { platforms: ["  "] } },
+      "req-bad-criteria-platform",
+    );
+    expect(badCriteriaPlatform.ok).toBe(false);
   });
 
   it("resource contract: rejects an invalid resource type, accepts a valid one, and enforces the bounded max", async () => {

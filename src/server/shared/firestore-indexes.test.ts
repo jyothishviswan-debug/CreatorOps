@@ -3,6 +3,7 @@ import path from "node:path";
 import { describe, expect, it } from "vitest";
 
 import type { ScopeGrant } from "@/server/authz/types";
+import { planCampaignListQuery } from "@/server/campaigns/firestore";
 import { planPartnerListQuery } from "@/server/partners/firestore";
 import { planVendorListQuery } from "@/server/vendors/firestore";
 import type { FirestoreFieldFilter, FirestoreListBranchPlan } from "./scoped-list";
@@ -87,6 +88,38 @@ describe("firestore.indexes.json - Vendors", () => {
     expect(hasIndex("vendors", [{ fieldPath: "ownerUid", order: "ASCENDING" }, displayNameLowerAsc])).toBe(true);
     expect(hasIndex("vendors", [{ fieldPath: "regionIds", arrayConfig: "CONTAINS" }, displayNameLowerAsc])).toBe(true);
     expect(hasIndex("vendors", [{ fieldPath: "teamIds", arrayConfig: "CONTAINS" }, displayNameLowerAsc])).toBe(true);
+  });
+});
+
+describe("firestore.indexes.json - Campaigns", () => {
+  // listCampaignDocs's {SELF, REGION, TEAM} scope branches x
+  // {createdAt-desc order} - see src/server/campaigns/firestore.ts's
+  // listCampaignDocs. Step 9A.1: `platforms` is a normalized string
+  // array (never a closed enum) but the INDEX SHAPE is unaffected - it
+  // was already `arrayConfig: CONTAINS` on a plain string field before
+  // and after that correction.
+  it("has the SELF/REGION/TEAM scope-branch x createdAt-desc grid", () => {
+    expect(hasIndex("campaigns", [{ fieldPath: "ownerUid", order: "ASCENDING" }, createdAtDesc])).toBe(true);
+    expect(hasIndex("campaigns", [{ fieldPath: "regionIds", arrayConfig: "CONTAINS" }, createdAtDesc])).toBe(true);
+    expect(hasIndex("campaigns", [{ fieldPath: "teamIds", arrayConfig: "CONTAINS" }, createdAtDesc])).toBe(true);
+  });
+
+  it("has the status + scope-branch x createdAt-desc grid", () => {
+    expect(hasIndex("campaigns", [{ fieldPath: "status", order: "ASCENDING" }, { fieldPath: "ownerUid", order: "ASCENDING" }, createdAtDesc])).toBe(true);
+    expect(hasIndex("campaigns", [{ fieldPath: "status", order: "ASCENDING" }, { fieldPath: "regionIds", arrayConfig: "CONTAINS" }, createdAtDesc])).toBe(true);
+    expect(hasIndex("campaigns", [{ fieldPath: "status", order: "ASCENDING" }, { fieldPath: "teamIds", arrayConfig: "CONTAINS" }, createdAtDesc])).toBe(true);
+    expect(hasIndex("campaigns", [{ fieldPath: "status", order: "ASCENDING" }, { fieldPath: "platforms", arrayConfig: "CONTAINS" }, createdAtDesc])).toBe(true);
+  });
+
+  it("has a standalone createdAt-desc index for platforms (the business filter dimension, distinct from the scope branches)", () => {
+    expect(hasIndex("campaigns", [{ fieldPath: "platforms", arrayConfig: "CONTAINS" }, createdAtDesc])).toBe(true);
+  });
+
+  it("has the SELF/REGION/TEAM/platforms x nameLower-asc grid (search order)", () => {
+    expect(hasIndex("campaigns", [{ fieldPath: "ownerUid", order: "ASCENDING" }, { fieldPath: "nameLower", order: "ASCENDING" }])).toBe(true);
+    expect(hasIndex("campaigns", [{ fieldPath: "regionIds", arrayConfig: "CONTAINS" }, { fieldPath: "nameLower", order: "ASCENDING" }])).toBe(true);
+    expect(hasIndex("campaigns", [{ fieldPath: "teamIds", arrayConfig: "CONTAINS" }, { fieldPath: "nameLower", order: "ASCENDING" }])).toBe(true);
+    expect(hasIndex("campaigns", [{ fieldPath: "platforms", arrayConfig: "CONTAINS" }, { fieldPath: "nameLower", order: "ASCENDING" }])).toBe(true);
   });
 });
 
@@ -218,5 +251,34 @@ describe("firestore.indexes.json - planner-to-index mapping", () => {
 
     const { plan: vendorsPlan } = planVendorListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, region: "Tamil Nadu" });
     expect(hasIndexForBranch("vendors", firestoreBranch(vendorsPlan, "team"))).toBe(true);
+  });
+
+  // Step 9A.1 section 5: re-certifies that the real Campaign planner's
+  // output (self/region/team branches, with and without status, and with
+  // the platform business filter pushed where its array-filter budget
+  // allows) still maps to a source-controlled index - platform values
+  // themselves are now normalized strings rather than enum members, but
+  // the QUERY SHAPE (and therefore every certified index) is unchanged.
+  it("Campaigns: self/region/team branches (createdAt order, and with status) each map to a certified index", () => {
+    const grants: ScopeGrant[] = [self(), region("Kerala"), team("t1")];
+    const { plan } = planCampaignListQuery({ actorUid: "actor-uid", grants, hasGlobal: false });
+    expect(hasIndexForBranch("campaigns", firestoreBranch(plan, "self"))).toBe(true);
+    expect(hasIndexForBranch("campaigns", firestoreBranch(plan, "region"))).toBe(true);
+    expect(hasIndexForBranch("campaigns", firestoreBranch(plan, "team"))).toBe(true);
+
+    const { plan: withStatus } = planCampaignListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, status: "ACTIVE" });
+    expect(hasIndexForBranch("campaigns", firestoreBranch(withStatus, "self"))).toBe(true);
+    expect(hasIndexForBranch("campaigns", firestoreBranch(withStatus, "region"))).toBe(true);
+    expect(hasIndexForBranch("campaigns", firestoreBranch(withStatus, "team"))).toBe(true);
+  });
+
+  it("Campaigns: a self branch with the platform filter pushed (no region selected) maps to the standalone platforms+createdAt index", () => {
+    const { plan } = planCampaignListQuery({ actorUid: "actor-uid", grants: [self()], hasGlobal: false, platform: "youtube" });
+    expect(hasIndexForBranch("campaigns", firestoreBranch(plan, "self"))).toBe(true);
+  });
+
+  it("Campaigns: a team branch with both region and platform selected needs only its own teamIds+createdAt index - both business filters are postFilters, never leading index fields", () => {
+    const { plan } = planCampaignListQuery({ actorUid: "actor-uid", grants: [team("t1")], hasGlobal: false, region: "Tamil Nadu", platform: "x" });
+    expect(hasIndexForBranch("campaigns", firestoreBranch(plan, "team"))).toBe(true);
   });
 });
