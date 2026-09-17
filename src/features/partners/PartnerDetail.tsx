@@ -14,6 +14,7 @@ import { PartnerAccountsPanel } from "./PartnerAccountsPanel";
 import { PartnerLifecyclePanel } from "./PartnerLifecyclePanel";
 import { PartnerOwnerTeamPanel } from "./PartnerOwnerTeamPanel";
 import { PartnerRestrictedIdentityPanel } from "./PartnerRestrictedIdentityPanel";
+import { PartnerVendorRelationshipsPanel } from "./PartnerVendorRelationshipsPanel";
 
 type TabKey = "overview" | "accounts" | "relationships" | "activity" | "restricted" | "context";
 
@@ -183,12 +184,7 @@ export function PartnerDetail({ initialPartner }: { initialPartner: PartnerDto }
 
       {selectedTab === "relationships" && (
         <PanelGrid>
-          <Panel span={12}>
-            <PanelHead title="Relationships" description="Vendors are not implemented yet." />
-            <PanelBody>
-              <EmptyState title="Vendor relationships will be available in the Vendors phase" description="Nothing is fabricated here - no Vendor records can be created from Partners." icon="brief" />
-            </PanelBody>
-          </Panel>
+          <PartnerVendorRelationshipsPanel partnerRef={partner.partnerRef} />
         </PanelGrid>
       )}
 

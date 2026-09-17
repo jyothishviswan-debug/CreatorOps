@@ -524,14 +524,24 @@ test.describe("Discovery provenance", () => {
   });
 });
 
-// ---- Relationships (Vendors truthful-unavailable) ----
+// ---- Relationships (Step 8B: real Vendor relationship slice) ----
 
 test.describe("Relationships", () => {
-  test("shows a truthful Vendors-unavailable state, never fabricated data", async ({ page }) => {
+  test("shows an honest empty state for a Partner with no Vendor relationships, never fabricated data", async ({ page }) => {
     const partner = await createPartnerViaApi(page);
     await page.goto(`/partners/${partner.partnerRef}`);
     await page.getByRole("tab", { name: "Relationships" }).click();
-    await expect(page.getByText("Vendor relationships will be available in the Vendors phase")).toBeVisible();
+    await expect(page.getByText("No Vendor relationships yet")).toBeVisible({ timeout: 5000 });
+  });
+
+  test("shows the real Vendor relationship rows for a Partner that has them, with a link to the Vendor when directly authorized", async ({ page }) => {
+    // creator-house is seeded with two real Vendor relationships (see
+    // seed-vendors-data.ts) - Super Admin (GLOBAL scope) can reach both
+    // the Partner and the linked Vendors directly.
+    await page.goto("/partners/creator-house");
+    await page.getByRole("tab", { name: "Relationships" }).click();
+    await expect(page.getByText("Northline Talent Agency")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByRole("link", { name: "Open Vendor" }).first()).toBeVisible();
   });
 });
 

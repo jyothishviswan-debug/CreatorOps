@@ -173,7 +173,11 @@ export function planVendorListQuery(options: VendorListQueryOptions): { plan: Li
     orderField = "displayNameLower";
     orderDirection = "asc";
     sharedFilters.push({ field: "displayNameLower", op: ">=", value: options.displayNamePrefix });
-    sharedFilters.push({ field: "displayNameLower", op: "<", value: options.displayNamePrefix });
+    // The standard Firestore "prefix range" upper bound - see Discovery's
+    // planLeadListQuery for why this can't just be the bare prefix again
+    // (that combination is never satisfiable - Step 8B found and fixed
+    // this while building the Vendor<->Partner picker).
+    sharedFilters.push({ field: "displayNameLower", op: "<", value: `${options.displayNamePrefix}` });
   }
 
   const regionArrayContains: FirestoreFieldFilter | null = options.region ? { field: "regionIds", op: "array-contains", value: options.region } : null;

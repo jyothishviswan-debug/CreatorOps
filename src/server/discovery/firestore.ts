@@ -155,7 +155,15 @@ export function planLeadListQuery(options: LeadListQueryOptions): { plan: ListQu
     orderField = "displayNameLower";
     orderDirection = "asc";
     sharedFilters.push({ field: "displayNameLower", op: ">=", value: options.displayNamePrefix });
-    sharedFilters.push({ field: "displayNameLower", op: "<", value: options.displayNamePrefix });
+    // The standard Firestore "prefix range" upper bound -  sorts
+    // after every realistic character, so this matches every string
+    // starting with the prefix. A prior version of this filter used the
+    // bare prefix as BOTH bounds (`>= prefix AND < prefix`), which is
+    // mathematically never satisfiable - name search returned zero
+    // results unconditionally. Found and fixed during Step 8B while
+    // building the Vendor<->Partner picker, which depends on this
+    // actually working.
+    sharedFilters.push({ field: "displayNameLower", op: "<", value: `${options.displayNamePrefix}` });
   } else if (options.followUpDue) {
     orderField = "outreachSummary.nextFollowUpAt";
     orderDirection = "asc";

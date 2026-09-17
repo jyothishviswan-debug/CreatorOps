@@ -129,3 +129,16 @@ export function toPartnerAccountDto(doc: PartnerAccountDoc): PartnerAccountDto {
   delete rest.uid;
   return rest as PartnerAccountDto;
 }
+
+// A safe, minimal Partner label for embedding inside rows returned from
+// the VENDOR side (see vendor-partner-link-service.ts's listLinksForVendor) -
+// mirrors Vendors' own VendorSafeLabelDto/toVendorSafeLabelDto exactly, in
+// the reverse direction. Deliberately never the full PartnerDto, which
+// would require Partner-side scope the Vendor-scoped actor managing that
+// link may not hold - Step 8A section 7's scope-escalation-bridge rule
+// applies symmetrically in both directions.
+export type PartnerSafeLabelDto = { partnerRef: string; displayName: string; regionIds: string[] };
+
+export function toPartnerSafeLabelDto(doc: PartnerDoc): PartnerSafeLabelDto {
+  return { partnerRef: doc.partnerRef, displayName: doc.displayName, regionIds: doc.regionIds };
+}

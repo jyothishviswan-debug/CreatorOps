@@ -3,7 +3,8 @@ import { z } from "zod";
 import type { ActorContext } from "@/server/authz/types";
 import { getPartnerDocByRef } from "@/server/partners/firestore";
 import { requirePartnerInScope } from "@/server/partners/partners-gate";
-import { toVendorPartnerLinkDto, toVendorSafeLabelDto, type PartnerVendorLinkDto, type VendorPartnerLinkDto } from "./client-dto";
+import { toPartnerSafeLabelDto } from "@/server/partners/client-dto";
+import { toVendorPartnerLinkDto, toVendorSafeLabelDto, type PartnerVendorLinkDto, type VendorPartnerLinkDto, type VendorPartnerLinkWithPartnerDto } from "./client-dto";
 import { getVendorDocByRef, getVendorPartnerLinkDocByRef, listVendorPartnerLinkDocsForPartner, listVendorPartnerLinkDocsForVendor, runVendorPartnerLinkMutation, vendorPartnerLinksCollection } from "./firestore";
 import { generateVendorPartnerLinkRef } from "./ids";
 import { requireVendorInScope, requireVendorsAccess } from "./vendors-gate";
@@ -239,7 +240,16 @@ export async function restoreVendorPartnerLink(actor: ActorContext | null, linkR
 
 // ---- Read: Vendor side ----
 
-export async function listLinksForVendor(actor: ActorContext | null, vendorRef: unknown): Promise<VendorsServiceResult<VendorPartnerLinkDto[]>> {
+// Resolves each link's safe Partner label (name/regionIds only, never
+// the full PartnerDto) via the existing getPartnerDocByRef, batched so
+// each distinct partnerRef is read at most once regardless of link
+// count - mirrors listVendorLinksForPartner's own Vendor-label
+// resolution exactly, in the reverse direction. Deliberately never
+// routed through Partner-side scope: a Vendor-scoped actor managing this
+// Vendor's own relationships must see every linked Partner's safe label
+// even without independently holding Partner-side scope for it (Step 8A
+// section 7's scope-escalation-bridge rule cuts both ways).
+export async function listLinksForVendor(actor: ActorContext | null, vendorRef: unknown): Promise<VendorsServiceResult<VendorPartnerLinkWithPartnerDto[]>> {
   const gate = await requireVendorsAccess(actor, "manage_vendor_partner_relationships");
   // Reads use feature access, not a mutation action - but this function
   // is only ever called from the Vendor's own detail surface, which
@@ -258,7 +268,18 @@ export async function listLinksForVendor(actor: ActorContext | null, vendorRef: 
   if (!scopeCheck.ok) return vendorsUnauthorizedResult(scopeCheck.reason);
 
   const links = await listVendorPartnerLinkDocsForVendor(vendor.vendorRef);
-  return { ok: true, data: links.map(toVendorPartnerLinkDto) };
+
+  const uniquePartnerRefs = [...new Set(links.map((l) => l.partnerRef))];
+  const partnerEntries = await Promise.all(uniquePartnerRefs.map(async (ref) => [ref, await getPartnerDocByRef(ref)] as const));
+  const partnersByRef = new Map(partnerEntries);
+
+  const result: VendorPartnerLinkWithPartnerDto[] = [];
+  for (const link of links) {
+    const partner = partnersByRef.get(link.partnerRef);
+    if (!partner) continue; // A dangling link (its Partner was somehow removed) is simply omitted, never fabricated.
+    result.push({ ...toVendorPartnerLinkDto(link), partner: toPartnerSafeLabelDto(partner) });
+  }
+  return { ok: true, data: result };
 }
 
 // ---- Read: Partner side (Step 8A section 10) ----

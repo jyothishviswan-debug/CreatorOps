@@ -32,10 +32,10 @@ for (const { workspace, back } of WORKSPACE_TO_DETAIL) {
 // explicit product direction). Their Overview's Recent Activity panel
 // links directly to real detail records, so the detail pattern is
 // exercised via those known hrefs instead of a workspace table.
-// Partners moved out of this list in Step 7B - it now has a real
-// dedicated Workspace and Detail page, covered by tests/e2e/partners.spec.ts.
+// Partners moved out of this list in Step 7B, and Vendors in Step 8B -
+// each now has a real dedicated Workspace and Detail page, covered by
+// tests/e2e/partners.spec.ts and tests/e2e/vendors.spec.ts respectively.
 const OVERVIEW_DETAIL_LINKS: { detail: string; back: string }[] = [
-  { detail: "/vendors/creator-house", back: "/vendors" },
   { detail: "/campaigns/civic-voices", back: "/campaigns" },
   { detail: "/partner-reviews/ananya-rao", back: "/partner-reviews" },
   { detail: "/reports/monthly-partner-review", back: "/reports" },

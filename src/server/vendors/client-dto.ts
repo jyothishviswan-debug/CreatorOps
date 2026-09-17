@@ -119,3 +119,10 @@ export function toVendorSafeLabelDto(doc: VendorDoc): VendorSafeLabelDto {
 }
 
 export type PartnerVendorLinkDto = VendorPartnerLinkDto & { vendor: VendorSafeLabelDto };
+
+// The Vendor-side mirror of PartnerVendorLinkDto - a link row plus a safe
+// minimal Partner label (see @/server/partners/client-dto.ts's
+// PartnerSafeLabelDto), used by listLinksForVendor so the Vendor's own
+// Relationships tab can show "linked Partner" without requiring the
+// Vendor-scoped actor to also hold Partner-side scope for that Partner.
+export type VendorPartnerLinkWithPartnerDto = VendorPartnerLinkDto & { partner: { partnerRef: string; displayName: string; regionIds: string[] } };
