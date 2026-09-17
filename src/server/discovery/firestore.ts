@@ -15,6 +15,7 @@ import {
   type ListQueryPlan,
   type MergeCandidate,
   type SortDirection,
+  toValueArray,
 } from "@/server/shared/scoped-list";
 import { leadDocSchema, leadRestrictedKycDocSchema, type LeadDoc, type LeadRestrictedKycDoc } from "./types";
 
@@ -117,7 +118,7 @@ export type LeadListQueryOptions = {
   grants: ScopeGrant[];
   hasGlobal: boolean;
   lifecycle?: string;
-  region?: string;
+  region?: string | string[];
   platform?: string;
   assignedToMe?: boolean;
   displayNamePrefix?: string;
@@ -137,12 +138,19 @@ export type LeadListQueryOptions = {
 // assertProductionValidPlan, called from listLeadDocs before any read) -
 // see scoped-list.ts's own header comment for the full design rationale.
 //
-// Discovery's `region`/`teamId` are single scalar fields (`in` for scope
-// grants, `==` for the operator's own filter) - unlike Partners'/
-// Vendors' array-valued regionIds/teamIds, an `in` and a same-field `==`
-// filter don't hit Firestore's "one array/IN-type filter per query"
-// restriction, so only the REGION branch (not TEAM) ever needs the
-// simplify-or-drop treatment below.
+// Discovery's `regionIds` is array-valued (matching Partners'/Vendors'/
+// Campaigns' own shape) - `array-contains-any` for scope grants AND for
+// the operator's own filter (which may now select multiple regions;
+// widened from a single scalar `region` field). `teamId` stays scalar
+// (`in` for scope grants, `==` for the operator's
+// filter) - a scalar `in`/`==` never counts against the "one array-type
+// filter per Firestore query" budget the way array-contains/
+// array-contains-any do (see scoped-list.ts's assertProductionValidPlan),
+// so only the REGION branch (never TEAM) ever needs the
+// simplify-or-drop treatment below. No branch below ever pushes both the
+// operator's own region filter AND the REGION branch's own grant filter
+// together, so the one-array-filter-per-branch budget is always
+// respected.
 export function planLeadListQuery(options: LeadListQueryOptions): { plan: ListQueryPlan; orderField: string; orderDirection: SortDirection } {
   const sharedFilters: FirestoreFieldFilter[] = [];
   if (options.lifecycle) sharedFilters.push({ field: "lifecycle", op: "==", value: options.lifecycle });
@@ -170,7 +178,8 @@ export function planLeadListQuery(options: LeadListQueryOptions): { plan: ListQu
     sharedFilters.push({ field: "outreachSummary.nextFollowUpAt", op: "<=", value: new Date().toISOString() });
   }
 
-  const regionEquality: FirestoreFieldFilter | null = options.region ? { field: "region", op: "==", value: options.region } : null;
+  const requestedRegions = toValueArray(options.region);
+  const regionEquality: FirestoreFieldFilter | null = requestedRegions.length > 0 ? { field: "regionIds", op: "array-contains-any", value: requestedRegions } : null;
   const branches: ListBranchPlan[] = [];
 
   const explicitLeadUids = [
@@ -197,9 +206,9 @@ export function planLeadListQuery(options: LeadListQueryOptions): { plan: ListQu
   const selfGranted = options.grants.some((g) => g.type === "SELF");
   const grantedRegions = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
   const grantedTeams = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
-  const regionFilterGranted = options.region ? grantedRegions.includes(options.region) : false;
+  const regionFilterGranted = requestedRegions.length > 0 && requestedRegions.every((r) => grantedRegions.includes(r));
 
-  if (options.region && regionFilterGranted) {
+  if (requestedRegions.length > 0 && regionFilterGranted) {
     // The REGION grant alone authorizes every Lead in this region,
     // regardless of ownerUid/teamId - a strict superset of what
     // SELF/TEAM/EXPLICIT_RECORD could otherwise contribute once also
@@ -210,7 +219,7 @@ export function planLeadListQuery(options: LeadListQueryOptions): { plan: ListQu
   }
 
   const selfExclude: FirestoreFieldFilter = { field: "ownerUid", op: "==", value: options.actorUid };
-  const regionExclude: FirestoreFieldFilter | null = grantedRegions.length > 0 ? { field: "region", op: "in", value: grantedRegions } : null;
+  const regionExclude: FirestoreFieldFilter | null = grantedRegions.length > 0 ? { field: "regionIds", op: "array-contains-any", value: grantedRegions } : null;
   const teamExclude: FirestoreFieldFilter | null = grantedTeams.length > 0 ? { field: "teamId", op: "in", value: grantedTeams } : null;
 
   if (selfGranted) {
@@ -231,7 +240,7 @@ export function planLeadListQuery(options: LeadListQueryOptions): { plan: ListQu
   // "main". Excludes anything the (higher-priority) "self" branch would
   // already surface, keeping branches disjoint without cross-branch
   // dedup.
-  if (!options.region && regionExclude) {
+  if (requestedRegions.length === 0 && regionExclude) {
     branches.push({
       kind: "firestore-query",
       name: "region",
@@ -249,7 +258,7 @@ export function planLeadListQuery(options: LeadListQueryOptions): { plan: ListQu
       name: "team",
       pushedFilters: [teamExclude, ...sharedFilters, ...(regionEquality ? [regionEquality] : [])],
       postFilters: [],
-      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(!options.region && regionExclude ? [regionExclude] : [])],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(requestedRegions.length === 0 && regionExclude ? [regionExclude] : [])],
       orderField,
       orderDirection,
     });

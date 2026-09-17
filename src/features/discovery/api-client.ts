@@ -78,10 +78,16 @@ async function call<T>(input: string, init?: RequestInit): Promise<DiscoveryApiR
   return { ok: false, status: res.status, code, error, blockers };
 }
 
-function query(params: Record<string, string | undefined>): string {
-  const usable = Object.entries(params).filter((entry): entry is [string, string] => entry[1] !== undefined);
-  if (usable.length === 0) return "";
-  return `?${new URLSearchParams(usable).toString()}`;
+function query(params: Record<string, string | string[] | undefined>): string {
+  const search = new URLSearchParams();
+  for (const [key, value] of Object.entries(params)) {
+    if (value === undefined) continue;
+    // A multi-select filter (e.g. region) sends one query param per
+    // value - the API route reads them back with getAll(key).
+    for (const v of Array.isArray(value) ? value : [value]) search.append(key, v);
+  }
+  const qs = search.toString();
+  return qs ? `?${qs}` : "";
 }
 
 // ---- Leads: list / get / create / edit ----

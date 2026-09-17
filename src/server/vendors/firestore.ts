@@ -15,6 +15,7 @@ import {
   type ListQueryPlan,
   type MergeCandidate,
   type SortDirection,
+  toValueArray,
 } from "@/server/shared/scoped-list";
 import { vendorDocSchema, vendorPartnerLinkDocSchema, type VendorDoc, type VendorPartnerLinkDoc } from "./types";
 
@@ -162,7 +163,7 @@ export type VendorListQueryOptions = {
   hasGlobal: boolean;
   status?: string;
   displayNamePrefix?: string;
-  region?: string;
+  region?: string | string[];
   ownerUid?: string;
   vendorType?: string;
 };
@@ -195,7 +196,8 @@ export function planVendorListQuery(options: VendorListQueryOptions): { plan: Li
     sharedFilters.push({ field: "displayNameLower", op: "<", value: `${options.displayNamePrefix}` });
   }
 
-  const regionArrayContains: FirestoreFieldFilter | null = options.region ? { field: "regionIds", op: "array-contains", value: options.region } : null;
+  const requestedRegions = toValueArray(options.region);
+  const regionArrayContains: FirestoreFieldFilter | null = requestedRegions.length > 0 ? { field: "regionIds", op: "array-contains-any", value: requestedRegions } : null;
   const branches: ListBranchPlan[] = [];
 
   const explicitVendorUids = [
@@ -218,9 +220,9 @@ export function planVendorListQuery(options: VendorListQueryOptions): { plan: Li
   const selfGranted = options.grants.some((g) => g.type === "SELF");
   const grantedRegions = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
   const grantedTeams = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
-  const regionFilterGranted = options.region ? grantedRegions.includes(options.region) : false;
+  const regionFilterGranted = requestedRegions.length > 0 && requestedRegions.every((r) => grantedRegions.includes(r));
 
-  if (options.region && regionFilterGranted) {
+  if (requestedRegions.length > 0 && regionFilterGranted) {
     branches.push({ kind: "firestore-query", name: "main", pushedFilters: [...sharedFilters, regionArrayContains!], postFilters: [], excludePostFilters: [], orderField, orderDirection });
     return { plan: { branches }, orderField, orderDirection };
   }
@@ -241,7 +243,7 @@ export function planVendorListQuery(options: VendorListQueryOptions): { plan: Li
     });
   }
 
-  if (!options.region && regionExclude) {
+  if (requestedRegions.length === 0 && regionExclude) {
     branches.push({
       kind: "firestore-query",
       name: "region",
@@ -258,8 +260,8 @@ export function planVendorListQuery(options: VendorListQueryOptions): { plan: Li
       kind: "firestore-query",
       name: "team",
       pushedFilters: [teamExclude, ...sharedFilters],
-      postFilters: options.region ? [regionArrayContains!] : [],
-      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(!options.region && regionExclude ? [regionExclude] : [])],
+      postFilters: requestedRegions.length > 0 ? [regionArrayContains!] : [],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(requestedRegions.length === 0 && regionExclude ? [regionExclude] : [])],
       orderField,
       orderDirection,
     });

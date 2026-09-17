@@ -3,20 +3,11 @@
 import { useState, type FormEvent } from "react";
 
 import { Field, Fields } from "@/ui/Form";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import type { VendorDto } from "@/server/vendors/client-dto";
 import { VENDOR_TYPES, type VendorType } from "@/server/vendors/types";
 import { editVendor } from "./api-client";
 import { VENDOR_TYPE_LABELS } from "./format";
-
-function toCsv(values: string[]): string {
-  return values.join(", ");
-}
-function fromCsv(value: string): string[] {
-  return value
-    .split(",")
-    .map((v) => v.trim())
-    .filter(Boolean);
-}
 
 // Ordinary profile editing, wired to the trusted versioned PATCH -
 // editable ordinary fields only (never lifecycle, never owner/team,
@@ -33,7 +24,7 @@ export function VendorProfileEditPanel({ vendor, onSaved }: { vendor: VendorDto;
   const [vendorType, setVendorType] = useState<VendorType>(vendor.vendorType);
   const [email, setEmail] = useState(vendor.email ?? "");
   const [phone, setPhone] = useState(vendor.phone ?? "");
-  const [regions, setRegions] = useState(toCsv(vendor.regionIds));
+  const [regions, setRegions] = useState<string[]>(vendor.regionIds);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [stale, setStale] = useState(false);
@@ -49,7 +40,7 @@ export function VendorProfileEditPanel({ vendor, onSaved }: { vendor: VendorDto;
       vendorType,
       email: email.trim() || null,
       phone: phone.trim() || null,
-      regionIds: fromCsv(regions),
+      regionIds: regions,
       expectedVersion: vendor.version,
     });
     setSaving(false);
@@ -105,10 +96,10 @@ export function VendorProfileEditPanel({ vendor, onSaved }: { vendor: VendorDto;
         <Field label="Phone number">
           <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
         </Field>
-        <Field label="Regions">
-          <input type="text" value={regions} onChange={(e) => setRegions(e.target.value)} placeholder="Kerala, Karnataka" />
-        </Field>
       </Fields>
+      <Field label="Regions" full>
+        <RegionMultiSelect value={regions} onChange={setRegions} />
+      </Field>
 
       {error && (
         <div className="banner" role="alert" style={{ marginTop: 10 }}>

@@ -1,7 +1,7 @@
 import type { ActionId } from "@/server/authz/actions";
 import { canAccessFeature, canPerformAction } from "@/server/authz/capabilities";
 import { canAccessSensitive } from "@/server/authz/sensitive";
-import { getActorScopeGrants, isResourceInScope } from "@/server/authz/scope";
+import { getActorScopeGrants, hasGlobalScope, isExplicitRecordInScope, isRegionInScope, isSelfInScope, isTeamInScope } from "@/server/authz/scope";
 import type { ActorContext } from "@/server/authz/types";
 import type { DiscoveryDenialReason } from "./types";
 
@@ -40,21 +40,26 @@ export async function requireDiscoveryFeatureAccess(actor: ActorContext | null):
   return hasFeature ? { ok: true } : { ok: false, reason: "feature_denied" };
 }
 
-// Record Scope, applied to one already-loaded Lead. Built entirely out
-// of the existing Step 4C primitives (isResourceInScope) - the Lead's
-// own ownerUid/region/teamId double as its scope dimensions, and
+// Record Scope, applied to one already-loaded Lead. The Lead's own
+// ownerUid/regionIds/teamId double as its scope dimensions, and
 // EXPLICIT_RECORD grants match against resourceType "lead" + the Lead's
 // internal uid (never exposed to the browser, but scope grants are
-// managed server-side by Administration regardless).
-export async function requireLeadInScope(actor: ActorContext, lead: { uid: string; ownerUid: string | null; region: string | null; teamId: string | null }): Promise<DiscoveryAccessResult> {
+// managed server-side by Administration regardless). `regionIds` is an
+// array (widened from a single scalar `region`) - matches ANY granted
+// region, same idiom as Partners'/Vendors'/Campaigns' own requireXInScope.
+export async function requireLeadInScope(
+  actor: ActorContext,
+  lead: { uid: string; ownerUid: string | null; regionIds: string[]; teamId: string | null },
+): Promise<DiscoveryAccessResult> {
   const grants = await getActorScopeGrants(actor);
-  const inScope = isResourceInScope(grants, actor.uid, {
-    ownerUid: lead.ownerUid ?? undefined,
-    region: lead.region ?? undefined,
-    teamId: lead.teamId ?? undefined,
-    resourceType: "lead",
-    resourceId: lead.uid,
-  });
+
+  const inScope =
+    hasGlobalScope(grants) ||
+    isSelfInScope(grants, actor.uid, lead.ownerUid ?? undefined) ||
+    lead.regionIds.some((region) => isRegionInScope(grants, region)) ||
+    isTeamInScope(grants, lead.teamId ?? undefined) ||
+    isExplicitRecordInScope(grants, "lead", lead.uid);
+
   return inScope ? { ok: true } : { ok: false, reason: "scope_denied" };
 }
 

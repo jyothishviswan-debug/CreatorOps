@@ -15,6 +15,7 @@ import {
   type ListQueryPlan,
   type MergeCandidate,
   type SortDirection,
+  toValueArray,
 } from "@/server/shared/scoped-list";
 import {
   partnerAccountDocSchema,
@@ -165,7 +166,7 @@ export type PartnerListQueryOptions = {
   hasGlobal: boolean;
   status?: string;
   displayNamePrefix?: string;
-  region?: string;
+  region?: string | string[];
   ownerUid?: string;
   tier?: string;
   targetAudience?: string;
@@ -210,7 +211,8 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
     sharedFilters.push({ field: "displayNameLower", op: "<", value: `${options.displayNamePrefix}` });
   }
 
-  const regionArrayContains: FirestoreFieldFilter | null = options.region ? { field: "regionIds", op: "array-contains", value: options.region } : null;
+  const requestedRegions = toValueArray(options.region);
+  const regionArrayContains: FirestoreFieldFilter | null = requestedRegions.length > 0 ? { field: "regionIds", op: "array-contains-any", value: requestedRegions } : null;
   const branches: ListBranchPlan[] = [];
 
   const explicitPartnerUids = [
@@ -236,9 +238,9 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
   const selfGranted = options.grants.some((g) => g.type === "SELF");
   const grantedRegions = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
   const grantedTeams = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
-  const regionFilterGranted = options.region ? grantedRegions.includes(options.region) : false;
+  const regionFilterGranted = requestedRegions.length > 0 && requestedRegions.every((r) => grantedRegions.includes(r));
 
-  if (options.region && regionFilterGranted) {
+  if (requestedRegions.length > 0 && regionFilterGranted) {
     // The REGION grant alone authorizes every Partner in this region,
     // regardless of ownerUid/teamIds - a strict superset of what
     // SELF/TEAM/EXPLICIT could otherwise contribute once also filtered
@@ -268,7 +270,7 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
   // returned above) - array-contains-any can't combine with a selected
   // region's own array-contains on the same field. Excludes anything the
   // higher-priority "self" branch would already surface.
-  if (!options.region && regionExclude) {
+  if (requestedRegions.length === 0 && regionExclude) {
     branches.push({
       kind: "firestore-query",
       name: "region",
@@ -294,8 +296,8 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
       kind: "firestore-query",
       name: "team",
       pushedFilters: [teamExclude, ...sharedFilters],
-      postFilters: options.region ? [regionArrayContains!] : [],
-      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(!options.region && regionExclude ? [regionExclude] : [])],
+      postFilters: requestedRegions.length > 0 ? [regionArrayContains!] : [],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(requestedRegions.length === 0 && regionExclude ? [regionExclude] : [])],
       orderField,
       orderDirection,
     });

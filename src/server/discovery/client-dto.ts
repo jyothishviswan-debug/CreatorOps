@@ -31,7 +31,7 @@ export type LeadDto = {
   platform: string | null;
   handle: string | null;
   source: LeadSource;
-  region: string | null;
+  regionIds: string[];
   teamId: string | null;
   ownerRef: string | null;
   ownerDisplayName: string | null;
@@ -85,7 +85,7 @@ export async function toLeadDto(doc: LeadDoc): Promise<LeadDto> {
     platform: doc.platform,
     handle: doc.handle,
     source: doc.source,
-    region: doc.region,
+    regionIds: doc.regionIds,
     teamId: doc.teamId,
     ownerRef: owner.ref,
     ownerDisplayName: owner.displayName,

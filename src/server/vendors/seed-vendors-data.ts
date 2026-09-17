@@ -63,15 +63,17 @@ export async function seedVendorsData(): Promise<void> {
     };
   }
 
-  // Deliberately: no region grants Karnataka to Partnership Manager (see
-  // seed-access-data.ts's SCOPE_GRANTS - Manager has Kerala/Maharashtra/
-  // South/West only), so seed-vendor-agency and seed-vendor-manager are
-  // cross-scope for Manager despite creator-house (which they're linked
-  // to) being Manager-visible via its own PARTNER-type grant - the exact
-  // "a visible Partner relationship must not bridge into unrelated
-  // Vendor scope" proof Step 8A section 7 asks for, in the other
-  // direction (a Vendor's own scope is never inferred from a linked
-  // Partner's scope either).
+  // Deliberately: Partnership Manager's own region expansion explicitly
+  // carves out Karnataka (see seed-access-data.ts's SCOPE_GRANTS comment)
+  // precisely so seed-vendor-agency stays cross-scope for Manager despite
+  // creator-house (which it's linked to) being Manager-visible via its
+  // own PARTNER-type grant - the exact "a visible Partner relationship
+  // must not bridge into unrelated Vendor scope" proof Step 8A section 7
+  // asks for, in the other direction (a Vendor's own scope is never
+  // inferred from a linked Partner's scope either). seed-vendor-manager
+  // uses a different out-of-scope state (Uttar Pradesh, no Manager grant
+  // at all covers it) since it doesn't need that same Karnataka-specific
+  // Head-vs-Manager asymmetry - it's a plain cross-scope-denial fixture.
   const vendors: VendorDoc[] = [
     {
       ...base("seed-vendor-agency", "Northline Talent Agency"),
@@ -88,7 +90,7 @@ export async function seedVendorsData(): Promise<void> {
       previousStatus: null,
       statusReason: null,
       vendorType: "MANAGER_REPRESENTATIVE",
-      regionIds: ["Karnataka"],
+      regionIds: ["Uttar Pradesh"],
       ownerUid: null,
     },
     {

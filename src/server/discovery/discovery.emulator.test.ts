@@ -55,8 +55,8 @@ describe("Discovery domain (real emulator)", () => {
     });
 
     it("a malformed/missing scope context (an actor with zero relevant grants) is denied, not silently given global access", async () => {
-      // Analyst's seeded scope has no REGION Karnataka / TEAM / EXPLICIT_RECORD
-      // covering the Karnataka-region seeded Leads.
+      // Analyst's seeded scope has no REGION Uttar Pradesh / TEAM /
+      // EXPLICIT_RECORD covering the Uttar-Pradesh-region seeded Leads.
       const analyst = await actorFor("analyst");
       const result = await getLead(analyst, "seed-lead-researching");
       expect(result).toMatchObject({ ok: false, code: "unauthorized", reason: "scope_denied" });
@@ -71,7 +71,7 @@ describe("Discovery domain (real emulator)", () => {
       if (!managerPage.ok) throw new Error("unreachable");
       const managerRefs = managerPage.data.leads.map((l) => l.leadRef);
       // Manager has REGION Kerala/Maharashtra + TEAM kerala-programmes -
-      // never the Karnataka-only seeded Leads.
+      // never the Uttar-Pradesh-only seeded Leads.
       expect(managerRefs).not.toContain("seed-lead-researching");
       expect(managerRefs).not.toContain("seed-lead-watchlist");
       expect(managerRefs).not.toContain("seed-lead-rejected");
@@ -87,8 +87,8 @@ describe("Discovery domain (real emulator)", () => {
     it("an EXPLICIT_RECORD grant reaches exactly the one referenced Lead, independent of region/team", async () => {
       const viewer = await actorFor("viewer");
       // Viewer has REGION Kerala + an EXPLICIT_RECORD grant on
-      // seed-lead-duplicate specifically (Karnataka - outside Viewer's
-      // region grant otherwise).
+      // seed-lead-duplicate specifically (Uttar Pradesh - outside Viewer's
+      // region grants otherwise).
       const viaExplicitRecord = await getLead(viewer, "seed-lead-duplicate");
       expect(viaExplicitRecord.ok).toBe(true);
 
@@ -121,7 +121,7 @@ describe("Discovery domain (real emulator)", () => {
       const manager = await actorFor("partnership_manager");
       const created = await createLead(
         manager,
-        { displayName: `Create Test ${runId}`, source: { type: "referral" }, region: "Kerala", address: "123 Fake Street" } as unknown,
+        { displayName: `Create Test ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"], address: "123 Fake Street" } as unknown,
         "req-create",
       );
       expect(created.ok).toBe(true);
@@ -132,7 +132,7 @@ describe("Discovery domain (real emulator)", () => {
 
     it("rejects a stale edit (version mismatch)", async () => {
       const manager = await actorFor("partnership_manager");
-      const created = await createLead(manager, { displayName: `Stale Test ${runId}`, source: { type: "referral" }, region: "Kerala" }, "req-stale-create");
+      const created = await createLead(manager, { displayName: `Stale Test ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"] }, "req-stale-create");
       if (!created.ok) throw new Error("unreachable");
 
       const first = await updateLead(manager, created.data.leadRef, { displayName: "Updated Once", expectedVersion: created.data.version }, "req-edit-1");
@@ -146,7 +146,7 @@ describe("Discovery domain (real emulator)", () => {
   describe("lifecycle: outreach-driven transitions", () => {
     it("the first genuine outbound contact advances NEW to CONTACTED; a meaningful inbound response then advances it to RESPONDED", async () => {
       const manager = await actorFor("partnership_manager");
-      const created = await createLead(manager, { displayName: `Outreach Test ${runId}`, source: { type: "referral" }, region: "Kerala" }, "req-outreach-create");
+      const created = await createLead(manager, { displayName: `Outreach Test ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"] }, "req-outreach-create");
       if (!created.ok) throw new Error("unreachable");
       expect(created.data.lifecycle).toBe("NEW");
 
@@ -190,7 +190,7 @@ describe("Discovery domain (real emulator)", () => {
   describe("watchlist / reject / archive + reasoned restore", () => {
     it("requires a reason to enter WATCHLIST, and restores back to the exact prior state", async () => {
       const manager = await actorFor("partnership_manager");
-      const created = await createLead(manager, { displayName: `Restore Test ${runId}`, source: { type: "referral" }, region: "Kerala" }, "req-restore-create");
+      const created = await createLead(manager, { displayName: `Restore Test ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"] }, "req-restore-create");
       if (!created.ok) throw new Error("unreachable");
 
       const missingReason = await transitionLeadLifecycle(manager, created.data.leadRef, { to: "WATCHLIST", expectedVersion: created.data.version }, "req-no-reason");
@@ -209,7 +209,7 @@ describe("Discovery domain (real emulator)", () => {
 
     it("CONVERTED can never be reached through the manual transition endpoint", async () => {
       const manager = await actorFor("partnership_manager");
-      const created = await createLead(manager, { displayName: `No Manual Convert ${runId}`, source: { type: "referral" }, region: "Kerala" }, "req-no-manual-convert");
+      const created = await createLead(manager, { displayName: `No Manual Convert ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"] }, "req-no-manual-convert");
       if (!created.ok) throw new Error("unreachable");
       const attempt = await transitionLeadLifecycle(manager, created.data.leadRef, { to: "CONVERTED", expectedVersion: created.data.version }, "req-manual-convert");
       expect(attempt).toMatchObject({ ok: false, code: "invalid_input" });
@@ -219,7 +219,7 @@ describe("Discovery domain (real emulator)", () => {
   describe("asset decision invariants", () => {
     it("NEW_ACCOUNT must not reference an existing Partner Account, and MAINTAIN_EXISTING must", async () => {
       const manager = await actorFor("partnership_manager");
-      const created = await createLead(manager, { displayName: `Asset Test ${runId}`, source: { type: "referral" }, region: "Kerala" }, "req-asset-create");
+      const created = await createLead(manager, { displayName: `Asset Test ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"] }, "req-asset-create");
       if (!created.ok) throw new Error("unreachable");
 
       const newAccountWithRef = await saveAssetDecision(manager, created.data.leadRef, { decision: "NEW_ACCOUNT", existingPartnerAccountRef: "some-ref", expectedVersion: created.data.version }, "req-asset-1");
@@ -258,7 +258,7 @@ describe("Discovery domain (real emulator)", () => {
 
     it("saving KYC never puts raw values into the append-only event log", async () => {
       const head = await actorFor("partnership_head");
-      const created = await createLead(head, { displayName: `KYC Test ${runId}`, source: { type: "referral" }, region: "Kerala" }, "req-kyc-create");
+      const created = await createLead(head, { displayName: `KYC Test ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"] }, "req-kyc-create");
       if (!created.ok) throw new Error("unreachable");
 
       const saved = await saveLeadKyc(
@@ -291,7 +291,7 @@ describe("Discovery domain (real emulator)", () => {
   describe("manager assignment", () => {
     it("must reference a real, active, admitted user", async () => {
       const head = await actorFor("partnership_head");
-      const created = await createLead(head, { displayName: `Manager Test ${runId}`, source: { type: "referral" }, region: "Kerala" }, "req-manager-create");
+      const created = await createLead(head, { displayName: `Manager Test ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"] }, "req-manager-create");
       if (!created.ok) throw new Error("unreachable");
 
       const bogus = await assignManager(head, created.data.leadRef, { managerUserRef: "not-a-real-ref", expectedVersion: created.data.version }, "req-manager-1");
@@ -317,7 +317,7 @@ describe("Discovery domain (real emulator)", () => {
 
     it("runs and persists a duplicate check automatically on create - no separate action needed", async () => {
       const head = await actorFor("partnership_head");
-      const created = await createLead(head, { displayName: `Dup Test ${runId}`, source: { type: "referral" }, region: "Kerala" }, "req-dup-create");
+      const created = await createLead(head, { displayName: `Dup Test ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"] }, "req-dup-create");
       if (!created.ok) throw new Error("unreachable");
       expect(created.data.duplicateCheck?.status).toBe("none");
     });
@@ -326,7 +326,7 @@ describe("Discovery domain (real emulator)", () => {
       const head = await actorFor("partnership_head");
       const created = await createLead(
         head,
-        { displayName: `Dup Match ${runId}`, source: { type: "referral" }, region: "Kerala", profileUrl: "https://instagram.com/new" },
+        { displayName: `Dup Match ${runId}`, source: { type: "referral" }, regionIds: ["Kerala"], profileUrl: "https://instagram.com/new" },
         "req-dup-create-match",
       );
       if (!created.ok) throw new Error("unreachable");
@@ -367,7 +367,7 @@ describe("Discovery domain (real emulator)", () => {
     it("converts a ready Lead into exactly one canonical Partner, is idempotent on retry, and NEW_ACCOUNT creates no fake Partner Account", async () => {
       const head = await actorFor("partnership_head");
       const email = `convert-${runId}@example-creator.test`;
-      const created = await createLead(head, { displayName: `Convert Flow ${runId}`, email, source: { type: "referral" }, region: "Kerala" }, "req-convert-create");
+      const created = await createLead(head, { displayName: `Convert Flow ${runId}`, email, source: { type: "referral" }, regionIds: ["Kerala"] }, "req-convert-create");
       if (!created.ok) throw new Error("unreachable");
       const leadRef = created.data.leadRef;
       let version = created.data.version;

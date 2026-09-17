@@ -131,7 +131,7 @@ export type ListPartnersInput = {
   cursor?: PartnerListCursor;
   status?: string;
   displayNamePrefix?: string;
-  region?: string;
+  region?: string | string[];
   tier?: string;
   targetAudience?: string;
   // Resolved to the actor's own uid server-side - the browser never

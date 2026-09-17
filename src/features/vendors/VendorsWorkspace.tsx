@@ -9,6 +9,7 @@ import { EmptyState, Skeleton } from "@/ui/States";
 import { Icon } from "@/ui/icons";
 import { initialsOf } from "@/features/shared/types";
 import { Pager } from "@/features/administration/Pager";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import type { VendorDto } from "@/server/vendors/client-dto";
 import type { VendorListCursor } from "@/server/vendors/firestore";
 import { VENDOR_STATUSES, VENDOR_TYPES, type VendorStatus, type VendorType } from "@/server/vendors/types";
@@ -42,9 +43,8 @@ export function VendorsWorkspace({ initialVendors, initialNextCursor }: { initia
   const [currentPage, setCurrentPage] = useState(1);
 
   const [searchInput, setSearchInput] = useState("");
-  const [regionInput, setRegionInput] = useState("");
+  const [regionFilter, setRegionFilter] = useState<string[]>([]);
   const search = useDebouncedValue(searchInput, DEBOUNCE_MS);
-  const region = useDebouncedValue(regionInput, DEBOUNCE_MS);
 
   const [status, setStatus] = useState<VendorStatus | "all">("all");
   const [vendorType, setVendorType] = useState<VendorType | "all">("all");
@@ -56,7 +56,7 @@ export function VendorsWorkspace({ initialVendors, initialNextCursor }: { initia
 
   const filters = {
     status: status === "all" ? undefined : status,
-    region: region.trim() || undefined,
+    region: regionFilter.length > 0 ? regionFilter : undefined,
     vendorType: vendorType === "all" ? undefined : vendorType,
     assignedToMe: assignedToMe || undefined,
     displayNamePrefix: search.trim() || undefined,
@@ -89,7 +89,7 @@ export function VendorsWorkspace({ initialVendors, initialNextCursor }: { initia
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, region, vendorType, assignedToMe, search]);
+  }, [status, regionFilter, vendorType, assignedToMe, search]);
 
   async function goToPage(page: number) {
     if (page < 1 || page === currentPage) return;
@@ -121,13 +121,13 @@ export function VendorsWorkspace({ initialVendors, initialNextCursor }: { initia
 
   function clearFilters() {
     setSearchInput("");
-    setRegionInput("");
+    setRegionFilter([]);
     setStatus("all");
     setVendorType("all");
     setAssignedToMe(false);
   }
 
-  const anyFilterActive = Boolean(searchInput || regionInput || status !== "all" || vendorType !== "all" || assignedToMe);
+  const anyFilterActive = Boolean(searchInput || regionFilter.length > 0 || status !== "all" || vendorType !== "all" || assignedToMe);
 
   return (
     <section className="panel">
@@ -149,7 +149,9 @@ export function VendorsWorkspace({ initialVendors, initialNextCursor }: { initia
             </option>
           ))}
         </select>
-        <input type="text" aria-label="Filter region" placeholder="Region…" value={regionInput} onChange={(e) => setRegionInput(e.target.value)} style={{ maxWidth: 140 }} />
+        <div style={{ minWidth: 160, maxWidth: 220 }}>
+          <RegionMultiSelect value={regionFilter} onChange={setRegionFilter} />
+        </div>
         <button type="button" className={assignedToMe ? "btn primary" : "btn"} aria-pressed={assignedToMe} onClick={() => setAssignedToMe((v) => !v)}>
           {assignedToMe && <Icon name="check" />} Assigned to me
         </button>

@@ -6,9 +6,10 @@ import { useRouter } from "next/navigation";
 
 import { FormLayout, FormSection, Fields, Field, FormFoot, Checklist } from "@/ui/Form";
 import { Icon } from "@/ui/icons";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import type { PartnerDto } from "@/server/partners/client-dto";
 import type { PartnerOwnerCandidateDto } from "@/server/partners/user-picker";
-import { DISCOVERY_PLATFORMS, DISCOVERY_REGIONS, TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
+import { DISCOVERY_PLATFORMS, TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
 import { PARTNER_PRIORITIES, PARTNER_TIERS, type PartnerDuplicateCheckResult } from "@/server/partners/types";
 import { createPartner, createPartnerAccount, editPartner, precheckPartnerDuplicates } from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
@@ -42,7 +43,7 @@ export function PartnerForm(props: Props) {
   const [legalName, setLegalName] = useState(initial?.legalName ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
-  const [regions, setRegions] = useState(toCsv(initial?.regionIds ?? []));
+  const [regions, setRegions] = useState<string[]>(initial?.regionIds ?? []);
   const [languages, setLanguages] = useState(toCsv(initial?.languageIds ?? []));
   const [categories, setCategories] = useState(toCsv(initial?.categoryIds ?? []));
   const [tier, setTier] = useState(initial?.tier ?? "");
@@ -124,7 +125,7 @@ export function PartnerForm(props: Props) {
         legalName: legalName.trim() || undefined,
         email: email.trim() || undefined,
         phone: phone.trim() || undefined,
-        regionIds: fromCsv(regions),
+        regionIds: regions,
         languageIds: fromCsv(languages),
         categoryIds: fromCsv(categories),
         tier: tier.trim() || undefined,
@@ -161,7 +162,7 @@ export function PartnerForm(props: Props) {
       legalName: legalName.trim() || null,
       email: email.trim() || null,
       phone: phone.trim() || null,
-      regionIds: fromCsv(regions),
+      regionIds: regions,
       languageIds: fromCsv(languages),
       categoryIds: fromCsv(categories),
       tier: tier.trim() || null,
@@ -218,9 +219,6 @@ export function PartnerForm(props: Props) {
             <Field label="Mobile number">
               <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </Field>
-            <Field label="Regions">
-              <input type="text" value={regions} onChange={(e) => setRegions(e.target.value)} placeholder="South, Karnataka" />
-            </Field>
             <Field label="Languages">
               <input type="text" value={languages} onChange={(e) => setLanguages(e.target.value)} placeholder="English, Malayalam" />
             </Field>
@@ -276,6 +274,10 @@ export function PartnerForm(props: Props) {
               {priorityOther && <input type="text" value={priority} placeholder="Priority name" style={{ marginTop: 8 }} onChange={(e) => setPriority(e.target.value)} />}
             </Field>
           </Fields>
+
+          <Field label="Regions" full>
+            <RegionMultiSelect value={regions} onChange={setRegions} />
+          </Field>
 
           {props.mode === "create" && (
             <Field label="Owner" full>
@@ -341,10 +343,6 @@ export function PartnerForm(props: Props) {
             )}
           </FormSection>
         )}
-
-        <FormSection title="Regions reference" description="The Region dropdown above shows this starter list.">
-          <p className="foundationnote">{DISCOVERY_REGIONS.join(" · ")}</p>
-        </FormSection>
 
         {saveError && (
           <div className="banner" role="alert" style={{ margin: "0 22px 18px" }}>

@@ -34,6 +34,17 @@ import { z } from "zod";
 // tie-break, paginated" query shape every list query here already uses -
 // never a generic query builder for arbitrary app logic.
 
+// Normalizes a caller-supplied single-or-multi-value filter (e.g. a
+// multi-select region filter) into a plain array - `undefined` becomes
+// `[]`, a bare string becomes a one-element array. Shared by every
+// domain's planner (Discovery/Partners/Vendors/Campaigns) so a multi-
+// select filter's `array-contains-any` construction is written the same
+// way everywhere.
+export function toValueArray(value: string | string[] | undefined): string[] {
+  if (value === undefined) return [];
+  return Array.isArray(value) ? value : [value];
+}
+
 export type FirestoreFieldFilter =
   | { field: string; op: "=="; value: unknown }
   | { field: string; op: "array-contains"; value: unknown }

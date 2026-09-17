@@ -9,6 +9,7 @@ import { EmptyState, Skeleton } from "@/ui/States";
 import { Icon } from "@/ui/icons";
 import { initialsOf } from "@/features/shared/types";
 import { Pager } from "@/features/administration/Pager";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import type { LeadDto } from "@/server/discovery/client-dto";
 import type { LeadListCursor } from "@/server/discovery/firestore";
 import { LEAD_LIFECYCLE_STATES, type LeadLifecycle } from "@/server/discovery/types";
@@ -38,10 +39,9 @@ export function DiscoveryWorkspace({ initialLeads, initialNextCursor }: { initia
   const [currentPage, setCurrentPage] = useState(1);
 
   const [searchInput, setSearchInput] = useState("");
-  const [regionInput, setRegionInput] = useState("");
+  const [regionFilter, setRegionFilter] = useState<string[]>([]);
   const [platformInput, setPlatformInput] = useState("");
   const search = useDebouncedValue(searchInput, DEBOUNCE_MS);
-  const region = useDebouncedValue(regionInput, DEBOUNCE_MS);
   const platform = useDebouncedValue(platformInput, DEBOUNCE_MS);
 
   const [lifecycle, setLifecycle] = useState<LeadLifecycle | "all">("all");
@@ -54,7 +54,7 @@ export function DiscoveryWorkspace({ initialLeads, initialNextCursor }: { initia
 
   const filters = {
     lifecycle: lifecycle === "all" ? undefined : lifecycle,
-    region: region.trim() || undefined,
+    region: regionFilter.length > 0 ? regionFilter : undefined,
     platform: platform.trim() || undefined,
     assignedToMe: assignedToMe || undefined,
     search: search.trim() || undefined,
@@ -89,7 +89,7 @@ export function DiscoveryWorkspace({ initialLeads, initialNextCursor }: { initia
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lifecycle, region, platform, assignedToMe, search, followUpDue]);
+  }, [lifecycle, regionFilter, platform, assignedToMe, search, followUpDue]);
 
   async function goToPage(page: number) {
     if (page < 1 || page === currentPage) return;
@@ -121,14 +121,14 @@ export function DiscoveryWorkspace({ initialLeads, initialNextCursor }: { initia
 
   function clearFilters() {
     setSearchInput("");
-    setRegionInput("");
+    setRegionFilter([]);
     setPlatformInput("");
     setLifecycle("all");
     setAssignedToMe(false);
     setFollowUpDue(false);
   }
 
-  const anyFilterActive = Boolean(searchInput || regionInput || platformInput || lifecycle !== "all" || assignedToMe || followUpDue);
+  const anyFilterActive = Boolean(searchInput || regionFilter.length > 0 || platformInput || lifecycle !== "all" || assignedToMe || followUpDue);
 
   return (
     <section className="panel">
@@ -142,7 +142,9 @@ export function DiscoveryWorkspace({ initialLeads, initialNextCursor }: { initia
             </option>
           ))}
         </select>
-        <input type="text" aria-label="Filter region" placeholder="Region…" value={regionInput} onChange={(e) => setRegionInput(e.target.value)} style={{ maxWidth: 140 }} />
+        <div style={{ minWidth: 160, maxWidth: 220 }}>
+          <RegionMultiSelect value={regionFilter} onChange={setRegionFilter} />
+        </div>
         <input type="text" aria-label="Filter platform" placeholder="Platform…" value={platformInput} onChange={(e) => setPlatformInput(e.target.value)} style={{ maxWidth: 140 }} />
         <button type="button" className={assignedToMe ? "btn primary" : "btn"} aria-pressed={assignedToMe} onClick={() => setAssignedToMe((v) => !v)}>
           {assignedToMe && <Icon name="check" />} Assigned to me
@@ -215,7 +217,7 @@ function RecordCards({ rows, onOpen }: { rows: LeadDto[]; onOpen: (leadRef: stri
             <Pill tone={lifecycleTone(lead.lifecycle)}>{LIFECYCLE_LABELS[lead.lifecycle]}</Pill>
           </div>
           <div className="recordmeta">
-            <span>{lead.region ?? "No region"}</span>
+            <span>{lead.regionIds.length > 0 ? lead.regionIds.join(", ") : "No region"}</span>
             <span>{lead.ownerDisplayName ?? "Unassigned"}</span>
           </div>
         </article>
@@ -257,7 +259,7 @@ function RecordTable({ rows, onOpen }: { rows: LeadDto[]; onOpen: (leadRef: stri
               <td>
                 <Pill tone={lifecycleTone(lead.lifecycle)}>{LIFECYCLE_LABELS[lead.lifecycle]}</Pill>
               </td>
-              <td>{lead.region ?? "—"}</td>
+              <td>{lead.regionIds.length > 0 ? lead.regionIds.join(", ") : "—"}</td>
               <td>{lead.ownerDisplayName ?? "Unassigned"}</td>
               <td>
                 <button className="iconbutton" aria-label={`Inspect ${lead.displayName}`} type="button" onClick={() => onOpen(lead.leadRef)}>

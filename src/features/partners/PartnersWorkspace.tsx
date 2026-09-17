@@ -9,6 +9,7 @@ import { EmptyState, Skeleton } from "@/ui/States";
 import { Icon } from "@/ui/icons";
 import { initialsOf } from "@/features/shared/types";
 import { Pager } from "@/features/administration/Pager";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import type { PartnerDto } from "@/server/partners/client-dto";
 import type { PartnerListCursor } from "@/server/partners/firestore";
 import { PARTNER_STATUSES, type PartnerStatus } from "@/server/partners/types";
@@ -36,10 +37,9 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
   const [currentPage, setCurrentPage] = useState(1);
 
   const [searchInput, setSearchInput] = useState("");
-  const [regionInput, setRegionInput] = useState("");
+  const [regionFilter, setRegionFilter] = useState<string[]>([]);
   const [tierInput, setTierInput] = useState("");
   const search = useDebouncedValue(searchInput, DEBOUNCE_MS);
-  const region = useDebouncedValue(regionInput, DEBOUNCE_MS);
   const tier = useDebouncedValue(tierInput, DEBOUNCE_MS);
 
   const [status, setStatus] = useState<PartnerStatus | "all">("all");
@@ -53,7 +53,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
 
   const filters = {
     status: status === "all" ? undefined : status,
-    region: region.trim() || undefined,
+    region: regionFilter.length > 0 ? regionFilter : undefined,
     tier: tier.trim() || undefined,
     targetAudience: targetAudience === "all" ? undefined : targetAudience,
     assignedToMe: assignedToMe || undefined,
@@ -88,7 +88,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, region, tier, targetAudience, assignedToMe, search, pendingSetup]);
+  }, [status, regionFilter, tier, targetAudience, assignedToMe, search, pendingSetup]);
 
   async function goToPage(page: number) {
     if (page < 1 || page === currentPage) return;
@@ -120,7 +120,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
 
   function clearFilters() {
     setSearchInput("");
-    setRegionInput("");
+    setRegionFilter([]);
     setTierInput("");
     setStatus("all");
     setTargetAudience("all");
@@ -128,7 +128,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
     setPendingSetup(false);
   }
 
-  const anyFilterActive = Boolean(searchInput || regionInput || tierInput || status !== "all" || targetAudience !== "all" || assignedToMe || pendingSetup);
+  const anyFilterActive = Boolean(searchInput || regionFilter.length > 0 || tierInput || status !== "all" || targetAudience !== "all" || assignedToMe || pendingSetup);
 
   return (
     <section className="panel">
@@ -150,7 +150,9 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
             </option>
           ))}
         </select>
-        <input type="text" aria-label="Filter region" placeholder="Region…" value={regionInput} onChange={(e) => setRegionInput(e.target.value)} style={{ maxWidth: 140 }} />
+        <div style={{ minWidth: 160, maxWidth: 220 }}>
+          <RegionMultiSelect value={regionFilter} onChange={setRegionFilter} />
+        </div>
         <input type="text" aria-label="Filter tier" placeholder="Tier…" value={tierInput} onChange={(e) => setTierInput(e.target.value)} style={{ maxWidth: 140 }} />
         <button type="button" className={assignedToMe ? "btn primary" : "btn"} aria-pressed={assignedToMe} onClick={() => setAssignedToMe((v) => !v)}>
           {assignedToMe && <Icon name="check" />} Assigned to me

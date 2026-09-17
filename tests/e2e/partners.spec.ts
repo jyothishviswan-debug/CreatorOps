@@ -355,7 +355,7 @@ test.describe("NEW_ACCOUNT pending setup", () => {
     await signInAs(page, "head");
 
     const leadResponse = await page.request.post("/api/discovery/leads", {
-      data: { displayName: uniqueName("E2E NEW_ACCOUNT Lead"), source: { type: "referral" }, region: "Kerala", email: `${uniqueName("newacct").replace(/\s+/g, "")}@example.com` },
+      data: { displayName: uniqueName("E2E NEW_ACCOUNT Lead"), source: { type: "referral" }, regionIds: ["Kerala"], email: `${uniqueName("newacct").replace(/\s+/g, "")}@example.com` },
     });
     expect(leadResponse.ok()).toBeTruthy();
     const lead = (await leadResponse.json()) as { leadRef: string; version: number };

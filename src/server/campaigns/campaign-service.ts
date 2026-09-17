@@ -133,7 +133,7 @@ export type ListCampaignsInput = {
   cursor?: CampaignListCursor;
   status?: string;
   namePrefix?: string;
-  region?: string;
+  region?: string | string[];
   platform?: string;
   assignedToMe?: boolean;
 };

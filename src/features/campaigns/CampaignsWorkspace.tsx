@@ -9,6 +9,7 @@ import { EmptyState, Skeleton } from "@/ui/States";
 import { Icon } from "@/ui/icons";
 import { initialsOf } from "@/features/shared/types";
 import { Pager } from "@/features/administration/Pager";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import type { CampaignDto } from "@/server/campaigns/client-dto";
 import type { CampaignListCursor } from "@/server/campaigns/firestore";
 import { CAMPAIGN_STATUSES, type CampaignStatus } from "@/server/campaigns/types";
@@ -40,10 +41,9 @@ export function CampaignsWorkspace({ initialCampaigns, initialNextCursor }: { in
   const [currentPage, setCurrentPage] = useState(1);
 
   const [searchInput, setSearchInput] = useState("");
-  const [regionInput, setRegionInput] = useState("");
+  const [regionFilter, setRegionFilter] = useState<string[]>([]);
   const [platformInput, setPlatformInput] = useState("");
   const search = useDebouncedValue(searchInput, DEBOUNCE_MS);
-  const region = useDebouncedValue(regionInput, DEBOUNCE_MS);
   const platform = useDebouncedValue(platformInput, DEBOUNCE_MS);
 
   const [status, setStatus] = useState<CampaignStatus | "all">("all");
@@ -55,7 +55,7 @@ export function CampaignsWorkspace({ initialCampaigns, initialNextCursor }: { in
 
   const filters = {
     status: status === "all" ? undefined : status,
-    region: region.trim() || undefined,
+    region: regionFilter.length > 0 ? regionFilter : undefined,
     platform: platform.trim() || undefined,
     assignedToMe: assignedToMe || undefined,
     namePrefix: search.trim() || undefined,
@@ -88,7 +88,7 @@ export function CampaignsWorkspace({ initialCampaigns, initialNextCursor }: { in
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, region, platform, assignedToMe, search]);
+  }, [status, regionFilter, platform, assignedToMe, search]);
 
   async function goToPage(page: number) {
     if (page < 1 || page === currentPage) return;
@@ -120,13 +120,13 @@ export function CampaignsWorkspace({ initialCampaigns, initialNextCursor }: { in
 
   function clearFilters() {
     setSearchInput("");
-    setRegionInput("");
+    setRegionFilter([]);
     setPlatformInput("");
     setStatus("all");
     setAssignedToMe(false);
   }
 
-  const anyFilterActive = Boolean(searchInput || regionInput || platformInput || status !== "all" || assignedToMe);
+  const anyFilterActive = Boolean(searchInput || regionFilter.length > 0 || platformInput || status !== "all" || assignedToMe);
 
   return (
     <section className="panel">
@@ -141,7 +141,9 @@ export function CampaignsWorkspace({ initialCampaigns, initialNextCursor }: { in
           ))}
         </select>
         <input type="text" aria-label="Filter platform" placeholder="Platform…" value={platformInput} onChange={(e) => setPlatformInput(e.target.value)} style={{ maxWidth: 140 }} />
-        <input type="text" aria-label="Filter region" placeholder="Region…" value={regionInput} onChange={(e) => setRegionInput(e.target.value)} style={{ maxWidth: 140 }} />
+        <div style={{ minWidth: 160, maxWidth: 220 }}>
+          <RegionMultiSelect value={regionFilter} onChange={setRegionFilter} />
+        </div>
         <button type="button" className={assignedToMe ? "btn primary" : "btn"} aria-pressed={assignedToMe} onClick={() => setAssignedToMe((v) => !v)}>
           {assignedToMe && <Icon name="check" />} Assigned to me
         </button>

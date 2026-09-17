@@ -1,17 +1,15 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 
 import { Field, Fields } from "@/ui/Form";
-import { Icon } from "@/ui/icons";
+import { MultiSelectDropdown } from "@/features/shared/MultiSelectDropdown";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import type { CampaignDto } from "@/server/campaigns/client-dto";
 import { TARGET_AUDIENCES, type TargetAudience } from "@/server/campaigns/types";
 import { editCampaign } from "./api-client";
 import { REVIEW_POLICY_LABELS } from "./format";
 
-function toCsv(values: string[]): string {
-  return values.join(", ");
-}
 function fromCsv(value: string): string[] {
   return value
     .split(",")
@@ -19,102 +17,7 @@ function fromCsv(value: string): string[] {
     .filter(Boolean);
 }
 
-const PLATFORM_SUGGESTIONS = ["Instagram", "YouTube"];
-
-// A real multi-selection dropdown: a closed control that shows the
-// current selection, opens a checkbox list on click, and closes on an
-// outside click - never a native unstyled <datalist> popup, never a
-// native <select multiple> listbox (which never closes and needs
-// ctrl/cmd-click). Free text stays possible via the "Other platform"
-// row at the bottom, so this is still never a fixed whitelist. Mirrors
-// CampaignForm.tsx's own PlatformMultiSelect exactly.
-function PlatformMultiSelect({ value, onChange }: { value: string; onChange: (next: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [customInput, setCustomInput] = useState("");
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onOutsideClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onOutsideClick);
-    return () => document.removeEventListener("mousedown", onOutsideClick);
-  }, [open]);
-
-  const selectedValues = fromCsv(value);
-  const selectedLower = new Set(selectedValues.map((v) => v.toLowerCase()));
-  const extraSelected = selectedValues.filter((v) => !PLATFORM_SUGGESTIONS.some((p) => p.toLowerCase() === v.toLowerCase()));
-
-  function toggle(name: string) {
-    const already = selectedLower.has(name.toLowerCase());
-    const next = already ? selectedValues.filter((v) => v.toLowerCase() !== name.toLowerCase()) : [...selectedValues, name];
-    onChange(next.join(", "));
-  }
-
-  function addCustom() {
-    const trimmed = customInput.trim();
-    if (!trimmed || selectedLower.has(trimmed.toLowerCase())) return;
-    onChange([...selectedValues, trimmed].join(", "));
-    setCustomInput("");
-  }
-
-  return (
-    <div ref={containerRef} style={{ position: "relative" }}>
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        style={{
-          width: "100%",
-          textAlign: "left",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          border: "1px solid #dce1e7",
-          borderRadius: 6,
-          padding: "8px 10px",
-          background: "white",
-          color: "var(--ink)",
-          fontSize: 12,
-        }}
-      >
-        <span>{selectedValues.length > 0 ? selectedValues.join(", ") : "Select platforms…"}</span>
-        <Icon name="chevronDown" className="muted" style={{ width: 14, height: 14, flexShrink: 0 }} />
-      </button>
-      {open && (
-        <div className="panel" role="listbox" style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20, padding: 10 }}>
-          {[...PLATFORM_SUGGESTIONS, ...extraSelected].map((p) => (
-            <label key={p} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", cursor: "pointer" }}>
-              <input type="checkbox" checked={selectedLower.has(p.toLowerCase())} onChange={() => toggle(p)} />
-              {p}
-            </label>
-          ))}
-          <div className="actions" style={{ marginTop: 8 }}>
-            <input
-              type="text"
-              value={customInput}
-              onChange={(e) => setCustomInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addCustom();
-                }
-              }}
-              placeholder="Other platform…"
-              style={{ flex: 1 }}
-            />
-            <button type="button" className="btn" onClick={addCustom}>
-              Add
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
+const PLATFORM_GROUPS = [{ label: "Platforms", options: ["Instagram", "YouTube"] }];
 
 // Ordinary plan editing, wired to the trusted versioned PATCH - the
 // brief/plan fields and targeting criteria combined into one coherent
@@ -128,12 +31,12 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
   const [objective, setObjective] = useState(campaign.objective);
   const [startDate, setStartDate] = useState(campaign.startDate);
   const [endDate, setEndDate] = useState(campaign.endDate);
-  const [platforms, setPlatforms] = useState(toCsv(campaign.platforms));
+  const [platforms, setPlatforms] = useState<string[]>(campaign.platforms);
   const [targetAudience, setTargetAudience] = useState<TargetAudience | "">(campaign.criteria.targetAudience ?? "");
-  const [regions, setRegions] = useState(toCsv(campaign.regionIds));
-  const [languages, setLanguages] = useState(toCsv(campaign.criteria.languageIds));
-  const [categories, setCategories] = useState(toCsv(campaign.criteria.categoryIds));
-  const [criteriaPlatforms, setCriteriaPlatforms] = useState(toCsv(campaign.criteria.platforms));
+  const [regions, setRegions] = useState<string[]>(campaign.regionIds);
+  const [languages, setLanguages] = useState(campaign.criteria.languageIds.join(", "));
+  const [categories, setCategories] = useState(campaign.criteria.categoryIds.join(", "));
+  const [criteriaPlatforms, setCriteriaPlatforms] = useState<string[]>(campaign.criteria.platforms);
   const [reviewPolicy, setReviewPolicy] = useState(campaign.defaultReviewPolicy);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -144,20 +47,19 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
     setSaving(true);
     setError(null);
     setStale(false);
-    const regionIds = fromCsv(regions);
     const result = await editCampaign(campaign.campaignRef, {
       objective,
       startDate,
       endDate,
-      platforms: fromCsv(platforms),
-      regionIds,
+      platforms,
+      regionIds: regions,
       defaultReviewPolicy: reviewPolicy,
       criteria: {
         targetAudience: targetAudience || null,
-        regionIds,
+        regionIds: regions,
         languageIds: fromCsv(languages),
         categoryIds: fromCsv(categories),
-        platforms: fromCsv(criteriaPlatforms),
+        platforms: criteriaPlatforms,
       },
       expectedVersion: campaign.version,
     });
@@ -200,7 +102,7 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
           <input type="date" value={endDate} onChange={(e) => setEndDate(e.target.value)} required />
         </Field>
         <Field label="Platforms" full>
-          <PlatformMultiSelect value={platforms} onChange={setPlatforms} />
+          <MultiSelectDropdown value={platforms} onChange={setPlatforms} groups={PLATFORM_GROUPS} placeholder="Select platforms…" allowCustom customPlaceholder="Other platform…" />
         </Field>
         <Field label="Target Audience">
           <select value={targetAudience} onChange={(e) => setTargetAudience(e.target.value as TargetAudience | "")}>
@@ -212,8 +114,8 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
             ))}
           </select>
         </Field>
-        <Field label="Regions">
-          <input type="text" value={regions} onChange={(e) => setRegions(e.target.value)} placeholder="Kerala, Karnataka" />
+        <Field label="Regions" full>
+          <RegionMultiSelect value={regions} onChange={setRegions} />
         </Field>
         <Field label="Languages">
           <input type="text" value={languages} onChange={(e) => setLanguages(e.target.value)} placeholder="Malayalam, English" />
@@ -222,7 +124,7 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
           <input type="text" value={categories} onChange={(e) => setCategories(e.target.value)} placeholder="Lifestyle, Education" />
         </Field>
         <Field label="Targeting platforms" full>
-          <PlatformMultiSelect value={criteriaPlatforms} onChange={setCriteriaPlatforms} />
+          <MultiSelectDropdown value={criteriaPlatforms} onChange={setCriteriaPlatforms} groups={PLATFORM_GROUPS} placeholder="Select platforms…" allowCustom customPlaceholder="Other platform…" />
         </Field>
         <Field label="Default review policy">
           <select value={reviewPolicy} onChange={(e) => setReviewPolicy(e.target.value as CampaignDto["defaultReviewPolicy"])}>

@@ -15,6 +15,7 @@ import {
   type ListQueryPlan,
   type MergeCandidate,
   type SortDirection,
+  toValueArray,
 } from "@/server/shared/scoped-list";
 import { campaignDocSchema, type CampaignDoc } from "./types";
 
@@ -97,7 +98,7 @@ export type CampaignListQueryOptions = {
   hasGlobal: boolean;
   status?: string;
   namePrefix?: string;
-  region?: string;
+  region?: string | string[];
   platform?: string;
   ownerUid?: string;
 };
@@ -134,7 +135,8 @@ export function planCampaignListQuery(options: CampaignListQueryOptions): { plan
     sharedFilters.push({ field: "nameLower", op: "<", value: `${options.namePrefix}` });
   }
 
-  const regionFilter: FirestoreFieldFilter | null = options.region ? { field: "regionIds", op: "array-contains", value: options.region } : null;
+  const requestedRegions = toValueArray(options.region);
+  const regionFilter: FirestoreFieldFilter | null = requestedRegions.length > 0 ? { field: "regionIds", op: "array-contains-any", value: requestedRegions } : null;
   const platformFilter: FirestoreFieldFilter | null = options.platform ? { field: "platforms", op: "array-contains", value: options.platform } : null;
   // At most one of these may be PUSHED into any single branch alongside
   // that branch's own array filter (if any) - region wins the pushed
@@ -169,9 +171,9 @@ export function planCampaignListQuery(options: CampaignListQueryOptions): { plan
   const selfGranted = options.grants.some((g) => g.type === "SELF");
   const grantedRegions = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "REGION" }> => g.type === "REGION").map((g) => g.region))].slice(0, MAX_SCOPE_IN_VALUES);
   const grantedTeams = [...new Set(options.grants.filter((g): g is Extract<ScopeGrant, { type: "TEAM" }> => g.type === "TEAM").map((g) => g.teamId))].slice(0, MAX_SCOPE_IN_VALUES);
-  const regionFilterGranted = options.region ? grantedRegions.includes(options.region) : false;
+  const regionFilterGranted = requestedRegions.length > 0 && requestedRegions.every((r) => grantedRegions.includes(r));
 
-  if (options.region && regionFilterGranted) {
+  if (requestedRegions.length > 0 && regionFilterGranted) {
     branches.push({
       kind: "firestore-query",
       name: "main",
@@ -200,7 +202,7 @@ export function planCampaignListQuery(options: CampaignListQueryOptions): { plan
     });
   }
 
-  if (!options.region && regionExclude) {
+  if (requestedRegions.length === 0 && regionExclude) {
     branches.push({
       kind: "firestore-query",
       name: "region",
@@ -217,8 +219,8 @@ export function planCampaignListQuery(options: CampaignListQueryOptions): { plan
       kind: "firestore-query",
       name: "team",
       pushedFilters: [teamExclude, ...sharedFilters],
-      postFilters: [...(options.region ? [regionFilter!] : []), ...(platformFilter ? [platformFilter] : [])],
-      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(!options.region && regionExclude ? [regionExclude] : [])],
+      postFilters: [...(requestedRegions.length > 0 ? [regionFilter!] : []), ...(platformFilter ? [platformFilter] : [])],
+      excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(requestedRegions.length === 0 && regionExclude ? [regionExclude] : [])],
       orderField,
       orderDirection,
     });

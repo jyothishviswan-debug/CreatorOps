@@ -34,14 +34,18 @@ import { ROLES } from "./roles";
 import { seedAccessControlData, TEST_IDENTITIES } from "./seed-access-data";
 
 // Total individual scope grants across all five seeded identities - kept
-// in sync with the SCOPE_GRANTS matrix in seed-access-data.ts (Viewer 4,
-// Analyst 5, Partnership Manager 6, Partnership Head 10, Super Admin 1).
-// A zone-level REGION grant (South/West) was added alongside every
-// existing state-level one so a Lead created through the newer
-// zone-based Region dropdown is visible to the same identities who could
-// already see its state-level equivalent - additive, per identity:
-// Viewer +1, Analyst +1, Manager +2, Head +2.
-const TOTAL_SCOPE_GRANTS = 4 + 5 + 6 + 10 + 1;
+// in sync with the SCOPE_GRANTS matrix in seed-access-data.ts. The old
+// single literal "South"/"West" zone-label REGION grant was replaced by
+// a real grant for every state in that zone (via zoneRegionsExcluding),
+// minus whichever states that identity already holds by name -
+// Viewer 8 (SELF, Kerala, 5 South Zone states, EXPLICIT_RECORD), Analyst
+// 9 (Kerala, Tamil Nadu, 5 South Zone states, 2 ANALYTICS grants),
+// Partnership Manager 14 (Kerala, Maharashtra, 4 South Zone states - both
+// Karnataka and Tamil Nadu deliberately excluded, see that role's own
+// comment - 6 West Zone states, TEAM, PARTNER), Partnership Head 18
+// (Kerala/Maharashtra/Tamil Nadu/Karnataka, 4 South Zone states, 6 West
+// Zone states, 2 TEAM, CAMPAIGN, EXPLICIT_RECORD), Super Admin 1 (GLOBAL).
+const TOTAL_SCOPE_GRANTS = 8 + 9 + 14 + 18 + 1;
 
 // Kept in sync with USER_OVERRIDES in seed-access-data.ts: viewer,
 // analyst and manager each get one representative override document

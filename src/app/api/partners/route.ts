@@ -18,7 +18,8 @@ export async function GET(request: Request) {
   const limit = limitParam ? Number(limitParam) : undefined;
   const status = url.searchParams.get("status") ?? undefined;
   const displayNamePrefix = url.searchParams.get("displayNamePrefix") ?? undefined;
-  const region = url.searchParams.get("region") ?? undefined;
+  const regionValues = url.searchParams.getAll("region");
+  const region = regionValues.length > 0 ? regionValues : undefined;
   const tier = url.searchParams.get("tier") ?? undefined;
   const targetAudience = url.searchParams.get("targetAudience") ?? undefined;
   const assignedToMe = url.searchParams.get("assignedToMe") === "true" ? true : undefined;

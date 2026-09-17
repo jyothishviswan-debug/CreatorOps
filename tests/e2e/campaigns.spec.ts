@@ -106,10 +106,14 @@ test.describe("Workspace", () => {
 
     await page.getByLabel("Search campaigns by name").fill("");
     await page.getByLabel("Filter platform").fill("instagram");
-    await page.getByLabel("Filter region").fill("Goa");
+    await page.getByRole("button", { name: "Select regions…" }).click();
+    await page.getByRole("checkbox", { name: "Goa" }).check();
+    await page.getByLabel("Search campaigns by name").click(); // closes the dropdown via outside click
     await expect(page.getByText(campaign.name)).toBeVisible({ timeout: 5000 });
 
-    await page.getByLabel("Filter region").fill("");
+    await page.getByRole("button", { name: "Goa" }).click();
+    await page.getByRole("checkbox", { name: "Goa" }).uncheck();
+    await page.getByLabel("Search campaigns by name").click();
     await page.getByLabel("Filter platform").fill("");
     await page.getByLabel("Filter status").selectOption("DRAFT");
     await expect(page.getByText(campaign.name)).toBeVisible({ timeout: 5000 });
@@ -135,8 +139,8 @@ test.describe("Workspace", () => {
 
   test("cross-scope user cannot read another-scope Campaign by direct URL, and gets the same safe denial as a nonexistent one", async ({ page }) => {
     await signInAs(page, "manager");
-    // seed-campaign-paused is Karnataka - outside Manager's seeded REGION
-    // grants (Kerala/Maharashtra/South/West).
+    // seed-campaign-paused is Uttar Pradesh - outside Manager's seeded
+    // REGION grants (Kerala/Maharashtra/South Zone/West Zone).
     await page.goto("/campaigns/seed-campaign-paused");
     await expect(page.getByText("Access denied")).toBeVisible();
     await expect(page.getByText("You don't have permission to view this Campaign.")).toBeVisible();
@@ -421,7 +425,7 @@ test.describe("Role behavior", () => {
 
   test("targeting region alone never grants Campaign record access", async ({ page }) => {
     // seed-campaign-paused's own targeting criteria.regionIds includes
-    // Karnataka, which Manager does NOT hold as a scope grant - proving
+    // Uttar Pradesh, which Manager does NOT hold as a scope grant - proving
     // criteria never substitutes for real scope.
     await signInAs(page, "manager");
     await page.goto("/campaigns/seed-campaign-paused");

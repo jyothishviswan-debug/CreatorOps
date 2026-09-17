@@ -309,19 +309,19 @@ describe("Campaign scope/list", () => {
     expect(refs.has("civic-voices")).toBe(true);
   });
 
-  it("REGION-scoped actor (Manager) sees Kerala-region Campaigns but not Karnataka-only ones", async () => {
+  it("REGION-scoped actor (Manager) sees Kerala-region Campaigns but not Uttar-Pradesh-only ones", async () => {
     const manager = await actorFor("partnership_manager"); // Kerala/Maharashtra/South/West only
     const listed = await listCampaigns(manager, { limit: 50 });
     expect(listed.ok).toBe(true);
     if (!listed.ok) throw new Error("unreachable");
     const refs = new Set(listed.data.campaigns.map((c) => c.campaignRef));
     expect(refs.has("seed-campaign-draft")).toBe(true); // Kerala
-    expect(refs.has("seed-campaign-paused")).toBe(false); // Karnataka only - out of scope
+    expect(refs.has("seed-campaign-paused")).toBe(false); // Uttar Pradesh only - out of scope
   });
 
   it("cross-scope direct-ref access is denied safely (not_found leak-free), same-scope direct-ref succeeds", async () => {
     const manager = await actorFor("partnership_manager");
-    const denied = await getCampaign(manager, "seed-campaign-paused"); // Karnataka
+    const denied = await getCampaign(manager, "seed-campaign-paused"); // Uttar Pradesh
     expect(denied.ok).toBe(false);
     if (denied.ok) throw new Error("unreachable");
     expect(denied.code).toBe("unauthorized");

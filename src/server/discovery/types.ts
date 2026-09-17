@@ -44,12 +44,40 @@ export const LEAD_RESTORABLE_STATES: readonly LeadLifecycle[] = ["WATCHLIST", "R
 // downstream code.
 export const DISCOVERY_PLATFORMS = ["Instagram", "YouTube"] as const;
 
-// A starter zone-level classification, expected to grow (e.g. more
-// granular India-1/India-2-style segments) - "Other" always covers
-// whatever isn't on the list yet, same idiom as DISCOVERY_PLATFORMS.
-// Lead.region itself stays free text server-side - this only shapes the
-// Create/Edit Lead form's dropdown, never a schema-level constraint.
-export const DISCOVERY_REGIONS = ["South", "North", "Central", "East", "West"] as const;
+// Canonical India State/UT list, grouped by the 4 official zones (source:
+// MSME Annexure 1 - "List of State/UTs by Zones" - there is no "Central"
+// zone in the official classification). This is the single source of
+// truth for every region-selection UI in the app (Discovery/Partners/
+// Vendors/Campaigns) - each `regionIds`/`region` field itself stays free
+// text server-side (see each domain's own schema), this only shapes what
+// the region picker offers and how it groups results.
+export const REGION_ZONES = {
+  "West Zone": ["Rajasthan", "Madhya Pradesh", "Gujarat", "Daman & Diu", "Dadra & Nagar Haveli", "Maharashtra", "Goa"],
+  "South Zone": ["Andhra Pradesh", "Karnataka", "Lakshadweep", "Kerala", "Tamil Nadu", "Puducherry", "Andaman & Nicobar"],
+  "North Zone": ["Jammu & Kashmir", "Himachal Pradesh", "Punjab", "Chandigarh", "Uttarakhand", "Haryana", "Delhi", "Uttar Pradesh"],
+  "East Zone": [
+    "Bihar",
+    "Sikkim",
+    "Arunachal Pradesh",
+    "Nagaland",
+    "Manipur",
+    "Mizoram",
+    "Tripura",
+    "Meghalaya",
+    "Assam",
+    "West Bengal",
+    "Jharkhand",
+    "Odisha",
+    "Chhattisgarh",
+  ],
+} as const;
+
+export type RegionZoneName = keyof typeof REGION_ZONES;
+export const REGION_ZONE_NAMES = Object.keys(REGION_ZONES) as RegionZoneName[];
+
+// Flat list of every state/UT across all zones, for validation/lookup -
+// never a fixed whitelist on the schema itself (see comment above).
+export const DISCOVERY_REGIONS = REGION_ZONE_NAMES.flatMap((zone) => REGION_ZONES[zone]);
 
 // --- Research policy ---------------------------------------------------
 // Step 6A section 3: research completion requires exactly one approved
@@ -277,8 +305,10 @@ export const leadDocSchema = z.object({
 
   // Scope-relevant dimensions (also the Firestore query filter fields -
   // see firestore.ts's listLeads). No postal address anywhere on this
-  // model.
-  region: z.string().min(1).max(80).nullable().default(null),
+  // model. `regionIds` is an array (a Lead can span multiple States/UTs),
+  // matching Partners'/Vendors'/Campaigns' own regionIds shape - widened
+  // from a single scalar `region` field.
+  regionIds: z.array(z.string().min(1)).max(50).default([]),
   teamId: z.string().min(1).max(120).nullable().default(null),
   ownerUid: z.string().min(1).nullable().default(null),
 

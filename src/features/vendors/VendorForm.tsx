@@ -6,8 +6,8 @@ import { useRouter } from "next/navigation";
 
 import { FormLayout, FormSection, Fields, Field, FormFoot, Checklist } from "@/ui/Form";
 import { Icon } from "@/ui/icons";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import type { VendorOwnerCandidateDto } from "@/server/vendors/user-picker";
-import { DISCOVERY_REGIONS } from "@/server/discovery/types";
 import { VENDOR_TYPES, type VendorDuplicateCheckResult, type VendorType } from "@/server/vendors/types";
 import { createVendor, precheckVendorDuplicates } from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
@@ -33,7 +33,7 @@ export function VendorForm() {
   const [vendorType, setVendorType] = useState<VendorType>("AGENCY");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
-  const [regions, setRegions] = useState("");
+  const [regions, setRegions] = useState<string[]>([]);
   const [websiteLabel, setWebsiteLabel] = useState("Website");
   const [websiteValue, setWebsiteValue] = useState("");
   const [teams, setTeams] = useState("");
@@ -79,7 +79,7 @@ export function VendorForm() {
       email: email.trim() || undefined,
       phone: phone.trim() || undefined,
       businessReferences: websiteValue.trim() ? [{ label: websiteLabel.trim() || "Website", value: websiteValue.trim() }] : undefined,
-      regionIds: fromCsv(regions),
+      regionIds: regions,
       teamIds: fromCsv(teams),
       ownerUserRef: owner?.userRef,
     });
@@ -118,13 +118,14 @@ export function VendorForm() {
             <Field label="Phone number">
               <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </Field>
-            <Field label="Regions">
-              <input type="text" value={regions} onChange={(e) => setRegions(e.target.value)} placeholder="Kerala, Karnataka" />
-            </Field>
             <Field label="Teams">
               <input type="text" value={teams} onChange={(e) => setTeams(e.target.value)} placeholder="south-programmes" />
             </Field>
           </Fields>
+
+          <Field label="Regions" full>
+            <RegionMultiSelect value={regions} onChange={setRegions} />
+          </Field>
 
           <Field label="Owner" full>
             {owner ? (
@@ -151,10 +152,6 @@ export function VendorForm() {
               <input type="text" value={websiteValue} onChange={(e) => setWebsiteValue(e.target.value)} placeholder="https://example.com" maxLength={300} />
             </Field>
           </Fields>
-        </FormSection>
-
-        <FormSection title="Regions reference" description="The Regions field above accepts a comma-separated list from this starter set.">
-          <p className="foundationnote">{DISCOVERY_REGIONS.join(" · ")}</p>
         </FormSection>
 
         {saveError && (

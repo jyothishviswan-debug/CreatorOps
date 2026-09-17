@@ -1,12 +1,13 @@
 "use client";
 
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import { useState, type FormEvent } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { FormLayout, FormSection, Fields, Field, FormFoot, Checklist } from "@/ui/Form";
 import { Icon } from "@/ui/icons";
-import { DISCOVERY_REGIONS } from "@/server/discovery/types";
+import { MultiSelectDropdown } from "@/features/shared/MultiSelectDropdown";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import { TARGET_AUDIENCES, type TargetAudience } from "@/server/campaigns/types";
 import type { CampaignOwnerCandidateDto } from "@/server/campaigns/user-picker";
 import { createCampaign } from "./api-client";
@@ -18,107 +19,13 @@ import { REVIEW_POLICY_LABELS } from "./format";
 // identifiers, compatible with Partner Account's own platform values,
 // never a closed enum). The server normalizes and de-duplicates
 // regardless of what's typed here.
-const PLATFORM_SUGGESTIONS = ["Instagram", "YouTube"];
+const PLATFORM_GROUPS = [{ label: "Platforms", options: ["Instagram", "YouTube"] }];
 
 function fromCsv(value: string): string[] {
   return value
     .split(",")
     .map((v) => v.trim())
     .filter(Boolean);
-}
-
-// A real multi-selection dropdown: a closed control that shows the
-// current selection, opens a checkbox list on click, and closes on an
-// outside click - never a native unstyled <datalist> popup, never a
-// native <select multiple> listbox (which never closes and needs
-// ctrl/cmd-click). Free text stays possible via the "Other platform"
-// row at the bottom, so this is still never a fixed whitelist.
-function PlatformMultiSelect({ value, onChange }: { value: string; onChange: (next: string) => void }) {
-  const [open, setOpen] = useState(false);
-  const [customInput, setCustomInput] = useState("");
-  const containerRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!open) return;
-    function onOutsideClick(e: MouseEvent) {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    document.addEventListener("mousedown", onOutsideClick);
-    return () => document.removeEventListener("mousedown", onOutsideClick);
-  }, [open]);
-
-  const selectedValues = fromCsv(value);
-  const selectedLower = new Set(selectedValues.map((v) => v.toLowerCase()));
-  const extraSelected = selectedValues.filter((v) => !PLATFORM_SUGGESTIONS.some((p) => p.toLowerCase() === v.toLowerCase()));
-
-  function toggle(name: string) {
-    const already = selectedLower.has(name.toLowerCase());
-    const next = already ? selectedValues.filter((v) => v.toLowerCase() !== name.toLowerCase()) : [...selectedValues, name];
-    onChange(next.join(", "));
-  }
-
-  function addCustom() {
-    const trimmed = customInput.trim();
-    if (!trimmed || selectedLower.has(trimmed.toLowerCase())) return;
-    onChange([...selectedValues, trimmed].join(", "));
-    setCustomInput("");
-  }
-
-  return (
-    <div ref={containerRef} style={{ position: "relative" }}>
-      <button
-        type="button"
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        style={{
-          width: "100%",
-          textAlign: "left",
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 8,
-          border: "1px solid #dce1e7",
-          borderRadius: 6,
-          padding: "8px 10px",
-          background: "white",
-          color: "var(--ink)",
-          fontSize: 12,
-        }}
-      >
-        <span>{selectedValues.length > 0 ? selectedValues.join(", ") : "Select platforms…"}</span>
-        <Icon name="chevronDown" className="muted" style={{ width: 14, height: 14, flexShrink: 0 }} />
-      </button>
-      {open && (
-        <div className="panel" role="listbox" style={{ position: "absolute", top: "calc(100% + 4px)", left: 0, right: 0, zIndex: 20, padding: 10 }}>
-          {[...PLATFORM_SUGGESTIONS, ...extraSelected].map((p) => (
-            <label key={p} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", cursor: "pointer" }}>
-              <input type="checkbox" checked={selectedLower.has(p.toLowerCase())} onChange={() => toggle(p)} />
-              {p}
-            </label>
-          ))}
-          <div className="actions" style={{ marginTop: 8 }}>
-            <input
-              type="text"
-              value={customInput}
-              onChange={(e) => setCustomInput(e.target.value)}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  addCustom();
-                }
-              }}
-              placeholder="Other platform…"
-              style={{ flex: 1 }}
-            />
-            <button type="button" className="btn" onClick={addCustom}>
-              Add
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
 }
 
 // Step 9B section 4: direct Campaign creation over the real trusted
@@ -135,13 +42,13 @@ export function CampaignForm() {
   const [startDate, setStartDate] = useState("");
   const [endDate, setEndDate] = useState("");
 
-  const [platforms, setPlatforms] = useState("");
+  const [platforms, setPlatforms] = useState<string[]>([]);
 
   const [targetAudience, setTargetAudience] = useState<TargetAudience | "">("");
-  const [regions, setRegions] = useState("");
+  const [regions, setRegions] = useState<string[]>([]);
   const [languages, setLanguages] = useState("");
   const [categories, setCategories] = useState("");
-  const [criteriaPlatforms, setCriteriaPlatforms] = useState("");
+  const [criteriaPlatforms, setCriteriaPlatforms] = useState<string[]>([]);
 
   const [teams, setTeams] = useState("");
   const [owner, setOwner] = useState<CampaignOwnerCandidateDto | null>(null);
@@ -161,17 +68,17 @@ export function CampaignForm() {
       objective,
       startDate,
       endDate,
-      platforms: fromCsv(platforms),
-      regionIds: fromCsv(regions),
+      platforms,
+      regionIds: regions,
       teamIds: fromCsv(teams),
       ownerUserRef: owner?.userRef,
       defaultReviewPolicy: reviewPolicy,
       criteria: {
         targetAudience: targetAudience || null,
-        regionIds: fromCsv(regions),
+        regionIds: regions,
         languageIds: fromCsv(languages),
         categoryIds: fromCsv(categories),
-        platforms: fromCsv(criteriaPlatforms),
+        platforms: criteriaPlatforms,
       },
     });
     setSaving(false);
@@ -205,7 +112,7 @@ export function CampaignForm() {
 
         <FormSection title="Platforms" description="One or more normalized platform identifiers - the same identifiers Partner Accounts use. Never a fixed whitelist.">
           <Field label="Platforms" full>
-            <PlatformMultiSelect value={platforms} onChange={setPlatforms} />
+            <MultiSelectDropdown value={platforms} onChange={setPlatforms} groups={PLATFORM_GROUPS} placeholder="Select platforms…" allowCustom customPlaceholder="Other platform…" />
           </Field>
         </FormSection>
 
@@ -221,8 +128,8 @@ export function CampaignForm() {
                 ))}
               </select>
             </Field>
-            <Field label="Regions">
-              <input type="text" value={regions} onChange={(e) => setRegions(e.target.value)} placeholder="Kerala, Karnataka" />
+            <Field label="Regions" full>
+              <RegionMultiSelect value={regions} onChange={setRegions} />
             </Field>
             <Field label="Languages">
               <input type="text" value={languages} onChange={(e) => setLanguages(e.target.value)} placeholder="Malayalam, English" />
@@ -231,11 +138,10 @@ export function CampaignForm() {
               <input type="text" value={categories} onChange={(e) => setCategories(e.target.value)} placeholder="Lifestyle, Education" />
             </Field>
             <Field label="Targeting platforms" full hint="Partners active on these platforms - can differ from where the Campaign itself publishes.">
-              <PlatformMultiSelect value={criteriaPlatforms} onChange={setCriteriaPlatforms} />
+              <MultiSelectDropdown value={criteriaPlatforms} onChange={setCriteriaPlatforms} groups={PLATFORM_GROUPS} placeholder="Select platforms…" allowCustom customPlaceholder="Other platform…" />
             </Field>
           </Fields>
           <p className="foundationnote">Target Audience is the audience-segmentation criterion. Partner tier is not part of Campaign targeting.</p>
-          <p className="foundationnote">Regions reference: {DISCOVERY_REGIONS.join(" · ")}</p>
         </FormSection>
 
         <FormSection title="Ownership" description="Owner is optional - an unassigned Campaign is flagged for attention, not blocked from being created.">

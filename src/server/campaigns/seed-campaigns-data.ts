@@ -65,12 +65,12 @@ export async function seedCampaignsData(): Promise<void> {
     addedByUserRef: headUserRef,
   });
 
-  // Deliberately: no region grants Karnataka to Partnership Manager (see
-  // seed-access-data.ts's SCOPE_GRANTS - Manager has Kerala/Maharashtra/
-  // South/West only), so seed-campaign-paused (Karnataka) is cross-scope
-  // for Manager despite being Head/Admin-visible - the same "genuinely
-  // out of scope, not just hidden by UI" proof Vendors'/Partners' own
-  // seed data already exercises.
+  // Deliberately: no region grant covers Uttar Pradesh for Partnership
+  // Manager (see seed-access-data.ts's SCOPE_GRANTS), so
+  // seed-campaign-paused (Uttar Pradesh) is cross-scope for Manager
+  // despite being Head/Admin-visible - the same "genuinely out of scope,
+  // not just hidden by UI" proof Vendors'/Partners' own seed data already
+  // exercises.
   const campaigns: CampaignDoc[] = [
     {
       ...base("seed-campaign-draft", "Kerala Creator Onboarding"),
@@ -115,14 +115,14 @@ export async function seedCampaignsData(): Promise<void> {
       defaultReviewPolicy: "REVIEW_REQUIRED",
     },
     {
-      ...base("seed-campaign-paused", "Karnataka Growth Push"),
+      ...base("seed-campaign-paused", "Uttar Pradesh Growth Push"),
       status: "PAUSED",
       statusReason: null,
       platforms: ["instagram", "tiktok"],
-      regionIds: ["Karnataka"],
+      regionIds: ["Uttar Pradesh"],
       teamIds: [],
       ownerUid: null,
-      criteria: { regionIds: ["Karnataka"], languageIds: [], categoryIds: [], targetAudience: null, platforms: [] },
+      criteria: { regionIds: ["Uttar Pradesh"], languageIds: [], categoryIds: [], targetAudience: null, platforms: [] },
       resources: [],
       defaultReviewPolicy: "REVIEW_REQUIRED",
     },
@@ -131,10 +131,10 @@ export async function seedCampaignsData(): Promise<void> {
       status: "COMPLETED",
       statusReason: null,
       platforms: ["facebook"],
-      regionIds: ["West"],
+      regionIds: ["Gujarat"],
       teamIds: [],
       ownerUid: null,
-      criteria: { regionIds: ["West"], languageIds: [], categoryIds: [], targetAudience: null, platforms: [] },
+      criteria: { regionIds: ["Gujarat"], languageIds: [], categoryIds: [], targetAudience: null, platforms: [] },
       resources: [resourceFixture("Retrospective Deck")],
       defaultReviewPolicy: "NO_PREPOST_REVIEW",
     },

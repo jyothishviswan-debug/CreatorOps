@@ -6,8 +6,9 @@ import { useRouter } from "next/navigation";
 
 import { FormLayout, FormSection, Fields, Field, FormFoot, Checklist } from "@/ui/Form";
 import { Icon } from "@/ui/icons";
+import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
 import type { LeadDto } from "@/server/discovery/client-dto";
-import { DISCOVERY_PLATFORMS, DISCOVERY_REGIONS, LEAD_SOURCE_TYPES, type DuplicateCheckResult, type LeadSourceType } from "@/server/discovery/types";
+import { DISCOVERY_PLATFORMS, LEAD_SOURCE_TYPES, type DuplicateCheckResult, type LeadSourceType } from "@/server/discovery/types";
 import { createLead, precheckDuplicates, updateLead } from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
 import { deriveFromProfileUrl } from "./profile-url";
@@ -39,15 +40,7 @@ export function DiscoveryLeadForm(props: Props) {
   const [handle, setHandle] = useState(initial?.handle ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
-  const [region, setRegion] = useState(initial?.region ?? "");
-  // Same "dropdown covers the common cases, Other reveals free text"
-  // idiom as Platform above - Lead.region stays free text server-side,
-  // so an existing Lead whose region isn't on the (currently short,
-  // expected-to-grow) list still shows via the fallback.
-  const [regionOther, setRegionOther] = useState(() => {
-    const value = initial?.region ?? "";
-    return value !== "" && !(DISCOVERY_REGIONS as readonly string[]).includes(value);
-  });
+  const [regionIds, setRegionIds] = useState<string[]>(initial?.regionIds ?? []);
   const [sourceType, setSourceType] = useState<LeadSourceType>(initial?.source.type ?? "research");
   const [sourceNote, setSourceNote] = useState(initial?.source.note ?? "");
   const platformTouched = useRef(props.mode === "edit");
@@ -120,7 +113,7 @@ export function DiscoveryLeadForm(props: Props) {
         platform: platform.trim() || undefined,
         handle: handle.trim() || undefined,
         source: { type: sourceType, note: sourceNote.trim() || undefined },
-        region: region.trim() || undefined,
+        regionIds,
       });
       setSaving(false);
       if (!result.ok) {
@@ -140,7 +133,7 @@ export function DiscoveryLeadForm(props: Props) {
       platform: platform.trim() || null,
       handle: handle.trim() || null,
       source: { type: sourceType, note: sourceNote.trim() || undefined },
-      region: region.trim() || null,
+      regionIds,
       expectedVersion: lead.version,
     });
     setSaving(false);
@@ -229,33 +222,11 @@ export function DiscoveryLeadForm(props: Props) {
             <Field label="Mobile number">
               <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </Field>
-            <Field label="Region">
-              <select
-                value={regionOther ? "other" : region}
-                onChange={(e) => {
-                  const value = e.target.value;
-                  if (value === "other") {
-                    setRegionOther(true);
-                    setRegion("");
-                  } else {
-                    setRegionOther(false);
-                    setRegion(value);
-                  }
-                }}
-              >
-                <option value="">Select region…</option>
-                {DISCOVERY_REGIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-                <option value="other">Other</option>
-              </select>
-              {regionOther && (
-                <input type="text" value={region} placeholder="Region name" style={{ marginTop: 8 }} onChange={(e) => setRegion(e.target.value)} />
-              )}
-            </Field>
           </Fields>
+
+          <Field label="Regions" full>
+            <RegionMultiSelect value={regionIds} onChange={setRegionIds} />
+          </Field>
 
           <DuplicateStatusBanner result={hasIdentitySignal ? duplicateResult : null} checking={hasIdentitySignal && checkingDuplicates} />
         </FormSection>

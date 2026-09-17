@@ -22,11 +22,13 @@ export async function GET(request: Request) {
     }
   }
 
+  const regionValues = url.searchParams.getAll("region");
+
   const input = {
     limit: limitParam ? Number(limitParam) : undefined,
     cursor,
     lifecycle: url.searchParams.get("lifecycle") ?? undefined,
-    region: url.searchParams.get("region") ?? undefined,
+    region: regionValues.length > 0 ? regionValues : undefined,
     platform: url.searchParams.get("platform") ?? undefined,
     assignedToMe: url.searchParams.get("assignedToMe") === "true" ? true : undefined,
     search: url.searchParams.get("search") ?? undefined,

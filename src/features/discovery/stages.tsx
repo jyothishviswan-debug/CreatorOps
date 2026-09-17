@@ -87,7 +87,7 @@ export function LeadStage({ lead }: StageProps) {
       <div className="kv">
         <span>Region / team</span>
         <b>
-          {lead.region ?? "—"} {lead.teamId ? `· ${lead.teamId}` : ""}
+          {lead.regionIds.length > 0 ? lead.regionIds.join(", ") : "—"} {lead.teamId ? `· ${lead.teamId}` : ""}
         </b>
       </div>
       <div className="kv">

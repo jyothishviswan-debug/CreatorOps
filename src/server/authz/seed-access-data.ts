@@ -4,6 +4,7 @@
 // - safe to re-run. Emulator-only, same guard pattern as seed-users.ts.
 import { getAdminAuth, getAdminFirestore } from "@/server/firebase/admin";
 import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
+import { REGION_ZONES } from "@/server/discovery/types";
 import type { ActionId } from "./actions";
 import type { FeatureId } from "./features";
 import { FEATURES } from "./features";
@@ -228,31 +229,38 @@ const SENSITIVE_GRANTS: Record<Role, string[]> = {
   super_admin: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details"],
 };
 
+// Every South/West Zone state (per REGION_ZONES, the canonical
+// Annexure-1 taxonomy) EXCEPT the ones already granted individually
+// below - used to expand what used to be a single literal "South"/"West"
+// zone-label grant into the real per-state grants it was always meant to
+// represent (a genuine access-widening change for Manager/Head,
+// explicitly confirmed - see the region-taxonomy overhaul's own note).
+// `Set`-deduped so a state already listed by name for that role is never
+// repeated as a second, redundant grant document.
+function zoneRegionsExcluding(zone: keyof typeof REGION_ZONES, already: string[]): ScopeGrantInput[] {
+  const alreadySet = new Set(already);
+  return REGION_ZONES[zone].filter((state) => !alreadySet.has(state)).map((state) => ({ type: "REGION", region: state }) as const);
+}
+
 // Explicit, per-role scope grants (Step 4C's canonical multi-dimensional
 // model - see types.ts). Deliberately exercises every one of the 9 grant
 // types across the five identities, and deliberately does NOT give every
 // role the same shape of scope: Super Admin's GLOBAL grant is its own
 // explicit document, not something inferred from the role name, and
 // nothing here compares roles to each other to decide breadth.
-// REGION grants below are deliberately given at BOTH granularities that
-// exist in the app today: the original state-level names (what every
-// seeded Discovery Lead still uses) and the newer zone-level names
-// DISCOVERY_REGIONS now offers on the Create/Edit Lead form (Kerala/
-// Tamil Nadu/Karnataka -> South, Maharashtra -> West). This is additive,
-// not a replacement - every existing state-level grant stays exactly as
-// it was, so no seeded Lead's visibility changes. Without the zone-level
-// addition, a Lead created through the new dropdown (region: "South")
-// would be invisible to every seeded identity, including whoever just
-// created it - region grants are exact-string matches, not a hierarchy,
-// so "South" and "Kerala" are two unrelated values to this system until
-// both are explicitly granted.
 const SCOPE_GRANTS: Record<Role, ScopeGrantInput[]> = {
   viewer: [
     { type: "SELF" },
     { type: "REGION", region: "Kerala" },
-    { type: "REGION", region: "South" },
+    // Karnataka deliberately excluded from this expansion (unlike every
+    // other South Zone state) - Viewer must stay without real Karnataka
+    // access, since several regression tests (Vendors'/Partners' own
+    // "cross-scope user is denied" fixtures - seed-vendor-agency,
+    // creator-house) specifically prove Viewer is denied a Karnataka-only
+    // record while Head, who holds Karnataka explicitly, is allowed.
+    ...zoneRegionsExcluding("South Zone", ["Kerala", "Karnataka"]),
     // Step 6A: proves EXPLICIT_RECORD scope works for Leads specifically,
-    // independent of region/team - this one out-of-region (Karnataka)
+    // independent of region/team - this one out-of-region (Uttar Pradesh)
     // seeded Lead is reachable for Viewer ONLY through this grant (see
     // discovery/seed-discovery-data.ts's "seed-lead-duplicate").
     { type: "EXPLICIT_RECORD", resourceType: "lead", resourceId: "seed-lead-duplicate" },
@@ -260,15 +268,26 @@ const SCOPE_GRANTS: Record<Role, ScopeGrantInput[]> = {
   analyst: [
     { type: "REGION", region: "Kerala" },
     { type: "REGION", region: "Tamil Nadu" },
-    { type: "REGION", region: "South" },
+    ...zoneRegionsExcluding("South Zone", ["Kerala", "Tamil Nadu"]),
     { type: "ANALYTICS_DATASET", datasetId: "cross-platform-reach" },
     { type: "ANALYTICS_ACCOUNT", accountId: "instagram-primary" },
   ],
   partnership_manager: [
     { type: "REGION", region: "Kerala" },
     { type: "REGION", region: "Maharashtra" },
-    { type: "REGION", region: "South" },
-    { type: "REGION", region: "West" },
+    // Karnataka AND Tamil Nadu deliberately excluded from this expansion
+    // (unlike every other South Zone state) - Partnership Head holds
+    // both explicitly (below) and several regression tests depend on
+    // that exact asymmetry: Manager denied / Head allowed on a
+    // Karnataka-only record (seed-vendor-agency, creator-house's linked
+    // Vendor) and on a Tamil-Nadu-only record via a non-region grant
+    // (civic-voices' CAMPAIGN grant; seed-partner-inactive's owner-only
+    // access). Widening Manager's own South Zone coverage to include
+    // these two specific states would silently erase that asymmetry
+    // without any test failing loudly - so it's carved out explicitly
+    // here instead, once, with this comment as the reason.
+    ...zoneRegionsExcluding("South Zone", ["Kerala", "Karnataka", "Tamil Nadu"]),
+    ...zoneRegionsExcluding("West Zone", ["Maharashtra"]),
     { type: "TEAM", teamId: "kerala-programmes" },
     { type: "PARTNER", partnerId: "creator-house" },
   ],
@@ -277,8 +296,8 @@ const SCOPE_GRANTS: Record<Role, ScopeGrantInput[]> = {
     { type: "REGION", region: "Maharashtra" },
     { type: "REGION", region: "Tamil Nadu" },
     { type: "REGION", region: "Karnataka" },
-    { type: "REGION", region: "South" },
-    { type: "REGION", region: "West" },
+    ...zoneRegionsExcluding("South Zone", ["Kerala", "Tamil Nadu", "Karnataka"]),
+    ...zoneRegionsExcluding("West Zone", ["Maharashtra"]),
     { type: "TEAM", teamId: "kerala-programmes" },
     { type: "TEAM", teamId: "maharashtra-programmes" },
     { type: "CAMPAIGN", campaignId: "civic-voices" },

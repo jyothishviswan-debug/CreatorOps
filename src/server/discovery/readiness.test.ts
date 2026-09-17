@@ -23,7 +23,7 @@ function fullyReadyLead(overrides: Partial<LeadDoc> = {}): LeadDoc {
     platform: "Instagram",
     handle: "testcreator",
     source: { type: "research" },
-    region: "Kerala",
+    regionIds: ["Kerala"],
     teamId: null,
     ownerUid: "owner-uid",
     research: { targetAudience: "India 1", updatedAt: now, updatedByUserRef: "ref-1" },

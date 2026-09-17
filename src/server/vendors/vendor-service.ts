@@ -121,7 +121,7 @@ export type ListVendorsInput = {
   cursor?: VendorListCursor;
   status?: string;
   displayNamePrefix?: string;
-  region?: string;
+  region?: string | string[];
   vendorType?: string;
   // Resolved to the actor's own uid server-side - the browser never
   // supplies a raw uid, only the boolean intent (same idiom as Partners'

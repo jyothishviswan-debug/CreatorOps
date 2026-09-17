@@ -71,7 +71,7 @@ function uniqueName(prefix: string): string {
 async function convertFreshLeadToPartner(assetDecision: "NEW_ACCOUNT" | "MAINTAIN_EXISTING", existingPartnerAccountRef?: string) {
   const head = await actorFor("partnership_head");
   const email = `${uniqueName("handoff").replace(/\s+/g, "")}@example.com`;
-  const lead = await createLead(head, { displayName: uniqueName("Handoff Lead"), source: { type: "referral" }, region: "Kerala", email, platform: "Instagram", handle: uniqueName("handofflead").replace(/\s+/g, "") }, "req-handoff-create");
+  const lead = await createLead(head, { displayName: uniqueName("Handoff Lead"), source: { type: "referral" }, regionIds: ["Kerala"], email, platform: "Instagram", handle: uniqueName("handofflead").replace(/\s+/g, "") }, "req-handoff-create");
   if (!lead.ok) throw new Error("unreachable");
   let version = lead.data.version;
 

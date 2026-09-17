@@ -140,19 +140,19 @@ describe("planPartnerListQuery - specific shapes", () => {
     const { plan } = planPartnerListQuery({ actorUid: ACTOR_UID, grants: [region("Kerala"), self(), team("t1")], hasGlobal: false, region: "Tamil Nadu" });
     expect(branchNames(plan)).not.toContain("region");
     const selfBranch = plan.branches.find((b) => b.name === "self") as FirestoreListBranchPlan;
-    expect(selfBranch.pushedFilters.some((f) => f.field === "regionIds" && f.op === "array-contains" && f.value === "Tamil Nadu")).toBe(true);
+    expect(selfBranch.pushedFilters.some((f) => f.field === "regionIds" && f.op === "array-contains-any" && JSON.stringify(f.value) === JSON.stringify(["Tamil Nadu"]))).toBe(true);
     const teamBranch = plan.branches.find((b) => b.name === "team") as FirestoreListBranchPlan;
-    // TEAM's own array-contains-any can never combine with the region's array-contains in one query - it must be a postFilter, never pushed.
+    // TEAM's own array-contains-any can never combine with the region's own array-contains-any in one query - it must be a postFilter, never pushed.
     expect(teamBranch.pushedFilters.some((f) => f.field === "regionIds")).toBe(false);
-    expect(teamBranch.postFilters.some((f) => f.field === "regionIds" && f.op === "array-contains" && f.value === "Tamil Nadu")).toBe(true);
+    expect(teamBranch.postFilters.some((f) => f.field === "regionIds" && f.op === "array-contains-any" && JSON.stringify(f.value) === JSON.stringify(["Tamil Nadu"]))).toBe(true);
     expect(arrayFilterCount(teamBranch)).toBe(1);
   });
 
-  it("global actor + selected region produces one branch with the region pushed as a plain array-contains filter", () => {
+  it("global actor + selected region produces one branch with the region pushed as an array-contains-any filter", () => {
     const { plan } = planPartnerListQuery({ actorUid: ACTOR_UID, grants: [], hasGlobal: true, region: "Kerala" });
     expect(plan.branches).toHaveLength(1);
     const branch = plan.branches[0] as FirestoreListBranchPlan;
-    expect(branch.pushedFilters).toContainEqual({ field: "regionIds", op: "array-contains", value: "Kerala" });
+    expect(branch.pushedFilters).toContainEqual({ field: "regionIds", op: "array-contains-any", value: ["Kerala"] });
   });
 
   it("team actor + selected region: team branch's own array filter is teamIds, region is a postFilter, and it excludes anything self already covers", () => {
@@ -208,7 +208,7 @@ describe("planCampaignListQuery - CAMPAIGN grant merge and dual business-array-f
     const { plan } = planCampaignListQuery({ actorUid: ACTOR_UID, grants: [self()], hasGlobal: false, region: "Kerala", platform: "instagram" });
     const selfBranch = plan.branches.find((b) => b.name === "self") as FirestoreListBranchPlan;
     expect(arrayFilterCount(selfBranch)).toBe(1);
-    expect(selfBranch.pushedFilters).toContainEqual({ field: "regionIds", op: "array-contains", value: "Kerala" });
+    expect(selfBranch.pushedFilters).toContainEqual({ field: "regionIds", op: "array-contains-any", value: ["Kerala"] });
     expect(selfBranch.postFilters).toContainEqual({ field: "platforms", op: "array-contains", value: "instagram" });
   });
 
@@ -223,17 +223,18 @@ describe("planCampaignListQuery - CAMPAIGN grant merge and dual business-array-f
     const teamBranch = plan.branches.find((b) => b.name === "team") as FirestoreListBranchPlan;
     expect(arrayFilterCount(teamBranch)).toBe(1);
     expect(teamBranch.pushedFilters).toContainEqual({ field: "teamIds", op: "array-contains-any", value: ["t1"] });
-    expect(teamBranch.postFilters).toContainEqual({ field: "regionIds", op: "array-contains", value: "Kerala" });
+    expect(teamBranch.postFilters).toContainEqual({ field: "regionIds", op: "array-contains-any", value: ["Kerala"] });
     expect(teamBranch.postFilters).toContainEqual({ field: "platforms", op: "array-contains", value: "x" });
   });
 });
 
-describe("planLeadListQuery - scalar region/team fields never need the array-conflict treatment", () => {
-  it("team actor + selected region pushes both teamId `in` and region `==` in the SAME query (no array conflict for scalar fields)", () => {
+describe("planLeadListQuery - scalar teamId never needs the array-conflict treatment, even alongside the array-valued regionIds filter", () => {
+  it("team actor + selected region pushes both teamId `in` and regionIds `array-contains` in the SAME query (a scalar `in` filter never competes for the one-array-filter-per-branch budget)", () => {
     const { plan } = planLeadListQuery({ actorUid: ACTOR_UID, grants: [team("t1")], hasGlobal: false, region: "Kerala" });
     const teamBranch = plan.branches.find((b) => b.name === "team") as FirestoreListBranchPlan;
+    expect(arrayFilterCount(teamBranch)).toBe(1);
     expect(teamBranch.pushedFilters).toContainEqual({ field: "teamId", op: "in", value: ["t1"] });
-    expect(teamBranch.pushedFilters).toContainEqual({ field: "region", op: "==", value: "Kerala" });
+    expect(teamBranch.pushedFilters).toContainEqual({ field: "regionIds", op: "array-contains-any", value: ["Kerala"] });
     expect(teamBranch.postFilters).toHaveLength(0);
   });
 });

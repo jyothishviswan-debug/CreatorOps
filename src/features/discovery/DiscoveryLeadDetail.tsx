@@ -74,7 +74,7 @@ export function DiscoveryLeadDetail({ initialLead, initialReadiness }: { initial
         </div>
         <div>
           <small>Region</small>
-          <b>{lead.region ?? "—"}</b>
+          <b>{lead.regionIds.length > 0 ? lead.regionIds.join(", ") : "—"}</b>
         </div>
         <div>
           <small>Last updated</small>

@@ -151,8 +151,8 @@ describe("Vendor model", () => {
     const listed = await listVendors(manager, { limit: 50 });
     expect(listed.ok).toBe(true);
     if (!listed.ok) throw new Error("unreachable");
-    expect(listed.data.vendors.every((v) => v.vendorRef !== "seed-vendor-agency")).toBe(true); // Karnataka
-    expect(listed.data.vendors.every((v) => v.vendorRef !== "seed-vendor-manager")).toBe(true); // Karnataka
+    expect(listed.data.vendors.every((v) => v.vendorRef !== "seed-vendor-agency")).toBe(true); // Karnataka - deliberately carved out of Manager's own region expansion
+    expect(listed.data.vendors.every((v) => v.vendorRef !== "seed-vendor-manager")).toBe(true); // Uttar Pradesh - no Manager grant covers it
 
     const direct = await getVendor(manager, "seed-vendor-agency");
     expect(direct.ok).toBe(false);
@@ -686,7 +686,7 @@ describe("Regression", () => {
     if (!before.ok) throw new Error("unreachable");
     const vendorRefsBefore = new Set(before.data.vendors.map((v) => v.vendorRef));
 
-    const lead = await createLead(head, { displayName: uniqueName("No Vendor Lead"), source: { type: "referral" }, region: "Kerala", email: `${uniqueName("novendor").replace(/\s+/g, "")}@example.com` }, "req-no-vendor-create");
+    const lead = await createLead(head, { displayName: uniqueName("No Vendor Lead"), source: { type: "referral" }, regionIds: ["Kerala"], email: `${uniqueName("novendor").replace(/\s+/g, "")}@example.com` }, "req-no-vendor-create");
     if (!lead.ok) throw new Error("unreachable");
     let version = lead.data.version;
     const research = await saveResearch(head, lead.data.leadRef, { targetAudience: "India 1", expectedVersion: version }, "req-nv-research");

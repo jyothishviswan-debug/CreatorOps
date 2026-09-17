@@ -54,7 +54,7 @@ type LeadApi = {
 
 async function createLeadViaApi(page: Page, overrides: Record<string, unknown> = {}): Promise<LeadApi> {
   const response = await page.request.post("/api/discovery/leads", {
-    data: { displayName: uniqueName("E2E Lead"), source: { type: "referral" }, region: "Kerala", ...overrides },
+    data: { displayName: uniqueName("E2E Lead"), source: { type: "referral" }, regionIds: ["Kerala"], ...overrides },
   });
   expect(response.ok()).toBeTruthy();
   return (await response.json()) as LeadApi;
@@ -597,8 +597,8 @@ test.describe("Alternative outcomes", () => {
 test.describe("Scope enforcement", () => {
   test("a scoped user cannot read another-scope Lead by direct URL", async ({ page }) => {
     await signInAs(page, "analyst");
-    // seed-lead-researching is Karnataka-only - outside Analyst's seeded
-    // REGION grants (Kerala, Tamil Nadu).
+    // seed-lead-researching is Uttar Pradesh-only - outside Analyst's
+    // seeded REGION grants (Kerala, Tamil Nadu, and the rest of South Zone).
     await page.goto("/discovery/seed-lead-researching");
     await expect(page.getByText("Access denied")).toBeVisible();
     await expect(page.getByText("You don't have permission to view this Lead.")).toBeVisible();

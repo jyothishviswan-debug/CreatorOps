@@ -113,10 +113,14 @@ test.describe("Workspace", () => {
 
     await page.getByLabel("Search vendors by name").fill("");
     await page.getByLabel("Filter vendor type").selectOption("PAYEE_BUSINESS");
-    await page.getByLabel("Filter region").fill("Goa");
+    await page.getByRole("button", { name: "Select regions…" }).click();
+    await page.getByRole("checkbox", { name: "Goa" }).check();
+    await page.getByLabel("Search vendors by name").click(); // closes the dropdown via outside click
     await expect(page.getByText(vendor.displayName)).toBeVisible({ timeout: 5000 });
 
-    await page.getByLabel("Filter region").fill("");
+    await page.getByRole("button", { name: "Goa" }).click();
+    await page.getByRole("checkbox", { name: "Goa" }).uncheck();
+    await page.getByLabel("Search vendors by name").click();
     await page.getByLabel("Filter status").selectOption("ACTIVE");
     await expect(page.getByText(vendor.displayName)).toBeVisible({ timeout: 5000 });
   });
