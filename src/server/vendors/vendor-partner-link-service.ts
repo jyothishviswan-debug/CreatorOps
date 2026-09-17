@@ -1,19 +1,30 @@
 import { z } from "zod";
 
+import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ActorContext } from "@/server/authz/types";
 import { getPartnerDocByRef } from "@/server/partners/firestore";
 import { requirePartnerInScope } from "@/server/partners/partners-gate";
 import { toPartnerSafeLabelDto } from "@/server/partners/client-dto";
 import { toVendorPartnerLinkDto, toVendorSafeLabelDto, type PartnerVendorLinkDto, type VendorPartnerLinkDto, type VendorPartnerLinkWithPartnerDto } from "./client-dto";
-import { getVendorDocByRef, getVendorPartnerLinkDocByRef, listVendorPartnerLinkDocsForPartner, listVendorPartnerLinkDocsForVendor, runVendorPartnerLinkMutation, vendorPartnerLinksCollection } from "./firestore";
+import {
+  getVendorDocByRef,
+  getVendorPartnerLinkDocByRef,
+  listVendorPartnerLinkDocsForPartner,
+  listVendorPartnerLinkDocsForVendor,
+  runVendorPartnerLinkMutation,
+  vendorPartnerActiveClaimsCollection,
+  vendorPartnerLinksCollection,
+} from "./firestore";
 import { generateVendorPartnerLinkRef } from "./ids";
-import { requireVendorInScope, requireVendorsAccess } from "./vendors-gate";
+import { requireVendorInScope, requireVendorsAccess, requireVendorsFeatureAccess } from "./vendors-gate";
 import {
   relationshipTypeSchema,
+  vendorPartnerActiveClaimDocSchema,
   vendorPartnerLinkDocSchema,
   vendorsInvalidInputResult,
   vendorsUnauthorizedResult,
   type VendorDoc,
+  type VendorPartnerActiveClaimDoc,
   type VendorPartnerLinkDoc,
   type VendorsServiceResult,
 } from "./types";
@@ -65,25 +76,37 @@ const createLinkInputSchema = z
   .object({
     partnerRef: z.string().min(1),
     relationshipType: relationshipTypeSchema,
+    payeeRole: z.boolean().optional(),
     effectiveFrom: z.string().min(1),
     effectiveTo: z.string().min(1).optional(),
   })
   .strict();
 export type CreateVendorPartnerLinkInput = z.input<typeof createLinkInputSchema>;
 
-// Company policy: a Partner may have at most ONE ACTIVE Vendor
-// relationship at a time - the one Vendor handles that Partner's
-// operations and payments in full, never split across simultaneous
-// Vendors. Enforced here, not by a Firestore-level constraint: a bounded
-// equality-only query (partnerRef==+status=="ACTIVE", no orderBy - no
-// composite index required, same discipline as
-// checkVendorDependencies'/checkPartnerDependencies' own dependency
-// checks) run BEFORE the write, inside the same request. This is a
-// policy precondition, not a concurrency-safe uniqueness lock (two
-// simultaneous creates could theoretically both pass the check before
-// either writes) - acceptable here the same way Partner Account primary-
-// account selection already accepts that same narrow window, since a
-// human operator, not a high-frequency system, drives this action. The
+async function conflictMessageFor(actingVendor: VendorDoc, claim: VendorPartnerActiveClaimDoc): Promise<string> {
+  const existingVendor = claim.vendorRef === actingVendor.vendorRef ? actingVendor : await getVendorDocByRef(claim.vendorRef);
+  return `This Partner already has an active Vendor relationship (${existingVendor?.displayName ?? "another Vendor"}). End it before linking a new one.`;
+}
+
+type CreateLinkTxResult =
+  | { kind: "created"; doc: VendorPartnerLinkDoc }
+  | { kind: "idempotent"; doc: VendorPartnerLinkDoc }
+  | { kind: "conflict"; claim: VendorPartnerActiveClaimDoc };
+
+// Step 8B.1 REVISED section 1/2: company policy - a Partner may have at
+// most ONE ACTIVE Vendor relationship at a time (the one Vendor handles
+// that Partner's operations and payments in full, never split across
+// simultaneous Vendors) - and that invariant must be race-safe, not just
+// a pre-query precondition. Enforced via vendorPartnerActiveClaims: a
+// deterministic claim doc keyed by partnerRef whose EXISTENCE is the
+// lock. ALL transaction reads (the claim, and, on an idempotent-retry
+// path, the existing link) happen before the ONLY writes (the new link +
+// the new claim, both staged together) - the hard Firestore transaction
+// requirement. If two concurrent creates race for the same Partner, the
+// Admin SDK's automatic optimistic-transaction retry guarantees exactly
+// one observes an empty claim and wins; the loser's retried attempt
+// re-reads the now-existing claim and correctly reports conflict - no
+// separate locking primitive needed beyond the transaction itself. The
 // Vendor-side (a Vendor may have many simultaneously-active Partners) is
 // deliberately unrestricted - only the Partner-side is policy-limited.
 // The Partner side is validated for real existence only
@@ -104,27 +127,19 @@ export async function createVendorPartnerLink(actor: ActorContext | null, vendor
   const partner = await getPartnerDocByRef(input.partnerRef);
   if (!partner) return vendorsInvalidInputResult("partnerRef does not resolve to a real Partner.");
 
-  const existingActive = await vendorPartnerLinksCollection().where("partnerRef", "==", partner.partnerRef).where("status", "==", "ACTIVE").limit(1).get();
-  if (!existingActive.empty) {
-    const existingVendorRef = existingActive.docs[0]!.data().vendorRef as string;
-    const existingVendor = existingVendorRef === loaded.vendor.vendorRef ? loaded.vendor : await getVendorDocByRef(existingVendorRef);
-    return {
-      ok: false,
-      code: "conflict",
-      message: `This Partner already has an active Vendor relationship (${existingVendor?.displayName ?? "another Vendor"}). End it before linking a new one.`,
-    };
-  }
-
+  const db = getAdminFirestore();
+  const claimRef = vendorPartnerActiveClaimsCollection().doc(partner.partnerRef);
+  const newLinkRef = vendorPartnerLinksCollection().doc();
   const now = new Date().toISOString();
-  const uid = vendorPartnerLinksCollection().doc().id;
 
   const doc: VendorPartnerLinkDoc = vendorPartnerLinkDocSchema.parse({
-    uid,
+    uid: newLinkRef.id,
     vendorPartnerLinkRef: generateVendorPartnerLinkRef(),
     version: 1,
     vendorRef: loaded.vendor.vendorRef,
     partnerRef: partner.partnerRef,
     relationshipType: input.relationshipType,
+    payeeRole: input.payeeRole ?? false,
     effectiveFrom: input.effectiveFrom,
     effectiveTo: input.effectiveTo ?? null,
     status: "ACTIVE",
@@ -133,17 +148,42 @@ export async function createVendorPartnerLink(actor: ActorContext | null, vendor
     updatedAt: now,
     updatedByUserRef: actor!.userRef,
   });
-  await vendorPartnerLinksCollection().doc(uid).set(doc);
 
-  await writeVendorEvent({
-    vendorUid: loaded.vendor.uid,
-    kind: "link_created",
-    actorUserRef: actor!.userRef,
-    metadata: { partnerRef: partner.partnerRef, relationshipType: input.relationshipType },
-    requestId,
+  const txResult = await db.runTransaction<CreateLinkTxResult>(async (tx) => {
+    const claimSnap = await tx.get(claimRef);
+    if (claimSnap.exists) {
+      const claim = vendorPartnerActiveClaimDocSchema.safeParse(claimSnap.data());
+      // A same-Vendor retry (e.g. a double-submit/network retry) is a
+      // supported idempotent path: the desired end state ("this
+      // Partner's active Vendor is X") is already true, so read and
+      // return the existing link rather than erroring. All reads still
+      // precede all writes - this branch performs no writes at all.
+      if (claim.success && claim.data.vendorRef === loaded.vendor.vendorRef) {
+        const existingLinkSnap = await tx.get(vendorPartnerLinksCollection().doc(claim.data.vendorPartnerLinkUid));
+        const existingLink = existingLinkSnap.exists ? vendorPartnerLinkDocSchema.safeParse(existingLinkSnap.data()) : null;
+        if (existingLink?.success) return { kind: "idempotent", doc: existingLink.data };
+      }
+      return { kind: "conflict", claim: claim.success ? claim.data : { partnerRef: partner.partnerRef, vendorRef: "unknown", vendorPartnerLinkRef: "unknown", vendorPartnerLinkUid: "unknown", claimedAt: now } };
+    }
+
+    tx.set(newLinkRef, doc);
+    tx.set(claimRef, vendorPartnerActiveClaimDocSchema.parse({ partnerRef: partner.partnerRef, vendorRef: loaded.vendor.vendorRef, vendorPartnerLinkRef: doc.vendorPartnerLinkRef, vendorPartnerLinkUid: doc.uid, claimedAt: now }));
+    return { kind: "created", doc };
   });
 
-  return { ok: true, data: toVendorPartnerLinkDto(doc) };
+  if (txResult.kind === "conflict") return { ok: false, code: "conflict", message: await conflictMessageFor(loaded.vendor, txResult.claim) };
+
+  if (txResult.kind === "created") {
+    await writeVendorEvent({
+      vendorUid: loaded.vendor.uid,
+      kind: "link_created",
+      actorUserRef: actor!.userRef,
+      metadata: { partnerRef: partner.partnerRef, relationshipType: input.relationshipType },
+      requestId,
+    });
+  }
+
+  return { ok: true, data: toVendorPartnerLinkDto(txResult.doc) };
 }
 
 // ---- Edit safe metadata ----
@@ -151,12 +191,17 @@ export async function createVendorPartnerLink(actor: ActorContext | null, vendor
 const editLinkInputSchema = z
   .object({
     relationshipType: relationshipTypeSchema.optional(),
+    payeeRole: z.boolean().optional(),
     effectiveFrom: z.string().min(1).optional(),
     expectedVersion: z.number().int().min(1),
   })
   .strict();
 export type EditVendorPartnerLinkInput = z.input<typeof editLinkInputSchema>;
 
+// Metadata-only - never touches status or the active-Vendor claim, so it
+// can never create a second active relationship (Step 8B.1 REVISED
+// section 1's "Editing" requirement) - the generic optimistic-version
+// mutation primitive is sufficient here.
 export async function editVendorPartnerLink(actor: ActorContext | null, linkRef: unknown, rawInput: unknown, requestId: string): Promise<VendorsServiceResult<VendorPartnerLinkDto>> {
   const loaded = await loadAuthorizedLink(actor, linkRef);
   if (!loaded.ok) return loaded.error;
@@ -172,6 +217,7 @@ export async function editVendorPartnerLink(actor: ActorContext | null, linkRef:
   const result = await runVendorPartnerLinkMutation(loaded.link.uid, input.expectedVersion, (current) => ({
     ...current,
     relationshipType: input.relationshipType ?? current.relationshipType,
+    payeeRole: input.payeeRole ?? current.payeeRole,
     effectiveFrom,
     updatedAt: new Date().toISOString(),
     updatedByUserRef: actor!.userRef,
@@ -189,11 +235,21 @@ export async function editVendorPartnerLink(actor: ActorContext | null, linkRef:
 const endLinkInputSchema = z.object({ effectiveTo: z.string().min(1), expectedVersion: z.number().int().min(1) });
 export type EndVendorPartnerLinkInput = z.input<typeof endLinkInputSchema>;
 
+type EndLinkTxResult = { kind: "ok"; doc: VendorPartnerLinkDoc } | { kind: "stale" } | { kind: "not_found" } | { kind: "already_ended" };
+
 // Never a hard delete - the row is preserved exactly, only status/
 // effectiveTo change. Historical Agreement/Invoice/Payment/tax/Discovery
 // provenance that referenced this relationship is never rewritten by
 // this (this service never touches any Finance record, which doesn't
-// exist yet - see Step 8A section 12).
+// exist yet - see Step 8A section 12). Also atomically releases this
+// Partner's vendorPartnerActiveClaims doc in the SAME transaction as the
+// status write - this is what frees the Partner up for a new active
+// Vendor link (Step 8B.1 REVISED section 1's "Changing Vendor" two-step
+// workflow's first step). The claim is only deleted when it still points
+// at THIS exact link (defensive - it always should, since the invariant
+// guarantees at most one ACTIVE link/claim pair per Partner at a time);
+// otherwise ending this link still succeeds, the mismatched claim is
+// simply left alone rather than risking freeing a different relationship.
 export async function endVendorPartnerLink(actor: ActorContext | null, linkRef: unknown, rawInput: unknown, requestId: string): Promise<VendorsServiceResult<VendorPartnerLinkDto>> {
   const loaded = await loadAuthorizedLink(actor, linkRef);
   if (!loaded.ok) return loaded.error;
@@ -202,24 +258,49 @@ export async function endVendorPartnerLink(actor: ActorContext | null, linkRef: 
   if (!parsed.success) return vendorsInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
   const input = parsed.data;
 
-  if (loaded.link.status === "ENDED") return vendorsInvalidInputResult("This relationship has already ended.");
-
   const dateError = validateEffectiveDates(loaded.link.effectiveFrom, input.effectiveTo);
   if (dateError) return vendorsInvalidInputResult(dateError);
 
-  const result = await runVendorPartnerLinkMutation(loaded.link.uid, input.expectedVersion, (current) => ({
-    ...current,
-    status: "ENDED",
-    effectiveTo: input.effectiveTo,
-    updatedAt: new Date().toISOString(),
-    updatedByUserRef: actor!.userRef,
-  }));
+  const db = getAdminFirestore();
+  const linkDocRef = vendorPartnerLinksCollection().doc(loaded.link.uid);
+  const claimRef = vendorPartnerActiveClaimsCollection().doc(loaded.link.partnerRef);
 
-  if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Vendor-Partner relationship not found." };
-  if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This relationship was changed elsewhere. Reload and try again." };
+  const txResult = await db.runTransaction<EndLinkTxResult>(async (tx) => {
+    const linkSnap = await tx.get(linkDocRef);
+    if (!linkSnap.exists) return { kind: "not_found" };
+    const parsedLink = vendorPartnerLinkDocSchema.safeParse(linkSnap.data());
+    if (!parsedLink.success) return { kind: "not_found" };
+    const current = parsedLink.data;
+
+    if (current.version !== input.expectedVersion) return { kind: "stale" };
+    if (current.status === "ENDED") return { kind: "already_ended" };
+
+    const claimSnap = await tx.get(claimRef);
+
+    const next: VendorPartnerLinkDoc = {
+      ...current,
+      status: "ENDED",
+      effectiveTo: input.effectiveTo,
+      updatedAt: new Date().toISOString(),
+      updatedByUserRef: actor!.userRef,
+      version: current.version + 1,
+    };
+    tx.set(linkDocRef, next);
+
+    if (claimSnap.exists) {
+      const claim = vendorPartnerActiveClaimDocSchema.safeParse(claimSnap.data());
+      if (claim.success && claim.data.vendorPartnerLinkUid === current.uid) tx.delete(claimRef);
+    }
+
+    return { kind: "ok", doc: next };
+  });
+
+  if (txResult.kind === "not_found") return { ok: false, code: "not_found", message: "Vendor-Partner relationship not found." };
+  if (txResult.kind === "stale") return { ok: false, code: "stale_write", message: "This relationship was changed elsewhere. Reload and try again." };
+  if (txResult.kind === "already_ended") return vendorsInvalidInputResult("This relationship has already ended.");
 
   await writeVendorEvent({ vendorUid: loaded.vendor.uid, kind: "link_ended", actorUserRef: actor!.userRef, metadata: { vendorPartnerLinkRef: loaded.link.vendorPartnerLinkRef, partnerRef: loaded.link.partnerRef, effectiveTo: input.effectiveTo }, requestId });
-  return { ok: true, data: toVendorPartnerLinkDto(result.doc) };
+  return { ok: true, data: toVendorPartnerLinkDto(txResult.doc) };
 }
 
 // ---- Restore / reopen ----
@@ -227,11 +308,20 @@ export async function endVendorPartnerLink(actor: ActorContext | null, linkRef: 
 const restoreLinkInputSchema = z.object({ expectedVersion: z.number().int().min(1) });
 export type RestoreVendorPartnerLinkInput = z.input<typeof restoreLinkInputSchema>;
 
+type RestoreLinkTxResult = { kind: "ok"; doc: VendorPartnerLinkDoc } | { kind: "stale" } | { kind: "not_found" } | { kind: "not_ended" } | { kind: "conflict"; claim: VendorPartnerActiveClaimDoc };
+
 // Reopens an ENDED relationship - clears effectiveTo (the relationship is
 // ongoing again) while the fact that it was once ended stays permanently
 // in the append-only event history (the earlier link_ended event is
 // never erased or rewritten), same history-preserving discipline as
-// Partner/Vendor status restore.
+// Partner/Vendor status restore. Step 8B.1 REVISED section 1/3: allowed
+// ONLY when the Partner currently has no other active Vendor - checked
+// transactionally against the same vendorPartnerActiveClaims doc
+// createVendorPartnerLink guards, so this can never race past a
+// concurrent create/restore for the same Partner either. If a claim
+// exists (any active Vendor, including a different one), restore fails
+// safely with conflict rather than silently creating a second active
+// relationship.
 export async function restoreVendorPartnerLink(actor: ActorContext | null, linkRef: unknown, rawInput: unknown, requestId: string): Promise<VendorsServiceResult<VendorPartnerLinkDto>> {
   const loaded = await loadAuthorizedLink(actor, linkRef);
   if (!loaded.ok) return loaded.error;
@@ -240,21 +330,39 @@ export async function restoreVendorPartnerLink(actor: ActorContext | null, linkR
   if (!parsed.success) return vendorsInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
   const input = parsed.data;
 
-  if (loaded.link.status !== "ENDED") return vendorsInvalidInputResult("Only an ended relationship can be restored.");
+  const db = getAdminFirestore();
+  const linkDocRef = vendorPartnerLinksCollection().doc(loaded.link.uid);
+  const claimRef = vendorPartnerActiveClaimsCollection().doc(loaded.link.partnerRef);
 
-  const result = await runVendorPartnerLinkMutation(loaded.link.uid, input.expectedVersion, (current) => ({
-    ...current,
-    status: "ACTIVE",
-    effectiveTo: null,
-    updatedAt: new Date().toISOString(),
-    updatedByUserRef: actor!.userRef,
-  }));
+  const txResult = await db.runTransaction<RestoreLinkTxResult>(async (tx) => {
+    const linkSnap = await tx.get(linkDocRef);
+    if (!linkSnap.exists) return { kind: "not_found" };
+    const parsedLink = vendorPartnerLinkDocSchema.safeParse(linkSnap.data());
+    if (!parsedLink.success) return { kind: "not_found" };
+    const current = parsedLink.data;
 
-  if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Vendor-Partner relationship not found." };
-  if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This relationship was changed elsewhere. Reload and try again." };
+    if (current.version !== input.expectedVersion) return { kind: "stale" };
+    if (current.status !== "ENDED") return { kind: "not_ended" };
+
+    const claimSnap = await tx.get(claimRef);
+    if (claimSnap.exists) {
+      const claim = vendorPartnerActiveClaimDocSchema.safeParse(claimSnap.data());
+      return { kind: "conflict", claim: claim.success ? claim.data : { partnerRef: current.partnerRef, vendorRef: "unknown", vendorPartnerLinkRef: "unknown", vendorPartnerLinkUid: "unknown", claimedAt: current.updatedAt } };
+    }
+
+    const next: VendorPartnerLinkDoc = { ...current, status: "ACTIVE", effectiveTo: null, updatedAt: new Date().toISOString(), updatedByUserRef: actor!.userRef, version: current.version + 1 };
+    tx.set(linkDocRef, next);
+    tx.set(claimRef, vendorPartnerActiveClaimDocSchema.parse({ partnerRef: current.partnerRef, vendorRef: current.vendorRef, vendorPartnerLinkRef: current.vendorPartnerLinkRef, vendorPartnerLinkUid: current.uid, claimedAt: next.updatedAt }));
+    return { kind: "ok", doc: next };
+  });
+
+  if (txResult.kind === "not_found") return { ok: false, code: "not_found", message: "Vendor-Partner relationship not found." };
+  if (txResult.kind === "stale") return { ok: false, code: "stale_write", message: "This relationship was changed elsewhere. Reload and try again." };
+  if (txResult.kind === "not_ended") return vendorsInvalidInputResult("Only an ended relationship can be restored.");
+  if (txResult.kind === "conflict") return { ok: false, code: "conflict", message: await conflictMessageFor(loaded.vendor, txResult.claim) };
 
   await writeVendorEvent({ vendorUid: loaded.vendor.uid, kind: "link_restored", actorUserRef: actor!.userRef, metadata: { vendorPartnerLinkRef: loaded.link.vendorPartnerLinkRef, partnerRef: loaded.link.partnerRef }, requestId });
-  return { ok: true, data: toVendorPartnerLinkDto(result.doc) };
+  return { ok: true, data: toVendorPartnerLinkDto(txResult.doc) };
 }
 
 // ---- Read: Vendor side ----
@@ -327,11 +435,35 @@ export async function listVendorLinksForPartner(actor: ActorContext | null, part
   const vendorEntries = await Promise.all(uniqueVendorRefs.map(async (ref) => [ref, await getVendorDocByRef(ref)] as const));
   const vendorsByRef = new Map(vendorEntries);
 
+  // Step 8B.1 REVISED section 8: canOpenVendor replaces the old N+1
+  // client-side per-row probe (a fetch(`/api/vendors/${ref}`) per link).
+  // Computed here, once per distinct Vendor, using the EXACT same gate
+  // pair the real Vendor-detail endpoint itself uses (see
+  // vendor-service.ts's getVendor: requireVendorsFeatureAccess +
+  // requireVendorInScope) - never exposing role/grant/scope internals,
+  // just a plain boolean. The direct Vendor detail endpoint still
+  // independently re-authorizes when actually opened; this field only
+  // controls whether the browser renders the "Open Vendor" link at all.
+  // Partner scope alone (having reached this function) never grants
+  // Vendor access - each Vendor is checked on its own genuine scope.
+  const featureGate = await requireVendorsFeatureAccess(actor);
+  const canOpenByVendorRef = new Map<string, boolean>();
+  if (featureGate.ok) {
+    for (const [ref, vendor] of vendorsByRef) {
+      if (!vendor) {
+        canOpenByVendorRef.set(ref, false);
+        continue;
+      }
+      const scopeCheck = await requireVendorInScope(actor, vendor);
+      canOpenByVendorRef.set(ref, scopeCheck.ok);
+    }
+  }
+
   const result: PartnerVendorLinkDto[] = [];
   for (const link of links) {
     const vendor = vendorsByRef.get(link.vendorRef);
     if (!vendor) continue; // A dangling link (its Vendor was somehow removed) is simply omitted, never fabricated.
-    result.push({ ...toVendorPartnerLinkDto(link), vendor: toVendorSafeLabelDto(vendor) });
+    result.push({ ...toVendorPartnerLinkDto(link), vendor: toVendorSafeLabelDto(vendor), canOpenVendor: canOpenByVendorRef.get(link.vendorRef) ?? false });
   }
   return { ok: true, data: result };
 }

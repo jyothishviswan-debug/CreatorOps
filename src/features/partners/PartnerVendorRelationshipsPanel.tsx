@@ -10,17 +10,18 @@ import type { PartnerVendorLinkDto } from "@/server/vendors/client-dto";
 import { listVendorLinksForPartner } from "@/features/vendors/api-client";
 import { effectiveDateLabel, LINK_STATUS_LABELS, linkStatusTone, RELATIONSHIP_TYPE_LABELS, VENDOR_TYPE_LABELS } from "@/features/vendors/format";
 
-// Step 8B section 7: the real Partner-side Vendor relationship slice,
-// replacing the earlier truthful "Vendors unavailable" placeholder now
-// that Vendors is accepted. Gated ENTIRELY by this Partner's own scope
-// (via /api/partners/[partnerRef]/vendor-links - see
-// listVendorLinksForPartner's own comment) - never Vendor scope. Shows
-// only this one Partner's own link rows with a safe minimal Vendor
-// label; a direct link to the Vendor's own detail page is only ever
-// rendered when the Vendor is ALSO directly reachable (a 401/403 on
-// probing it is treated as "not directly reachable", never surfaced as
-// an error to the operator - this is an expected, safe outcome, not a
-// failure).
+// Step 8B section 7 / Step 8B.1 REVISED section 5+8: the real
+// Partner-side Vendor relationship slice, replacing the earlier truthful
+// "Vendors unavailable" placeholder now that Vendors is accepted. Gated
+// ENTIRELY by this Partner's own scope (via
+// /api/partners/[partnerRef]/vendor-links - see listVendorLinksForPartner's
+// own comment) - never Vendor scope. Presents the current ACTIVE Vendor
+// (if any) separately from historical ENDED relationships below - never
+// implying more than one simultaneous active Vendor is possible. "Open
+// Vendor" renders purely from the server-computed canOpenVendor field on
+// each row (no client-side per-row authorization probe - see
+// listVendorLinksForPartner's own comment for why a per-row fetch was
+// removed).
 export function PartnerVendorRelationshipsPanel({ partnerRef }: { partnerRef: string }) {
   const [links, setLinks] = useState<PartnerVendorLinkDto[] | null>(null);
   const [loading, setLoading] = useState(true);
@@ -42,9 +43,12 @@ export function PartnerVendorRelationshipsPanel({ partnerRef }: { partnerRef: st
     };
   }, [partnerRef]);
 
+  const activeLink = links?.find((l) => l.status === "ACTIVE") ?? null;
+  const historicalLinks = links?.filter((l) => l.status !== "ACTIVE") ?? [];
+
   return (
     <Panel span={12}>
-      <PanelHead title="Vendor Relationships" description="This Partner's own Vendor relationship history - at most one active at a time - never a Vendor's unrelated portfolio." />
+      <PanelHead title="Vendor Relationships" description="This Partner's current Vendor (if any), plus its historical relationships below - never more than one active at a time." />
       <PanelBody>
         {loading ? (
           <Skeleton lines={3} />
@@ -55,58 +59,54 @@ export function PartnerVendorRelationshipsPanel({ partnerRef }: { partnerRef: st
         ) : !links || links.length === 0 ? (
           <EmptyState title="No Vendor relationships yet" description="Vendor relationships for this Partner will appear here once linked from the Vendor's own Relationships tab." icon="brief" />
         ) : (
-          links.map((link) => (
-            <div className="record" key={link.vendorPartnerLinkRef} style={{ marginBottom: 10 }}>
-              <div className="recordmeta" style={{ justifyContent: "space-between", alignItems: "center" }}>
-                <div>
-                  <b>{link.vendor.displayName}</b>
-                  <Pill tone={linkStatusTone(link.status)}> {LINK_STATUS_LABELS[link.status]}</Pill>
-                  <Pill tone="default"> {RELATIONSHIP_TYPE_LABELS[link.relationshipType]}</Pill>
-                  <div>
-                    <small>{VENDOR_TYPE_LABELS[link.vendor.vendorType]}</small>
-                  </div>
-                  <div>
-                    <small>
-                      Effective {effectiveDateLabel(link.effectiveFrom)}
-                      {link.effectiveTo ? ` – ${effectiveDateLabel(link.effectiveTo)}` : " – ongoing"}
-                    </small>
-                  </div>
-                </div>
-                <VendorDetailLink vendorRef={link.vendor.vendorRef} />
-              </div>
-            </div>
-          ))
+          <>
+            {activeLink ? (
+              <LinkRow link={activeLink} />
+            ) : (
+              <EmptyState title="No active Vendor" description="This Partner currently has no active Vendor - representation and payments, if any, are handled directly." icon="brief" />
+            )}
+            {historicalLinks.length > 0 && (
+              <>
+                <p className="foundationnote" style={{ margin: "16px 0 10px" }}>
+                  Historical relationships ({historicalLinks.length})
+                </p>
+                {historicalLinks.map((link) => (
+                  <LinkRow key={link.vendorPartnerLinkRef} link={link} />
+                ))}
+              </>
+            )}
+          </>
         )}
       </PanelBody>
     </Panel>
   );
 }
 
-// Probes direct Vendor access before rendering a link - a Partner-scope
-// actor without direct Vendor scope must see the safe relationship row
-// with NO active deep link, never a link that 403s when clicked (Step
-// 8B section 7's own explicit requirement).
-function VendorDetailLink({ vendorRef }: { vendorRef: string }) {
-  const [reachable, setReachable] = useState<boolean | null>(null);
-
-  useEffect(() => {
-    let cancelled = false;
-    fetch(`/api/vendors/${encodeURIComponent(vendorRef)}`)
-      .then((res) => {
-        if (!cancelled) setReachable(res.ok);
-      })
-      .catch(() => {
-        if (!cancelled) setReachable(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [vendorRef]);
-
-  if (!reachable) return null;
+function LinkRow({ link }: { link: PartnerVendorLinkDto }) {
   return (
-    <Link href={`/vendors/${vendorRef}`} className="btn">
-      Open Vendor
-    </Link>
+    <div className="record" style={{ marginBottom: 10 }}>
+      <div className="recordmeta" style={{ justifyContent: "space-between", alignItems: "center" }}>
+        <div>
+          <b>{link.vendor.displayName}</b>
+          <Pill tone={linkStatusTone(link.status)}> {LINK_STATUS_LABELS[link.status]}</Pill>
+          <Pill tone="default"> {RELATIONSHIP_TYPE_LABELS[link.relationshipType]}</Pill>
+          {link.payeeRole && <Pill tone="default"> Payee</Pill>}
+          <div>
+            <small>{VENDOR_TYPE_LABELS[link.vendor.vendorType]}</small>
+          </div>
+          <div>
+            <small>
+              Effective {effectiveDateLabel(link.effectiveFrom)}
+              {link.effectiveTo ? ` – ${effectiveDateLabel(link.effectiveTo)}` : " – ongoing"}
+            </small>
+          </div>
+        </div>
+        {link.canOpenVendor && (
+          <Link href={`/vendors/${link.vendor.vendorRef}`} className="btn">
+            Open Vendor
+          </Link>
+        )}
+      </div>
+    </div>
   );
 }

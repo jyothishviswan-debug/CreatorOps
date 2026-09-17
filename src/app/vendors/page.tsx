@@ -33,11 +33,20 @@ async function loadAllVendors(actor: Awaited<ReturnType<typeof resolveRequestAct
 // checked vendorRefs (never an unbounded/cross-scope collection scan) -
 // Firestore's `in` operator caps at 30 values per query, so this batches
 // into chunks of 30, same idiom as Partners' own loadAccountCountsByPartner.
-async function loadRelationshipCountsByVendor(vendorRefs: string[]): Promise<{ activeByVendorRef: Map<string, number>; totalActiveLinks: number; ended: number }> {
+// Step 8B.1 REVISED section 10: counts reflect the one-active-Vendor-per-
+// Partner reality - representedPartners is the count of DISTINCT
+// Partners with a current active link (never a link count, which could
+// double-count nothing here since a Partner has at most one, but stays
+// named for what it actually measures); historical ended relationships
+// are never counted as current representation.
+async function loadRelationshipCountsByVendor(
+  vendorRefs: string[],
+): Promise<{ activeByVendorRef: Map<string, number>; representedPartnerRefs: Set<string>; payeeActive: number; ended: number }> {
   const db = getAdminFirestore();
   const collection = db.collection(VENDORS_COLLECTIONS.vendorPartnerLinks);
   const activeByVendorRef = new Map<string, number>();
-  let totalActiveLinks = 0;
+  const representedPartnerRefs = new Set<string>();
+  let payeeActive = 0;
   let ended = 0;
 
   for (let i = 0; i < vendorRefs.length; i += 30) {
@@ -49,14 +58,15 @@ async function loadRelationshipCountsByVendor(vendorRefs: string[]): Promise<{ a
       if (!parsed.success) continue;
       if (parsed.data.status === "ACTIVE") {
         activeByVendorRef.set(parsed.data.vendorRef, (activeByVendorRef.get(parsed.data.vendorRef) ?? 0) + 1);
-        totalActiveLinks += 1;
+        representedPartnerRefs.add(parsed.data.partnerRef);
+        if (parsed.data.payeeRole) payeeActive += 1;
       } else {
         ended += 1;
       }
     }
   }
 
-  return { activeByVendorRef, totalActiveLinks, ended };
+  return { activeByVendorRef, representedPartnerRefs, payeeActive, ended };
 }
 
 export default async function VendorsOverviewPage() {
@@ -85,9 +95,13 @@ export default async function VendorsOverviewPage() {
   const archived = vendors.filter((v) => v.status === "ARCHIVED").length;
   const activePct = total > 0 ? ((active / total) * 100).toFixed(1) : "0.0";
 
-  const { activeByVendorRef, totalActiveLinks, ended } = await loadRelationshipCountsByVendor(vendors.map((v) => v.vendorRef));
+  const { activeByVendorRef, representedPartnerRefs, payeeActive, ended } = await loadRelationshipCountsByVendor(vendors.map((v) => v.vendorRef));
   const withActiveRelationship = vendors.filter((v) => (activeByVendorRef.get(v.vendorRef) ?? 0) > 0).length;
   const noActiveRelationship = total - withActiveRelationship;
+  // Step 8B.1 REVISED section 10: distinct Partners currently represented
+  // by ANY in-scope Vendor - never a link count, and never fabricated
+  // beyond what the loaded, scope-checked Vendor set can actually see.
+  const representedPartners = representedPartnerRefs.size;
 
   const ownerAssigned = vendors.filter((v) => v.ownerRef).length;
   const noOwnerAssigned = total - ownerAssigned;
@@ -170,7 +184,8 @@ export default async function VendorsOverviewPage() {
         { label: "Owner assigned", detail: `${ownerAssigned} / ${total}`, badge: "Coverage" },
         { label: "Profile complete", detail: `${profileComplete} / ${total}`, badge: "Coverage" },
         { label: "Has active relationship", detail: `${withActiveRelationship} / ${total}`, badge: "Coverage" },
-        { label: "Active relationships (total)", detail: String(totalActiveLinks), badge: "Current" },
+        { label: "Partners with an active Vendor", detail: String(representedPartners), badge: "Current" },
+        { label: "Active payee relationships", detail: String(payeeActive), badge: "Current" },
       ],
     },
   ];

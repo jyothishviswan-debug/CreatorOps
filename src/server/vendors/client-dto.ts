@@ -118,7 +118,13 @@ export function toVendorSafeLabelDto(doc: VendorDoc): VendorSafeLabelDto {
   return { vendorRef: doc.vendorRef, displayName: doc.displayName, vendorType: doc.vendorType, status: doc.status };
 }
 
-export type PartnerVendorLinkDto = VendorPartnerLinkDto & { vendor: VendorSafeLabelDto };
+// canOpenVendor: Step 8B.1 REVISED section 8 - server-derived from this
+// actor's OWN effective direct Vendor access/scope for this specific
+// linked Vendor (never role/grant/scope internals), computed once here
+// in listVendorLinksForPartner rather than a per-row client-side probe.
+// The direct Vendor detail endpoint still independently re-authorizes
+// when opened - this field only controls whether "Open Vendor" renders.
+export type PartnerVendorLinkDto = VendorPartnerLinkDto & { vendor: VendorSafeLabelDto; canOpenVendor: boolean };
 
 // The Vendor-side mirror of PartnerVendorLinkDto - a link row plus a safe
 // minimal Partner label (see @/server/partners/client-dto.ts's

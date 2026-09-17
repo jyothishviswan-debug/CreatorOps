@@ -534,10 +534,11 @@ test.describe("Relationships", () => {
     await expect(page.getByText("No Vendor relationships yet")).toBeVisible({ timeout: 5000 });
   });
 
-  test("shows the real Vendor relationship rows for a Partner that has them, with a link to the Vendor when directly authorized", async ({ page }) => {
-    // creator-house is seeded with two real Vendor relationships (see
-    // seed-vendors-data.ts) - Super Admin (GLOBAL scope) can reach both
-    // the Partner and the linked Vendors directly.
+  test("shows the real active Vendor relationship row for a Partner that has one, with a link to the Vendor when directly authorized", async ({ page }) => {
+    // creator-house is seeded with its one current active Vendor
+    // relationship (see seed-vendors-data.ts - a Partner has at most one
+    // ACTIVE Vendor at a time) - Super Admin (GLOBAL scope) can reach
+    // both the Partner and the linked Vendor directly.
     await page.goto("/partners/creator-house");
     await page.getByRole("tab", { name: "Relationships" }).click();
     await expect(page.getByText("Northline Talent Agency")).toBeVisible({ timeout: 5000 });

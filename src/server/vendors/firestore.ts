@@ -27,6 +27,15 @@ export const VENDORS_COLLECTIONS = {
   vendors: "vendors",
   vendorEvents: "events", // subcollection name under vendors/{uid}
   vendorPartnerLinks: "vendorPartnerLinks",
+  // Step 8B.1 REVISED: the concurrency-safe claim collection backing the
+  // activeVendorLinkCount(partnerRef) <= 1 invariant - one doc id per
+  // Partner (partnerRef IS the doc id, already a unique opaque token, no
+  // hashing needed unlike Partners' own normalized-identity claims). Its
+  // EXISTENCE is the lock: see vendorPartnerActiveClaimsCollection's own
+  // comment and vendor-partner-link-service.ts's createVendorPartnerLink/
+  // endVendorPartnerLink/restoreVendorPartnerLink for the exact
+  // transactional protocol, mirroring partnerAccountIdentityClaims.
+  vendorPartnerActiveClaims: "vendorPartnerActiveClaims",
 } as const;
 
 export const MAX_VENDOR_PAGE_SIZE = 100;
@@ -47,6 +56,12 @@ export function vendorEventsCollection(vendorUid: string) {
 
 export function vendorPartnerLinksCollection() {
   return getAdminFirestore().collection(VENDORS_COLLECTIONS.vendorPartnerLinks);
+}
+
+// The one-active-Vendor-per-Partner claim collection - see
+// VENDORS_COLLECTIONS.vendorPartnerActiveClaims's own comment.
+export function vendorPartnerActiveClaimsCollection() {
+  return getAdminFirestore().collection(VENDORS_COLLECTIONS.vendorPartnerActiveClaims);
 }
 
 export async function getVendorDocByUid(uid: string): Promise<VendorDoc | null> {

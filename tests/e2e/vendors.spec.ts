@@ -376,7 +376,7 @@ test.describe("Relationships", () => {
     await expect(page.getByText(partnerB.displayName)).toHaveCount(0);
   });
 
-  test("a Partner-scope actor without direct Vendor scope sees the safe row with no active deep link", async ({ page }) => {
+  test("a Partner-scope actor without direct Vendor scope sees the safe row with no active deep link, and no client-side Vendor probe fires", async ({ page }) => {
     // creator-house IS in Manager's Partner scope - via a real explicit
     // PARTNER-type grant naming it specifically (see seed-access-data.ts),
     // not a region/owner match. It's linked to seed-vendor-agency
@@ -385,10 +385,35 @@ test.describe("Relationships", () => {
     // the visible Partner relationship must never bridge into direct
     // Vendor access (Step 8A section 7's rule, in this direction).
     await signInAs(page, "manager");
+    // Step 8B.1 REVISED section 8: canOpenVendor is server-computed on
+    // the /vendor-links response itself - the browser must never issue a
+    // per-row GET to /api/vendors/{ref} just to decide whether to render
+    // "Open Vendor".
+    const vendorProbes: string[] = [];
+    await page.route(/\/api\/vendors\/(?!links)[^/]+$/, (route) => {
+      vendorProbes.push(route.request().url());
+      route.continue();
+    });
+
     await page.goto("/partners/creator-house");
     await page.getByRole("tab", { name: "Relationships" }).click();
     await expect(page.getByText("Northline Talent Agency")).toBeVisible({ timeout: 5000 });
     await expect(page.getByRole("link", { name: "Open Vendor" })).toHaveCount(0);
+    expect(vendorProbes).toEqual([]);
+  });
+
+  test("a Partner-scope actor WITH direct Vendor scope sees a real Open Vendor link, still with no client-side probe", async ({ page }) => {
+    await signInAs(page, "head"); // Head has GLOBAL-ish region coverage including Karnataka
+    const vendorProbes: string[] = [];
+    await page.route(/\/api\/vendors\/(?!links)[^/]+$/, (route) => {
+      vendorProbes.push(route.request().url());
+      route.continue();
+    });
+
+    await page.goto("/partners/creator-house");
+    await page.getByRole("tab", { name: "Relationships" }).click();
+    await expect(page.getByRole("link", { name: "Open Vendor" })).toBeVisible({ timeout: 5000 });
+    expect(vendorProbes).toEqual([]); // canOpenVendor came pre-computed on the list response, not a probe
   });
 });
 
@@ -498,20 +523,28 @@ test.describe("Restricted identity", () => {
 // ---- Truthful future context ----
 
 test.describe("Truthful future context", () => {
-  test("payee context derives only from active relationship rows, and Agreements/Finance are shown as unavailable, not fabricated", async ({ page }) => {
+  test("payee context shows only the active relationship explicitly marked payeeRole, and Agreements/Finance are shown as unavailable, not fabricated", async ({ page }) => {
     const vendor = await createVendorViaApi(page);
-    await createLinkViaApi(page, vendor.vendorRef);
+    // Not marked as payee - representation only, so it must NOT appear
+    // in the Payee/Commercial Context panel (Step 8B.1 REVISED section 4:
+    // an active relationship without payeeRole means this Vendor is not
+    // the one handling that Partner's payments).
+    await createLinkViaApi(page, vendor.vendorRef, { payeeRole: false });
 
     await page.goto(`/vendors/${vendor.vendorRef}`);
     await page.getByRole("tab", { name: "Payee / Commercial Context" }).click();
-    // Every ACTIVE relationship is now, by construction, the one Vendor
-    // handling that Partner's operations and payments - no separate
-    // payee flag to check.
-    await expect(page.locator(".pill", { hasText: "Active" }).first()).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("No active payee relationships")).toBeVisible({ timeout: 5000 });
     await expect(page.getByText("Not yet built").first()).toBeVisible();
     for (const label of ["Agreements", "Payables", "Invoices", "Payments"]) {
       await expect(page.getByRole("heading", { name: label })).toBeVisible();
     }
+
+    // A DIFFERENT relationship explicitly marked as the payee DOES appear.
+    const payeeLink = await createLinkViaApi(page, vendor.vendorRef, { payeeRole: true });
+    await page.reload();
+    await page.getByRole("tab", { name: "Payee / Commercial Context" }).click();
+    await expect(page.locator(".pill", { hasText: "Active" }).first()).toBeVisible({ timeout: 5000 });
+    void payeeLink;
   });
 });
 

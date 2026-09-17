@@ -78,12 +78,13 @@ export type VendorDoc = z.infer<typeof vendorDocSchema>;
 // ACTIVE Vendor relationship at a time (company policy - one agency/
 // company handles a Partner's operations and payments in full; no
 // splitting a Partner's representation across simultaneous Vendors).
-// Enforced server-side in vendor-partner-link-service.ts's
-// createVendorPartnerLink, not by a Firestore-level constraint. A
-// Partner with zero active links is simply handled directly, with no
-// Vendor intermediary. Never hard-deleted; ending a relationship sets
-// status=ENDED and effectiveTo, the row itself stays - which is also
-// how a Partner becomes free for a new active Vendor link.
+// Enforced server-side, race-safely, via the vendorPartnerActiveClaims
+// transactional guard (see firestore.ts's own comment and
+// vendor-partner-link-service.ts), not by a Firestore-level constraint
+// alone. A Partner with zero active links is simply handled directly,
+// with no Vendor intermediary. Never hard-deleted; ending a relationship
+// sets status=ENDED and effectiveTo, the row itself stays - which is
+// also how a Partner becomes free for a new active Vendor link.
 export const RELATIONSHIP_TYPES = ["REPRESENTATION", "MANAGEMENT", "AGENCY", "PAYEE", "OTHER"] as const;
 export const relationshipTypeSchema = z.enum(RELATIONSHIP_TYPES);
 export type RelationshipType = z.infer<typeof relationshipTypeSchema>;
@@ -98,11 +99,14 @@ export const vendorPartnerLinkDocSchema = z.object({
 
   vendorRef: z.string().min(1),
   partnerRef: z.string().min(1),
-  // The one Vendor's role for this Partner - since a Partner has at most
-  // one ACTIVE Vendor, this single field now stands for that Vendor's
-  // whole relationship (there is no separate payee flag; the Partner's
-  // one active Vendor is always the one handling payments too).
   relationshipType: relationshipTypeSchema,
+  // Step 8B.1 REVISED section 4: because a Partner has at most one
+  // ACTIVE Vendor, the payee/commercial-representation flag can now live
+  // safely on that single active link without ever implying a second,
+  // simultaneous payee Vendor - true means this Vendor is the one
+  // currently handling this Partner's payments, not just its
+  // operations/representation.
+  payeeRole: z.boolean().default(false),
 
   effectiveFrom: z.string().min(1),
   effectiveTo: z.string().min(1).nullable().default(null),
@@ -114,6 +118,23 @@ export const vendorPartnerLinkDocSchema = z.object({
   updatedByUserRef: z.string().min(1),
 });
 export type VendorPartnerLinkDoc = z.infer<typeof vendorPartnerLinkDocSchema>;
+
+// --- One-active-Vendor-per-Partner claim (vendorPartnerActiveClaims/{partnerRef}) ---
+// Step 8B.1 REVISED section 2: the concurrency-safe lock backing
+// activeVendorLinkCount(partnerRef) <= 1. Doc id IS partnerRef (already
+// unique/opaque - no hashing needed, unlike Partners' own normalized-
+// identity claims). Its EXISTENCE means "this Partner currently has an
+// ACTIVE Vendor", and vendorRef/vendorPartnerLinkRef say which one - see
+// vendor-partner-link-service.ts for the exact transactional protocol
+// that creates/deletes it atomically alongside the link document.
+export const vendorPartnerActiveClaimDocSchema = z.object({
+  partnerRef: z.string().min(1),
+  vendorRef: z.string().min(1),
+  vendorPartnerLinkRef: z.string().min(1),
+  vendorPartnerLinkUid: z.string().min(1),
+  claimedAt: z.string().min(1),
+});
+export type VendorPartnerActiveClaimDoc = z.infer<typeof vendorPartnerActiveClaimDocSchema>;
 
 // --- Restricted Vendor financial identity ---------------------------------
 // Step 8A.1: moved to the one canonical, cross-domain

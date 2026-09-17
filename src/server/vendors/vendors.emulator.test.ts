@@ -76,7 +76,12 @@ function uniqueName(prefix: string): string {
 async function createVendorAndPartnerPair(head: ActorContext) {
   const vendor = await createVendor(head, { displayName: uniqueName("Rel Vendor"), vendorType: "AGENCY", regionIds: ["Kerala"] }, "req-rel-vendor");
   if (!vendor.ok) throw new Error("unreachable");
-  const partner = await createPartner(head, { displayName: uniqueName("Rel Partner") }, "req-rel-partner");
+  // regionIds: Kerala is one of partnership_head's own granted regions -
+  // without it, a freshly created Partner would have empty regionIds and
+  // be genuinely out of Head's own scope (Head has no SELF/GLOBAL grant),
+  // making listVendorLinksForPartner (a real Partner-scope check) deny
+  // even its own creator.
+  const partner = await createPartner(head, { displayName: uniqueName("Rel Partner"), regionIds: ["Kerala"] }, "req-rel-partner");
   if (!partner.ok) throw new Error("unreachable");
   return { vendor: vendor.data, partner: partner.data };
 }
@@ -421,6 +426,123 @@ describe("Vendor <-> Partner relationships", () => {
   });
 });
 
+describe("Vendor <-> Partner one-active-Vendor invariant (Step 8B.1 REVISED)", () => {
+  it("a same-Vendor create retry is idempotent - returns the existing active link rather than erroring or creating a duplicate", async () => {
+    const head = await actorFor("partnership_head");
+    const { vendor, partner } = await createVendorAndPartnerPair(head);
+    const first = await createVendorPartnerLink(head, vendor.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "AGENCY", effectiveFrom: new Date().toISOString() }, "req-idem-1");
+    expect(first.ok).toBe(true);
+    if (!first.ok) throw new Error("unreachable");
+
+    const retry = await createVendorPartnerLink(head, vendor.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "AGENCY", effectiveFrom: new Date().toISOString() }, "req-idem-2");
+    expect(retry.ok).toBe(true);
+    if (!retry.ok) throw new Error("unreachable");
+    expect(retry.data.vendorPartnerLinkRef).toBe(first.data.vendorPartnerLinkRef); // same row, not a new one
+
+    const links = await listLinksForVendor(head, vendor.vendorRef);
+    if (!links.ok) throw new Error("unreachable");
+    expect(links.data.filter((l) => l.partnerRef === partner.partnerRef).length).toBe(1); // no duplicate was created
+  });
+
+  it("restoring an ended link succeeds only when the Partner currently has no other active Vendor - rejected with conflict otherwise", async () => {
+    const head = await actorFor("partnership_head");
+    const { vendor: vendorA, partner } = await createVendorAndPartnerPair(head);
+    const linkA = await createVendorPartnerLink(head, vendorA.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "AGENCY", effectiveFrom: new Date().toISOString() }, "req-restoreconf-1");
+    if (!linkA.ok) throw new Error("unreachable");
+    const endedA = await endVendorPartnerLink(head, linkA.data.vendorPartnerLinkRef, { effectiveTo: new Date().toISOString(), expectedVersion: linkA.data.version }, "req-restoreconf-end");
+    if (!endedA.ok) throw new Error("unreachable");
+
+    const vendorB = await createVendor(head, { displayName: uniqueName("Restore Conflict Vendor B"), vendorType: "MANAGEMENT_COMPANY", regionIds: ["Kerala"] }, "req-restoreconf-vb");
+    if (!vendorB.ok) throw new Error("unreachable");
+    const linkB = await createVendorPartnerLink(head, vendorB.data.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "MANAGEMENT", effectiveFrom: new Date().toISOString() }, "req-restoreconf-2");
+    expect(linkB.ok).toBe(true);
+
+    // vendorB is now the Partner's one active Vendor - restoring the
+    // earlier ended vendorA link must be rejected, never silently
+    // creating a second active relationship.
+    const restoreBlocked = await restoreVendorPartnerLink(head, linkA.data.vendorPartnerLinkRef, { expectedVersion: endedA.data.version }, "req-restoreconf-restore-1");
+    expect(restoreBlocked.ok).toBe(false);
+    if (restoreBlocked.ok) throw new Error("unreachable");
+    expect(restoreBlocked.code).toBe("conflict");
+
+    // Ending vendorB's link frees the Partner up again - the SAME earlier
+    // ended link can now be restored cleanly.
+    if (!linkB.ok) throw new Error("unreachable");
+    const endedB = await endVendorPartnerLink(head, linkB.data.vendorPartnerLinkRef, { effectiveTo: new Date().toISOString(), expectedVersion: linkB.data.version }, "req-restoreconf-endb");
+    expect(endedB.ok).toBe(true);
+
+    const restoreOk = await restoreVendorPartnerLink(head, linkA.data.vendorPartnerLinkRef, { expectedVersion: endedA.data.version }, "req-restoreconf-restore-2");
+    expect(restoreOk.ok).toBe(true);
+    if (!restoreOk.ok) throw new Error("unreachable");
+    expect(restoreOk.data.status).toBe("ACTIVE");
+  });
+
+  it("two concurrent creates against different Vendors for the same Partner never both succeed - exactly one wins, race-safely, across repeated attempts", async () => {
+    const head = await actorFor("partnership_head");
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const partner = await createPartner(head, { displayName: uniqueName(`Race Partner ${attempt}`), regionIds: ["Kerala"] }, `req-race-partner-${attempt}`);
+      if (!partner.ok) throw new Error("unreachable");
+      const vendorX = await createVendor(head, { displayName: uniqueName(`Race Vendor X ${attempt}`), vendorType: "AGENCY", regionIds: ["Kerala"] }, `req-race-vx-${attempt}`);
+      const vendorY = await createVendor(head, { displayName: uniqueName(`Race Vendor Y ${attempt}`), vendorType: "MANAGEMENT_COMPANY", regionIds: ["Kerala"] }, `req-race-vy-${attempt}`);
+      if (!vendorX.ok || !vendorY.ok) throw new Error("unreachable");
+
+      const [resultX, resultY] = await Promise.all([
+        createVendorPartnerLink(head, vendorX.data.vendorRef, { partnerRef: partner.data.partnerRef, relationshipType: "AGENCY", effectiveFrom: new Date().toISOString() }, `req-race-x-${attempt}`),
+        createVendorPartnerLink(head, vendorY.data.vendorRef, { partnerRef: partner.data.partnerRef, relationshipType: "MANAGEMENT", effectiveFrom: new Date().toISOString() }, `req-race-y-${attempt}`),
+      ]);
+
+      const outcomes = [resultX, resultY];
+      const wins = outcomes.filter((r) => r.ok);
+      const conflicts = outcomes.filter((r) => !r.ok && r.code === "conflict");
+      expect(wins.length).toBe(1); // exactly one winner, never zero, never both
+      expect(conflicts.length).toBe(1);
+
+      // The Partner's own link list agrees - exactly one ACTIVE link.
+      const partnerLinks = await listVendorLinksForPartner(head, partner.data.partnerRef);
+      if (!partnerLinks.ok) throw new Error("unreachable");
+      expect(partnerLinks.data.filter((l) => l.status === "ACTIVE").length).toBe(1);
+    }
+  }, 20_000);
+
+  it("switching Vendor never corrupts the Partner record, and the previous Vendor's history/effective dates stay exactly as recorded", async () => {
+    const head = await actorFor("partnership_head");
+    const { vendor: vendorA, partner } = await createVendorAndPartnerPair(head);
+    const partnerBefore = await getPartnerDocByRef(partner.partnerRef);
+
+    const effectiveFromA = "2025-01-01T00:00:00.000Z";
+    const linkA = await createVendorPartnerLink(head, vendorA.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "AGENCY", effectiveFrom: effectiveFromA }, "req-switch-1");
+    if (!linkA.ok) throw new Error("unreachable");
+
+    const effectiveToA = "2025-06-01T00:00:00.000Z";
+    const endedA = await endVendorPartnerLink(head, linkA.data.vendorPartnerLinkRef, { effectiveTo: effectiveToA, expectedVersion: linkA.data.version }, "req-switch-end");
+    expect(endedA.ok).toBe(true);
+
+    const vendorB = await createVendor(head, { displayName: uniqueName("Switch Vendor B"), vendorType: "MANAGEMENT_COMPANY", regionIds: ["Kerala"] }, "req-switch-vb");
+    if (!vendorB.ok) throw new Error("unreachable");
+    const linkB = await createVendorPartnerLink(head, vendorB.data.vendorRef, { partnerRef: partner.partnerRef, relationshipType: "MANAGEMENT", effectiveFrom: "2025-06-01T00:00:00.000Z" }, "req-switch-2");
+    expect(linkB.ok).toBe(true);
+
+    // The Partner document itself was never touched by any of this.
+    const partnerAfter = await getPartnerDocByRef(partner.partnerRef);
+    expect(partnerAfter?.version).toBe(partnerBefore?.version);
+
+    // vendorA's own historical record is exactly what was recorded -
+    // never rewritten to look continuous with vendorB's period.
+    const linkADoc = await getVendorPartnerLinkDocByRef(linkA.data.vendorPartnerLinkRef);
+    expect(linkADoc?.status).toBe("ENDED");
+    expect(linkADoc?.effectiveFrom).toBe(effectiveFromA);
+    expect(linkADoc?.effectiveTo).toBe(effectiveToA);
+
+    // Both rows remain readable side by side - a distinct history record,
+    // not an in-place overwrite.
+    const allLinks = await listVendorLinksForPartner(head, partner.partnerRef);
+    if (!allLinks.ok) throw new Error("unreachable");
+    expect(allLinks.data.some((l) => l.vendorRef === vendorA.vendorRef && l.status === "ENDED")).toBe(true);
+    expect(allLinks.data.some((l) => l.vendorRef === vendorB.data.vendorRef && l.status === "ACTIVE")).toBe(true);
+  });
+});
+
 describe("Scope: Partner-side relationship query never bridges into a Vendor's unrelated portfolio", () => {
   it("Partnership Manager sees creator-house's own Vendor links (Partner-scope), even though the Vendors themselves are cross-scope for Manager directly", async () => {
     const manager = await actorFor("partnership_manager"); // no Karnataka region grant
@@ -434,6 +556,21 @@ describe("Scope: Partner-side relationship query never bridges into a Vendor's u
     // Only a safe label, never the full Vendor - no raw ids, no other fields.
     const row = viaPartner.data.find((l) => l.vendorRef === "seed-vendor-agency")!;
     expect(Object.keys(row.vendor).sort()).toEqual(["displayName", "status", "vendorRef", "vendorType"].sort());
+    // Step 8B.1 REVISED section 8: canOpenVendor is server-derived from
+    // Manager's OWN Vendor scope, not from Partner visibility - Manager
+    // can see this row (Partner scope) but seed-vendor-agency is
+    // Karnataka/cross-scope for Manager directly, so "Open Vendor" must
+    // not be offered.
+    expect(row.canOpenVendor).toBe(false);
+
+    // A Head actor with real Vendor scope over Karnataka sees the SAME
+    // row with canOpenVendor true - proving the field genuinely reflects
+    // direct Vendor access, not a blanket false.
+    const head = await actorFor("partnership_head");
+    const viaPartnerAsHead = await listVendorLinksForPartner(head, "creator-house");
+    if (!viaPartnerAsHead.ok) throw new Error("unreachable");
+    const headRow = viaPartnerAsHead.data.find((l) => l.vendorRef === "seed-vendor-agency")!;
+    expect(headRow.canOpenVendor).toBe(true);
   });
 
   it("the reverse bridge is also blocked: seeing a Vendor's own link list never grants Partner-side access to an out-of-scope linked Partner", async () => {

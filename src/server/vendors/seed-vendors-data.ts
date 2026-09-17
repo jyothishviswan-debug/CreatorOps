@@ -14,7 +14,7 @@ import { getAdminAuth } from "@/server/firebase/admin";
 import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
 import { getUserDoc } from "@/server/authz/firestore";
 import { restrictedFinancialIdentitiesCollection, restrictedIdentityDocId, type RestrictedFinancialIdentityDoc } from "@/server/shared/restricted-financial-identity";
-import { vendorPartnerLinksCollection, vendorsCollection } from "./firestore";
+import { vendorPartnerActiveClaimsCollection, vendorPartnerLinksCollection, vendorsCollection } from "./firestore";
 import type { VendorDoc, VendorPartnerLinkDoc } from "./types";
 
 async function uidFor(email: string): Promise<string> {
@@ -126,7 +126,7 @@ export async function seedVendorsData(): Promise<void> {
     await vendorsCollection().doc(vendor.uid).set(vendor);
   }
 
-  function linkBase(uid: string, vendorRef: string, partnerRef: string): Omit<VendorPartnerLinkDoc, "relationshipType" | "effectiveFrom" | "effectiveTo" | "status"> {
+  function linkBase(uid: string, vendorRef: string, partnerRef: string): Omit<VendorPartnerLinkDoc, "relationshipType" | "payeeRole" | "effectiveFrom" | "effectiveTo" | "status"> {
     return {
       uid,
       vendorPartnerLinkRef: uid,
@@ -147,10 +147,16 @@ export async function seedVendorsData(): Promise<void> {
   // "one Vendor, multiple simultaneously-ACTIVE Partners" (creator-house
   // + seed-partner-blacklisted), which is exactly the real "an agency
   // manages many creators" shape this policy is meant to support.
+  // seed-partner-archived (Vikram Nair) deliberately has no link at all -
+  // "one Partner with no active Vendor" (Step 8B.1 REVISED section 6).
   const links: VendorPartnerLinkDoc[] = [
     {
       ...linkBase("seed-link-agency-creatorhouse", "seed-vendor-agency", "creator-house"),
       relationshipType: "AGENCY",
+      // The one active payee relationship (Step 8B.1 REVISED section
+      // 6/4): this Vendor is the party currently handling creator-house's
+      // payments, not just its representation.
+      payeeRole: true,
       effectiveFrom: daysAgoIso(now, 400),
       effectiveTo: null,
       status: "ACTIVE",
@@ -162,6 +168,7 @@ export async function seedVendorsData(): Promise<void> {
     {
       ...linkBase("seed-link-agency-blacklisted", "seed-vendor-agency", "seed-partner-blacklisted"),
       relationshipType: "AGENCY",
+      payeeRole: false,
       effectiveFrom: daysAgoIso(now, 200),
       effectiveTo: null,
       status: "ACTIVE",
@@ -174,6 +181,7 @@ export async function seedVendorsData(): Promise<void> {
     {
       ...linkBase("seed-link-agency-inactive-partner-ended", "seed-vendor-agency", "seed-partner-inactive"),
       relationshipType: "AGENCY",
+      payeeRole: false,
       effectiveFrom: daysAgoIso(now, 365),
       effectiveTo: daysAgoIso(now, 180),
       status: "ENDED",
@@ -185,6 +193,7 @@ export async function seedVendorsData(): Promise<void> {
     {
       ...linkBase("seed-link-manager-direct", "seed-vendor-manager", "seed-partner-direct"),
       relationshipType: "MANAGEMENT",
+      payeeRole: false,
       effectiveFrom: daysAgoIso(now, 300),
       effectiveTo: null,
       status: "ACTIVE",
@@ -201,6 +210,7 @@ export async function seedVendorsData(): Promise<void> {
     {
       ...linkBase("seed-link-inactive-vendor-inactive-partner", "seed-vendor-inactive", "seed-partner-inactive"),
       relationshipType: "OTHER",
+      payeeRole: false,
       effectiveFrom: daysAgoIso(now, 90),
       effectiveTo: null,
       status: "ACTIVE",
@@ -209,6 +219,20 @@ export async function seedVendorsData(): Promise<void> {
 
   for (const link of links) {
     await vendorPartnerLinksCollection().doc(link.uid).set(link);
+  }
+
+  // Seed data writes links directly (never through the trusted
+  // createVendorPartnerLink transaction), so it must also seed the
+  // matching vendorPartnerActiveClaims doc for every ACTIVE link itself -
+  // otherwise the one-active-Vendor invariant's lock would be silently
+  // absent for fixture data, letting a restore/create wrongly succeed
+  // against a Partner that (per the fixtures above) already has an
+  // active Vendor. One claim per ACTIVE link, doc id = partnerRef.
+  for (const link of links) {
+    if (link.status !== "ACTIVE") continue;
+    await vendorPartnerActiveClaimsCollection()
+      .doc(link.partnerRef)
+      .set({ partnerRef: link.partnerRef, vendorRef: link.vendorRef, vendorPartnerLinkRef: link.vendorPartnerLinkRef, vendorPartnerLinkUid: link.uid, claimedAt: link.createdAt });
   }
 
   // The one restricted-identity subject - safe fake values only, same

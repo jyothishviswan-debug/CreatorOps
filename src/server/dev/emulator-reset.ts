@@ -155,6 +155,7 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await deleteCollection(db.collection(PARTNERS_COLLECTIONS.partnerAccountIdentityClaims));
   await deleteVendorsCollectionWithEvents();
   await deleteCollection(db.collection(VENDORS_COLLECTIONS.vendorPartnerLinks));
+  await deleteCollection(db.collection(VENDORS_COLLECTIONS.vendorPartnerActiveClaims));
   // Step 8A.1: the one canonical, cross-domain restricted-identity
   // collection - covers both Partner and Vendor subjects, deleted once.
   await deleteCollection(db.collection(RESTRICTED_FINANCIAL_IDENTITIES_COLLECTION));

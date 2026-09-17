@@ -144,6 +144,7 @@ function LinkRow({ link, onEdit, onChanged }: { link: VendorPartnerLinkWithPartn
           <b>{link.partner.displayName}</b>
           <Pill tone={linkStatusTone(link.status)}> {LINK_STATUS_LABELS[link.status]}</Pill>
           <Pill tone="default"> {RELATIONSHIP_TYPE_LABELS[link.relationshipType]}</Pill>
+          {link.payeeRole && <Pill tone="default"> Payee</Pill>}
           <div>
             <small>
               Effective {effectiveDateLabel(link.effectiveFrom)}
@@ -203,6 +204,7 @@ function LinkForm(props: LinkFormProps) {
   const initial = props.mode === "edit" ? props.link : null;
   const [partner, setPartner] = useState<PartnerDto | null>(null);
   const [relationshipType, setRelationshipType] = useState<RelationshipType>(initial?.relationshipType ?? "REPRESENTATION");
+  const [payeeRole, setPayeeRole] = useState(initial?.payeeRole ?? false);
   const [effectiveFrom, setEffectiveFrom] = useState(initial?.effectiveFrom ?? todayIso());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -218,7 +220,7 @@ function LinkForm(props: LinkFormProps) {
         setError("Select a Partner to link.");
         return;
       }
-      const result = await createVendorPartnerLink(props.vendorRef, { partnerRef: partner.partnerRef, relationshipType, effectiveFrom });
+      const result = await createVendorPartnerLink(props.vendorRef, { partnerRef: partner.partnerRef, relationshipType, payeeRole, effectiveFrom });
       setSaving(false);
       if (!result.ok) {
         setError(result.error);
@@ -228,7 +230,7 @@ function LinkForm(props: LinkFormProps) {
       return;
     }
 
-    const result = await editVendorPartnerLink(props.link.vendorPartnerLinkRef, { relationshipType, effectiveFrom, expectedVersion: props.link.version });
+    const result = await editVendorPartnerLink(props.link.vendorPartnerLinkRef, { relationshipType, payeeRole, effectiveFrom, expectedVersion: props.link.version });
     setSaving(false);
     if (!result.ok) {
       setError(result.error);
@@ -274,6 +276,13 @@ function LinkForm(props: LinkFormProps) {
         <div className="field">
           <label htmlFor="link-effective-from">Effective from</label>
           <input id="link-effective-from" type="date" value={effectiveFrom} onChange={(e) => setEffectiveFrom(e.target.value)} required />
+        </div>
+        <div className="field">
+          <label htmlFor="link-payee-role">Payee</label>
+          <label style={{ display: "flex", alignItems: "center", gap: 6, fontWeight: 400 }}>
+            <input id="link-payee-role" type="checkbox" checked={payeeRole} onChange={(e) => setPayeeRole(e.target.checked)} />
+            This Vendor handles this Partner&rsquo;s payments
+          </label>
         </div>
       </div>
 
