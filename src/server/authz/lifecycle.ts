@@ -56,6 +56,22 @@ export const LEAD_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
   DUPLICATE: [...LEAD_ACTIVE_STATES, "WATCHLIST", "REJECTED"],
 };
 
+// Step 9A: the canonical Campaign lifecycle. No restore from ARCHIVED is
+// ever modeled (frozen authority is explicit) - CANCELLED and ARCHIVED
+// are both one-way terminal-adjacent states, reached only through their
+// own reasoned transition (see campaign-lifecycle-service.ts). Keyed by
+// target state -> its allowed predecessor states, same convention as
+// LEAD_LIFECYCLE_TRANSITIONS above.
+export const CAMPAIGN_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  DRAFT: ["PLANNED"],
+  PLANNED: ["DRAFT"],
+  ACTIVE: ["PLANNED", "PAUSED"],
+  PAUSED: ["ACTIVE"],
+  COMPLETED: ["ACTIVE"],
+  CANCELLED: ["DRAFT", "PLANNED", "ACTIVE", "PAUSED"],
+  ARCHIVED: ["COMPLETED", "CANCELLED"],
+};
+
 export function canTransitionLifecycle(currentState: string, nextState: string, transitions: LifecycleTransitionMap): boolean {
   const allowedFrom = transitions[nextState];
   if (!allowedFrom) return false;

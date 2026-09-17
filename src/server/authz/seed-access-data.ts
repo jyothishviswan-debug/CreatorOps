@@ -64,7 +64,7 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
   },
   partnership_manager: {
     features: {
-      ...featuresOf(["dashboard", "partners", "vendors", "campaigns", "assignments", "content", "analytics", "partner_reviews", "operations", "reports"]),
+      ...featuresOf(["dashboard", "partners", "vendors", "assignments", "content", "analytics", "partner_reviews", "operations", "reports"]),
       // Non-monotonic on purpose - matches the module-specific action
       // catalog (module-actions.ts): can manage day-to-day finance
       // records but cannot approve payables, unlike Partnership Head.
@@ -118,11 +118,24 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         archive_vendor: false,
         restore_vendor: false,
       }),
+      // Step 9A: same day-to-day-but-not-governance split as Partners'/
+      // Vendors' own - Partnership Manager can plan and run day-to-day
+      // Campaign work (create/edit/own/transition/resources) but cancel
+      // and archive (governance-weight, reasoned, one-way) are Head-only.
+      campaigns: featureGrant(true, {
+        create: true,
+        edit: true,
+        manage_campaign_ownership: true,
+        transition_campaign_lifecycle: true,
+        manage_campaign_resources: true,
+        cancel_campaign: false,
+        archive_campaign: false,
+      }),
     },
   },
   partnership_head: {
     features: {
-      ...featuresOf(["dashboard", "partners", "vendors", "campaigns", "assignments", "content", "analytics", "partner_reviews", "operations", "reports"]),
+      ...featuresOf(["dashboard", "partners", "vendors", "assignments", "content", "analytics", "partner_reviews", "operations", "reports"]),
       finance: featureGrant(true, { manage_agreements: true, manage_payables: true, approve_payables: true, manage_invoices: true, record_payments: true }),
       discovery: featureGrant(true, {
         create: true,
@@ -160,6 +173,18 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_vendor_restricted_identity: true,
         archive_vendor: true,
         restore_vendor: true,
+      }),
+      // Step 9A: the only role (besides Super Admin) trusted with
+      // Campaign governance (cancel/archive), matching Partners'/
+      // Vendors' own head-only governance split above.
+      campaigns: featureGrant(true, {
+        create: true,
+        edit: true,
+        manage_campaign_ownership: true,
+        transition_campaign_lifecycle: true,
+        manage_campaign_resources: true,
+        cancel_campaign: true,
+        archive_campaign: true,
       }),
     },
   },

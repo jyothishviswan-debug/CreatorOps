@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ScopeGrant } from "@/server/authz/types";
+import { planCampaignListQuery } from "@/server/campaigns/firestore";
 import { planLeadListQuery } from "@/server/discovery/firestore";
 import { planPartnerListQuery } from "@/server/partners/firestore";
 import { planVendorListQuery } from "@/server/vendors/firestore";
@@ -31,6 +32,9 @@ function explicit(resourceType: string, resourceId: string): ScopeGrant {
 function partnerGrant(partnerId: string): ScopeGrant {
   return { type: "PARTNER", partnerId, ...AUDIT };
 }
+function campaignGrant(campaignId: string): ScopeGrant {
+  return { type: "CAMPAIGN", campaignId, ...AUDIT };
+}
 
 const ACTOR_UID = "actor-uid";
 
@@ -44,11 +48,12 @@ function arrayFilterCount(branch: FirestoreListBranchPlan): number {
   return branch.pushedFilters.filter((f) => f.op === "array-contains" || f.op === "array-contains-any").length;
 }
 
-describe("planLeadListQuery / planPartnerListQuery / planVendorListQuery - production-valid by construction", () => {
+describe("planLeadListQuery / planPartnerListQuery / planVendorListQuery / planCampaignListQuery - production-valid by construction", () => {
   const planners: Array<{ name: string; plan: (opts: Parameters<typeof planLeadListQuery>[0] | Parameters<typeof planPartnerListQuery>[0]) => ListQueryPlan }> = [
     { name: "leads", plan: (o) => planLeadListQuery(o as Parameters<typeof planLeadListQuery>[0]).plan },
     { name: "partners", plan: (o) => planPartnerListQuery(o as Parameters<typeof planPartnerListQuery>[0]).plan },
     { name: "vendors", plan: (o) => planVendorListQuery(o as Parameters<typeof planVendorListQuery>[0]).plan },
+    { name: "campaigns", plan: (o) => planCampaignListQuery(o as Parameters<typeof planCampaignListQuery>[0]).plan },
   ];
 
   const scenarios: Array<{ label: string; grants: ScopeGrant[]; hasGlobal: boolean; region?: string }> = [
@@ -187,6 +192,39 @@ describe("planVendorListQuery - array-field conflicts (mirrors Partners)", () =>
     const teamBranch = plan.branches.find((b) => b.name === "team") as FirestoreListBranchPlan;
     expect(arrayFilterCount(teamBranch)).toBe(1);
     expect(teamBranch.postFilters.some((f) => f.field === "regionIds")).toBe(true);
+  });
+});
+
+describe("planCampaignListQuery - CAMPAIGN grant merge and dual business-array-filter budget", () => {
+  it("CAMPAIGN-type grants merge into the same bounded-ids explicit branch as EXPLICIT_RECORD grants", () => {
+    const { plan } = planCampaignListQuery({ actorUid: ACTOR_UID, grants: [campaignGrant("c1"), explicit("campaign", "c2")], hasGlobal: false });
+    expect(plan.branches).toHaveLength(1);
+    const branch = plan.branches[0]!;
+    expect(branch.kind).toBe("bounded-ids");
+    if (branch.kind === "bounded-ids") expect(new Set(branch.ids)).toEqual(new Set(["c1", "c2"]));
+  });
+
+  it("region AND platform both selected: region wins the pushed array slot, platform becomes a postFilter, on a branch with no other array filter", () => {
+    const { plan } = planCampaignListQuery({ actorUid: ACTOR_UID, grants: [self()], hasGlobal: false, region: "Kerala", platform: "INSTAGRAM" });
+    const selfBranch = plan.branches.find((b) => b.name === "self") as FirestoreListBranchPlan;
+    expect(arrayFilterCount(selfBranch)).toBe(1);
+    expect(selfBranch.pushedFilters).toContainEqual({ field: "regionIds", op: "array-contains", value: "Kerala" });
+    expect(selfBranch.postFilters).toContainEqual({ field: "platforms", op: "array-contains", value: "INSTAGRAM" });
+  });
+
+  it("platform selected alone (no region): pushed as a real array-contains filter on a branch with no other array filter", () => {
+    const { plan } = planCampaignListQuery({ actorUid: ACTOR_UID, grants: [self()], hasGlobal: false, platform: "YOUTUBE" });
+    const selfBranch = plan.branches.find((b) => b.name === "self") as FirestoreListBranchPlan;
+    expect(selfBranch.pushedFilters).toContainEqual({ field: "platforms", op: "array-contains", value: "YOUTUBE" });
+  });
+
+  it("team actor + region AND platform selected: team branch's own array filter is teamIds, BOTH business filters land in postFilters (never a second pushed array filter)", () => {
+    const { plan } = planCampaignListQuery({ actorUid: ACTOR_UID, grants: [team("t1")], hasGlobal: false, region: "Kerala", platform: "X" });
+    const teamBranch = plan.branches.find((b) => b.name === "team") as FirestoreListBranchPlan;
+    expect(arrayFilterCount(teamBranch)).toBe(1);
+    expect(teamBranch.pushedFilters).toContainEqual({ field: "teamIds", op: "array-contains-any", value: ["t1"] });
+    expect(teamBranch.postFilters).toContainEqual({ field: "regionIds", op: "array-contains", value: "Kerala" });
+    expect(teamBranch.postFilters).toContainEqual({ field: "platforms", op: "array-contains", value: "X" });
   });
 });
 

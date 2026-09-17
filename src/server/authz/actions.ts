@@ -64,8 +64,15 @@ export const ACTIONS = [
   "archive_vendor",
   "restore_vendor",
   "manage_vendor_restricted_identity",
-  // Campaigns
-  "manage_campaign_work",
+  // Step 9A: Campaigns' own granular actions, same "granular rather than
+  // one generic 'manage'" discipline as Partners'/Vendors' - replaces the
+  // earlier UI-skeleton-era "manage_campaign_work" placeholder (never
+  // enforced by a real service, so nothing accepted depends on it).
+  "manage_campaign_ownership",
+  "transition_campaign_lifecycle",
+  "cancel_campaign",
+  "archive_campaign",
+  "manage_campaign_resources",
   // Content
   "submit_review",
   "approve_publish",

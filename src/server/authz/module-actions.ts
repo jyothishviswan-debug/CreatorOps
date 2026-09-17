@@ -54,9 +54,13 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "export", label: "Export" },
   ],
   campaigns: [
-    { id: "create", label: "Create" },
-    { id: "edit", label: "Edit" },
-    { id: "manage_campaign_work", label: "Manage campaign work" },
+    { id: "create", label: "Create Campaign" },
+    { id: "edit", label: "Edit Campaign" },
+    { id: "manage_campaign_ownership", label: "Manage owner/team" },
+    { id: "transition_campaign_lifecycle", label: "Transition lifecycle (plan/activate/pause/complete)" },
+    { id: "cancel_campaign", label: "Cancel" },
+    { id: "archive_campaign", label: "Archive" },
+    { id: "manage_campaign_resources", label: "Manage resources" },
     { id: "export", label: "Export" },
   ],
   assignments: [

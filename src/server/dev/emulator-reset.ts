@@ -23,6 +23,8 @@ import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
 import { COLLECTIONS } from "@/server/authz/firestore";
 import { seedAccessControlData } from "@/server/authz/seed-access-data";
+import { CAMPAIGNS_COLLECTIONS } from "@/server/campaigns/firestore";
+import { seedCampaignsData } from "@/server/campaigns/seed-campaigns-data";
 import { DISCOVERY_COLLECTIONS } from "@/server/discovery/firestore";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
 import { PARTNERS_COLLECTIONS } from "@/server/partners/firestore";
@@ -134,6 +136,24 @@ async function deleteVendorsCollectionWithEvents(): Promise<void> {
   }
 }
 
+// campaigns/{uid}/events is a subcollection - same cascade concern as
+// leads/{uid}/events, partners/{uid}/events, and vendors/{uid}/events
+// above.
+async function deleteCampaignsCollectionWithEvents(): Promise<void> {
+  const db = getAdminFirestore();
+  const campaignsRef = db.collection(CAMPAIGNS_COLLECTIONS.campaigns);
+  for (;;) {
+    const snapshot = await campaignsRef.limit(200).get();
+    if (snapshot.empty) return;
+    for (const doc of snapshot.docs) {
+      await deleteCollection(doc.ref.collection(CAMPAIGNS_COLLECTIONS.campaignEvents));
+    }
+    const batch = db.batch();
+    for (const doc of snapshot.docs) batch.delete(doc.ref);
+    await batch.commit();
+  }
+}
+
 // Wipes every Auth account and every Firestore collection this app
 // writes to, then reseeds the canonical baseline. Idempotent in effect
 // (running it twice in a row produces the same end state), but NOT a
@@ -159,10 +179,12 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   // Step 8A.1: the one canonical, cross-domain restricted-identity
   // collection - covers both Partner and Vendor subjects, deleted once.
   await deleteCollection(db.collection(RESTRICTED_FINANCIAL_IDENTITIES_COLLECTION));
+  await deleteCampaignsCollectionWithEvents();
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();
   await seedDiscoveryData();
   await seedPartnersData();
   await seedVendorsData();
+  await seedCampaignsData();
 }
