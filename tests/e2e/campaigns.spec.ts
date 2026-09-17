@@ -201,9 +201,14 @@ test.describe("Create Campaign", () => {
     expect(rejected.ok()).toBeFalsy();
     expect(rejected.status()).toBe(400);
 
+    // The Platforms field is a real multi-select dropdown (never a
+    // native <datalist> popup) - convenience checkboxes plus a free-text
+    // "Other platform" row, never a fixed whitelist.
     await page.goto("/campaigns/new");
-    const datalistOptions = await page.locator("#campaign-platform-suggestions option").count();
-    expect(datalistOptions).toBeGreaterThan(0); // suggestions exist, but are convenience only
+    await page.getByRole("button", { name: "Select platforms…" }).first().click();
+    await expect(page.getByText("Instagram", { exact: true })).toBeVisible();
+    await expect(page.getByText("YouTube", { exact: true })).toBeVisible();
+    await expect(page.getByPlaceholder("Other platform…")).toBeVisible();
   });
 
   test("owner is optional at create - absence never blocks creation", async ({ page }) => {

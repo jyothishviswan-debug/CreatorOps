@@ -1,6 +1,9 @@
+import type { CSSProperties } from "react";
+
 // Icon paths ported from docs/reference/CreatorOps_UI_Golden_Master.html (`paths` map).
-// `upload`/`download` are new additions for Import/Export Center, drawn in the same
-// stroke style (24x24 viewBox, 1.6 stroke) so they match visually.
+// `upload`/`download`/`chevronDown` are new additions (Import/Export Center and
+// custom dropdown affordances respectively), drawn in the same stroke style
+// (24x24 viewBox, 1.6 stroke) so they match visually.
 const paths: Record<string, string> = {
   grid: '<rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/>',
   search: '<circle cx="10" cy="10" r="6"/><path d="m15 15 6 6"/>',
@@ -28,6 +31,7 @@ const paths: Record<string, string> = {
   lock: '<rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3m-4 4v3"/>',
   eye: '<path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12Z"/><circle cx="12" cy="12" r="3"/>',
   logout: '<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5"/><path d="M21 12H9"/>',
+  chevronDown: '<path d="m6 9 6 6 6-6"/>',
 };
 
 export type IconName = keyof typeof paths;
@@ -35,9 +39,11 @@ export type IconName = keyof typeof paths;
 export function Icon({
   name,
   className,
+  style,
 }: {
   name: string;
   className?: string;
+  style?: CSSProperties;
 }) {
   const d = paths[name] ?? paths.grid;
   return (
@@ -50,6 +56,7 @@ export function Icon({
       strokeLinejoin="round"
       aria-hidden="true"
       className={className}
+      style={style}
       dangerouslySetInnerHTML={{ __html: d }}
     />
   );
