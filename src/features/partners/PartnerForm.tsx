@@ -199,7 +199,7 @@ export function PartnerForm(props: Props) {
             <Field label="Full name">
               <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={200} />
             </Field>
-            <Field label="Target Audience" hint="Carried over automatically from Discovery when this Partner originates there.">
+            <Field label="Target Audience">
               <select value={targetAudience} onChange={(e) => setTargetAudience(e.target.value as TargetAudience | "")}>
                 <option value="">Not yet tagged</option>
                 {TARGET_AUDIENCES.map((ta) => (
@@ -209,7 +209,7 @@ export function PartnerForm(props: Props) {
                 ))}
               </select>
             </Field>
-            <Field label="Legal name" hint="Optional - only if it differs from the display name.">
+            <Field label="Legal name">
               <input type="text" value={legalName} onChange={(e) => setLegalName(e.target.value)} maxLength={200} />
             </Field>
             <Field label="Email address">
@@ -218,13 +218,13 @@ export function PartnerForm(props: Props) {
             <Field label="Mobile number">
               <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </Field>
-            <Field label="Regions" hint="Comma-separated - matches the app's scope grants exactly.">
+            <Field label="Regions">
               <input type="text" value={regions} onChange={(e) => setRegions(e.target.value)} placeholder="South, Karnataka" />
             </Field>
-            <Field label="Languages" hint="Comma-separated.">
+            <Field label="Languages">
               <input type="text" value={languages} onChange={(e) => setLanguages(e.target.value)} placeholder="English, Malayalam" />
             </Field>
-            <Field label="Categories" hint="Comma-separated.">
+            <Field label="Categories">
               <input type="text" value={categories} onChange={(e) => setCategories(e.target.value)} placeholder="Lifestyle, Comedy" />
             </Field>
             <Field label="Tier">
@@ -278,7 +278,7 @@ export function PartnerForm(props: Props) {
           </Fields>
 
           {props.mode === "create" && (
-            <Field label="Owner" full hint="Search active users by email - optional, can be assigned later.">
+            <Field label="Owner" full>
               {owner ? (
                 <div className="banner" role="status">
                   <b>{owner.displayName}</b> · {owner.email}
@@ -334,7 +334,7 @@ export function PartnerForm(props: Props) {
                     }}
                   />
                 </Field>
-                <Field label="Stable platform account id" hint="Strongest identity evidence, if known.">
+                <Field label="Stable platform account id">
                   <input type="text" value={accountPlatformId} onChange={(e) => setAccountPlatformId(e.target.value)} />
                 </Field>
               </Fields>
