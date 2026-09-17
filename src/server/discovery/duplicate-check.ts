@@ -22,11 +22,16 @@ function normalizeHandle(value: string): string {
   return value.trim().toLowerCase().replace(/^@/, "");
 }
 
+function normalizeDisplayName(value: string): string {
+  return value.trim().toLowerCase();
+}
+
 export type DuplicateCheckInput = {
   email?: string;
   phone?: string;
   profileUrl?: string;
   handle?: string;
+  displayName?: string;
   // Excludes the Lead being re-checked from its own match set (a Lead
   // always "matches itself" trivially on identity fields, which is not
   // a duplicate).
@@ -40,6 +45,21 @@ async function matchLeadsByField(field: "email" | "phone" | "profileUrl" | "hand
     if (doc.id === excludeLeadUid) continue;
     const leadRef = doc.data().leadRef;
     if (typeof leadRef === "string") matches.push({ type: field, source: "lead", ref: leadRef, confidence });
+  }
+  return matches;
+}
+
+// Name alone is never unique (two different creators can share a
+// name), so this is deliberately "low" confidence only and, unlike the
+// other fields, only checked against existing Leads - Partners have no
+// normalized/lowercased name field to query against.
+async function matchLeadsByDisplayName(value: string, excludeLeadUid: string | undefined): Promise<DuplicateMatch[]> {
+  const snapshot = await leadsCollection().where("displayNameLower", "==", value).limit(MATCH_QUERY_LIMIT).get();
+  const matches: DuplicateMatch[] = [];
+  for (const doc of snapshot.docs) {
+    if (doc.id === excludeLeadUid) continue;
+    const leadRef = doc.data().leadRef;
+    if (typeof leadRef === "string") matches.push({ type: "displayName", source: "lead", ref: leadRef, confidence: "low" });
   }
   return matches;
 }
@@ -65,9 +85,9 @@ async function matchPartnerAccountsByField(field: "profileUrl" | "handle", value
 }
 
 // Step 6A section 6: bounded normalized duplicate lookup across email,
-// phone, profile URL, and handle/platform identity - checked against
-// existing Leads and canonical Partner/Partner Account records where
-// evidence supports it. A failed lookup is "unknown/error", NEVER "no
+// phone, profile URL, handle/platform identity, and display name -
+// checked against existing Leads and canonical Partner/Partner Account
+// records where evidence supports it. A failed lookup is "unknown/error", NEVER "no
 // duplicate" - the caller must never treat a thrown error here as a
 // clean bill of health. This does not and cannot claim a global
 // uniqueness lock; it is a best-effort signal with explicit
@@ -97,6 +117,10 @@ export async function checkForDuplicates(input: DuplicateCheckInput): Promise<Du
       const handle = normalizeHandle(input.handle);
       matches.push(...(await matchLeadsByField("handle", handle, input.excludeLeadUid, "high")));
       matches.push(...(await matchPartnerAccountsByField("handle", handle, "high")));
+    }
+    if (input.displayName) {
+      const displayName = normalizeDisplayName(input.displayName);
+      matches.push(...(await matchLeadsByDisplayName(displayName, input.excludeLeadUid)));
     }
 
     const bounded = matches.slice(0, 10);

@@ -16,7 +16,7 @@ import { getAdminAuth } from "@/server/firebase/admin";
 import { convertLead, getLeadReadiness } from "./conversion-service";
 import { getLeadDocByRef, getPartnerDocByRef } from "./firestore";
 import { listLeadEvents } from "./lead-events";
-import { assignManager, checkLeadDuplicates, createLead, getLead, listLeads, precheckDuplicates, recordOutreach, recordReview, saveAssetDecision, saveCommercial, saveDiscoveryAgreement, saveResearch, updateLead } from "./lead-service";
+import { assignManager, createLead, getLead, listLeads, precheckDuplicates, recordOutreach, recordReview, saveAssetDecision, saveCommercial, saveDiscoveryAgreement, saveResearch, updateLead } from "./lead-service";
 import { getLeadKyc, saveLeadKyc } from "./kyc-service";
 import { restoreLead, transitionLeadLifecycle } from "./lifecycle-service";
 import { seedDiscoveryData } from "./seed-discovery-data";
@@ -314,14 +314,23 @@ describe("Discovery domain (real emulator)", () => {
       expect(result.data.matches.some((m) => m.ref === "seed-lead-new")).toBe(true);
     });
 
-    it("persists a fresh duplicate check result onto an existing Lead", async () => {
+    it("runs and persists a duplicate check automatically on create - no separate action needed", async () => {
       const head = await actorFor("partnership_head");
       const created = await createLead(head, { displayName: `Dup Test ${runId}`, source: { type: "referral" }, region: "Kerala" }, "req-dup-create");
       if (!created.ok) throw new Error("unreachable");
-      const checked = await checkLeadDuplicates(head, created.data.leadRef, { expectedVersion: created.data.version }, "req-dup-check");
-      expect(checked.ok).toBe(true);
-      if (!checked.ok) throw new Error("unreachable");
-      expect(checked.data.duplicateCheck?.status).toBe("none");
+      expect(created.data.duplicateCheck?.status).toBe("none");
+    });
+
+    it("flags a brand-new Lead as a confirmed duplicate automatically, by profile URL", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createLead(
+        head,
+        { displayName: `Dup Match ${runId}`, source: { type: "referral" }, region: "Kerala", profileUrl: "https://instagram.com/new" },
+        "req-dup-create-match",
+      );
+      if (!created.ok) throw new Error("unreachable");
+      expect(created.data.duplicateCheck?.status).toBe("confirmed");
+      expect(created.data.duplicateCheck?.matches.some((m) => m.ref === "seed-lead-new")).toBe(true);
     });
   });
 
@@ -424,10 +433,6 @@ describe("Discovery domain (real emulator)", () => {
       const afterKyc = await getLead(head, leadRef);
       if (!afterKyc.ok) throw new Error("unreachable");
       version = afterKyc.data.version;
-
-      const dupCheck = await checkLeadDuplicates(head, leadRef, { expectedVersion: version }, "req-cf-dup");
-      if (!dupCheck.ok) throw new Error("unreachable");
-      version = dupCheck.data.version;
 
       const readyTransition = await transitionLeadLifecycle(head, leadRef, { to: "CONVERSION_READY", expectedVersion: version }, "req-cf-ready");
       expect(readyTransition.ok).toBe(true);

@@ -473,8 +473,6 @@ test.describe("Readiness and conversion", () => {
     const leadAfterKycBody = await leadAfterKyc.json();
     version = leadAfterKycBody.version;
     expect(leadAfterKycBody.lifecycle).toBe("RESPONDED");
-    const dup = await page.request.post(`/api/discovery/leads/${lead.leadRef}/duplicate-check`, { data: { expectedVersion: version } });
-    expect(dup.ok()).toBeTruthy();
 
     await page.goto(`/discovery/${lead.leadRef}`);
     await page.getByRole("tab", { name: "Ready" }).click();
@@ -533,8 +531,6 @@ test.describe("Readiness and conversion", () => {
     expect(kyc.ok()).toBeTruthy();
     const leadAfterKyc = await page.request.get(`/api/discovery/leads/${lead.leadRef}`);
     version = (await leadAfterKyc.json()).version;
-    const dup = await page.request.post(`/api/discovery/leads/${lead.leadRef}/duplicate-check`, { data: { expectedVersion: version } });
-    version = (await dup.json()).version;
     const ready = await page.request.post(`/api/discovery/leads/${lead.leadRef}/lifecycle`, { data: { to: "CONVERSION_READY", expectedVersion: version } });
     expect(ready.ok()).toBeTruthy();
     version = (await ready.json()).version;

@@ -66,7 +66,7 @@ export async function evaluateLeadReadiness(lead: LeadDoc): Promise<ReadinessRes
   }
 
   if (!lead.duplicateCheck || lead.duplicateCheck.status === "unknown") {
-    blockers.push(blocker("DUPLICATE_UNRESOLVED", "Duplicate status is unknown - run a duplicate check before converting."));
+    blockers.push(blocker("DUPLICATE_UNRESOLVED", "Duplicate status is unknown - the automatic check either hasn't run yet or the last attempt failed."));
   } else if (lead.duplicateCheck.status === "confirmed") {
     blockers.push(blocker("DUPLICATE_CONFIRMED", "This Lead is a confirmed duplicate and must be resolved before conversion."));
   } else if (lead.duplicateCheck.status === "possible") {

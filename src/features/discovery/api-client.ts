@@ -203,10 +203,6 @@ export async function uploadKycAttachment(
 
 // ---- Duplicate check ----
 
-export function checkLeadDuplicates(leadRef: string, expectedVersion: number): Promise<DiscoveryApiResult<LeadDto>> {
-  return call(`/api/discovery/leads/${encodeURIComponent(leadRef)}/duplicate-check`, { method: "POST", body: JSON.stringify({ expectedVersion }) });
-}
-
 export function precheckDuplicates(input: PrecheckDuplicatesInput): Promise<DiscoveryApiResult<DuplicateCheckResult>> {
   return call("/api/discovery/duplicate-check", { method: "POST", body: JSON.stringify(input) });
 }

@@ -188,7 +188,7 @@ export const DUPLICATE_STATUSES = ["unknown", "none", "possible", "confirmed"] a
 export const duplicateStatusSchema = z.enum(DUPLICATE_STATUSES);
 export type DuplicateStatus = z.infer<typeof duplicateStatusSchema>;
 
-export const DUPLICATE_MATCH_TYPES = ["email", "phone", "profileUrl", "handle"] as const;
+export const DUPLICATE_MATCH_TYPES = ["email", "phone", "profileUrl", "handle", "displayName"] as const;
 export const duplicateMatchTypeSchema = z.enum(DUPLICATE_MATCH_TYPES);
 export type DuplicateMatchType = z.infer<typeof duplicateMatchTypeSchema>;
 

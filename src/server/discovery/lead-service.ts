@@ -147,6 +147,20 @@ export async function createLead(actor: ActorContext | null, rawInput: unknown, 
   const now = new Date().toISOString();
   const uid = leadsCollection().doc().id;
 
+  // Runs automatically on every create, using whatever identity fields
+  // were actually given - no separate "Run duplicate check" step is
+  // needed before a brand-new Lead has a real status. A later edit to
+  // these fields does not re-run this (see updateLead) - the final
+  // conversion step always re-checks fresh right before committing
+  // (conversion-service.ts), which is the actual safety net.
+  const duplicateCheck = await checkForDuplicates({
+    email: input.email ?? undefined,
+    phone: input.phone ?? undefined,
+    profileUrl: input.profileUrl ?? undefined,
+    handle: input.handle ?? undefined,
+    displayName: input.displayName,
+  });
+
   const doc: LeadDoc = {
     uid,
     leadRef: generateLeadRef(),
@@ -174,7 +188,7 @@ export async function createLead(actor: ActorContext | null, rawInput: unknown, 
     assetDecision: null,
     managerUid: null,
     kycPackageComplete: false,
-    duplicateCheck: null,
+    duplicateCheck,
     conversion: null,
     proposalNumber: null,
     proposalPlatformCode: null,
@@ -567,41 +581,6 @@ export async function assignManager(actor: ActorContext | null, leadRef: unknown
   if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This Lead was changed elsewhere. Reload and try again." };
 
   await writeLeadEvent({ leadUid: loaded.lead.uid, kind: "manager_assigned", actorUserRef: actor!.userRef, metadata: { assigned: Boolean(managerUid) }, requestId });
-  return { ok: true, data: await toLeadDto(result.doc) };
-}
-
-// ---- Duplicate check (persisted onto an existing Lead) ----
-
-const checkLeadDuplicatesInputSchema = z.object({ expectedVersion: z.number().int().min(1) });
-export type CheckLeadDuplicatesInput = z.input<typeof checkLeadDuplicatesInputSchema>;
-
-export async function checkLeadDuplicates(actor: ActorContext | null, leadRef: unknown, rawInput: unknown, requestId: string): Promise<DiscoveryServiceResult<LeadDto>> {
-  const loaded = await loadAuthorizedLead(actor, leadRef, "edit");
-  if (!loaded.ok) return loaded.error;
-
-  const parsed = checkLeadDuplicatesInputSchema.safeParse(rawInput);
-  if (!parsed.success) return discoveryInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
-
-  const checkResult = await checkForDuplicates({
-    email: loaded.lead.email ?? undefined,
-    phone: loaded.lead.phone ?? undefined,
-    profileUrl: loaded.lead.profileUrl ?? undefined,
-    handle: loaded.lead.handle ?? undefined,
-    excludeLeadUid: loaded.lead.uid,
-  });
-  const duplicateCheck = duplicateCheckResultSchema.parse(checkResult);
-
-  const result = await runLeadMutation(loaded.lead.uid, parsed.data.expectedVersion, (current) => ({
-    ...current,
-    duplicateCheck,
-    updatedAt: new Date().toISOString(),
-    updatedByUserRef: actor!.userRef,
-  }));
-
-  if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Lead not found." };
-  if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This Lead was changed elsewhere. Reload and try again." };
-
-  await writeLeadEvent({ leadUid: loaded.lead.uid, kind: "duplicate_checked", actorUserRef: actor!.userRef, metadata: { status: duplicateCheck.status, matchCount: duplicateCheck.matches.length }, requestId });
   return { ok: true, data: await toLeadDto(result.doc) };
 }
 

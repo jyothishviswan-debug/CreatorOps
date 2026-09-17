@@ -12,7 +12,6 @@ import type { DiscoveryApiResult } from "./api-client";
 import {
   addKycLinkAttachment,
   assignManager,
-  checkLeadDuplicates,
   getLeadKyc,
   recordOutreach,
   recordReview,
@@ -60,9 +59,7 @@ function useSaveHandler(onSaved: (lead: LeadDto) => void) {
 
 // ---- Lead ----
 
-export function LeadStage({ lead, onSaved }: StageProps) {
-  const { saving, error, run } = useSaveHandler(onSaved);
-
+export function LeadStage({ lead }: StageProps) {
   return (
     <div>
       <div className="kv">
@@ -102,20 +99,11 @@ export function LeadStage({ lead, onSaved }: StageProps) {
         <Link href={`/discovery/${lead.leadRef}/edit`} className="btn">
           Edit lead
         </Link>
-        <button
-          type="button"
-          className="btn"
-          disabled={saving}
-          onClick={() => run(() => checkLeadDuplicates(lead.leadRef, lead.version))}
-        >
-          {saving ? "Checking…" : "Run duplicate check"}
-        </button>
       </div>
 
       <div style={{ marginTop: 14 }}>
         <DuplicateStatusBanner result={lead.duplicateCheck} />
       </div>
-      <ErrorBanner message={error} />
     </div>
   );
 }
