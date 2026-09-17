@@ -69,7 +69,7 @@ test.describe("Overview", () => {
     await page.goto("/partners");
     await expect(page.locator("h1")).toHaveText("Partners");
     await expect(page.getByText("Real scoped emulator data")).toBeVisible();
-    await expect(page.locator(".ov-kpi-label", { hasText: "Partners in scope" })).toBeVisible();
+    await expect(page.locator(".ov-kpi-label", { hasText: "Total partners" })).toBeVisible();
     await expect(page.getByRole("heading", { name: "Partner Status" })).toBeVisible();
     await expect(page.getByText("Recent Activity")).toBeVisible();
     await expect(page.getByText("Quick Actions")).toBeVisible();
