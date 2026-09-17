@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import Link from "next/link";
 
 import { DialogShell } from "@/ui/Dialog";
 import { Pill } from "@/ui/Badge";
@@ -198,7 +199,9 @@ function ConversionDialog({
           </div>
           <div className="kv">
             <span>Partner reference</span>
-            <b style={{ fontFamily: "monospace", fontSize: 11 }}>{result.partnerRef}</b>
+            <Link href={`/partners/${result.partnerRef}`} className="textlink">
+              <b style={{ fontFamily: "monospace", fontSize: 11 }}>{result.partnerRef}</b>
+            </Link>
           </div>
           <div className="kv">
             <span>Partner Account</span>
@@ -271,7 +274,9 @@ export function ConvertedStage({ lead }: { lead: LeadDto }) {
       </div>
       <div className="kv">
         <span>Partner reference</span>
-        <b style={{ fontFamily: "monospace", fontSize: 11 }}>{lead.conversion.partnerRef}</b>
+        <Link href={`/partners/${lead.conversion.partnerRef}`} className="textlink">
+          <b style={{ fontFamily: "monospace", fontSize: 11 }}>{lead.conversion.partnerRef}</b>
+        </Link>
       </div>
       <div className="kv">
         <span>Partner Account</span>
@@ -282,7 +287,10 @@ export function ConvertedStage({ lead }: { lead: LeadDto }) {
         <b>{absoluteTime(lead.conversion.convertedAt)}</b>
       </div>
       <p className="foundationnote" style={{ marginTop: 12 }}>
-        A dedicated Partners workspace isn&rsquo;t built yet - this reference is the canonical link. No Vendor is created by this ordinary individual-Partner conversion.
+        <Link href={`/partners/${lead.conversion.partnerRef}`} className="textlink">
+          Open this Partner
+        </Link>{" "}
+        in the Partners workspace. No Vendor is created by this ordinary individual-Partner conversion.
       </p>
     </div>
   );

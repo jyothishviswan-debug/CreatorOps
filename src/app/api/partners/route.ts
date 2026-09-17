@@ -13,13 +13,17 @@ export async function GET(request: Request) {
   const limit = limitParam ? Number(limitParam) : undefined;
   const status = url.searchParams.get("status") ?? undefined;
   const displayNamePrefix = url.searchParams.get("displayNamePrefix") ?? undefined;
+  const region = url.searchParams.get("region") ?? undefined;
+  const tier = url.searchParams.get("tier") ?? undefined;
+  const assignedToMe = url.searchParams.get("assignedToMe") === "true" ? true : undefined;
+  const pendingPartnerAccountSetup = url.searchParams.get("pendingPartnerAccountSetup") === "true" ? true : undefined;
 
   let cursor: PartnerListCursor | undefined;
   const cursorOrderValue = url.searchParams.get("cursorOrderValue");
   const cursorUid = url.searchParams.get("cursorUid");
   if (cursorOrderValue && cursorUid) cursor = { orderValue: cursorOrderValue, uid: cursorUid };
 
-  const result = await listPartners(actor, { limit, cursor, status, displayNamePrefix });
+  const result = await listPartners(actor, { limit, cursor, status, displayNamePrefix, region, tier, assignedToMe, pendingPartnerAccountSetup });
   return toPartnersHttpResponse(result);
 }
 

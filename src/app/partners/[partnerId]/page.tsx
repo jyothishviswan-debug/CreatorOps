@@ -1,21 +1,31 @@
 import { notFound } from "next/navigation";
 
 import { AppShell } from "@/ui/AppShell";
-import { DetailView } from "@/ui/DetailView";
-import { getPartnerDetail } from "@/features/partners/fixtures";
+import { EmptyState } from "@/ui/States";
+import { PartnerDetail } from "@/features/partners/PartnerDetail";
+import { resolveRequestActor } from "@/server/partners/http";
+import { getPartner } from "@/server/partners/partner-service";
 
-export default async function PartnerDetailPage({
-  params,
-}: {
-  params: Promise<{ partnerId: string }>;
-}) {
+export default async function PartnerDetailPage({ params }: { params: Promise<{ partnerId: string }> }) {
   const { partnerId } = await params;
-  const detail = getPartnerDetail(partnerId);
-  if (!detail) notFound();
+  const actor = await resolveRequestActor();
+  const result = await getPartner(actor, partnerId);
+
+  if (!result.ok && result.code === "not_found") notFound();
+
+  if (!result.ok) {
+    return (
+      <AppShell>
+        <section className="panel">
+          <EmptyState title="Access denied" description="You don't have permission to view this Partner." icon="lock" />
+        </section>
+      </AppShell>
+    );
+  }
 
   return (
     <AppShell>
-      <DetailView moduleLabel="Partners" workspaceHref="/partners" detail={detail} />
+      <PartnerDetail initialPartner={result.data} />
     </AppShell>
   );
 }

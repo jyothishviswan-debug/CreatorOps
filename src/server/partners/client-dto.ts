@@ -1,6 +1,11 @@
 import { getUserDoc } from "@/server/authz/firestore";
 import type { PartnerAccountDoc, PartnerDoc, PartnerStatus } from "./types";
 
+// The safe subset of sourceDiscovery worth showing the browser - already
+// entirely non-restricted fields (see partnerDocSchema's own comment),
+// so this is a narrow passthrough, not a redaction.
+export type PartnerSourceDiscoveryDto = NonNullable<PartnerDoc["sourceDiscovery"]>;
+
 // The only shape of a Partner ever handed to the browser - no Firestore
 // doc id, no raw Firebase uid anywhere (ownerUid resolved to the owner's
 // own opaque userRef, same pattern as Discovery's LeadDto). Restricted
@@ -25,6 +30,7 @@ export type PartnerDto = {
   ownerDisplayName: string | null;
   teamIds: string[];
   originLeadRefs: string[];
+  sourceDiscovery: PartnerSourceDiscoveryDto | null;
   pendingPartnerAccountSetup: boolean;
   createdAt: string;
   createdByUserRef: string;
@@ -62,6 +68,7 @@ export async function toPartnerDto(doc: PartnerDoc): Promise<PartnerDto> {
     ownerDisplayName: owner.displayName,
     teamIds: doc.teamIds,
     originLeadRefs: doc.originLeadRefs,
+    sourceDiscovery: doc.sourceDiscovery,
     pendingPartnerAccountSetup: doc.pendingPartnerAccountSetup,
     createdAt: doc.createdAt,
     createdByUserRef: doc.createdByUserRef,
@@ -98,6 +105,7 @@ export async function toPartnerDtos(docs: PartnerDoc[]): Promise<PartnerDto[]> {
       ownerDisplayName: owner.displayName,
       teamIds: doc.teamIds,
       originLeadRefs: doc.originLeadRefs,
+      sourceDiscovery: doc.sourceDiscovery,
       pendingPartnerAccountSetup: doc.pendingPartnerAccountSetup,
       createdAt: doc.createdAt,
       createdByUserRef: doc.createdByUserRef,

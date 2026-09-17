@@ -31,6 +31,15 @@ export const PARTNER_GOVERNANCE_STATUSES = ["BLACKLISTED", "ARCHIVED"] as const 
 export const partnerAccountStatusSchema = z.enum(["ACTIVE", "INACTIVE"]);
 export type PartnerAccountStatus = z.infer<typeof partnerAccountStatusSchema>;
 
+// Starter short lists for the Partner create/edit form's tier/priority
+// dropdowns - same "dropdown covers the common cases, Other reveals free
+// text" idiom as Discovery's DISCOVERY_PLATFORMS/DISCOVERY_REGIONS.
+// `tier`/`priority` stay free text server-side (see partnerDocSchema
+// below), so a value outside this starter list is never blocked, only
+// shown via the form's own "Other" fallback.
+export const PARTNER_TIERS = ["Tier 1", "Tier 2", "Tier 3"] as const;
+export const PARTNER_PRIORITIES = ["High", "Medium", "Low"] as const;
+
 // --- Partner document (partners/{uid}) ----------------------------------
 export const partnerDocSchema = z.object({
   uid: z.string().min(1),

@@ -128,6 +128,13 @@ export type ListPartnersInput = {
   cursor?: PartnerListCursor;
   status?: string;
   displayNamePrefix?: string;
+  region?: string;
+  tier?: string;
+  // Resolved to the actor's own uid server-side - the browser never
+  // supplies a raw uid, only the boolean intent (same idiom as
+  // Discovery's listLeads assignedToMe).
+  assignedToMe?: boolean;
+  pendingPartnerAccountSetup?: boolean;
 };
 
 export async function listPartners(actor: ActorContext | null, input: ListPartnersInput): Promise<PartnersServiceResult<{ partners: PartnerDto[]; nextCursor: PartnerListCursor | null }>> {
@@ -143,6 +150,10 @@ export async function listPartners(actor: ActorContext | null, input: ListPartne
     hasGlobal: hasGlobalScope(grants),
     status: input.status,
     displayNamePrefix: input.displayNamePrefix?.toLowerCase(),
+    region: input.region,
+    tier: input.tier,
+    ownerUid: input.assignedToMe ? actor!.uid : undefined,
+    pendingPartnerAccountSetup: input.pendingPartnerAccountSetup,
   });
 
   return { ok: true, data: { partners: await toPartnerDtos(page.partners), nextCursor: page.nextCursor } };
