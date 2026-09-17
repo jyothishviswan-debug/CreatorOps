@@ -55,6 +55,7 @@ export async function seedVendorsData(): Promise<void> {
       phone: "+91 90000 00002",
       businessReferences: [],
       teamIds: [],
+      sequenceNumber: null,
       createdAt: nowIso,
       createdByUserRef: headUserRef,
       updatedAt: nowIso,

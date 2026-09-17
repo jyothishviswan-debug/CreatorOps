@@ -19,7 +19,8 @@ import type { PartnerOwnerCandidateDto } from "@/server/partners/user-picker";
 import type { CreatePartnerInput, EditPartnerInput, ListPartnersInput, ListPartnerHistoryInput, PartnerHistoryEventDto, SetPartnerOwnerTeamInput, SetPartnerStatusInput } from "@/server/partners/partner-service";
 import type { BlacklistPartnerInput, ArchivePartnerInput, RestorePartnerInput } from "@/server/partners/partner-lifecycle-service";
 import type { CreatePartnerAccountInput, EditPartnerAccountInput, SetPartnerAccountStatusInput, SetPrimaryPartnerAccountInput } from "@/server/partners/partner-account-service";
-import type { SavePartnerRestrictedIdentityInput } from "@/server/partners/restricted-identity-service";
+import type { SavePartnerRestrictedIdentityInput, AddPartnerRestrictedIdentityLinkEvidenceInput } from "@/server/partners/restricted-identity-service";
+import type { RestrictedFinancialIdentityEvidence } from "@/server/shared/restricted-financial-identity";
 import type { PartnerListCursor } from "@/server/partners/firestore";
 import type { PartnerEventListCursor } from "@/server/partners/partner-events";
 import type { PartnerDuplicateCheckResult } from "@/server/partners/types";
@@ -177,6 +178,46 @@ export function getPartnerRestrictedIdentity(partnerRef: string): Promise<Partne
 
 export function savePartnerRestrictedIdentity(partnerRef: string, input: SavePartnerRestrictedIdentityInput): Promise<PartnersApiResult<PartnerRestrictedIdentityDto>> {
   return call(`/api/partners/${encodeURIComponent(partnerRef)}/restricted-identity`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+// ---- Restricted identity evidence (real KYC upload, mirrors Discovery) ----
+
+export function addPartnerRestrictedIdentityLinkEvidence(
+  partnerRef: string,
+  input: AddPartnerRestrictedIdentityLinkEvidenceInput,
+): Promise<PartnersApiResult<{ version: number; evidence: RestrictedFinancialIdentityEvidence }>> {
+  return call(`/api/partners/${encodeURIComponent(partnerRef)}/restricted-identity/evidence`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// A real file upload - deliberately bypasses `call`'s JSON Content-Type
+// header (FormData needs the browser to set its own multipart boundary).
+export async function uploadPartnerRestrictedIdentityEvidence(
+  partnerRef: string,
+  input: { docType: string; file: File; expectedVersion: number },
+): Promise<PartnersApiResult<{ version: number; evidence: RestrictedFinancialIdentityEvidence }>> {
+  const form = new FormData();
+  form.set("docType", input.docType);
+  form.set("expectedVersion", String(input.expectedVersion));
+  form.set("file", input.file);
+
+  let res: Response;
+  try {
+    res = await fetch(`/api/partners/${encodeURIComponent(partnerRef)}/restricted-identity/evidence`, { method: "POST", body: form });
+  } catch {
+    return { ok: false, status: 0, code: "network_error", error: "Could not reach the server. Check your connection and try again." };
+  }
+
+  if (res.ok) return { ok: true, data: (await res.json()) as { version: number; evidence: RestrictedFinancialIdentityEvidence } };
+
+  let error = "Something went wrong.";
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (typeof body.error === "string") error = body.error;
+  } catch {
+    // No JSON body - keep the generic message.
+  }
+  const code: PartnersApiErrorCode = res.status === 401 || res.status === 403 ? "unauthorized" : res.status === 404 ? "not_found" : res.status === 400 ? "invalid_input" : res.status === 409 ? "conflict" : "internal";
+  return { ok: false, status: res.status, code, error };
 }
 
 // ---- Duplicate check ----

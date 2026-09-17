@@ -3,7 +3,8 @@
 import { useState, type FormEvent } from "react";
 
 import { Panel, PanelBody, PanelHead } from "@/ui/Panel";
-import { getPartnerRestrictedIdentity, savePartnerRestrictedIdentity } from "./api-client";
+import type { RestrictedFinancialIdentityEvidence } from "@/server/shared/restricted-financial-identity";
+import { addPartnerRestrictedIdentityLinkEvidence, getPartnerRestrictedIdentity, savePartnerRestrictedIdentity, uploadPartnerRestrictedIdentityEvidence } from "./api-client";
 
 // Restricted financial/KYC identity - gated by BOTH the
 // manage_partner_restricted_identity action AND the payment_details
@@ -24,6 +25,7 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
   const [gstApplicable, setGstApplicable] = useState(false);
   const [gstNumber, setGstNumber] = useState("");
   const [existingVersion, setExistingVersion] = useState(0);
+  const [evidence, setEvidence] = useState<RestrictedFinancialIdentityEvidence[]>([]);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
@@ -48,6 +50,7 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
       setGstApplicable(result.data.gst?.applicable ?? false);
       setGstNumber(result.data.gst?.number ?? "");
       setExistingVersion(result.data.version);
+      setEvidence(result.data.evidence);
     }
   }
 
@@ -156,7 +159,135 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
             </div>
           </form>
         )}
+        {state === "ready" && existingVersion > 0 && (
+          <EvidenceManager partnerRef={partnerRef} version={existingVersion} evidence={evidence} onChanged={(version, next) => { setExistingVersion(version); setEvidence(next); }} />
+        )}
       </PanelBody>
     </Panel>
+  );
+}
+
+const DOC_TYPE_LABELS: Record<RestrictedFinancialIdentityEvidence["docType"], string> = {
+  pan: "PAN",
+  aadhaar: "Aadhaar",
+  gst: "GST certificate",
+  bank: "Bank proof",
+  other: "Other",
+};
+const DOC_TYPES = Object.keys(DOC_TYPE_LABELS) as RestrictedFinancialIdentityEvidence["docType"][];
+
+// A supplementary evidence manager, additional to (never a replacement
+// for) the plain restricted fields above. One document at a time: pick
+// its type, choose link or upload, submit - real uploads land in this
+// Partner's own Drive subfolder (named "P{sequenceNumber}_{displayName}_",
+// allocated on first upload) and only the real Drive link Drive returns
+// is ever stored. Mirrors Discovery's own KycAttachments exactly.
+function EvidenceManager({
+  partnerRef,
+  version,
+  evidence,
+  onChanged,
+}: {
+  partnerRef: string;
+  version: number;
+  evidence: RestrictedFinancialIdentityEvidence[];
+  onChanged: (version: number, evidence: RestrictedFinancialIdentityEvidence[]) => void;
+}) {
+  const [docType, setDocType] = useState<RestrictedFinancialIdentityEvidence["docType"]>("aadhaar");
+  const [mode, setMode] = useState<"link" | "upload">("link");
+  const [linkUrl, setLinkUrl] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleAdd(e: FormEvent) {
+    e.preventDefault();
+    setError(null);
+
+    if (mode === "link") {
+      if (!linkUrl.trim()) return;
+      setBusy(true);
+      const result = await addPartnerRestrictedIdentityLinkEvidence(partnerRef, { docType, url: linkUrl.trim(), expectedVersion: version });
+      setBusy(false);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      setLinkUrl("");
+      onChanged(result.data.version, [...evidence, result.data.evidence]);
+      return;
+    }
+
+    if (!file) return;
+    setBusy(true);
+    const result = await uploadPartnerRestrictedIdentityEvidence(partnerRef, { docType, file, expectedVersion: version });
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setFile(null);
+    onChanged(result.data.version, [...evidence, result.data.evidence]);
+  }
+
+  return (
+    <div style={{ marginTop: 28 }}>
+      <h3>Document evidence</h3>
+      <p className="foundationnote">Add a link to an existing document, or upload a real file - uploads are stored in this Partner&rsquo;s own Drive folder, never simulated.</p>
+
+      <form onSubmit={handleAdd}>
+        <div className="fields">
+          <div className="field">
+            <label htmlFor="ri-evidence-doc-type">Document name</label>
+            <select id="ri-evidence-doc-type" value={docType} onChange={(e) => setDocType(e.target.value as RestrictedFinancialIdentityEvidence["docType"])}>
+              {DOC_TYPES.map((type) => (
+                <option key={type} value={type}>
+                  {DOC_TYPE_LABELS[type]}
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="field">
+            <label htmlFor="ri-evidence-mode">Source</label>
+            <select id="ri-evidence-mode" value={mode} onChange={(e) => setMode(e.target.value as "link" | "upload")}>
+              <option value="link">Doc link</option>
+              <option value="upload">Upload file</option>
+            </select>
+          </div>
+          {mode === "link" ? (
+            <div className="field full" key="link">
+              <label htmlFor="ri-evidence-url">Document link</label>
+              <input id="ri-evidence-url" type="url" placeholder="https://…" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} required />
+            </div>
+          ) : (
+            <div className="field full" key="upload">
+              <label htmlFor="ri-evidence-file">Choose file</label>
+              <input id="ri-evidence-file" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
+            </div>
+          )}
+        </div>
+        {error && (
+          <div className="banner" role="alert" style={{ marginTop: 10 }}>
+            {error}
+          </div>
+        )}
+        <button type="submit" className="btn" disabled={busy} style={{ marginTop: 12 }}>
+          {busy ? "Adding…" : mode === "link" ? "Add link" : "Upload"}
+        </button>
+      </form>
+
+      {evidence.length > 0 && (
+        <ul className="checklist" style={{ marginTop: 18, gridTemplateColumns: "repeat(auto-fill, minmax(240px, 1fr))" }}>
+          {evidence.map((e, i) => (
+            <li key={`${e.docType}-${e.addedAt}-${i}`}>
+              <b>{DOC_TYPE_LABELS[e.docType]}</b> ·{" "}
+              <a href={e.url} target="_blank" rel="noreferrer">
+                {e.kind === "upload" ? (e.fileName ?? "Uploaded file") : "Open link"}
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </div>
   );
 }

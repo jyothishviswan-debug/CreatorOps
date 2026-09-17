@@ -64,6 +64,14 @@ export const vendorDocSchema = z.object({
   ownerUid: z.string().min(1).nullable().default(null),
   teamIds: z.array(z.string().min(1)).max(50).default([]),
 
+  // Allocated exactly once, the first time this Vendor's restricted-
+  // identity evidence is uploaded (see restricted-identity-service.ts's
+  // ensureVendorSequenceNumber) - never reassigned afterward, even if
+  // displayName is edited later, so every evidence file uploaded for
+  // this Vendor always lands in the same Drive subfolder. Mirrors
+  // Discovery's own Lead.proposalNumber allocation discipline exactly.
+  sequenceNumber: z.number().int().positive().nullable().default(null),
+
   createdAt: z.string().min(1),
   createdByUserRef: z.string().min(1),
   updatedAt: z.string().min(1),

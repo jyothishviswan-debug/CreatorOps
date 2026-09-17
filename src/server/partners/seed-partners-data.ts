@@ -71,6 +71,7 @@ export async function seedPartnersData(): Promise<void> {
       originLeadRefs: [],
       sourceDiscovery: null,
       pendingPartnerAccountSetup: false,
+      sequenceNumber: null,
       createdAt: now,
       createdByUserRef: headUserRef,
       updatedAt: now,

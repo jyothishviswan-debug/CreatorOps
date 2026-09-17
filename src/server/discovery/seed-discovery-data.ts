@@ -260,6 +260,7 @@ export async function seedDiscoveryData(): Promise<void> {
       },
     },
     pendingPartnerAccountSetup: true,
+    sequenceNumber: null,
     createdAt: now,
     createdByUserRef: headUserRef,
     updatedAt: now,

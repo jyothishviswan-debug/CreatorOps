@@ -5,7 +5,8 @@
 // re-verifies the actor server-side. Mirrors
 // src/features/partners/api-client.ts's pattern and ApiResult shape.
 import type { VendorDto, VendorPartnerLinkDto, VendorPartnerLinkWithPartnerDto, PartnerVendorLinkDto } from "@/server/vendors/client-dto";
-import type { VendorRestrictedIdentityDto, SaveVendorRestrictedIdentityInput } from "@/server/vendors/restricted-identity-service";
+import type { VendorRestrictedIdentityDto, SaveVendorRestrictedIdentityInput, AddVendorRestrictedIdentityLinkEvidenceInput } from "@/server/vendors/restricted-identity-service";
+import type { RestrictedFinancialIdentityEvidence } from "@/server/shared/restricted-financial-identity";
 import type { VendorOwnerCandidateDto } from "@/server/vendors/user-picker";
 import type { CreateVendorInput, EditVendorInput, ListVendorsInput, ListVendorHistoryInput, VendorHistoryEventDto, SetVendorOwnerTeamInput, SetVendorStatusInput } from "@/server/vendors/vendor-service";
 import type { ArchiveVendorInput, RestoreVendorInput } from "@/server/vendors/vendor-lifecycle-service";
@@ -157,6 +158,46 @@ export function getVendorRestrictedIdentity(vendorRef: string): Promise<VendorsA
 
 export function saveVendorRestrictedIdentity(vendorRef: string, input: SaveVendorRestrictedIdentityInput): Promise<VendorsApiResult<VendorRestrictedIdentityDto>> {
   return call(`/api/vendors/${encodeURIComponent(vendorRef)}/restricted-identity`, { method: "PUT", body: JSON.stringify(input) });
+}
+
+// ---- Restricted identity evidence (real KYC upload, mirrors Discovery) ----
+
+export function addVendorRestrictedIdentityLinkEvidence(
+  vendorRef: string,
+  input: AddVendorRestrictedIdentityLinkEvidenceInput,
+): Promise<VendorsApiResult<{ version: number; evidence: RestrictedFinancialIdentityEvidence }>> {
+  return call(`/api/vendors/${encodeURIComponent(vendorRef)}/restricted-identity/evidence`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// A real file upload - deliberately bypasses `call`'s JSON Content-Type
+// header (FormData needs the browser to set its own multipart boundary).
+export async function uploadVendorRestrictedIdentityEvidence(
+  vendorRef: string,
+  input: { docType: string; file: File; expectedVersion: number },
+): Promise<VendorsApiResult<{ version: number; evidence: RestrictedFinancialIdentityEvidence }>> {
+  const form = new FormData();
+  form.set("docType", input.docType);
+  form.set("expectedVersion", String(input.expectedVersion));
+  form.set("file", input.file);
+
+  let res: Response;
+  try {
+    res = await fetch(`/api/vendors/${encodeURIComponent(vendorRef)}/restricted-identity/evidence`, { method: "POST", body: form });
+  } catch {
+    return { ok: false, status: 0, code: "network_error", error: "Could not reach the server. Check your connection and try again." };
+  }
+
+  if (res.ok) return { ok: true, data: (await res.json()) as { version: number; evidence: RestrictedFinancialIdentityEvidence } };
+
+  let error = "Something went wrong.";
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (typeof body.error === "string") error = body.error;
+  } catch {
+    // No JSON body - keep the generic message.
+  }
+  const code: VendorsApiErrorCode = res.status === 401 || res.status === 403 ? "unauthorized" : res.status === 404 ? "not_found" : res.status === 400 ? "invalid_input" : res.status === 409 ? "conflict" : "internal";
+  return { ok: false, status: res.status, code, error };
 }
 
 // ---- Duplicate check ----

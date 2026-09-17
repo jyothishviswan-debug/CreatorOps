@@ -104,6 +104,14 @@ export const partnerDocSchema = z.object({
   // real createPartnerAccount call (never auto-cleared by anything else).
   pendingPartnerAccountSetup: z.boolean().default(false),
 
+  // Allocated exactly once, the first time this Partner's restricted-
+  // identity evidence is uploaded (see restricted-identity-service.ts's
+  // ensurePartnerSequenceNumber) - never reassigned afterward, so every
+  // evidence file uploaded for this Partner always lands in the same
+  // Drive subfolder. Mirrors Discovery's own Lead.proposalNumber
+  // allocation discipline exactly.
+  sequenceNumber: z.number().int().positive().nullable().default(null),
+
   createdAt: z.string().min(1),
   createdByUserRef: z.string().min(1),
   updatedAt: z.string().min(1),
