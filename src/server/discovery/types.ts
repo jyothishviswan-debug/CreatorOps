@@ -44,6 +44,13 @@ export const LEAD_RESTORABLE_STATES: readonly LeadLifecycle[] = ["WATCHLIST", "R
 // downstream code.
 export const DISCOVERY_PLATFORMS = ["Instagram", "YouTube"] as const;
 
+// A starter zone-level classification, expected to grow (e.g. more
+// granular India-1/India-2-style segments) - "Other" always covers
+// whatever isn't on the list yet, same idiom as DISCOVERY_PLATFORMS.
+// Lead.region itself stays free text server-side - this only shapes the
+// Create/Edit Lead form's dropdown, never a schema-level constraint.
+export const DISCOVERY_REGIONS = ["South", "North", "Central", "East", "West"] as const;
+
 // --- Research policy ---------------------------------------------------
 // Step 6A section 3: research completion requires exactly one approved
 // Target Audience from this fixed list - no "Pan India", "Regional",

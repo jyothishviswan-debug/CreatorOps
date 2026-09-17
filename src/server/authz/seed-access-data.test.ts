@@ -34,10 +34,14 @@ import { ROLES } from "./roles";
 import { seedAccessControlData, TEST_IDENTITIES } from "./seed-access-data";
 
 // Total individual scope grants across all five seeded identities - kept
-// in sync with the SCOPE_GRANTS matrix in seed-access-data.ts (Viewer 3
-// - Step 6A added an EXPLICIT_RECORD lead grant, Analyst 4, Partnership
-// Manager 4, Partnership Head 8, Super Admin 1).
-const TOTAL_SCOPE_GRANTS = 3 + 4 + 4 + 8 + 1;
+// in sync with the SCOPE_GRANTS matrix in seed-access-data.ts (Viewer 4,
+// Analyst 5, Partnership Manager 6, Partnership Head 10, Super Admin 1).
+// A zone-level REGION grant (South/West) was added alongside every
+// existing state-level one so a Lead created through the newer
+// zone-based Region dropdown is visible to the same identities who could
+// already see its state-level equivalent - additive, per identity:
+// Viewer +1, Analyst +1, Manager +2, Head +2.
+const TOTAL_SCOPE_GRANTS = 4 + 5 + 6 + 10 + 1;
 
 // Kept in sync with USER_OVERRIDES in seed-access-data.ts: viewer,
 // analyst and manager each get one representative override document

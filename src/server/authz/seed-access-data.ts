@@ -176,10 +176,23 @@ const SENSITIVE_GRANTS: Record<Role, string[]> = {
 // role the same shape of scope: Super Admin's GLOBAL grant is its own
 // explicit document, not something inferred from the role name, and
 // nothing here compares roles to each other to decide breadth.
+// REGION grants below are deliberately given at BOTH granularities that
+// exist in the app today: the original state-level names (what every
+// seeded Discovery Lead still uses) and the newer zone-level names
+// DISCOVERY_REGIONS now offers on the Create/Edit Lead form (Kerala/
+// Tamil Nadu/Karnataka -> South, Maharashtra -> West). This is additive,
+// not a replacement - every existing state-level grant stays exactly as
+// it was, so no seeded Lead's visibility changes. Without the zone-level
+// addition, a Lead created through the new dropdown (region: "South")
+// would be invisible to every seeded identity, including whoever just
+// created it - region grants are exact-string matches, not a hierarchy,
+// so "South" and "Kerala" are two unrelated values to this system until
+// both are explicitly granted.
 const SCOPE_GRANTS: Record<Role, ScopeGrantInput[]> = {
   viewer: [
     { type: "SELF" },
     { type: "REGION", region: "Kerala" },
+    { type: "REGION", region: "South" },
     // Step 6A: proves EXPLICIT_RECORD scope works for Leads specifically,
     // independent of region/team - this one out-of-region (Karnataka)
     // seeded Lead is reachable for Viewer ONLY through this grant (see
@@ -189,12 +202,15 @@ const SCOPE_GRANTS: Record<Role, ScopeGrantInput[]> = {
   analyst: [
     { type: "REGION", region: "Kerala" },
     { type: "REGION", region: "Tamil Nadu" },
+    { type: "REGION", region: "South" },
     { type: "ANALYTICS_DATASET", datasetId: "cross-platform-reach" },
     { type: "ANALYTICS_ACCOUNT", accountId: "instagram-primary" },
   ],
   partnership_manager: [
     { type: "REGION", region: "Kerala" },
     { type: "REGION", region: "Maharashtra" },
+    { type: "REGION", region: "South" },
+    { type: "REGION", region: "West" },
     { type: "TEAM", teamId: "kerala-programmes" },
     { type: "PARTNER", partnerId: "creator-house" },
   ],
@@ -203,6 +219,8 @@ const SCOPE_GRANTS: Record<Role, ScopeGrantInput[]> = {
     { type: "REGION", region: "Maharashtra" },
     { type: "REGION", region: "Tamil Nadu" },
     { type: "REGION", region: "Karnataka" },
+    { type: "REGION", region: "South" },
+    { type: "REGION", region: "West" },
     { type: "TEAM", teamId: "kerala-programmes" },
     { type: "TEAM", teamId: "maharashtra-programmes" },
     { type: "CAMPAIGN", campaignId: "civic-voices" },

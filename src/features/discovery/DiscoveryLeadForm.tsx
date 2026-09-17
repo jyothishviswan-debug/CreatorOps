@@ -7,7 +7,7 @@ import { useRouter } from "next/navigation";
 import { FormLayout, FormSection, Fields, Field, FormFoot, Checklist } from "@/ui/Form";
 import { Icon } from "@/ui/icons";
 import type { LeadDto } from "@/server/discovery/client-dto";
-import { DISCOVERY_PLATFORMS, LEAD_SOURCE_TYPES, type DuplicateCheckResult, type LeadSourceType } from "@/server/discovery/types";
+import { DISCOVERY_PLATFORMS, DISCOVERY_REGIONS, LEAD_SOURCE_TYPES, type DuplicateCheckResult, type LeadSourceType } from "@/server/discovery/types";
 import { createLead, precheckDuplicates, updateLead } from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
 import { deriveFromProfileUrl } from "./profile-url";
@@ -40,7 +40,14 @@ export function DiscoveryLeadForm(props: Props) {
   const [email, setEmail] = useState(initial?.email ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
   const [region, setRegion] = useState(initial?.region ?? "");
-  const [teamId, setTeamId] = useState(initial?.teamId ?? "");
+  // Same "dropdown covers the common cases, Other reveals free text"
+  // idiom as Platform above - Lead.region stays free text server-side,
+  // so an existing Lead whose region isn't on the (currently short,
+  // expected-to-grow) list still shows via the fallback.
+  const [regionOther, setRegionOther] = useState(() => {
+    const value = initial?.region ?? "";
+    return value !== "" && !(DISCOVERY_REGIONS as readonly string[]).includes(value);
+  });
   const [sourceType, setSourceType] = useState<LeadSourceType>(initial?.source.type ?? "research");
   const [sourceNote, setSourceNote] = useState(initial?.source.note ?? "");
   const platformTouched = useRef(props.mode === "edit");
@@ -114,7 +121,6 @@ export function DiscoveryLeadForm(props: Props) {
         handle: handle.trim() || undefined,
         source: { type: sourceType, note: sourceNote.trim() || undefined },
         region: region.trim() || undefined,
-        teamId: teamId.trim() || undefined,
       });
       setSaving(false);
       if (!result.ok) {
@@ -135,7 +141,6 @@ export function DiscoveryLeadForm(props: Props) {
       handle: handle.trim() || null,
       source: { type: sourceType, note: sourceNote.trim() || undefined },
       region: region.trim() || null,
-      teamId: teamId.trim() || null,
       expectedVersion: lead.version,
     });
     setSaving(false);
@@ -225,10 +230,30 @@ export function DiscoveryLeadForm(props: Props) {
               <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
             </Field>
             <Field label="Region">
-              <input type="text" value={region} onChange={(e) => setRegion(e.target.value)} placeholder="e.g. Kerala" />
-            </Field>
-            <Field label="Team / portfolio">
-              <input type="text" value={teamId} onChange={(e) => setTeamId(e.target.value)} placeholder="e.g. kerala-programmes" />
+              <select
+                value={regionOther ? "other" : region}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  if (value === "other") {
+                    setRegionOther(true);
+                    setRegion("");
+                  } else {
+                    setRegionOther(false);
+                    setRegion(value);
+                  }
+                }}
+              >
+                <option value="">Select region…</option>
+                {DISCOVERY_REGIONS.map((r) => (
+                  <option key={r} value={r}>
+                    {r}
+                  </option>
+                ))}
+                <option value="other">Other</option>
+              </select>
+              {regionOther && (
+                <input type="text" value={region} placeholder="Region name" style={{ marginTop: 8 }} onChange={(e) => setRegion(e.target.value)} />
+              )}
             </Field>
           </Fields>
 
