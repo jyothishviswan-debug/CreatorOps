@@ -54,8 +54,14 @@ export const assignmentBriefSchema = z
     language: z.string().min(1).max(60).nullable().default(null),
     hashtags: z.array(z.string().min(1).max(60)).max(30).default([]),
     dueAt: z.string().min(1).nullable().default(null),
+    // Step 10A.1 section 4: resource links are internal/reference by
+    // default (fail closed) - a link only reaches the public external-
+    // submission DTO when explicitly marked `shareExternally: true`.
+    // Snapshotting a Campaign resource into an Assignment's brief never
+    // makes it automatically public on its own; a staff member must
+    // deliberately opt each individual link in.
     resourceLinks: z
-      .array(z.object({ label: z.string().min(1).max(200), url: z.string().min(1).max(1000) }).strict())
+      .array(z.object({ label: z.string().min(1).max(200), url: z.string().min(1).max(1000), shareExternally: z.boolean().default(false) }).strict())
       .max(20)
       .default([]),
     // Frozen Campaign-derived context - never edited directly, only set

@@ -44,8 +44,18 @@ function featureGrant(view: boolean, actions: Partial<Record<ActionId, boolean>>
 // imports/exports; Partnership Manager and Partnership Head - otherwise
 // broader - do not) so no rank-based shortcut could reproduce it.
 const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
+  // Step 10A.1: Assignments is an operational module for Manager/Head/
+  // Super Admin only - Viewer and Analyst never held real access to it
+  // (the earlier "assignments" entry in their featuresOf(...) lists was
+  // stale UI-skeleton-era scaffold, predating Step 10A's real service and
+  // never re-examined against the actual accepted access model until
+  // now). Removed here, not merely left as view:true with no actions -
+  // the proxy-level Feature Access gate (src/proxy.ts) and every
+  // Assignment service call both key off this exact grant, so removing
+  // it is what actually denies the workspace/detail/read API and hides
+  // the nav item, all from this one place.
   viewer: {
-    features: featuresOf(["dashboard", "discovery", "partners", "vendors", "campaigns", "assignments", "content", "analytics", "partner_reviews", "reports"]),
+    features: featuresOf(["dashboard", "discovery", "partners", "vendors", "campaigns", "content", "analytics", "partner_reviews", "reports"]),
   },
   analyst: {
     features: featuresOf([
@@ -54,7 +64,6 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       "partners",
       "vendors",
       "campaigns",
-      "assignments",
       "content",
       "analytics",
       "partner_reviews",

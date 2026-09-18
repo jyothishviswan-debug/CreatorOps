@@ -12,11 +12,12 @@ import { writeAssignmentEvent } from "./assignment-events";
 import {
   assignmentExternalSubmissionsCollection,
   assignmentSubmissionSessionsCollection,
+  assignmentsCollection,
   getAssignmentDocByRef,
   getSubmissionSessionDocByRef,
 } from "./firestore";
 import { generateSubmissionRef, generateSubmissionSessionRef } from "./ids";
-import { assignmentsConflictResult, assignmentsInvalidInputResult, type AssignmentDoc, type AssignmentsServiceResult } from "./types";
+import { assignmentDocSchema, assignmentsConflictResult, assignmentsInvalidInputResult, type AssignmentDoc, type AssignmentsServiceResult } from "./types";
 import {
   assignmentExternalSubmissionDocSchema,
   assignmentSubmissionSessionDocSchema,
@@ -261,7 +262,11 @@ export async function resolveExternalSubmission(rawToken: unknown): Promise<Publ
     hashtags: assignment.brief.hashtags,
     formats: assignment.brief.formats,
     allowedPlatforms: assignment.brief.platforms,
-    resourceLinks: assignment.brief.resourceLinks,
+    // Step 10A.1 section 4: fail-closed - only links explicitly marked
+    // shareExternally reach the public DTO, and even those are stripped
+    // down to {label, url} only (the flag itself is an internal
+    // authoring detail, never useful to the external recipient).
+    resourceLinks: assignment.brief.resourceLinks.filter((link) => link.shareExternally).map((link) => ({ label: link.label, url: link.url })),
     reviewPolicyNote: assignment.brief.reviewPolicy === "REVIEW_REQUIRED" ? "Content from this Assignment is reviewed before it is considered final." : null,
   };
   return { ok: true, data: dto };
@@ -330,11 +335,24 @@ export async function submitExternalLinks(rawToken: unknown, rawRows: unknown): 
   // loser's retry re-reads state==="USED" and correctly returns
   // "unusable" - exactly one immutable submission batch ever exists for
   // this session, matching Step 10A section 14's own requirement.
+  //
+  // Step 10A.1 section 2/3: ALSO re-reads the live Assignment doc inside
+  // this same transaction (not just via the earlier, non-transactional
+  // loadValidSession above) and re-verifies it is still accepting. This
+  // is what makes this transaction and a concurrent CANCELLED transition
+  // (which writes to this exact Assignment doc - see
+  // assignment-lifecycle-service.ts) properly serialize: whichever
+  // commits first is what the other observes on its forced retry, so a
+  // race between "cancel" and "submit" can never let both win.
+  const assignmentDocRef = assignmentsCollection().doc(assignment.uid);
   const txResult = await db.runTransaction<SubmitTxResult>(async (tx) => {
-    const snap = await tx.get(sessionDocRef);
+    const [snap, assignmentSnap] = await tx.getAll(sessionDocRef, assignmentDocRef);
     if (!snap.exists) return { kind: "unusable" };
     const parsed = assignmentSubmissionSessionDocSchema.safeParse(snap.data());
     if (!parsed.success || parsed.data.state !== "ACTIVE") return { kind: "unusable" };
+
+    const freshAssignment = assignmentSnap.exists ? assignmentDocSchema.safeParse(assignmentSnap.data()) : null;
+    if (!freshAssignment?.success || !ASSIGNMENT_STATES_ACCEPTING_SUBMISSION.has(freshAssignment.data.status)) return { kind: "unusable" };
 
     const next: typeof parsed.data = { ...parsed.data, state: "USED", consumedAt: now, version: parsed.data.version + 1 };
     tx.set(sessionDocRef, next);

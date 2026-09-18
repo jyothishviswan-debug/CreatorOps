@@ -17,7 +17,7 @@ import { seedCampaignsData } from "@/server/campaigns/seed-campaigns-data";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
 import { seedVendorsData } from "@/server/vendors/seed-vendors-data";
-import { createAssignment, getAssignment } from "./assignment-service";
+import { createAssignment, editAssignmentBrief, getAssignment } from "./assignment-service";
 import { transitionAssignmentLifecycle } from "./assignment-lifecycle-service";
 import { createExternalSubmissionSession, resolveExternalSubmission, revokeExternalSubmissionSession, submitExternalLinks } from "./external-submission-service";
 import { seedAssignmentsData } from "./seed-assignments-data";
@@ -143,6 +143,91 @@ describe("Recipient rules", () => {
   });
 });
 
+// Step 10A.1 section 3: explicit certification of the exact Assignment
+// states a submission session may be created/used against - ASSIGNED,
+// ACCEPTED, IN_PROGRESS only, never DRAFT/COMPLETED/CANCELLED. Enforced
+// by ASSIGNMENT_STATES_ACCEPTING_SUBMISSION in external-submission-service.ts,
+// checked both at session creation (createExternalSubmissionSession) and
+// at every public access/use (loadValidSession, called by both
+// resolveExternalSubmission and submitExternalLinks). COMPLETED is
+// structurally unreachable in this build (transitionAssignmentLifecycle
+// always fails it closed - see assignment-lifecycle-service.ts), so no
+// COMPLETED-specific test is possible or needed here.
+describe("Session lifecycle state certification (ASSIGNED/ACCEPTED/IN_PROGRESS only)", () => {
+  it("session creation is rejected while the Assignment is DRAFT", async () => {
+    const head = await actorFor("partnership_head");
+    const createdCampaign = await createCampaign(
+      head,
+      { name: uniqueName("Draft State Test"), objective: "x", platforms: ["instagram"], startDate: "2026-01-01", endDate: "2026-06-01", regionIds: ["Kerala"], defaultReviewPolicy: "REVIEW_REQUIRED" },
+      "req",
+    );
+    if (!createdCampaign.ok) throw new Error("unreachable");
+    await transitionCampaignLifecycle(head, createdCampaign.data.campaignRef, { to: "PLANNED", expectedVersion: createdCampaign.data.version }, "req");
+    const draftAssignment = await createAssignment(head, { campaignRef: createdCampaign.data.campaignRef, partnerRef: "seed-partner-direct" }, "req");
+    if (!draftAssignment.ok) throw new Error("unreachable");
+    expect(draftAssignment.data.status).toBe("DRAFT");
+
+    const result = await createExternalSubmissionSession(head, draftAssignment.data.assignmentRef, { recipientType: "PARTNER" }, "req");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.message).toMatch(/DRAFT/);
+  });
+
+  it("session creation succeeds for each of ASSIGNED, ACCEPTED, and IN_PROGRESS", async () => {
+    const head = await actorFor("partnership_head");
+    const forwardPath = ["ASSIGNED", "ACCEPTED", "IN_PROGRESS"] as const;
+
+    for (let target = 0; target < forwardPath.length; target += 1) {
+      const createdCampaign = await createCampaign(
+        head,
+        { name: uniqueName("Accepting States Test"), objective: "x", platforms: ["instagram"], startDate: "2026-01-01", endDate: "2026-06-01", regionIds: ["Kerala"], defaultReviewPolicy: "REVIEW_REQUIRED" },
+        "req",
+      );
+      if (!createdCampaign.ok) throw new Error("unreachable");
+      await transitionCampaignLifecycle(head, createdCampaign.data.campaignRef, { to: "PLANNED", expectedVersion: createdCampaign.data.version }, "req");
+
+      const created = await createAssignment(head, { campaignRef: createdCampaign.data.campaignRef, partnerRef: "seed-partner-direct" }, "req");
+      if (!created.ok) throw new Error("unreachable");
+      let version = created.data.version;
+      const assignmentRef = created.data.assignmentRef;
+      for (let step = 0; step <= target; step += 1) {
+        const transitioned = await transitionAssignmentLifecycle(head, assignmentRef, { to: forwardPath[step]!, expectedVersion: version }, "req");
+        if (!transitioned.ok) throw new Error("unreachable");
+        version = transitioned.data.version;
+      }
+
+      const session = await createExternalSubmissionSession(head, assignmentRef, { recipientType: "PARTNER" }, "req");
+      expect(session.ok).toBe(true);
+    }
+  });
+
+  it("session creation is rejected once the Assignment is CANCELLED", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createAssignedAssignment(head);
+    const cancelled = await transitionAssignmentLifecycle(head, assignment.assignmentRef, { to: "CANCELLED", reason: "No evidence yet.", expectedVersion: assignment.version }, "req");
+    expect(cancelled.ok).toBe(true);
+
+    const result = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.message).toMatch(/CANCELLED/);
+  });
+
+  it("no scheduled cleanup job is required for correctness - a session created while valid becomes unusable purely from the live Assignment status re-check at request time", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createAssignedAssignment(head);
+    const session = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!session.ok) throw new Error("unreachable");
+    expect((await resolveExternalSubmission(session.data.rawToken)).ok).toBe(true);
+
+    await transitionAssignmentLifecycle(head, assignment.assignmentRef, { to: "CANCELLED", reason: "Immediate invalidation check.", expectedVersion: assignment.version }, "req");
+
+    // No job, no delay, no retry loop - the very next request already
+    // sees it as unusable.
+    expect((await resolveExternalSubmission(session.data.rawToken)).ok).toBe(false);
+  });
+});
+
 describe("Public DTO / privacy", () => {
   it("only the safe allowlisted brief fields are ever returned - no internal ids, scope, actor, Finance, or history", async () => {
     const resolved = await resolveExternalSubmission("seed-submission-token-partner-active");
@@ -153,9 +238,64 @@ describe("Public DTO / privacy", () => {
       ["allowedPlatforms", "assignmentDisplayContext", "campaignName", "dueAt", "formats", "hashtags", "instructions", "language", "resourceLinks", "reviewPolicyNote"].sort(),
     );
     const json = JSON.stringify(dto).toLowerCase();
-    for (const forbidden of ["uid", "useruid", "ownerUid".toLowerCase(), "scope", "restricted", "finance", "agreement", "token", "history"]) {
+    // Deliberately not a bare "uid" check - "guidelines" (a legitimate
+    // seeded resource-link label) contains that substring innocently.
+    for (const forbidden of ["useruid", "owneruid", "scope", "restricted", "finance", "agreement", "token", "history"]) {
       expect(json).not.toContain(forbidden);
     }
+  });
+
+  // Step 10A.1 section 4: seed-assignment-in-progress's own brief (see
+  // seed-assignments-data.ts) deliberately carries one shareExternally:
+  // true link and one shareExternally:false link, proving the split with
+  // real fixture data rather than only a unit-level schema assertion.
+  it("only shareExternally:true resource links reach the public DTO - internal-only links never leak, and the flag itself never appears", async () => {
+    const resolved = await resolveExternalSubmission("seed-submission-token-partner-active");
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error("unreachable");
+
+    const labels = resolved.data.resourceLinks.map((l) => l.label);
+    expect(labels).toContain("Public brand guidelines");
+    expect(labels).not.toContain("Internal negotiation notes");
+
+    for (const link of resolved.data.resourceLinks) {
+      expect(Object.keys(link).sort()).toEqual(["label", "url"]);
+    }
+  });
+
+  it("a resourceLink with no shareExternally value at all defaults to non-shareable (fail closed)", async () => {
+    const head = await actorFor("partnership_head");
+    // editAssignmentBrief only permits edits while DRAFT - build one
+    // directly rather than via createAssignedAssignment (which already
+    // advances to ASSIGNED).
+    const createdCampaign = await createCampaign(
+      head,
+      { name: uniqueName("Fail-Closed Default Test"), objective: "x", platforms: ["instagram"], startDate: "2026-01-01", endDate: "2026-06-01", regionIds: ["Kerala"], defaultReviewPolicy: "REVIEW_REQUIRED" },
+      "req",
+    );
+    if (!createdCampaign.ok) throw new Error("unreachable");
+    await transitionCampaignLifecycle(head, createdCampaign.data.campaignRef, { to: "PLANNED", expectedVersion: createdCampaign.data.version }, "req");
+    const draft = await createAssignment(head, { campaignRef: createdCampaign.data.campaignRef, partnerRef: "seed-partner-direct" }, "req");
+    if (!draft.ok) throw new Error("unreachable");
+
+    const edited = await editAssignmentBrief(
+      head,
+      draft.data.assignmentRef,
+      { resourceLinks: [{ label: "No flag supplied", url: "https://example.com/unspecified.pdf" }], expectedVersion: draft.data.version },
+      "req",
+    );
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) throw new Error("unreachable");
+    expect(edited.data.brief.resourceLinks[0]?.shareExternally).toBe(false);
+
+    const withAssigned = await transitionAssignmentLifecycle(head, draft.data.assignmentRef, { to: "ASSIGNED", expectedVersion: edited.data.version }, "req");
+    if (!withAssigned.ok) throw new Error("unreachable");
+    const session = await createExternalSubmissionSession(head, draft.data.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!session.ok) throw new Error("unreachable");
+    const resolved = await resolveExternalSubmission(session.data.rawToken);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error("unreachable");
+    expect(resolved.data.resourceLinks).toHaveLength(0);
   });
 });
 
@@ -358,7 +498,7 @@ describe("Expiry / revocation / single-use", () => {
         expect(losers.every((r) => !r.ok && r.code === "unusable")).toBe(true);
       }
     },
-    20_000,
+    40_000,
   );
 });
 
@@ -394,4 +534,71 @@ describe("Ownership boundaries", () => {
       expect(json).not.toContain(forbidden);
     }
   });
+});
+
+describe("Cancellation vs. external-submission irreversibility", () => {
+  it("cancellation succeeds normally when no external submission evidence exists yet", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createAssignedAssignment(head);
+    const cancelled = await transitionAssignmentLifecycle(head, assignment.assignmentRef, { to: "CANCELLED", reason: "No evidence yet - still legal.", expectedVersion: assignment.version }, "req");
+    expect(cancelled.ok).toBe(true);
+  });
+
+  it("cancellation is refused once at least one immutable external submission batch exists for the Assignment", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createAssignedAssignment(head);
+    const session = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!session.ok) throw new Error("unreachable");
+    const submitted = await submitExternalLinks(session.data.rawToken, [{ platform: "instagram", url: "https://instagram.com/p/x" }]);
+    expect(submitted.ok).toBe(true);
+
+    const cancelled = await transitionAssignmentLifecycle(head, assignment.assignmentRef, { to: "CANCELLED", reason: "Trying anyway.", expectedVersion: assignment.version }, "req");
+    expect(cancelled.ok).toBe(false);
+    if (cancelled.ok) throw new Error("unreachable");
+    expect(cancelled.code).toBe("not_ready");
+    expect(cancelled.blockers?.[0]?.code).toBe("EXTERNAL_EVIDENCE_EXISTS");
+  });
+
+  it("an active, still-unused submission session alone (no submitted evidence yet) does not block cancellation", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createAssignedAssignment(head);
+    const session = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!session.ok) throw new Error("unreachable");
+
+    const cancelled = await transitionAssignmentLifecycle(head, assignment.assignmentRef, { to: "CANCELLED", reason: "Session issued but never used.", expectedVersion: assignment.version }, "req");
+    expect(cancelled.ok).toBe(true);
+
+    // The now-orphaned session becomes unusable too, since the
+    // Assignment itself is no longer in an accepting state.
+    const resolved = await resolveExternalSubmission(session.data.rawToken);
+    expect(resolved.ok).toBe(false);
+  });
+
+  it(
+    "a real submission racing a cancel attempt: whichever the transaction observes wins consistently - either the submission lands and cancellation is then blocked, or cancellation lands first and the submission is then rejected as non-accepting (repeated to build confidence)",
+    async () => {
+      const head = await actorFor("partnership_head");
+      for (let round = 0; round < 5; round += 1) {
+        const assignment = await createAssignedAssignment(head);
+        const session = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req");
+        if (!session.ok) throw new Error("unreachable");
+
+        const [submitResult, cancelResult] = await Promise.all([
+          submitExternalLinks(session.data.rawToken, [{ platform: "instagram", url: `https://instagram.com/p/race-${round}` }]),
+          transitionAssignmentLifecycle(head, assignment.assignmentRef, { to: "CANCELLED", reason: "Racing the submission.", expectedVersion: assignment.version }, "req"),
+        ]);
+
+        if (submitResult.ok) {
+          // The submission won: exactly one immutable batch exists, and
+          // cancellation must now be (or have been) blocked by it.
+          expect(cancelResult.ok).toBe(false);
+        } else {
+          // Cancellation won (or raced ahead): the Assignment is no
+          // longer accepting, so the submission is correctly rejected.
+          expect(submitResult.code).toBe("unusable");
+        }
+      }
+    },
+    30_000,
+  );
 });

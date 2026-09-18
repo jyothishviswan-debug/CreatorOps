@@ -367,7 +367,11 @@ describe("Lifecycle", () => {
 });
 
 describe("Authorization / scope", () => {
-  it("Viewer and Analyst are denied create (view-only access)", async () => {
+  // Step 10A.1: Assignments is a Manager/Head/Super Admin operational
+  // module - Viewer/Analyst have NO feature access at all (not "view but
+  // no actions"), matching the accepted access model corrected here. The
+  // gate short-circuits at Feature Access, before any per-action check.
+  it("Viewer and Analyst are denied the Assignments feature entirely (feature_denied, not action_denied)", async () => {
     const head = await actorFor("partnership_head");
     const campaign = await createFreshPlannedCampaign(head);
     for (const role of ["viewer", "analyst"]) {
@@ -376,7 +380,38 @@ describe("Authorization / scope", () => {
       expect(result.ok).toBe(false);
       if (result.ok) throw new Error("unreachable");
       expect(result.code).toBe("unauthorized");
-      expect(result.reason).toBe("action_denied");
+      expect(result.reason).toBe("feature_denied");
+    }
+  });
+
+  it("Viewer and Analyst are denied get/list entirely - not just an empty/filtered result", async () => {
+    for (const role of ["viewer", "analyst"]) {
+      const actor = await actorFor(role);
+      const getResult = await getAssignment(actor, "seed-assignment-draft");
+      expect(getResult.ok).toBe(false);
+      if (getResult.ok) throw new Error("unreachable");
+      expect(getResult.reason).toBe("feature_denied");
+
+      const listResult = await listAssignments(actor, { limit: 50 });
+      expect(listResult.ok).toBe(false);
+      if (listResult.ok) throw new Error("unreachable");
+      expect(listResult.reason).toBe("feature_denied");
+    }
+  });
+
+  it("Manager and Head are denied create outside their own granted actions (action_denied), never confused with a feature-level denial", async () => {
+    // Sanity check that feature_denied and action_denied remain
+    // genuinely distinguishable outcomes for two different roles - a
+    // role that HAS the feature but lacks a specific action still gets
+    // action_denied, not feature_denied. Viewer's create attempt (no
+    // feature at all) already proves feature_denied above; there is no
+    // Assignment action Manager/Head lack today (both hold the full
+    // operational set), so this is documented rather than re-asserted
+    // with a real denial - see seed-access-data.ts's own comment.
+    for (const role of ["partnership_manager", "partnership_head"]) {
+      const actor = await actorFor(role);
+      const result = await getAssignment(actor, "seed-assignment-draft");
+      expect(result.ok).toBe(true);
     }
   });
 
@@ -415,20 +450,34 @@ describe("Authorization / scope", () => {
     expect(asAdmin.ok).toBe(true);
   });
 
-  it("cross-scope user cannot read another-scope Assignment by direct ref, and gets the same safe denial as a nonexistent one", async () => {
-    const viewer = await actorFor("viewer");
-    const real = await getAssignment(viewer, "seed-assignment-assigned");
-    const fake = await getAssignment(viewer, "not-a-real-assignment-ref");
+  it("cross-scope user (has the feature, lacks scope over this record) cannot read another-scope Assignment by direct ref, and gets the same safe denial as a nonexistent one", async () => {
+    // Manager has real Assignments feature/action access but no scope
+    // over seed-assignment-assigned (civic-voices' empty snapshot - see
+    // the CAMPAIGN-grant-bridging test above) - a genuine SCOPE denial,
+    // distinct from Viewer/Analyst's FEATURE denial tested above.
+    const manager = await actorFor("partnership_manager");
+    const real = await getAssignment(manager, "seed-assignment-assigned");
+    const fake = await getAssignment(manager, "not-a-real-assignment-ref");
     expect(real.ok).toBe(false);
+    if (real.ok) throw new Error("unreachable");
+    expect(real.reason).toBe("scope_denied");
     expect(fake.ok).toBe(false);
   });
 
   it("scoped list never returns an out-of-scope Assignment", async () => {
-    const viewer = await actorFor("viewer");
-    const page = await listAssignments(viewer, { limit: 50 });
+    const head = await actorFor("partnership_head");
+    const manager = await actorFor("partnership_manager");
+    // Created fresh (rather than relying on the beforeAll seed fixture)
+    // so it's guaranteed to land within the first 50-item page even
+    // after many other tests in this suite have created their own
+    // Assignments ahead of it in createdAt-descending order.
+    const inScope = await createRealAssignment(head);
+
+    const page = await listAssignments(manager, { limit: 50 });
     expect(page.ok).toBe(true);
     if (!page.ok) throw new Error("unreachable");
     expect(page.data.assignments.every((a) => a.assignmentRef !== "seed-assignment-assigned")).toBe(true);
+    expect(page.data.assignments.some((a) => a.assignmentRef === inScope.assignmentRef)).toBe(true);
   });
 
   it("super_admin (GLOBAL) reads and lists everything", async () => {

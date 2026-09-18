@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 // Step 10A section 16's own allowance: "if the current stack has no
 // reusable rate limiter, implement a minimal bounded local-safe defense
 // or document the deferred production edge rather than pretending it is
@@ -49,4 +51,16 @@ export function requestIpKey(request: Request): string {
   const forwardedFor = request.headers.get("x-forwarded-for");
   if (forwardedFor) return forwardedFor.split(",")[0]!.trim();
   return "unknown";
+}
+
+// Step 10A.1 section 5: the rate-limit key must never carry the raw
+// bearer token itself, even just as an in-memory Map key (never logged
+// or persisted, but "never store the raw token" is honored literally
+// here too) - this hashes it first. Deliberately a separate, cheaper
+// hash from the token's own real sha256 fingerprint (see
+// external-submission-service.ts) - this one only needs to bucket
+// abuse-tracking keys, never to authorize anything, so truncating it is
+// fine and keeps the in-memory Map's key strings small.
+export function rateLimitTokenKey(rawToken: string): string {
+  return createHash("sha256").update(rawToken).digest("hex").slice(0, 16);
 }

@@ -83,7 +83,7 @@ const createAssignmentBriefInputSchema = z
     language: z.string().min(1).max(60).optional(),
     hashtags: z.array(z.string().min(1).max(60)).max(30).optional(),
     dueAt: z.string().min(1).optional(),
-    resourceLinks: z.array(z.object({ label: z.string().min(1).max(200), url: z.string().min(1).max(1000) }).strict()).max(20).optional(),
+    resourceLinks: z.array(z.object({ label: z.string().min(1).max(200), url: z.string().min(1).max(1000), shareExternally: z.boolean().optional() }).strict()).max(20).optional(),
   })
   .strict();
 
@@ -297,7 +297,7 @@ const editAssignmentBriefInputSchema = z
     language: z.string().min(1).max(60).nullable().optional(),
     hashtags: z.array(z.string().min(1).max(60)).max(30).optional(),
     dueAt: z.string().min(1).nullable().optional(),
-    resourceLinks: z.array(z.object({ label: z.string().min(1).max(200), url: z.string().min(1).max(1000) }).strict()).max(20).optional(),
+    resourceLinks: z.array(z.object({ label: z.string().min(1).max(200), url: z.string().min(1).max(1000), shareExternally: z.boolean().optional() }).strict()).max(20).optional(),
     partnerAccountRefs: z.array(z.string().min(1)).max(10).optional(),
     expectedVersion: z.number().int().min(1),
   })
@@ -351,7 +351,11 @@ export async function editAssignmentBrief(actor: ActorContext | null, assignment
       language: input.language !== undefined ? input.language : current.brief.language,
       hashtags: input.hashtags ?? current.brief.hashtags,
       dueAt: input.dueAt !== undefined ? input.dueAt : current.brief.dueAt,
-      resourceLinks: input.resourceLinks ?? current.brief.resourceLinks,
+      // Fail-closed default preserved even on the plain-object mutation
+      // path (not re-run through assignmentBriefSchema.parse) - an
+      // omitted shareExternally in the input never silently inherits
+      // `true` from anywhere.
+      resourceLinks: input.resourceLinks ? input.resourceLinks.map((link) => ({ ...link, shareExternally: link.shareExternally ?? false })) : current.brief.resourceLinks,
     },
     updatedAt: new Date().toISOString(),
     updatedByUserRef: actor!.userRef,

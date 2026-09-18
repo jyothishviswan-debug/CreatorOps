@@ -63,7 +63,13 @@ export async function seedAssignmentsData(): Promise<void> {
       language: "English",
       hashtags: ["#partner", "#brandpartnership"],
       dueAt: futureIso.slice(0, 10),
-      resourceLinks: [{ label: "Brand brief deck", url: "https://example.com/brand-brief.pdf" }],
+      // One shareable (public-safe) and one internal-only link, so tests
+      // can prove the split (Step 10A.1 section 4) - fail-closed default,
+      // never automatically public.
+      resourceLinks: [
+        { label: "Public brand guidelines", url: "https://example.com/brand-brief.pdf", shareExternally: true },
+        { label: "Internal negotiation notes", url: "https://example.com/internal-notes.pdf", shareExternally: false },
+      ],
       reviewPolicy: "REVIEW_REQUIRED" as const,
       campaignName,
       campaignObjective,

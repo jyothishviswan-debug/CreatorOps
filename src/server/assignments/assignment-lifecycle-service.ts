@@ -5,7 +5,7 @@ import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ActorContext } from "@/server/authz/types";
 import { requireAssignmentInScope, requireAssignmentsAccess } from "./assignments-gate";
 import { writeAssignmentEvent } from "./assignment-events";
-import { assignmentsCollection, getAssignmentDocByRef } from "./firestore";
+import { assignmentExternalSubmissionsCollection, assignmentsCollection, getAssignmentDocByRef } from "./firestore";
 import {
   ASSIGNMENT_REASON_REQUIRED_STATUSES,
   assignmentDocSchema,
@@ -24,7 +24,7 @@ const transitionInputSchema = z.object({
 });
 export type TransitionAssignmentInput = z.input<typeof transitionInputSchema>;
 
-type TxResult = { kind: "ok"; doc: AssignmentDoc } | { kind: "stale" } | { kind: "not_found" } | { kind: "invalid" };
+type TxResult = { kind: "ok"; doc: AssignmentDoc } | { kind: "stale" } | { kind: "not_found" } | { kind: "invalid" } | { kind: "blocked_by_evidence" };
 
 // The one trusted entry point for every Assignment lifecycle change,
 // mirroring Campaigns' own transitionCampaignLifecycle. Moving to
@@ -34,13 +34,18 @@ type TxResult = { kind: "ok"; doc: AssignmentDoc } | { kind: "stale" } | { kind:
 // reasoned/consequential one" shape as Campaign's own cancel_campaign
 // split.
 //
-// IN_PROGRESS -> CANCELLED is unconditionally allowed for now (Step 10A
-// section 5: "only while cancellation remains reversible" - nothing
-// irreversible can have happened yet, since Content doesn't exist). THIS
-// is the extension point the authority doc asks for: once Content exists,
-// an "irreversible Content/publication evidence exists" check belongs
-// right here, before the transaction below, without changing this
-// function's own contract.
+// Step 10A.1 section 2: CANCELLED is reversible-edge-shaped in the graph
+// above, but is NOT unconditionally available - the immutable external-
+// submission batch Step 10A introduced IS irreversible evidence, even
+// before Content exists. Every CANCELLED attempt re-checks, inside the
+// SAME transaction as the write (a query read before any write, so a
+// concurrent submission mid-transaction correctly aborts/retries this
+// one - Firestore's normal transaction snapshot-conflict behavior),
+// whether any assignmentExternalSubmissions doc already references this
+// Assignment; if one does, cancellation is refused with a typed
+// not_ready result, never silently allowed. Once Content exists, its own
+// irreversible-evidence check belongs in this same place, checked the
+// same way.
 //
 // IN_PROGRESS -> COMPLETED always fails closed for the same reason
 // (Content doesn't exist yet to prove the obligation was actually
@@ -104,6 +109,11 @@ export async function transitionAssignmentLifecycle(
     if (freshCurrent.version !== input.expectedVersion) return { kind: "stale" };
     if (!canTransitionLifecycle(freshCurrent.status, input.to, ASSIGNMENT_LIFECYCLE_TRANSITIONS)) return { kind: "invalid" };
 
+    if (input.to === "CANCELLED") {
+      const evidenceSnap = await tx.get(assignmentExternalSubmissionsCollection().where("assignmentRef", "==", freshCurrent.assignmentRef).limit(1));
+      if (!evidenceSnap.empty) return { kind: "blocked_by_evidence" };
+    }
+
     const updated: AssignmentDoc = {
       ...freshCurrent,
       status: input.to,
@@ -119,6 +129,14 @@ export async function transitionAssignmentLifecycle(
   if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Assignment not found." };
   if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This Assignment was changed elsewhere. Reload and try again." };
   if (result.kind === "invalid") return assignmentsInvalidInputResult(`Cannot move an Assignment from ${current.status} to ${input.to}.`);
+  if (result.kind === "blocked_by_evidence") {
+    return {
+      ok: false,
+      code: "not_ready",
+      message: "This Assignment cannot be cancelled - it already has submitted external evidence, which is irreversible.",
+      blockers: [{ code: "EXTERNAL_EVIDENCE_EXISTS", message: "At least one external submission batch already exists for this Assignment." }],
+    };
+  }
 
   const eventKind = input.to === "CANCELLED" ? "cancelled" : "lifecycle_transitioned";
   await writeAssignmentEvent({ assignmentUid: current.uid, kind: eventKind, actorUserRef: actor.userRef, metadata: { from: current.status, to: input.to, reason: input.reason ?? null }, requestId });

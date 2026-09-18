@@ -1,7 +1,7 @@
 import { NextResponse } from "next/server";
 
 import { resolveExternalSubmission, submitExternalLinks } from "@/server/assignments/external-submission-service";
-import { checkAndRecordAttempt, requestIpKey } from "@/server/assignments/rate-limit";
+import { checkAndRecordAttempt, rateLimitTokenKey, requestIpKey } from "@/server/assignments/rate-limit";
 
 // Step 10A section 16: the one deliberately, genuinely unauthenticated
 // business-data surface in this app - hence the separate /api/public/
@@ -16,6 +16,12 @@ import { checkAndRecordAttempt, requestIpKey } from "@/server/assignments/rate-l
 
 type RouteParams = { params: Promise<{ token: string }> };
 
+// Step 10A.1 section 5: exact limit/window/keying - 20 attempts per
+// rolling 60s window, keyed by (route action, caller IP, hashed token) so
+// abuse against one token or from one IP is bounded independently of
+// every other token/IP. Never keyed by the raw token itself (see
+// rate-limit.ts's own rateLimitTokenKey comment) - NOT a production
+// defense (in-process, per-instance, no shared state - see rate-limit.ts).
 const RATE_LIMIT_MAX_ATTEMPTS = 20;
 const RATE_LIMIT_WINDOW_MS = 60_000;
 
@@ -27,7 +33,7 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 export async function GET(request: Request, { params }: RouteParams) {
   const { token } = await params;
 
-  if (!checkAndRecordAttempt(`resolve:${requestIpKey(request)}:${token}`, RATE_LIMIT_MAX_ATTEMPTS, RATE_LIMIT_WINDOW_MS)) {
+  if (!checkAndRecordAttempt(`resolve:${requestIpKey(request)}:${rateLimitTokenKey(token)}`, RATE_LIMIT_MAX_ATTEMPTS, RATE_LIMIT_WINDOW_MS)) {
     return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
   }
 
@@ -41,7 +47,7 @@ export async function GET(request: Request, { params }: RouteParams) {
 export async function POST(request: Request, { params }: RouteParams) {
   const { token } = await params;
 
-  if (!checkAndRecordAttempt(`submit:${requestIpKey(request)}:${token}`, RATE_LIMIT_MAX_ATTEMPTS, RATE_LIMIT_WINDOW_MS)) {
+  if (!checkAndRecordAttempt(`submit:${requestIpKey(request)}:${rateLimitTokenKey(token)}`, RATE_LIMIT_MAX_ATTEMPTS, RATE_LIMIT_WINDOW_MS)) {
     return NextResponse.json({ error: "Too many attempts. Try again later." }, { status: 429 });
   }
 

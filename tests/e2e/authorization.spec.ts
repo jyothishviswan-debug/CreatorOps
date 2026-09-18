@@ -43,6 +43,16 @@ test.describe("Viewer", () => {
     await expectDirectAccessAllowed(page, "/partners", "Partners");
     await expectDirectAccessDenied(page, "/finance", "Finance");
   });
+
+  // Step 10A.1: Assignments is Manager/Head/Super Admin operational
+  // access only - Viewer never held real access (a stale UI-skeleton-era
+  // scaffold grant was removed from seed-access-data.ts).
+  test("cannot reach Assignments (nav + direct route)", async ({ page }) => {
+    await signInAs(page, emailFor("viewer"));
+
+    await expect(navLink(page, "Assignments")).not.toBeVisible();
+    await expectDirectAccessDenied(page, "/assignments", "Assignments");
+  });
 });
 
 test.describe("Analyst", () => {
@@ -54,6 +64,13 @@ test.describe("Analyst", () => {
 
     await expectDirectAccessAllowed(page, "/imports", "Import Center");
     await expectDirectAccessDenied(page, "/finance", "Finance");
+  });
+
+  test("cannot reach Assignments (nav + direct route)", async ({ page }) => {
+    await signInAs(page, emailFor("analyst"));
+
+    await expect(navLink(page, "Assignments")).not.toBeVisible();
+    await expectDirectAccessDenied(page, "/assignments", "Assignments");
   });
 });
 
@@ -69,6 +86,13 @@ test.describe("Partnership Manager", () => {
     await expectDirectAccessAllowed(page, "/finance", "Finance");
     await expectDirectAccessDenied(page, "/imports", "Import Center");
   });
+
+  test("can reach Assignments (nav + direct route)", async ({ page }) => {
+    await signInAs(page, emailFor("manager"));
+
+    await expect(navLink(page, "Assignments")).toBeVisible();
+    await expectDirectAccessAllowed(page, "/assignments", "Assignments");
+  });
 });
 
 test.describe("Partnership Head", () => {
@@ -80,6 +104,13 @@ test.describe("Partnership Head", () => {
 
     await expectDirectAccessAllowed(page, "/finance", "Finance");
     await expectDirectAccessDenied(page, "/administration", "Administration");
+  });
+
+  test("can reach Assignments (nav + direct route)", async ({ page }) => {
+    await signInAs(page, emailFor("head"));
+
+    await expect(navLink(page, "Assignments")).toBeVisible();
+    await expectDirectAccessAllowed(page, "/assignments", "Assignments");
   });
 
   test("cannot reach any Administration sub-route directly (Users, Access, Audit, New user)", async ({ page }) => {
@@ -102,5 +133,6 @@ test.describe("Super Admin", () => {
     // Also explicitly granted every other role's representative feature.
     await expect(navLink(page, "Finance")).toBeVisible();
     await expect(navLink(page, "Import Center")).toBeVisible();
+    await expect(navLink(page, "Assignments")).toBeVisible();
   });
 });
