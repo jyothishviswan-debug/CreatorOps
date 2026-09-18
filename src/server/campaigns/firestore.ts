@@ -57,6 +57,27 @@ export async function getCampaignDocByRef(campaignRef: string): Promise<Campaign
   return result.success ? result.data : null;
 }
 
+// Step 10B: bounded bulk label resolution for a Workspace page of some
+// OTHER domain's rows (e.g. Assignment) that each carry a campaignRef -
+// never one query per row. Chunks the deduped ref list into groups of
+// MAX_SCOPE_IN_VALUES (Firestore's own `in` cap, same bound the scoped-
+// list planner already uses) and issues one `campaignRef "in" chunk`
+// query per chunk - for any realistic bounded page size this is exactly
+// one query total, never O(distinct refs).
+export async function getCampaignDocsByRefs(campaignRefs: string[]): Promise<Map<string, CampaignDoc>> {
+  const unique = [...new Set(campaignRefs)];
+  const result = new Map<string, CampaignDoc>();
+  for (let i = 0; i < unique.length; i += MAX_SCOPE_IN_VALUES) {
+    const chunk = unique.slice(i, i + MAX_SCOPE_IN_VALUES);
+    const snapshot = await campaignsCollection().where("campaignRef", "in", chunk).get();
+    for (const doc of snapshot.docs) {
+      const parsed = campaignDocSchema.safeParse(doc.data());
+      if (parsed.success) result.set(parsed.data.campaignRef, parsed.data);
+    }
+  }
+  return result;
+}
+
 export type CampaignMutationResult = { kind: "ok"; doc: CampaignDoc } | { kind: "stale" } | { kind: "not_found" };
 
 // Shared transactional "read current, verify optimistic version, apply a

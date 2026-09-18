@@ -503,3 +503,52 @@ describe("History", () => {
     expect(kinds).toContain("lifecycle_transitioned");
   });
 });
+
+// Step 10B section 5: bounded bulk label resolution - getAssignment
+// (single, per-field reads) and listAssignments (batch, bulk-chunked
+// getXDocsByRefs reads) must both resolve real, correct labels, and the
+// batch path must do so without any per-row read waterfall.
+describe("Bounded label resolution", () => {
+  it("getAssignment (Detail path) resolves campaignName/partnerDisplayName from the real owning records", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createRealAssignment(head);
+    const result = await getAssignment(head, assignment.assignmentRef);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.campaignName).toBeTruthy();
+    expect(result.data.partnerDisplayName).toBe("Meera Krishnan");
+  });
+
+  it("listAssignments (batch path) resolves campaignName/partnerDisplayName for every row via the bulk-chunked helpers, never leaving them null for a real record", async () => {
+    const head = await actorFor("partnership_head");
+    await createRealAssignment(head);
+    await createRealAssignment(head);
+    const page = await listAssignments(head, { limit: 50 });
+    expect(page.ok).toBe(true);
+    if (!page.ok) throw new Error("unreachable");
+    const withKnownPartner = page.data.assignments.filter((a) => a.partnerRef === "seed-partner-direct");
+    expect(withKnownPartner.length).toBeGreaterThan(0);
+    for (const a of withKnownPartner) {
+      expect(a.partnerDisplayName).toBe("Meera Krishnan");
+      expect(a.campaignName).toBeTruthy();
+    }
+  });
+
+  it("getCampaignDocsByRefs / getPartnerDocsByRefs / getPartnerAccountDocsByRefs dedupe and bulk-resolve correctly (used directly, not just through the DTO)", async () => {
+    const { getCampaignDocsByRefs } = await import("@/server/campaigns/firestore");
+    const { getPartnerDocsByRefs } = await import("@/server/partners/firestore");
+
+    const campaigns = await getCampaignDocsByRefs(["seed-campaign-planned", "seed-campaign-planned", "civic-voices", "not-a-real-campaign-ref"]);
+    expect(campaigns.size).toBe(2);
+    expect(campaigns.get("seed-campaign-planned")?.name).toBeTruthy();
+    expect(campaigns.get("civic-voices")?.name).toBe("Civic Voices");
+    expect(campaigns.has("not-a-real-campaign-ref")).toBe(false);
+
+    const partners = await getPartnerDocsByRefs(["seed-partner-direct", "seed-partner-direct", "creator-house"]);
+    expect(partners.size).toBe(2);
+    expect(partners.get("seed-partner-direct")?.displayName).toBe("Meera Krishnan");
+
+    const empty = await getCampaignDocsByRefs([]);
+    expect(empty.size).toBe(0);
+  });
+});

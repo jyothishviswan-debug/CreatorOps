@@ -79,6 +79,24 @@ export async function getPartnerDocByRef(partnerRef: string): Promise<PartnerDoc
   return result.success ? result.data : null;
 }
 
+// Step 10B: bounded bulk label resolution for a Workspace page of some
+// OTHER domain's rows (e.g. Assignment) that each carry a partnerRef -
+// never one query per row, same chunking discipline as Campaigns' own
+// getCampaignDocsByRefs.
+export async function getPartnerDocsByRefs(partnerRefs: string[]): Promise<Map<string, PartnerDoc>> {
+  const unique = [...new Set(partnerRefs)];
+  const result = new Map<string, PartnerDoc>();
+  for (let i = 0; i < unique.length; i += MAX_SCOPE_IN_VALUES) {
+    const chunk = unique.slice(i, i + MAX_SCOPE_IN_VALUES);
+    const snapshot = await partnersCollection().where("partnerRef", "in", chunk).get();
+    for (const doc of snapshot.docs) {
+      const parsed = partnerDocSchema.safeParse(doc.data());
+      if (parsed.success) result.set(parsed.data.partnerRef, parsed.data);
+    }
+  }
+  return result;
+}
+
 export async function getPartnerAccountDocByUid(uid: string): Promise<PartnerAccountDoc | null> {
   const snapshot = await partnerAccountsCollection().doc(uid).get();
   if (!snapshot.exists) return null;
@@ -91,6 +109,22 @@ export async function getPartnerAccountDocByRef(partnerAccountRef: string): Prom
   if (snapshot.empty) return null;
   const result = partnerAccountDocSchema.safeParse(snapshot.docs[0]!.data());
   return result.success ? result.data : null;
+}
+
+// Step 10B: same bounded bulk-chunked pattern as getPartnerDocsByRefs, for
+// a page of some other domain's rows that each carry partnerAccountRefs.
+export async function getPartnerAccountDocsByRefs(partnerAccountRefs: string[]): Promise<Map<string, PartnerAccountDoc>> {
+  const unique = [...new Set(partnerAccountRefs)];
+  const result = new Map<string, PartnerAccountDoc>();
+  for (let i = 0; i < unique.length; i += MAX_SCOPE_IN_VALUES) {
+    const chunk = unique.slice(i, i + MAX_SCOPE_IN_VALUES);
+    const snapshot = await partnerAccountsCollection().where("partnerAccountRef", "in", chunk).get();
+    for (const doc of snapshot.docs) {
+      const parsed = partnerAccountDocSchema.safeParse(doc.data());
+      if (parsed.success) result.set(parsed.data.partnerAccountRef, parsed.data);
+    }
+  }
+  return result;
 }
 
 export async function getPartnerAccountIdentityClaim(claimId: string): Promise<PartnerAccountIdentityClaimDoc | null> {
