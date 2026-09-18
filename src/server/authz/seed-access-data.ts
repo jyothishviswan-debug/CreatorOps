@@ -54,8 +54,15 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
   // Assignment service call both key off this exact grant, so removing
   // it is what actually denies the workspace/detail/read API and hides
   // the nav item, all from this one place.
+  // Step 11A: "content" removed from Viewer's and Analyst's own
+  // featuresOf(...) lists below - the earlier entry was stale UI-
+  // skeleton-era scaffold (same as the pre-10A.1 "assignments" entry's
+  // own history - see that grant's comment), predating Content's real
+  // trusted service and never re-examined against the actual accepted
+  // access model until now. Content is Manager/Head/Super Admin only,
+  // same operational-module shape as Assignments.
   viewer: {
-    features: featuresOf(["dashboard", "discovery", "partners", "vendors", "campaigns", "content", "analytics", "partner_reviews", "reports"]),
+    features: featuresOf(["dashboard", "discovery", "partners", "vendors", "campaigns", "analytics", "partner_reviews", "reports"]),
   },
   analyst: {
     features: featuresOf([
@@ -64,7 +71,6 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       "partners",
       "vendors",
       "campaigns",
-      "content",
       "analytics",
       "partner_reviews",
       "reports",
@@ -74,7 +80,7 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
   },
   partnership_manager: {
     features: {
-      ...featuresOf(["dashboard", "partners", "vendors", "assignments", "content", "analytics", "partner_reviews", "operations", "reports"]),
+      ...featuresOf(["dashboard", "partners", "vendors", "assignments", "analytics", "partner_reviews", "operations", "reports"]),
       // Non-monotonic on purpose - matches the module-specific action
       // catalog (module-actions.ts): can manage day-to-day finance
       // records but cannot approve payables, unlike Partnership Head.
@@ -156,11 +162,28 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         cancel_assignment: true,
         manage_assignment_external_submission: true,
       }),
+      // Step 11A: full operational Content access EXCEPT review_content -
+      // deliberately non-monotonic against partnership_head's own
+      // identical grant below (which has review_content: true), same
+      // "day-to-day-but-not-governance" split shape as Finance's
+      // approve_payables/Partners'/Vendors'/Campaigns' own head-only
+      // splits. Proves review permission is a genuinely distinct action
+      // gate: a Manager with full production/publication/completion
+      // access still cannot approve/request-changes/reject.
+      content: featureGrant(true, {
+        create: true,
+        manage_content_production: true,
+        submit_content_for_review: true,
+        review_content: false,
+        manage_content_publication: true,
+        complete_content: true,
+        cancel_content: true,
+      }),
     },
   },
   partnership_head: {
     features: {
-      ...featuresOf(["dashboard", "partners", "vendors", "assignments", "content", "analytics", "partner_reviews", "operations", "reports"]),
+      ...featuresOf(["dashboard", "partners", "vendors", "assignments", "analytics", "partner_reviews", "operations", "reports"]),
       finance: featureGrant(true, { manage_agreements: true, manage_payables: true, approve_payables: true, manage_invoices: true, record_payments: true }),
       discovery: featureGrant(true, {
         create: true,
@@ -219,6 +242,18 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         transition_assignment_lifecycle: true,
         cancel_assignment: true,
         manage_assignment_external_submission: true,
+      }),
+      // Step 11A: the only role (besides Super Admin) trusted with
+      // review_content - matching Finance's approve_payables/Partners'/
+      // Vendors'/Campaigns' own head-only governance split above.
+      content: featureGrant(true, {
+        create: true,
+        manage_content_production: true,
+        submit_content_for_review: true,
+        review_content: true,
+        manage_content_publication: true,
+        complete_content: true,
+        cancel_content: true,
       }),
     },
   },

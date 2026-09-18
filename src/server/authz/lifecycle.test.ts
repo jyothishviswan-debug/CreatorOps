@@ -1,18 +1,71 @@
 import { describe, expect, it } from "vitest";
 
-import { canTransitionLifecycle, CONTENT_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS } from "./lifecycle";
+import { canTransitionLifecycle, CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS, CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS } from "./lifecycle";
 
 describe("canTransitionLifecycle", () => {
   it("allows a transition from a listed predecessor state", () => {
-    expect(canTransitionLifecycle("Submitted", "Approved", CONTENT_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("SUBMITTED", "APPROVED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(true);
   });
 
   it("denies a transition that skips a required intermediate state", () => {
-    expect(canTransitionLifecycle("Planned", "Posted", CONTENT_LIFECYCLE_TRANSITIONS)).toBe(false);
+    expect(canTransitionLifecycle("PLANNED", "POSTED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(false);
   });
 
   it("denies a transition into an unrecognized state", () => {
-    expect(canTransitionLifecycle("Submitted", "Archived", CONTENT_LIFECYCLE_TRANSITIONS)).toBe(false);
+    expect(canTransitionLifecycle("SUBMITTED", "ARCHIVED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(false);
+  });
+});
+
+// Step 11A: the canonical Content lifecycle - two separate transition
+// graphs, one per review policy (see lifecycle.ts's own comment).
+describe("CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS", () => {
+  it("allows the main REVIEW_REQUIRED path one state at a time", () => {
+    expect(canTransitionLifecycle("PLANNED", "IN_PRODUCTION", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("IN_PRODUCTION", "SUBMITTED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("SUBMITTED", "APPROVED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("APPROVED", "POSTED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("POSTED", "COMPLETED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(true);
+  });
+
+  it("allows the CHANGES_REQUIRED revision loop back to SUBMITTED", () => {
+    expect(canTransitionLifecycle("SUBMITTED", "CHANGES_REQUIRED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("CHANGES_REQUIRED", "SUBMITTED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(true);
+  });
+
+  it("never allows POSTED before APPROVED", () => {
+    expect(canTransitionLifecycle("SUBMITTED", "POSTED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(false);
+    expect(canTransitionLifecycle("IN_PRODUCTION", "POSTED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(false);
+  });
+
+  it("CANCELLED is reachable from every pre-POSTED state including REJECTED, never from POSTED/COMPLETED", () => {
+    for (const from of ["PLANNED", "IN_PRODUCTION", "SUBMITTED", "CHANGES_REQUIRED", "APPROVED", "REJECTED"]) {
+      expect(canTransitionLifecycle(from, "CANCELLED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(true);
+    }
+    expect(canTransitionLifecycle("POSTED", "CANCELLED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(false);
+    expect(canTransitionLifecycle("COMPLETED", "CANCELLED", CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS)).toBe(false);
+  });
+});
+
+describe("CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS", () => {
+  it("allows the compact NO_PREPOST_REVIEW path one state at a time", () => {
+    expect(canTransitionLifecycle("PLANNED", "IN_PRODUCTION", CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("IN_PRODUCTION", "POSTED", CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("POSTED", "COMPLETED", CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(true);
+  });
+
+  it("can never enter any review state - the keys are structurally absent, not merely empty", () => {
+    for (const reviewState of ["SUBMITTED", "CHANGES_REQUIRED", "APPROVED", "REJECTED"]) {
+      expect(Object.keys(CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).not.toContain(reviewState);
+      expect(canTransitionLifecycle("IN_PRODUCTION", reviewState, CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
+      expect(canTransitionLifecycle("PLANNED", reviewState, CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
+    }
+  });
+
+  it("CANCELLED is reachable only pre-POSTED", () => {
+    expect(canTransitionLifecycle("PLANNED", "CANCELLED", CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("IN_PRODUCTION", "CANCELLED", CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("POSTED", "CANCELLED", CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
+    expect(canTransitionLifecycle("COMPLETED", "CANCELLED", CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
   });
 });
 

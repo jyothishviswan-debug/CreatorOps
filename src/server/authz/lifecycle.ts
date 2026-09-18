@@ -5,16 +5,50 @@
 // LEAD_LIFECYCLE_TRANSITIONS and src/server/discovery/lifecycle-service.ts).
 export type LifecycleTransitionMap = Readonly<Record<string, readonly string[]>>;
 
-// Representative content-publication lifecycle, matching the Content
-// module's existing fixture statuses (src/features/content/fixtures).
-// Each key's value lists the states allowed to precede it.
-export const CONTENT_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
-  Planned: [],
-  Submitted: ["Planned"],
-  "Needs changes": ["Submitted"],
-  Approved: ["Submitted"],
-  Posted: ["Approved"],
-  Completed: ["Posted"],
+// Step 11A: the canonical Content lifecycle - TWO separate transition
+// graphs, one per review policy, replacing the earlier UI-skeleton-era
+// placeholder above (which used display-label keys matching only
+// src/features/content/fixtures, never a real accepted status enum or
+// service). Content's real status enum
+// (PLANNED/IN_PRODUCTION/SUBMITTED/CHANGES_REQUIRED/APPROVED/REJECTED/
+// POSTED/COMPLETED/CANCELLED) lives in src/server/content/types.ts.
+//
+// REVIEW_REQUIRED: PLANNED -> IN_PRODUCTION -> SUBMITTED, then a review
+// decision (APPROVED/CHANGES_REQUIRED/REJECTED); CHANGES_REQUIRED loops
+// directly back to SUBMITTED (a resubmission with a newer version - see
+// content-lifecycle-service.ts - never a second, formal IN_PRODUCTION
+// status transition in between, since production/version-saving is
+// already legal while CHANGES_REQUIRED). POSTED is reachable only from
+// APPROVED (never precedes it). CANCELLED is reachable from every
+// pre-POSTED state including REJECTED (a reasoned close-out of a dead-end
+// record) but NOT from POSTED/COMPLETED, matching "cannot cancel after
+// canonical publication evidence exists" / "cannot cancel COMPLETED".
+export const CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  PLANNED: [],
+  IN_PRODUCTION: ["PLANNED"],
+  SUBMITTED: ["IN_PRODUCTION", "CHANGES_REQUIRED"],
+  CHANGES_REQUIRED: ["SUBMITTED"],
+  APPROVED: ["SUBMITTED"],
+  REJECTED: ["SUBMITTED"],
+  POSTED: ["APPROVED"],
+  COMPLETED: ["POSTED"],
+  CANCELLED: ["PLANNED", "IN_PRODUCTION", "SUBMITTED", "CHANGES_REQUIRED", "APPROVED", "REJECTED"],
+};
+
+// NO_PREPOST_REVIEW: PLANNED -> IN_PRODUCTION -> POSTED -> COMPLETED.
+// SUBMITTED/CHANGES_REQUIRED/APPROVED/REJECTED are deliberately absent
+// keys entirely (not merely empty arrays) - a target key absent from the
+// table is structurally unreachable (canTransitionLifecycle returns
+// false), which is exactly how this policy's "can never enter review
+// states" rule is enforced, with no separate runtime business-rule check
+// needed. CANCELLED excludes POSTED (publication evidence already
+// exists there) and COMPLETED, same rule as the REVIEW_REQUIRED graph.
+export const CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  PLANNED: [],
+  IN_PRODUCTION: ["PLANNED"],
+  POSTED: ["IN_PRODUCTION"],
+  COMPLETED: ["POSTED"],
+  CANCELLED: ["PLANNED", "IN_PRODUCTION"],
 };
 
 // Step 6A: the canonical, frozen greenfield compact Discovery Lead

@@ -74,10 +74,18 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "manage_assignment_external_submission", label: "Manage external submission links" },
     { id: "export", label: "Export" },
   ],
+  // Step 11A: extends the earlier UI-skeleton-era stub (create/submit_
+  // review/approve_publish/export only, never enforced by a real service)
+  // with Content's real granular actions, same stub->real extension shape
+  // Assignments' own list used.
   content: [
-    { id: "create", label: "Create/Edit" },
-    { id: "submit_review", label: "Submit/Review" },
-    { id: "approve_publish", label: "Approve/Publish" },
+    { id: "create", label: "Generate Content from Assignment" },
+    { id: "manage_content_production", label: "Manage production (start/save version)" },
+    { id: "submit_content_for_review", label: "Submit for review" },
+    { id: "review_content", label: "Review (approve/changes-required/reject)" },
+    { id: "manage_content_publication", label: "Manage publication evidence" },
+    { id: "complete_content", label: "Complete" },
+    { id: "cancel_content", label: "Cancel" },
     { id: "export", label: "Export" },
   ],
   analytics: [

@@ -27,6 +27,8 @@ import { COLLECTIONS } from "@/server/authz/firestore";
 import { seedAccessControlData } from "@/server/authz/seed-access-data";
 import { CAMPAIGNS_COLLECTIONS } from "@/server/campaigns/firestore";
 import { seedCampaignsData } from "@/server/campaigns/seed-campaigns-data";
+import { CONTENT_COLLECTIONS } from "@/server/content/firestore";
+import { seedContentData } from "@/server/content/seed-content-data";
 import { DISCOVERY_COLLECTIONS } from "@/server/discovery/firestore";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
 import { PARTNERS_COLLECTIONS } from "@/server/partners/firestore";
@@ -174,6 +176,27 @@ async function deleteAssignmentsCollectionWithEvents(): Promise<void> {
   }
 }
 
+// content/{uid}/events AND content/{uid}/versions are BOTH
+// subcollections - unlike every other single-subcollection domain above,
+// Content has two, and each must be deleted explicitly before (or
+// regardless of) the content document itself, or they'd linger as
+// orphaned, inaccessible-via-list data.
+async function deleteContentCollectionWithSubcollections(): Promise<void> {
+  const db = getAdminFirestore();
+  const contentRef = db.collection(CONTENT_COLLECTIONS.content);
+  for (;;) {
+    const snapshot = await contentRef.limit(200).get();
+    if (snapshot.empty) return;
+    for (const doc of snapshot.docs) {
+      await deleteCollection(doc.ref.collection(CONTENT_COLLECTIONS.contentEvents));
+      await deleteCollection(doc.ref.collection(CONTENT_COLLECTIONS.contentVersions));
+    }
+    const batch = db.batch();
+    for (const doc of snapshot.docs) batch.delete(doc.ref);
+    await batch.commit();
+  }
+}
+
 // Wipes every Auth account and every Firestore collection this app
 // writes to, then reseeds the canonical baseline. Idempotent in effect
 // (running it twice in a row produces the same end state), but NOT a
@@ -204,6 +227,9 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await deleteCollection(db.collection(ASSIGNMENTS_COLLECTIONS.assignmentActiveClaims));
   await deleteCollection(db.collection(ASSIGNMENTS_COLLECTIONS.assignmentSubmissionSessions));
   await deleteCollection(db.collection(ASSIGNMENTS_COLLECTIONS.assignmentExternalSubmissions));
+  await deleteContentCollectionWithSubcollections();
+  await deleteCollection(db.collection(CONTENT_COLLECTIONS.contentRequiredSlotClaims));
+  await deleteCollection(db.collection(CONTENT_COLLECTIONS.contentPublicationClaims));
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();
@@ -212,4 +238,5 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await seedVendorsData();
   await seedCampaignsData();
   await seedAssignmentsData();
+  await seedContentData();
 }

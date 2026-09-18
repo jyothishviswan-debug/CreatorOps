@@ -3,6 +3,8 @@ import { z } from "zod";
 import { ASSIGNMENT_LIFECYCLE_TRANSITIONS, canTransitionLifecycle } from "@/server/authz/lifecycle";
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ActorContext } from "@/server/authz/types";
+import { contentCollection } from "@/server/content/firestore";
+import { evaluateAssignmentFulfillment } from "@/server/content/fulfillment-service";
 import { requireAssignmentInScope, requireAssignmentsAccess } from "./assignments-gate";
 import { writeAssignmentEvent } from "./assignment-events";
 import { assignmentExternalSubmissionsCollection, assignmentsCollection, getAssignmentDocByRef } from "./firestore";
@@ -24,7 +26,14 @@ const transitionInputSchema = z.object({
 });
 export type TransitionAssignmentInput = z.input<typeof transitionInputSchema>;
 
-type TxResult = { kind: "ok"; doc: AssignmentDoc } | { kind: "stale" } | { kind: "not_found" } | { kind: "invalid" } | { kind: "blocked_by_evidence" };
+type TxResult =
+  | { kind: "ok"; doc: AssignmentDoc }
+  | { kind: "stale" }
+  | { kind: "not_found" }
+  | { kind: "invalid" }
+  | { kind: "blocked_by_evidence" }
+  | { kind: "blocked_by_content_evidence" }
+  | { kind: "blocked_by_unfulfilled_content"; blockers: { code: string; message: string }[] };
 
 // The one trusted entry point for every Assignment lifecycle change,
 // mirroring Campaigns' own transitionCampaignLifecycle. Moving to
@@ -47,14 +56,22 @@ type TxResult = { kind: "ok"; doc: AssignmentDoc } | { kind: "stale" } | { kind:
 // irreversible-evidence check belongs in this same place, checked the
 // same way.
 //
-// IN_PROGRESS -> COMPLETED always fails closed for the same reason
-// (Content doesn't exist yet to prove the obligation was actually
-// fulfilled) - Step 10A section 5's own rule against inventing a manual
-// "everything done" bypass. The edge stays in ASSIGNMENT_LIFECYCLE_TRANSITIONS
-// (matching the authority doc's own compact model) but is refused here
-// with a typed not_ready result, the same "the edge exists, but a real
-// readiness check currently always blocks it" shape Campaign's own
-// DRAFT -> PLANNED readiness gate uses.
+// Step 11A: IN_PROGRESS -> COMPLETED now uses the real, shared
+// fulfillment evaluator (evaluateAssignmentFulfillment /
+// countQualifyingContentForAssignment in
+// @/server/content/fulfillment-service) instead of the earlier
+// always-fails-closed stub - Content now exists to prove the obligation
+// was actually fulfilled. A pre-check runs before the transaction (fast,
+// non-transactional, most callers hit this) and the SAME evaluator runs
+// again INSIDE the transaction (transactional, race-safe - a concurrent
+// Content completion/cancellation forces a retry rather than racing,
+// same discipline as the CANCELLED evidence-blocker check below). This
+// is the one shared evaluator behind both the manual completion request
+// here and Content's own auto-completion trigger (completeContent in
+// content-lifecycle-service.ts, which calls
+// countQualifyingContentForAssignment directly with an in-flight
+// override rather than through this wrapper - see that function's own
+// comment for why).
 export async function transitionAssignmentLifecycle(
   actor: ActorContext | null,
   assignmentRef: unknown,
@@ -88,12 +105,10 @@ export async function transitionAssignmentLifecycle(
   }
 
   if (input.to === "COMPLETED") {
-    return {
-      ok: false,
-      code: "not_ready",
-      message: "This Assignment cannot be marked Completed yet.",
-      blockers: [{ code: "CONTENT_EVIDENCE_UNAVAILABLE", message: "Content does not exist yet - completion requires real Content evidence, which this build cannot produce." }],
-    };
+    const fulfillment = await evaluateAssignmentFulfillment(current);
+    if (!fulfillment.fulfilled) {
+      return { ok: false, code: "not_ready", message: "This Assignment cannot be marked Completed yet.", blockers: fulfillment.blockers };
+    }
   }
 
   const db = getAdminFirestore();
@@ -112,6 +127,23 @@ export async function transitionAssignmentLifecycle(
     if (input.to === "CANCELLED") {
       const evidenceSnap = await tx.get(assignmentExternalSubmissionsCollection().where("assignmentRef", "==", freshCurrent.assignmentRef).limit(1));
       if (!evidenceSnap.empty) return { kind: "blocked_by_evidence" };
+
+      // Step 11A: a second, Content-specific blocker query - mirrors the
+      // external-submission-evidence check immediately above, just
+      // against canonical Content publication evidence instead of
+      // intake-only external submission rows.
+      const contentEvidenceSnap = await tx.get(contentCollection().where("assignmentRef", "==", freshCurrent.assignmentRef).where("status", "in", ["POSTED", "COMPLETED"]).limit(1));
+      if (!contentEvidenceSnap.empty) return { kind: "blocked_by_content_evidence" };
+    }
+
+    if (input.to === "COMPLETED") {
+      // Re-run the same evaluator for real, race-safe gating inside the
+      // transaction - a concurrent Content completion/cancellation
+      // between the pre-check above and here forces this transaction to
+      // observe fresh state (or, under Firestore's own optimistic-
+      // transaction retry, to retry against it).
+      const freshFulfillment = await evaluateAssignmentFulfillment(freshCurrent, tx);
+      if (!freshFulfillment.fulfilled) return { kind: "blocked_by_unfulfilled_content", blockers: freshFulfillment.blockers };
     }
 
     const updated: AssignmentDoc = {
@@ -136,6 +168,17 @@ export async function transitionAssignmentLifecycle(
       message: "This Assignment cannot be cancelled - it already has submitted external evidence, which is irreversible.",
       blockers: [{ code: "EXTERNAL_EVIDENCE_EXISTS", message: "At least one external submission batch already exists for this Assignment." }],
     };
+  }
+  if (result.kind === "blocked_by_content_evidence") {
+    return {
+      ok: false,
+      code: "not_ready",
+      message: "This Assignment cannot be cancelled - at least one of its Content records already has canonical publication evidence, which is irreversible.",
+      blockers: [{ code: "CONTENT_EVIDENCE_EXISTS", message: "At least one Content record for this Assignment already has canonical publication evidence." }],
+    };
+  }
+  if (result.kind === "blocked_by_unfulfilled_content") {
+    return { ok: false, code: "not_ready", message: "This Assignment cannot be marked Completed yet.", blockers: result.blockers };
   }
 
   const eventKind = input.to === "CANCELLED" ? "cancelled" : "lifecycle_transitioned";

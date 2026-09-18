@@ -148,6 +148,28 @@ export async function seedAssignmentsData(): Promise<void> {
       teamIds: [],
       ownerUid: null,
     },
+    // Step 11A: a single-required-slot fixture whose seeded status is
+    // COMPLETED - the END STATE reached because its one and only
+    // required Content item is itself COMPLETED + QUALIFYING_REQUIRED
+    // (see seed-content-data.ts's matching Content + CLAIMED slot claim
+    // fixture). Seed data is a static snapshot, never simulated live -
+    // the real behavioral proof that completeContent's own transaction
+    // actually drives an Assignment to COMPLETED is a live emulator test
+    // that creates a fresh Assignment+Content pair and drives it through
+    // the real service calls end to end; this fixture exists only as a
+    // read/display snapshot. (seed-campaign-planned, seed-partner-archived)
+    // is a fresh, previously-unused pair - every other real ACTIVE
+    // Partner is already paired with every eligible Campaign above.
+    {
+      ...assignmentBase("seed-assignment-content-fulfilled", "seed-campaign-planned", "seed-partner-archived"),
+      status: "COMPLETED",
+      statusReason: null,
+      partnerAccountRefs: [],
+      brief: { ...briefBase("South Programmes Launch", "Programme-wide plan for South Programmes Launch."), platforms: ["instagram"], formats: ["reel"], requiredCount: 1 },
+      regionIds: ["Kerala", "Maharashtra"],
+      teamIds: ["kerala-programmes", "maharashtra-programmes"],
+      ownerUid: managerUid,
+    },
   ];
 
   for (const assignment of assignments) {

@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ScopeGrant } from "@/server/authz/types";
 import { planAssignmentListQuery } from "@/server/assignments/firestore";
 import { planCampaignListQuery } from "@/server/campaigns/firestore";
+import { planContentListQuery } from "@/server/content/firestore";
 import { planLeadListQuery } from "@/server/discovery/firestore";
 import { planPartnerListQuery } from "@/server/partners/firestore";
 import { planVendorListQuery } from "@/server/vendors/firestore";
@@ -345,6 +346,79 @@ describe("planAssignmentListQuery - production-valid by construction and specifi
 
   it("explicit + self overlap: the explicit branch excludes anything the self branch would already cover", () => {
     const { plan } = planAssignmentListQuery({ actorUid: ACTOR_UID, grants: [self(), explicit("assignment", "a1")], hasGlobal: false });
+    const explicitBranch = plan.branches.find((b) => b.name === "explicit")!;
+    const ownDoc = { ownerUid: ACTOR_UID };
+    expect(passesBranchPostFilters(ownDoc, explicitBranch)).toBe(false);
+    const otherDoc = { ownerUid: "someone-else" };
+    expect(passesBranchPostFilters(otherDoc, explicitBranch)).toBe(true);
+  });
+});
+
+// Step 11A: Content has no competing array-type business filter at all
+// (every requested filter - status/assignmentRef/campaignRef/partnerRef/
+// platform/reviewPolicy - is a plain equality filter, pushed directly
+// into every branch including region/team), so this is deliberately the
+// simplest of the planner test blocks - no postFilter-demotion scenario
+// exists to prove, unlike Assignment's own `platform` (array-contains
+// against brief.platforms).
+describe("planContentListQuery - production-valid by construction and specific shapes", () => {
+  const scenarios: Array<{ label: string; grants: ScopeGrant[]; hasGlobal: boolean; status?: string; platform?: string }> = [
+    { label: "no grants", grants: [], hasGlobal: false },
+    { label: "GLOBAL", grants: [], hasGlobal: true },
+    { label: "SELF only", grants: [self()], hasGlobal: false },
+    { label: "REGION only", grants: [region("Kerala")], hasGlobal: false },
+    { label: "TEAM only", grants: [team("t1")], hasGlobal: false },
+    { label: "EXPLICIT_RECORD only", grants: [explicit("content", "x1")], hasGlobal: false },
+    { label: "SELF+REGION+TEAM+EXPLICIT", grants: [self(), region("Kerala"), team("t1"), explicit("content", "x1")], hasGlobal: false },
+    { label: "SELF+REGION+TEAM+EXPLICIT, status+platform filters", grants: [self(), region("Kerala"), team("t1"), explicit("content", "x1")], hasGlobal: false, status: "POSTED", platform: "youtube" },
+    { label: "GLOBAL, status+platform filters", grants: [], hasGlobal: true, status: "POSTED", platform: "youtube" },
+  ];
+
+  for (const scenario of scenarios) {
+    it(`"${scenario.label}" never produces a production-invalid branch`, () => {
+      const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: scenario.grants, hasGlobal: scenario.hasGlobal, status: scenario.status, platform: scenario.platform });
+      expect(() => assertProductionValidPlan(plan)).not.toThrow();
+      for (const branch of firestoreBranches(plan)) {
+        // A region/team branch's OWN scope-exclusion filter is itself one
+        // array-contains-any - never zero - but Content has no second,
+        // competing array-type business filter to push alongside it (no
+        // "brief.platforms"-style array field), so it is never more than 1.
+        expect(arrayFilterCount(branch)).toBeLessThanOrEqual(1);
+      }
+    });
+  }
+
+  it("GLOBAL collapses to a single unscoped main branch", () => {
+    const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: [], hasGlobal: true });
+    expect(branchNames(plan)).toEqual(["main"]);
+  });
+
+  it("no grants at all produces zero branches", () => {
+    const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: [], hasGlobal: false });
+    expect(plan.branches).toHaveLength(0);
+  });
+
+  it("explicit-record-only scope produces exactly one bounded-ids branch, no firestore-query branch", () => {
+    const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: [explicit("content", "c1")], hasGlobal: false });
+    expect(plan.branches).toHaveLength(1);
+    expect(plan.branches[0]!.kind).toBe("bounded-ids");
+  });
+
+  it("SELF+REGION+TEAM all produce independent firestore-query branches", () => {
+    const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: [self(), region("Kerala"), team("t1")], hasGlobal: false });
+    expect(branchNames(plan).sort()).toEqual(["region", "self", "team"]);
+  });
+
+  it("every requested business filter (status/platform/reviewPolicy) is always pushed directly, never demoted to a postFilter - no competing array filter exists to force that", () => {
+    const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: [region("Kerala")], hasGlobal: false, status: "POSTED", platform: "youtube" });
+    const regionBranch = plan.branches.find((b) => b.name === "region") as FirestoreListBranchPlan;
+    expect(regionBranch.pushedFilters.some((f) => f.field === "status" && f.op === "==" && f.value === "POSTED")).toBe(true);
+    expect(regionBranch.pushedFilters.some((f) => f.field === "platform" && f.op === "==" && f.value === "youtube")).toBe(true);
+    expect(regionBranch.postFilters).toHaveLength(0);
+  });
+
+  it("explicit + self overlap: the explicit branch excludes anything the self branch would already cover", () => {
+    const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: [self(), explicit("content", "c1")], hasGlobal: false });
     const explicitBranch = plan.branches.find((b) => b.name === "explicit")!;
     const ownDoc = { ownerUid: ACTOR_UID };
     expect(passesBranchPostFilters(ownDoc, explicitBranch)).toBe(false);
