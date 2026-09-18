@@ -162,19 +162,22 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         cancel_assignment: true,
         manage_assignment_external_submission: true,
       }),
-      // Step 11A: full operational Content access EXCEPT review_content -
-      // deliberately non-monotonic against partnership_head's own
-      // identical grant below (which has review_content: true), same
-      // "day-to-day-but-not-governance" split shape as Finance's
-      // approve_payables/Partners'/Vendors'/Campaigns' own head-only
-      // splits. Proves review permission is a genuinely distinct action
-      // gate: a Manager with full production/publication/completion
-      // access still cannot approve/request-changes/reject.
+      // Step 11B (explicit user correction to Step 11A's own initial
+      // default): Manager now holds identical Content grants to Head,
+      // including review_content. review_content remains a genuinely
+      // separate, independently-gated action permission - it is never
+      // collapsed into the generic Content actions above, and nothing
+      // here implies a role could act on Content without this explicit
+      // grant. What changed is WHO holds it, not whether it is its own
+      // gate. The load-bearing proof that it stays a distinct permission
+      // is now scope-based (a Manager is still denied review_content on a
+      // Content record outside their own scope grants) rather than a
+      // same-scope role denial - see content.emulator.test.ts.
       content: featureGrant(true, {
         create: true,
         manage_content_production: true,
         submit_content_for_review: true,
-        review_content: false,
+        review_content: true,
         manage_content_publication: true,
         complete_content: true,
         cancel_content: true,

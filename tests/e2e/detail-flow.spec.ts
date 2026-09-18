@@ -1,14 +1,14 @@
 import { test, expect } from "@playwright/test";
 
 // Modules whose index route IS the record workspace (real table, click a
-// row to open a detail record): Discovery's dedicated /leads sub-route,
-// plus Content, which has no Overview and is workspace-only per the
-// golden master's navigate() default (Assignments moved out in Step 10B -
-// same reason Partners/Vendors/Campaigns did below, see that comment).
-const WORKSPACE_TO_DETAIL: { workspace: string; back: string }[] = [
-  { workspace: "/discovery/leads", back: "/discovery/leads" },
-  { workspace: "/content", back: "/content" },
-];
+// row to open a detail record), still on the generic fixture-backed
+// WorkspaceView/DetailView pair: Discovery's dedicated /leads sub-route.
+// Content moved out in Step 11B - same reason Partners/Vendors/Campaigns/
+// Assignments did below (see that comment) - it now has a real dedicated
+// ContentWorkspace/ContentDetail pair fed by trusted server data, covered
+// by tests/e2e/content.spec.ts instead (whose own Detail "Back" link
+// reads "Back to Content", not the generic fixture's "Back to workspace").
+const WORKSPACE_TO_DETAIL: { workspace: string; back: string }[] = [{ workspace: "/discovery/leads", back: "/discovery/leads" }];
 
 for (const { workspace, back } of WORKSPACE_TO_DETAIL) {
   test(`workspace to detail flow: ${workspace}`, async ({ page }) => {

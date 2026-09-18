@@ -7,6 +7,7 @@ import { Icon } from "@/ui/icons";
 import type { AssignmentDto } from "@/server/assignments/client-dto";
 import type { AssignmentStatus } from "@/server/assignments/types";
 import { transitionAssignmentLifecycle } from "./api-client";
+import { useAssignmentContentFulfillment } from "./useAssignmentContentFulfillment";
 
 // Step 10B: the frozen golden-master "Next action" panel (title/subtitle
 // preserved verbatim) - mapped to the single real primary lifecycle CTA
@@ -29,6 +30,13 @@ export function AssignmentNextActionPanel({ assignment, onSaved }: { assignment:
   const [error, setError] = useState<string | null>(null);
 
   const next = NEXT_ACTION[assignment.status];
+  const requiredCount = assignment.brief.requiredCount ?? 1;
+  // Step 11B: Content is real now (Step 11A) - IN_PROGRESS's own
+  // completion picture is fetched via the SAME shared tally helper
+  // AssignmentContentPanel uses, never a second independent
+  // implementation. Only enabled while IN_PROGRESS, to avoid an
+  // unnecessary read on every other status.
+  const fulfillment = useAssignmentContentFulfillment(assignment.assignmentRef, requiredCount, assignment.status === "IN_PROGRESS");
 
   async function run() {
     if (!next) return;
@@ -42,6 +50,20 @@ export function AssignmentNextActionPanel({ assignment, onSaved }: { assignment:
     }
     onSaved({ ...assignment, status: result.data.status, version: result.data.version, statusReason: null });
   }
+
+  async function runComplete() {
+    setBusy(true);
+    setError(null);
+    const result = await transitionAssignmentLifecycle(assignment.assignmentRef, { to: "COMPLETED", expectedVersion: assignment.version });
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    onSaved({ ...assignment, status: result.data.status, version: result.data.version, statusReason: null });
+  }
+
+  const fulfilled = assignment.status === "IN_PROGRESS" && !fulfillment.loading && fulfillment.qualifyingCount >= fulfillment.requiredCount;
 
   return (
     <Panel span={4}>
@@ -61,10 +83,24 @@ export function AssignmentNextActionPanel({ assignment, onSaved }: { assignment:
             </button>
           </>
         ) : assignment.status === "IN_PROGRESS" ? (
-          <>
-            <h3 style={{ marginTop: 12 }}>Completion pending Content - not available yet</h3>
-            <p className="detailcopy" style={{ margin: "8px 0 0" }}>Content does not exist yet, so this Assignment cannot be marked Completed in this build.</p>
-          </>
+          fulfilled ? (
+            <>
+              <h3 style={{ marginTop: 12 }}>Complete Assignment</h3>
+              <p className="detailcopy" style={{ margin: "8px 0 17px" }}>
+                {fulfillment.qualifyingCount} of {fulfillment.requiredCount} required Content completed. Server remains authoritative - this action is re-verified on every attempt.
+              </p>
+              <button type="button" className="btn primary" disabled={busy} onClick={runComplete}>
+                {busy ? "Saving…" : "Complete Assignment"}
+              </button>
+            </>
+          ) : (
+            <>
+              <h3 style={{ marginTop: 12 }}>Content fulfillment in progress</h3>
+              <p className="detailcopy" style={{ margin: "8px 0 0" }}>
+                {fulfillment.loading ? "Loading Content fulfillment…" : `${fulfillment.qualifyingCount} of ${fulfillment.requiredCount} required Content completed`}
+              </p>
+            </>
+          )
         ) : (
           <>
             <h3 style={{ marginTop: 12 }}>{assignment.status === "CANCELLED" ? "Cancelled" : "Completed"}</h3>

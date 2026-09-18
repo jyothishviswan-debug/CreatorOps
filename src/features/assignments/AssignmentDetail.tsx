@@ -15,6 +15,7 @@ import { AssignmentNotesDialog } from "./AssignmentNotesDialog";
 import { AssignmentNextActionPanel } from "./AssignmentNextActionPanel";
 import { AssignmentShareDialog } from "./AssignmentShareDialog";
 import { AssignmentWorkflowPanel } from "./AssignmentWorkflowPanel";
+import { AssignmentContentPanel } from "./AssignmentContentPanel";
 
 // Step 10B: the frozen golden-master Assignment Detail structure,
 // verified directly against docs/reference/CreatorOps_UI_Golden_Master.html's
@@ -147,12 +148,7 @@ export function AssignmentDetail({ initialAssignment }: { initialAssignment: Ass
       </PanelGrid>
 
       <div className="grid three">
-        <Panel span={4}>
-          <PanelHead title="Content" description="Content attached to this assignment" />
-          <PanelBody>
-            <EmptyState title="Not yet built" description="No real trusted source is wired to this Assignment yet." icon="clock" />
-          </PanelBody>
-        </Panel>
+        <AssignmentContentPanel assignment={assignment} onContentPlanned={handleAssignmentUpdated} />
         <AssignmentWorkflowPanel assignment={assignment} onSaved={handleAssignmentUpdated} />
         <Panel span={4}>
           <PanelHead title="Notes & meetings" description="Keep the conversation with the record" />

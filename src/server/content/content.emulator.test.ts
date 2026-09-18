@@ -350,33 +350,52 @@ describe("Authorization / scope", () => {
     expect(fake.ok).toBe(false);
   });
 
-  it("review_content is denied to Manager and allowed to Head - approve/changes-required/reject all three", async () => {
+  // Step 11B (explicit user correction to Step 11A's own initial
+  // default): Manager and Head now hold identical review_content grants -
+  // both can approve/request-changes/reject a same-scope submission.
+  it("review_content is allowed to both Manager and Head, in-scope - approve/changes-required/reject all three", async () => {
     const head = await actorFor("partnership_head");
     const manager = await actorFor("partnership_manager");
 
-    for (const decision of ["APPROVED", "CHANGES_REQUIRED", "REJECTED"] as const) {
-      const assignment = await createOperationalAssignment(head, "ASSIGNED");
-      const content = await generateRealContent(head, assignment.assignmentRef);
-      const submitted = await driveToSubmitted(head, content);
+    for (const [role, actor] of [
+      ["partnership_manager", manager],
+      ["partnership_head", head],
+    ] as const) {
+      for (const decision of ["APPROVED", "CHANGES_REQUIRED", "REJECTED"] as const) {
+        const assignment = await createOperationalAssignment(head, "ASSIGNED");
+        const content = await generateRealContent(head, assignment.assignmentRef);
+        const submitted = await driveToSubmitted(head, content);
 
-      const managerAttempt = await reviewContentDecision(
-        manager,
-        submitted.contentRef,
-        { decision, reviewedVersion: submitted.currentVersion, comment: decision === "APPROVED" ? undefined : "Needs work.", expectedVersion: submitted.version },
-        "req",
-      );
-      expect(managerAttempt.ok).toBe(false);
-      if (managerAttempt.ok) throw new Error("unreachable");
-      expect(managerAttempt.reason).toBe("action_denied");
-
-      const headAttempt = await reviewContentDecision(
-        head,
-        submitted.contentRef,
-        { decision, reviewedVersion: submitted.currentVersion, comment: decision === "APPROVED" ? undefined : "Needs work.", expectedVersion: submitted.version },
-        "req",
-      );
-      expect(headAttempt.ok).toBe(true);
+        const attempt = await reviewContentDecision(
+          actor,
+          submitted.contentRef,
+          { decision, reviewedVersion: submitted.currentVersion, comment: decision === "APPROVED" ? undefined : "Needs work.", expectedVersion: submitted.version },
+          "req",
+        );
+        expect(attempt.ok, `${role} should be allowed to record a ${decision} decision in-scope`).toBe(true);
+      }
     }
+  });
+
+  // The load-bearing proof that review_content remains a genuinely
+  // distinct, independently-gated action permission (not merely folded
+  // into generic Content access) now lives here, scope-based rather than
+  // role-based: Manager holds the action grant but is still denied on a
+  // Content record outside their own scope - the scope gate fires before
+  // any status/lifecycle check, so this is a true permission-boundary
+  // proof, not an artifact of the record's current status.
+  it("review_content is denied to Manager cross-scope even though the action grant itself is now held", async () => {
+    const manager = await actorFor("partnership_manager");
+
+    const attempt = await reviewContentDecision(
+      manager,
+      "community-story-reel-01",
+      { decision: "APPROVED", reviewedVersion: 1, expectedVersion: 1 },
+      "req",
+    );
+    expect(attempt.ok).toBe(false);
+    if (attempt.ok) throw new Error("unreachable");
+    expect(attempt.reason).toBe("scope_denied");
   });
 
   it("scoped list never returns an out-of-scope Content record", async () => {
