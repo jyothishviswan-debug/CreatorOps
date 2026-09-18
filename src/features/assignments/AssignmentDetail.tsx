@@ -148,7 +148,7 @@ export function AssignmentDetail({ initialAssignment }: { initialAssignment: Ass
       </PanelGrid>
 
       <div className="grid three">
-        <AssignmentContentPanel assignment={assignment} onContentPlanned={handleAssignmentUpdated} />
+        <AssignmentContentPanel assignment={assignment} />
         <AssignmentWorkflowPanel assignment={assignment} onSaved={handleAssignmentUpdated} />
         <Panel span={4}>
           <PanelHead title="Notes & meetings" description="Keep the conversation with the record" />

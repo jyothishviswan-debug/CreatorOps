@@ -21,9 +21,11 @@ function dateLabel(value: string): string {
   return value.length >= 10 ? value.slice(0, 10) : value;
 }
 
-// The one privacy-safe state for every invalid/expired/revoked/used/
-// non-accepting case - Step 10C section 14 explicitly forbids
-// distinguishing these publicly.
+// The one privacy-safe state for every invalid/expired/revoked/
+// non-accepting token case - Step 10C section 14 explicitly forbids
+// distinguishing these publicly. NOT used for UNDER_REVIEW/APPROVED (a
+// valid token whose thread is simply not currently editable) - those get
+// their own honest, non-generic copy below (Step 11A.1 section 10).
 function UnavailableCard() {
   return (
     <div className="panel publiccard">
@@ -40,12 +42,60 @@ function UnavailableCard() {
   );
 }
 
+// Locked, but NOT gone - the same token/page keeps working, it is just
+// not editable right now. Verbatim copy per the design: never call this
+// "expired" or "unavailable".
+function UnderReviewCard() {
+  return (
+    <div className="panel publiccard">
+      <div className="panelbody" style={{ textAlign: "center", padding: "40px 24px" }}>
+        <span className="tile" style={{ margin: "0 auto 14px" }}>
+          <Icon name="check" />
+        </span>
+        <h2>Links submitted for review</h2>
+        <p className="detailcopy" style={{ marginTop: 8 }}>
+          This page will become available again if changes are requested.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function ApprovedCard() {
+  return (
+    <div className="panel publiccard">
+      <div className="panelbody" style={{ textAlign: "center", padding: "40px 24px" }}>
+        <span className="tile" style={{ margin: "0 auto 14px" }}>
+          <Icon name="check" />
+        </span>
+        <h2>Links approved</h2>
+        <p className="detailcopy" style={{ marginTop: 8 }}>
+          This submission is closed.
+        </p>
+      </div>
+    </div>
+  );
+}
+
 export function PublicSubmissionPage({ token, initial }: { token: string; initial: PublicAssignmentSubmissionDto | null }) {
-  const [submitted, setSubmitted] = useState(false);
-  const [rows, setRows] = useState<Row[]>(() => [{ platform: initial?.allowedPlatforms[0] ?? "", url: "" }]);
+  // Step 11A.1: the page's own displayed state machine - starts from
+  // whatever the server resolved (threadStatus), and moves to
+  // "UNDER_REVIEW" locally right after a successful submit in this
+  // session (the SAME token/page stays valid and simply re-locks; there
+  // is no terminal "link no longer active" state anymore).
+  const [viewStatus, setViewStatus] = useState<PublicAssignmentSubmissionDto["threadStatus"] | null>(initial?.threadStatus ?? null);
+  const isResubmission = initial?.threadStatus === "REVISION_REQUESTED";
+  const [rows, setRows] = useState<Row[]>(() => {
+    if (initial && initial.threadStatus === "REVISION_REQUESTED" && initial.currentLinks.length > 0) {
+      return initial.currentLinks.map((link) => ({ platform: link.platform, url: link.url }));
+    }
+    return [{ platform: initial?.allowedPlatforms[0] ?? "", url: "" }];
+  });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
+
+  const showForm = Boolean(initial) && !unavailable && (viewStatus === "OPEN" || viewStatus === "REVISION_REQUESTED");
 
   return (
     <div className="publicwrap">
@@ -58,19 +108,11 @@ export function PublicSubmissionPage({ token, initial }: { token: string; initia
 
       {!initial || unavailable ? (
         <UnavailableCard />
-      ) : submitted ? (
-        <div className="panel publiccard">
-          <div className="panelbody" style={{ textAlign: "center", padding: "40px 24px" }}>
-            <span className="tile" style={{ margin: "0 auto 14px" }}>
-              <Icon name="check" />
-            </span>
-            <h2>Links submitted successfully</h2>
-            <p className="detailcopy" style={{ marginTop: 8 }}>
-              This submission link is no longer active.
-            </p>
-          </div>
-        </div>
-      ) : (
+      ) : viewStatus === "UNDER_REVIEW" ? (
+        <UnderReviewCard />
+      ) : viewStatus === "APPROVED" ? (
+        <ApprovedCard />
+      ) : showForm ? (
         <div className="publiccard">
           <div className="panel" style={{ marginBottom: 16 }}>
             <div className="panelbody">
@@ -135,6 +177,19 @@ export function PublicSubmissionPage({ token, initial }: { token: string; initia
               )}
             </div>
           </div>
+
+          {isResubmission && (
+            <div className="panel" style={{ marginBottom: 16 }}>
+              <div className="panelbody">
+                <h2>Changes requested</h2>
+                {initial.revisionNote && (
+                  <p className="detailcopy" style={{ marginTop: 8 }}>
+                    {initial.revisionNote}
+                  </p>
+                )}
+              </div>
+            </div>
+          )}
 
           <div className="panel">
             <div className="panelhead">
@@ -210,18 +265,25 @@ export function PublicSubmissionPage({ token, initial }: { token: string; initia
                       setError(result.error);
                       return;
                     }
-                    setSubmitted(true);
+                    // Step 11A.1: the SAME token/page stays valid - it
+                    // just re-locks. We already know the submit
+                    // succeeded and the thread deterministically became
+                    // UNDER_REVIEW, so we transition locally rather than
+                    // a network re-fetch.
+                    setViewStatus("UNDER_REVIEW");
                   }}
                 >
-                  {busy ? "Submitting…" : "Submit Links"}
+                  {busy ? "Submitting…" : isResubmission ? "Resubmit Links" : "Submit Links"}
                 </button>
               </div>
             </div>
           </div>
         </div>
+      ) : (
+        <UnavailableCard />
       )}
 
-      <p className="publicfoot">This is a secure, single-use CreatorOps submission link.</p>
+      <p className="publicfoot">This is a secure CreatorOps submission link. It stays active through the full review and revision process.</p>
     </div>
   );
 }

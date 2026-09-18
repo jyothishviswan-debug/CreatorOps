@@ -8,8 +8,8 @@ import { Pill } from "@/ui/Badge";
 import { EmptyState } from "@/ui/States";
 import { Icon } from "@/ui/icons";
 import type { ContentDto } from "@/server/content/client-dto";
-import { absoluteTime, contentDisplayTitle, dateLabel, platformLabel, STATUS_LABELS, statusTone } from "./format";
-import { NO_PREPOST_REVIEW_STEPS, REVIEW_REQUIRED_STEPS, reachedIndexNoPrepostReview, reachedIndexReviewRequired, stepStates } from "./workflow";
+import { absoluteTime, contentDisplayTitle, dateLabel, STATUS_LABELS, statusTone } from "./format";
+import { CONTENT_MAINLINE_STEPS, reachedIndex, stepStates } from "./workflow";
 import { ContentHistoryDialog } from "./ContentHistoryDialog";
 import { ContentNotesDialog } from "./ContentNotesDialog";
 import { ContentNextActionPanel } from "./ContentNextActionPanel";
@@ -33,12 +33,11 @@ export function ContentDetail({ initialContent, actorCanReview }: { initialConte
   }
 
   const displayTitle = contentDisplayTitle(content);
-  const isReviewRequired = content.reviewPolicy === "REVIEW_REQUIRED";
-  const steps = isReviewRequired ? REVIEW_REQUIRED_STEPS : NO_PREPOST_REVIEW_STEPS;
-  const reachedIndex = isReviewRequired ? reachedIndexReviewRequired(content) : reachedIndexNoPrepostReview(content);
-  const states = stepStates(reachedIndex, steps.length, content.status, steps);
+  const steps = CONTENT_MAINLINE_STEPS;
+  const currentReachedIndex = reachedIndex(content);
+  const states = stepStates(currentReachedIndex, steps.length, content.status, steps);
 
-  const showBranchBanner = content.status === "CHANGES_REQUIRED" || content.status === "REJECTED" || content.status === "CANCELLED";
+  const showBranchBanner = content.status === "REVISION_REQUESTED" || content.status === "CANCELLED";
 
   return (
     <>
@@ -107,16 +106,11 @@ export function ContentDetail({ initialContent, actorCanReview }: { initialConte
       </div>
 
       {showBranchBanner && (
-        <div className="banner" role={content.status === "REJECTED" ? "alert" : "status"} style={{ margin: "0 0 15px" }}>
-          {content.status === "CHANGES_REQUIRED" && (
+        <div className="banner" role="status" style={{ margin: "0 0 15px" }}>
+          {content.status === "REVISION_REQUESTED" && (
             <>
-              <p style={{ margin: "0 0 4px" }}>Revision needed before resubmission.</p>
-              <b>Changes required.</b> {content.statusReason ?? "No reason recorded."}
-            </>
-          )}
-          {content.status === "REJECTED" && (
-            <>
-              <b>Rejected.</b> {content.statusReason ?? "No reason recorded."}
+              <p style={{ margin: "0 0 4px" }}>The public submission page has reopened for correction.</p>
+              <b>Changes requested.</b> {content.statusReason ?? "No reason recorded."}
             </>
           )}
           {content.status === "CANCELLED" && (
@@ -132,16 +126,14 @@ export function ContentDetail({ initialContent, actorCanReview }: { initialConte
           <PanelHead title="Record context" description="Essential details stay visible" />
           <PanelBody>
             <p className="detailcopy">
-              {content.currentVersion > 0
-                ? `Production content has been saved (version ${content.currentVersion}). Full caption text isn't available in this view.`
-                : "No production content saved yet."}
+              {content.currentRevisionNumber > 0
+                ? `${content.currentLinks.length} link(s) submitted (revision ${content.currentRevisionNumber}).`
+                : "No links have been submitted yet - the public submission page is still open."}
             </p>
             <div style={{ marginTop: 14 }}>
               <div className="kv">
-                <span>Assignment</span>
-                <b>
-                  {platformLabel(content.platform)} · {content.dueAt ? `due ${dateLabel(content.dueAt)}` : "no due date"}
-                </b>
+                <span>Due date</span>
+                <b>{content.dueAt ? dateLabel(content.dueAt) : "No due date"}</b>
               </div>
               <div className="kv">
                 <span>Campaign</span>
@@ -150,13 +142,6 @@ export function ContentDetail({ initialContent, actorCanReview }: { initialConte
               <div className="kv">
                 <span>Partner</span>
                 <b>{content.partnerDisplayName ?? "Unknown Partner"}</b>
-              </div>
-              <div className="kv">
-                <span>Platform / account</span>
-                <b>
-                  {platformLabel(content.platform)}
-                  {content.partnerAccountLabel ? ` · ${content.partnerAccountLabel}` : ""}
-                </b>
               </div>
             </div>
           </PanelBody>

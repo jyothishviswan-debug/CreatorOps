@@ -74,17 +74,15 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "manage_assignment_external_submission", label: "Manage external submission links" },
     { id: "export", label: "Export" },
   ],
-  // Step 11A: extends the earlier UI-skeleton-era stub (create/submit_
-  // review/approve_publish/export only, never enforced by a real service)
-  // with Content's real granular actions, same stub->real extension shape
-  // Assignments' own list used.
+  // Step 11A.1: retires manage_content_production/submit_content_for_review/
+  // manage_content_publication/complete_content - the simplified
+  // post-link-review model has no staff-side production/submission/
+  // publication-evidence/complete steps left. `create` now gates the
+  // automatic resolveOrCreateContentThread get-or-create (there is no
+  // manual "Plan Content" action anymore).
   content: [
-    { id: "create", label: "Generate Content from Assignment" },
-    { id: "manage_content_production", label: "Manage production (start/save version)" },
-    { id: "submit_content_for_review", label: "Submit for review" },
-    { id: "review_content", label: "Review (approve/changes-required/reject)" },
-    { id: "manage_content_publication", label: "Manage publication evidence" },
-    { id: "complete_content", label: "Complete" },
+    { id: "create", label: "Create submission thread" },
+    { id: "review_content", label: "Review (approve/request revision)" },
     { id: "cancel_content", label: "Cancel" },
     { id: "export", label: "Export" },
   ],

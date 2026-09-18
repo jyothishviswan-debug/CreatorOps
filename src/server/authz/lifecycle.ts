@@ -5,50 +5,30 @@
 // LEAD_LIFECYCLE_TRANSITIONS and src/server/discovery/lifecycle-service.ts).
 export type LifecycleTransitionMap = Readonly<Record<string, readonly string[]>>;
 
-// Step 11A: the canonical Content lifecycle - TWO separate transition
-// graphs, one per review policy, replacing the earlier UI-skeleton-era
-// placeholder above (which used display-label keys matching only
-// src/features/content/fixtures, never a real accepted status enum or
-// service). Content's real status enum
-// (PLANNED/IN_PRODUCTION/SUBMITTED/CHANGES_REQUIRED/APPROVED/REJECTED/
-// POSTED/COMPLETED/CANCELLED) lives in src/server/content/types.ts.
+// Step 11A.1: the canonical Content lifecycle - ONE transition graph,
+// replacing Step 11A/11B's two separate review-policy-keyed graphs above
+// (the whole two-policy distinction is retired: review is now ALWAYS
+// required, unconditionally, for every thread). Content's real status
+// enum (OPEN/UNDER_REVIEW/REVISION_REQUESTED/APPROVED/CANCELLED) lives in
+// src/server/content/types.ts.
 //
-// REVIEW_REQUIRED: PLANNED -> IN_PRODUCTION -> SUBMITTED, then a review
-// decision (APPROVED/CHANGES_REQUIRED/REJECTED); CHANGES_REQUIRED loops
-// directly back to SUBMITTED (a resubmission with a newer version - see
-// content-lifecycle-service.ts - never a second, formal IN_PRODUCTION
-// status transition in between, since production/version-saving is
-// already legal while CHANGES_REQUIRED). POSTED is reachable only from
-// APPROVED (never precedes it). CANCELLED is reachable from every
-// pre-POSTED state including REJECTED (a reasoned close-out of a dead-end
-// record) but NOT from POSTED/COMPLETED, matching "cannot cancel after
-// canonical publication evidence exists" / "cannot cancel COMPLETED".
-export const CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
-  PLANNED: [],
-  IN_PRODUCTION: ["PLANNED"],
-  SUBMITTED: ["IN_PRODUCTION", "CHANGES_REQUIRED"],
-  CHANGES_REQUIRED: ["SUBMITTED"],
-  APPROVED: ["SUBMITTED"],
-  REJECTED: ["SUBMITTED"],
-  POSTED: ["APPROVED"],
-  COMPLETED: ["POSTED"],
-  CANCELLED: ["PLANNED", "IN_PRODUCTION", "SUBMITTED", "CHANGES_REQUIRED", "APPROVED", "REJECTED"],
-};
-
-// NO_PREPOST_REVIEW: PLANNED -> IN_PRODUCTION -> POSTED -> COMPLETED.
-// SUBMITTED/CHANGES_REQUIRED/APPROVED/REJECTED are deliberately absent
-// keys entirely (not merely empty arrays) - a target key absent from the
-// table is structurally unreachable (canTransitionLifecycle returns
-// false), which is exactly how this policy's "can never enter review
-// states" rule is enforced, with no separate runtime business-rule check
-// needed. CANCELLED excludes POSTED (publication evidence already
-// exists there) and COMPLETED, same rule as the REVIEW_REQUIRED graph.
-export const CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
-  PLANNED: [],
-  IN_PRODUCTION: ["PLANNED"],
-  POSTED: ["IN_PRODUCTION"],
-  COMPLETED: ["POSTED"],
-  CANCELLED: ["PLANNED", "IN_PRODUCTION"],
+// OPEN -> UNDER_REVIEW happens only via the public submit route (never
+// through this generic table's own caller - see
+// external-submission-service.ts's submitExternalLinks). UNDER_REVIEW's
+// two Manager decisions are REVISION_REQUESTED (reopens the SAME public
+// page/token for correction) or APPROVED (closes the thread - finality,
+// matching section 11's "approved = closed"). REVISION_REQUESTED loops
+// back to UNDER_REVIEW on resubmission (same public route). CANCELLED is
+// reachable from OPEN/UNDER_REVIEW/REVISION_REQUESTED but NOT from
+// APPROVED - there is no predecessor-of-anything entry for CANCELLED
+// itself, and APPROVED is deliberately absent from CANCELLED's own
+// allowed-predecessor list.
+export const CONTENT_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  OPEN: [],
+  UNDER_REVIEW: ["OPEN", "REVISION_REQUESTED"],
+  REVISION_REQUESTED: ["UNDER_REVIEW"],
+  APPROVED: ["UNDER_REVIEW"],
+  CANCELLED: ["OPEN", "UNDER_REVIEW", "REVISION_REQUESTED"],
 };
 
 // Step 6A: the canonical, frozen greenfield compact Discovery Lead

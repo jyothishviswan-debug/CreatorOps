@@ -1,5 +1,6 @@
 import { z } from "zod";
 
+import type { ContentStatus } from "@/server/content/types";
 import { assignmentPlatformsArraySchema, platformIdentifierSchema } from "./types";
 
 // Step 10A section 8-14: the secure, token-scoped external submission
@@ -12,7 +13,13 @@ export const SUBMISSION_RECIPIENT_TYPES = ["PARTNER", "VENDOR"] as const;
 export const submissionRecipientTypeSchema = z.enum(SUBMISSION_RECIPIENT_TYPES);
 export type SubmissionRecipientType = z.infer<typeof submissionRecipientTypeSchema>;
 
-export const SUBMISSION_SESSION_STATES = ["ACTIVE", "USED", "REVOKED"] as const;
+// Step 11A.1: "USED" is retired - the session itself is now REUSABLE
+// across the whole revision loop. It is the linked Content THREAD's own
+// status (see resolveExternalSubmission/submitExternalLinks) that governs
+// whether the public page is currently editable, never the session's own
+// state. A session only ever leaves ACTIVE by explicit staff revocation,
+// or by its own expiresAt passing.
+export const SUBMISSION_SESSION_STATES = ["ACTIVE", "REVOKED"] as const;
 export const submissionSessionStateSchema = z.enum(SUBMISSION_SESSION_STATES);
 export type SubmissionSessionState = z.infer<typeof submissionSessionStateSchema>;
 
@@ -42,6 +49,13 @@ export const assignmentSubmissionSessionDocSchema = z.object({
   // validation.
   recipientRef: z.string().min(1),
   state: submissionSessionStateSchema,
+  // Step 11A.1: links this session to its Assignment's one canonical
+  // Content thread - resolved/created via resolveOrCreateContentThread at
+  // session-creation time (a one-directional assignments -> content
+  // dependency, mirroring content's own existing content -> assignments
+  // dependency). The public resolve/submit routes load the thread via
+  // this ref, never via a second slot-claim lookup.
+  contentRef: z.string().min(1),
   createdAt: z.string().min(1),
   createdByUserRef: z.string().min(1),
   expiresAt: z.string().min(1),
@@ -57,7 +71,11 @@ export const assignmentSubmissionSessionDocSchema = z.object({
   // Assignment (see submitExternalLinks), never trusts this snapshot for
   // authorization.
   allowedPlatforms: assignmentPlatformsArraySchema,
-  consumedAt: z.string().min(1).nullable().default(null),
+  // Renamed from consumedAt (Step 11A.1) - display-only, updated on every
+  // successful submit/resubmit, never gates authorization (the session
+  // stays ACTIVE and reusable across the whole revision loop; only the
+  // linked Content thread's own status controls editability).
+  lastSubmittedAt: z.string().min(1).nullable().default(null),
   revokedAt: z.string().min(1).nullable().default(null),
   version: z.number().int().min(1),
 });
@@ -131,4 +149,15 @@ export type PublicAssignmentSubmissionDto = {
   allowedPlatforms: string[];
   resourceLinks: { label: string; url: string }[];
   reviewPolicyNote: string | null;
+  // Step 11A.1: drives the public page's own state machine (Section 10) -
+  // see src/features/assignments/public/PublicSubmissionPage.tsx. Only
+  // ever the thread's own status/statusReason/currentLinks, mapped down
+  // to a safe shape - never an internal field.
+  threadStatus: ContentStatus;
+  // The thread's statusReason, shown only when threadStatus ===
+  // "REVISION_REQUESTED".
+  revisionNote: string | null;
+  // The thread's currentLinks, mapped down to just {platform, url} -
+  // never normalizedUrl/recordedAt/anything internal.
+  currentLinks: { platform: string; url: string }[];
 };

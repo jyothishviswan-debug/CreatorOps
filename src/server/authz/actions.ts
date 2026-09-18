@@ -81,21 +81,17 @@ export const ACTIONS = [
   "transition_assignment_lifecycle",
   "cancel_assignment",
   "manage_assignment_external_submission",
-  // Step 11A: Content's own granular actions - the task doc's own
-  // explicit section-10 list of 6 separate permissions (manage
-  // production, submit for review, review, manage publication evidence,
-  // complete, cancel), deliberately with NO role ranking/minimumRole and
-  // review kept as its own distinct action (never folded into a generic
-  // "manage") so a role can hold ordinary manage/production/publication
-  // permissions without also being trusted to approve/reject. Replaces
-  // the earlier UI-skeleton-era "submit_review"/"approve_publish" stub,
-  // which predated the real Content service and was never enforced by
-  // one.
-  "manage_content_production",
-  "submit_content_for_review",
+  // Step 11A.1: Content's own granular actions, drastically simplified
+  // by the business-process correction retiring the two-policy
+  // production/pre-publication-review/publication/completion model.
+  // manage_content_production/submit_content_for_review/
+  // manage_content_publication/complete_content are retired entirely -
+  // submission only ever happens via the public page now, and approval
+  // IS closing (no separate Complete Content step anywhere). review_content
+  // remains its own distinct action (never folded into a generic
+  // "manage") so a role can hold Content create/cancel permissions
+  // without also being trusted to approve/request revision.
   "review_content",
-  "manage_content_publication",
-  "complete_content",
   "cancel_content",
   // Analytics
   "explore",

@@ -3,21 +3,21 @@
 import { useState } from "react";
 
 import { Panel, PanelBody, PanelHead } from "@/ui/Panel";
-import { CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS, CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS, canTransitionLifecycle } from "@/server/authz/lifecycle";
+import { CONTENT_LIFECYCLE_TRANSITIONS, canTransitionLifecycle } from "@/server/authz/lifecycle";
 import type { ContentDto } from "@/server/content/client-dto";
 import { cancelContent, type ContentReadinessIssue } from "./api-client";
 import { dateLabel } from "./format";
 
-// Step 11B: "Content workflow" panel - Due date / Review policy /
-// Fulfillment kv rows (never Priority, never a repeated Owner). The
-// legal-cancel check is derived DIRECTLY from the same lifecycle tables
-// the server itself enforces (CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS /
-// CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS's own CANCELLED
-// predecessor lists), via canTransitionLifecycle - never a second,
-// separately-hand-maintained status list that could drift from the real
-// backend rule. Mirrors AssignmentWorkflowPanel.tsx's exact inline
-// cancel-confirmation UI pattern (mandatory reason textarea, Back/Confirm,
-// not_ready blockers banner).
+// Step 11A.1: "Content workflow" panel - Due date / Fulfillment kv rows
+// only now (reviewPolicy is retired from Content's own state machine -
+// review is always required, unconditionally, for every thread; the
+// owning Campaign's/Assignment's own reviewPolicy field still exists for
+// other purposes but no longer drives anything shown here). The
+// legal-cancel check is derived DIRECTLY from the same single lifecycle
+// table the server itself enforces (CONTENT_LIFECYCLE_TRANSITIONS's own
+// CANCELLED predecessor list), via canTransitionLifecycle - never a
+// second, separately-hand-maintained status list that could drift from
+// the real backend rule.
 function fulfillmentLabel(content: ContentDto): string {
   if (!content.qualifyingFulfillment) return "Pending qualification";
   if (content.qualifyingFulfillment.kind === "QUALIFYING_REQUIRED") return "Qualifying required Content";
@@ -32,8 +32,7 @@ export function ContentWorkflowPanel({ content, onSaved }: { content: ContentDto
   const [error, setError] = useState<string | null>(null);
   const [blockers, setBlockers] = useState<ContentReadinessIssue[]>([]);
 
-  const table = content.reviewPolicy === "REVIEW_REQUIRED" ? CONTENT_REVIEW_REQUIRED_LIFECYCLE_TRANSITIONS : CONTENT_NO_PREPOST_REVIEW_LIFECYCLE_TRANSITIONS;
-  const canCancel = canTransitionLifecycle(content.status, "CANCELLED", table);
+  const canCancel = canTransitionLifecycle(content.status, "CANCELLED", CONTENT_LIFECYCLE_TRANSITIONS);
 
   function startCancel() {
     setCancelling(true);
@@ -65,10 +64,6 @@ export function ContentWorkflowPanel({ content, onSaved }: { content: ContentDto
         <div className="kv">
           <span>Due date</span>
           <b>{content.dueAt ? dateLabel(content.dueAt) : "—"}</b>
-        </div>
-        <div className="kv">
-          <span>Review policy</span>
-          <b>{content.reviewPolicy === "REVIEW_REQUIRED" ? "Review required" : "No pre/post review"}</b>
         </div>
         <div className="kv">
           <span>Fulfillment</span>

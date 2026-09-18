@@ -271,20 +271,21 @@ describe("Snapshot semantics", () => {
 });
 
 describe("Lifecycle", () => {
-  // Step 11A: replaces the earlier "always fails closed" stub coverage -
+  // Step 11A.1: replaces the earlier "always fails closed" stub coverage -
   // IN_PROGRESS -> COMPLETED now uses the real, shared fulfillment
   // evaluator (see @/server/content/fulfillment-service and
   // assignment-lifecycle-service.ts's own updated comment). Blocked
-  // before any qualifying required Content exists, succeeds once a real
-  // Content record completes with qualifyingFulfillment.kind ===
-  // "QUALIFYING_REQUIRED" - driven live through Content's own real
-  // service calls (generateContentFromAssignment -> ... ->
-  // completeContent), never a direct write to the Content collection.
-  // The exhaustive proof (partial fulfillment, asExtra never counting,
-  // auto-completion vs the manual path, concurrency) lives in
-  // src/server/content/content.emulator.test.ts - this is the boundary
-  // case, kept here to keep this file focused on Assignment itself.
-  it("DRAFT -> ASSIGNED -> ACCEPTED -> IN_PROGRESS succeeds; IN_PROGRESS -> COMPLETED is blocked until a qualifying required Content completes, then succeeds", async () => {
+  // before the Assignment's one canonical Content thread has been
+  // approved, succeeds once it is - driven live through the REAL public
+  // submission flow (createExternalSubmissionSession ->
+  // submitExternalLinks -> approveContentThread), never a direct write
+  // to the Content collection. The exhaustive proof (the full revision
+  // loop, concurrency, stale decisions, etc) lives in
+  // src/server/content/content.emulator.test.ts and
+  // src/server/assignments/external-submission.emulator.test.ts - this
+  // is the boundary case, kept here to keep this file focused on
+  // Assignment itself.
+  it("DRAFT -> ASSIGNED -> ACCEPTED -> IN_PROGRESS succeeds; IN_PROGRESS -> COMPLETED is blocked until the one canonical Content thread is approved, then succeeds", async () => {
     const head = await actorFor("partnership_head");
     const assignment = await createRealAssignment(head, { brief: { platforms: ["instagram"], requiredCount: 1 } });
     let version = assignment.version;
@@ -308,28 +309,33 @@ describe("Lifecycle", () => {
     expect(blocked.ok).toBe(false);
     if (blocked.ok) throw new Error("unreachable");
     expect(blocked.code).toBe("not_ready");
-    expect(blocked.blockers?.[0]?.code).toBe("CONTENT_NOT_FULFILLED");
+    // No submission session has been created for this Assignment yet -
+    // no Content thread exists at all, so the evaluator reports
+    // NO_SUBMISSION_THREAD (never the CONTENT_NOT_FULFILLED code, which
+    // is reserved for an existing-but-not-yet-approved thread).
+    expect(blocked.blockers?.[0]?.code).toBe("NO_SUBMISSION_THREAD");
 
-    const { generateContentFromAssignment, startContentProduction, saveContentVersion } = await import("@/server/content/content-service");
-    const { submitContentForReview, reviewContentDecision, addPublicationEvidence, completeContent } = await import("@/server/content/content-lifecycle-service");
+    const { createExternalSubmissionSession, submitExternalLinks } = await import("./external-submission-service");
+    const { approveContentThread } = await import("@/server/content/content-lifecycle-service");
+    const { listContent } = await import("@/server/content/content-service");
 
-    const created = await generateContentFromAssignment(head, { assignmentRef: assignment.assignmentRef, platform: "instagram", contentType: "reel" }, "req-content-create");
-    if (!created.ok) throw new Error(`unreachable: ${created.message}`);
-    const started = await startContentProduction(head, created.data.contentRef, { expectedVersion: created.data.version }, "req-start");
-    if (!started.ok) throw new Error("unreachable");
-    const versioned = await saveContentVersion(head, created.data.contentRef, { captionText: "Draft.", expectedVersion: started.data.version }, "req-version");
-    if (!versioned.ok) throw new Error("unreachable");
-    const submitted = await submitContentForReview(head, created.data.contentRef, { expectedVersion: versioned.data.version }, "req-submit");
-    if (!submitted.ok) throw new Error("unreachable");
-    const reviewed = await reviewContentDecision(head, created.data.contentRef, { decision: "APPROVED", reviewedVersion: submitted.data.currentVersion, expectedVersion: submitted.data.version }, "req-review");
-    if (!reviewed.ok) throw new Error("unreachable");
-    const posted = await addPublicationEvidence(head, created.data.contentRef, { platform: "instagram", url: `https://instagram.com/p/seed-fulfillment-${Date.now()}`, expectedVersion: reviewed.data.version }, "req-evidence");
-    if (!posted.ok) throw new Error("unreachable");
-    const completed = await completeContent(head, created.data.contentRef, { expectedVersion: posted.data.version }, "req-complete");
-    if (!completed.ok) throw new Error("unreachable");
+    const session = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req-session");
+    if (!session.ok) throw new Error(`unreachable: ${session.message}`);
+
+    const submitted = await submitExternalLinks(session.data.rawToken, [{ platform: "instagram", url: `https://instagram.com/p/seed-fulfillment-${Date.now()}` }]);
+    if (!submitted.ok) throw new Error(`unreachable: ${submitted.message}`);
+
+    const threadList = await listContent(head, { assignmentRef: assignment.assignmentRef, limit: 1 });
+    if (!threadList.ok) throw new Error("unreachable");
+    const thread = threadList.data.content[0];
+    if (!thread) throw new Error("unreachable: no thread found");
+    expect(thread.status).toBe("UNDER_REVIEW");
+
+    const completed = await approveContentThread(head, thread.contentRef, { reviewedRevisionNumber: thread.reviewedRevisionNumber!, expectedVersion: thread.version }, "req-approve");
+    if (!completed.ok) throw new Error(`unreachable: ${completed.message}`);
     expect(completed.data.qualifyingFulfillment?.kind).toBe("QUALIFYING_REQUIRED");
 
-    // completeContent's own transaction already auto-completed the
+    // approveContentThread's own transaction already auto-completed the
     // Assignment (it was IN_PROGRESS at that moment) - confirm that
     // directly, then confirm a manual re-request is correctly treated
     // as idempotent-terminal (already COMPLETED, no further transition).

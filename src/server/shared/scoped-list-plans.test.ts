@@ -354,15 +354,14 @@ describe("planAssignmentListQuery - production-valid by construction and specifi
   });
 });
 
-// Step 11A: Content has no competing array-type business filter at all
-// (every requested filter - status/assignmentRef/campaignRef/partnerRef/
-// platform/reviewPolicy - is a plain equality filter, pushed directly
-// into every branch including region/team), so this is deliberately the
-// simplest of the planner test blocks - no postFilter-demotion scenario
-// exists to prove, unlike Assignment's own `platform` (array-contains
-// against brief.platforms).
+// Step 11A.1: Content has no competing array-type business filter at all
+// (every requested filter - status/assignmentRef/campaignRef/partnerRef -
+// is a plain equality filter, pushed directly into every branch including
+// region/team), so this is deliberately the simplest of the planner test
+// blocks - no postFilter-demotion scenario exists to prove, unlike
+// Assignment's own `platform` (array-contains against brief.platforms).
 describe("planContentListQuery - production-valid by construction and specific shapes", () => {
-  const scenarios: Array<{ label: string; grants: ScopeGrant[]; hasGlobal: boolean; status?: string; platform?: string }> = [
+  const scenarios: Array<{ label: string; grants: ScopeGrant[]; hasGlobal: boolean; status?: string }> = [
     { label: "no grants", grants: [], hasGlobal: false },
     { label: "GLOBAL", grants: [], hasGlobal: true },
     { label: "SELF only", grants: [self()], hasGlobal: false },
@@ -370,13 +369,13 @@ describe("planContentListQuery - production-valid by construction and specific s
     { label: "TEAM only", grants: [team("t1")], hasGlobal: false },
     { label: "EXPLICIT_RECORD only", grants: [explicit("content", "x1")], hasGlobal: false },
     { label: "SELF+REGION+TEAM+EXPLICIT", grants: [self(), region("Kerala"), team("t1"), explicit("content", "x1")], hasGlobal: false },
-    { label: "SELF+REGION+TEAM+EXPLICIT, status+platform filters", grants: [self(), region("Kerala"), team("t1"), explicit("content", "x1")], hasGlobal: false, status: "POSTED", platform: "youtube" },
-    { label: "GLOBAL, status+platform filters", grants: [], hasGlobal: true, status: "POSTED", platform: "youtube" },
+    { label: "SELF+REGION+TEAM+EXPLICIT, status filter", grants: [self(), region("Kerala"), team("t1"), explicit("content", "x1")], hasGlobal: false, status: "UNDER_REVIEW" },
+    { label: "GLOBAL, status filter", grants: [], hasGlobal: true, status: "UNDER_REVIEW" },
   ];
 
   for (const scenario of scenarios) {
     it(`"${scenario.label}" never produces a production-invalid branch`, () => {
-      const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: scenario.grants, hasGlobal: scenario.hasGlobal, status: scenario.status, platform: scenario.platform });
+      const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: scenario.grants, hasGlobal: scenario.hasGlobal, status: scenario.status });
       expect(() => assertProductionValidPlan(plan)).not.toThrow();
       for (const branch of firestoreBranches(plan)) {
         // A region/team branch's OWN scope-exclusion filter is itself one
@@ -409,11 +408,10 @@ describe("planContentListQuery - production-valid by construction and specific s
     expect(branchNames(plan).sort()).toEqual(["region", "self", "team"]);
   });
 
-  it("every requested business filter (status/platform/reviewPolicy) is always pushed directly, never demoted to a postFilter - no competing array filter exists to force that", () => {
-    const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: [region("Kerala")], hasGlobal: false, status: "POSTED", platform: "youtube" });
+  it("every requested business filter (status) is always pushed directly, never demoted to a postFilter - no competing array filter exists to force that", () => {
+    const { plan } = planContentListQuery({ actorUid: ACTOR_UID, grants: [region("Kerala")], hasGlobal: false, status: "UNDER_REVIEW" });
     const regionBranch = plan.branches.find((b) => b.name === "region") as FirestoreListBranchPlan;
-    expect(regionBranch.pushedFilters.some((f) => f.field === "status" && f.op === "==" && f.value === "POSTED")).toBe(true);
-    expect(regionBranch.pushedFilters.some((f) => f.field === "platform" && f.op === "==" && f.value === "youtube")).toBe(true);
+    expect(regionBranch.pushedFilters.some((f) => f.field === "status" && f.op === "==" && f.value === "UNDER_REVIEW")).toBe(true);
     expect(regionBranch.postFilters).toHaveLength(0);
   });
 

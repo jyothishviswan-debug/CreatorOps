@@ -1,12 +1,19 @@
-// Thin client-side fetch wrappers around the Step 11A trusted Content API
-// routes - the ONLY way any Content screen mutates or reads data. Every
-// call here hits a real `/api/content/*` route, which independently
+// Thin client-side fetch wrappers around the Step 11A.1 trusted Content
+// API routes - the ONLY way any Content screen mutates or reads data.
+// Every call here hits a real `/api/content/*` route, which independently
 // re-verifies the actor server-side. Mirrors
 // src/features/assignments/api-client.ts's pattern/ApiResult shape
 // exactly.
+//
+// Step 11A.1: generateContentFromAssignment/startContentProduction/
+// saveContentVersion/submitContentForReview/addPublicationEvidence/
+// completeContent are all retired - there is no manual create, no
+// production/version/submit/publication-evidence/complete step anywhere
+// in this UI. approveContentThread/requestContentRevision replace the
+// old single reviewContentDecision wrapper.
 import type { ContentDto } from "@/server/content/client-dto";
-import type { ContentHistoryEventDto, GenerateContentFromAssignmentInput, ListContentHistoryInput, ListContentInput, StartContentProductionInput, SaveContentVersionInput } from "@/server/content/content-service";
-import type { AddPublicationEvidenceInput, CancelContentInput, CompleteContentInput, ReviewContentDecisionInput, SubmitContentForReviewInput } from "@/server/content/content-lifecycle-service";
+import type { ContentHistoryEventDto, ListContentHistoryInput, ListContentInput } from "@/server/content/content-service";
+import type { ApproveContentThreadInput, CancelContentInput, RequestContentRevisionInput } from "@/server/content/content-lifecycle-service";
 import type { ContentListCursor } from "@/server/content/firestore";
 import type { ContentEventListCursor } from "@/server/content/content-events";
 
@@ -39,16 +46,6 @@ async function call<T>(input: string, init?: RequestInit): Promise<ContentApiRes
     // No JSON body - keep the generic message.
   }
 
-  // Both stale-write and publication-identity-conflict errors are plain
-  // 409s with no `blockers` array (only not_ready carries one) - the
-  // server's own toContentHttpResponse doesn't send a separate
-  // discriminator field for the two, so this mirrors Assignments'
-  // api-client.ts's own identical simplification exactly: a 409 with
-  // blockers is "not_ready", any other 409 is labeled "stale_write" here,
-  // but callers that need the real distinction (e.g. the Publication
-  // dialog's collision case) read `error` itself - the server's own
-  // message text ("This URL ... is already claimed by another Content
-  // record.") already carries that meaning verbatim.
   const code: ContentApiErrorCode =
     res.status === 401 || res.status === 403
       ? "unauthorized"
@@ -87,8 +84,6 @@ export function listContent(input: ListContentInput = {}): Promise<ContentApiRes
     assignmentRef: input.assignmentRef,
     campaignRef: input.campaignRef,
     partnerRef: input.partnerRef,
-    platform: input.platform,
-    reviewPolicy: input.reviewPolicy,
     assignedToMe: input.assignedToMe ? "true" : undefined,
   });
   return call(`/api/content${qs}`);
@@ -98,36 +93,14 @@ export function getContent(contentRef: string): Promise<ContentApiResult<Content
   return call(`/api/content/${encodeURIComponent(contentRef)}`);
 }
 
-// ---- Generation (Assignment -> Content) ----
+// ---- Review decisions (the only two real Manager actions) ----
 
-export function generateContentFromAssignment(input: GenerateContentFromAssignmentInput): Promise<ContentApiResult<ContentDto>> {
-  return call(`/api/content`, { method: "POST", body: JSON.stringify(input) });
+export function approveContentThread(contentRef: string, input: ApproveContentThreadInput): Promise<ContentApiResult<ContentDto>> {
+  return call(`/api/content/${encodeURIComponent(contentRef)}/review`, { method: "POST", body: JSON.stringify({ decision: "APPROVED", ...input }) });
 }
 
-// ---- Lifecycle / production / review / publication ----
-
-export function startContentProduction(contentRef: string, input: StartContentProductionInput): Promise<ContentApiResult<ContentDto>> {
-  return call(`/api/content/${encodeURIComponent(contentRef)}/production`, { method: "POST", body: JSON.stringify(input) });
-}
-
-export function saveContentVersion(contentRef: string, input: SaveContentVersionInput): Promise<ContentApiResult<ContentDto>> {
-  return call(`/api/content/${encodeURIComponent(contentRef)}/versions`, { method: "POST", body: JSON.stringify(input) });
-}
-
-export function submitContentForReview(contentRef: string, input: SubmitContentForReviewInput): Promise<ContentApiResult<ContentDto>> {
-  return call(`/api/content/${encodeURIComponent(contentRef)}/submit`, { method: "POST", body: JSON.stringify(input) });
-}
-
-export function reviewContentDecision(contentRef: string, input: ReviewContentDecisionInput): Promise<ContentApiResult<ContentDto>> {
-  return call(`/api/content/${encodeURIComponent(contentRef)}/review`, { method: "POST", body: JSON.stringify(input) });
-}
-
-export function addPublicationEvidence(contentRef: string, input: AddPublicationEvidenceInput): Promise<ContentApiResult<ContentDto>> {
-  return call(`/api/content/${encodeURIComponent(contentRef)}/publication-evidence`, { method: "POST", body: JSON.stringify(input) });
-}
-
-export function completeContent(contentRef: string, input: CompleteContentInput): Promise<ContentApiResult<ContentDto>> {
-  return call(`/api/content/${encodeURIComponent(contentRef)}/complete`, { method: "POST", body: JSON.stringify(input) });
+export function requestContentRevision(contentRef: string, input: RequestContentRevisionInput): Promise<ContentApiResult<ContentDto>> {
+  return call(`/api/content/${encodeURIComponent(contentRef)}/review`, { method: "POST", body: JSON.stringify({ decision: "REVISION_REQUESTED", ...input }) });
 }
 
 export function cancelContent(contentRef: string, input: CancelContentInput): Promise<ContentApiResult<ContentDto>> {

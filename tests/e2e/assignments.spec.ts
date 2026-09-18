@@ -79,15 +79,44 @@ async function createVendorlessPartnerRefViaApi(page: Page): Promise<string> {
   return body.partnerRef;
 }
 
-// Creates a real, single-use PARTNER submission session via the already-
-// accepted trusted API and returns its raw bearer token - the same
-// primitive the WhatsApp share dialog itself calls, used here to drive
-// the public /submit/[token] page tests directly without the UI.
+// Creates a real, REUSABLE PARTNER submission session (Step 11A.1: the
+// SAME token stays valid across the whole revision loop, never single-
+// use) via the already-accepted trusted API and returns its raw bearer
+// token - the same primitive the WhatsApp share dialog itself calls,
+// used here to drive the public /submit/[token] page tests directly
+// without the UI.
 async function createSubmissionTokenViaApi(page: Page, assignmentRef: string): Promise<string> {
   const response = await page.request.post(`/api/assignments/${assignmentRef}/submission-sessions`, { data: { recipientType: "PARTNER" } });
   expect(response.ok()).toBeTruthy();
   const body = (await response.json()) as { rawToken: string };
   return body.rawToken;
+}
+
+type ContentThreadApi = { contentRef: string; version: number; status: string; reviewedRevisionNumber: number | null };
+
+// The Assignment's one canonical Content thread, via the same trusted
+// bounded API the real Detail page uses.
+async function getThreadViaApi(page: Page, assignmentRef: string): Promise<ContentThreadApi> {
+  const response = await page.request.get(`/api/content?assignmentRef=${encodeURIComponent(assignmentRef)}&limit=1`);
+  expect(response.ok()).toBeTruthy();
+  const body = (await response.json()) as { content: ContentThreadApi[] };
+  const thread = body.content[0];
+  if (!thread) throw new Error(`no Content thread found for ${assignmentRef}`);
+  return thread;
+}
+
+async function approveThreadViaApi(page: Page, thread: ContentThreadApi): Promise<void> {
+  const response = await page.request.post(`/api/content/${thread.contentRef}/review`, {
+    data: { decision: "APPROVED", reviewedRevisionNumber: thread.reviewedRevisionNumber, expectedVersion: thread.version },
+  });
+  expect(response.ok()).toBeTruthy();
+}
+
+async function requestRevisionViaApi(page: Page, thread: ContentThreadApi, reason: string): Promise<void> {
+  const response = await page.request.post(`/api/content/${thread.contentRef}/review`, {
+    data: { decision: "REVISION_REQUESTED", reason, reviewedRevisionNumber: thread.reviewedRevisionNumber, expectedVersion: thread.version },
+  });
+  expect(response.ok()).toBeTruthy();
 }
 
 // ---- Authorization ----
@@ -267,11 +296,17 @@ test.describe("Detail", () => {
     await expect(page.getByText("Renamed After Issuance")).toHaveCount(0);
   });
 
-  test("Content section shows a neutral not-built state, never fake progress", async ({ page }) => {
+  test("Content section shows a truthful 'no submission thread yet' state for a DRAFT Assignment, with no manual create control", async ({ page }) => {
+    // Step 11A.1: a Content thread is created automatically, the first
+    // time a public submission session is created - DRAFT can never have
+    // one (session creation is blocked while DRAFT), so this Assignment
+    // truthfully shows "no thread yet", never fake data and never a
+    // manual "Plan Content" control (retired entirely).
     await page.goto("/assignments/seed-assignment-draft");
     const contentPanel = page.locator(".grid.three > .panel").filter({ hasText: "Content" }).first();
-    await expect(contentPanel.getByText("Not yet built")).toBeVisible();
-    await expect(contentPanel.getByText("No real trusted source is wired to this Assignment yet.")).toBeVisible();
+    await expect(contentPanel.getByText("No submission thread yet")).toBeVisible();
+    await expect(contentPanel.getByText("Not yet built")).toHaveCount(0);
+    await expect(contentPanel.getByRole("button", { name: "Plan Content" })).toHaveCount(0);
   });
 
   test("no sharing/WhatsApp/public-link controls are rendered anywhere", async ({ page }) => {
@@ -320,9 +355,13 @@ test.describe("Lifecycle", () => {
     await page.getByRole("button", { name: "Start Work" }).click();
     await expect(page.locator(".detailcontext").getByText("In Progress")).toBeVisible();
 
-    // Now IN_PROGRESS - no actionable Complete button anywhere, only the
-    // neutral pending-Content text.
-    await expect(page.getByText("Completion pending Content - not available yet")).toBeVisible();
+    // Now IN_PROGRESS - Step 11A.1: this fresh Assignment has no
+    // submission thread yet (nothing was shared via WhatsApp), so the
+    // real, truthful status is "no submission thread yet" and there is
+    // still no actionable Complete button anywhere.
+    const nextActionPanel = page.locator(".panel").filter({ hasText: "Next action" });
+    await expect(nextActionPanel.getByText("Content fulfillment in progress")).toBeVisible();
+    await expect(nextActionPanel.getByText("No submission thread yet")).toBeVisible();
     await expect(page.getByRole("button", { name: /^Mark Completed$/ })).toHaveCount(0);
     await expect(page.getByRole("button", { name: /^Complete/ })).toHaveCount(0);
   });
@@ -341,29 +380,38 @@ test.describe("Lifecycle", () => {
     await expect(page.getByText("No longer needed for this test.")).toBeVisible();
   });
 
-  test("cancellation blocked by existing external-submission evidence shows the real business-safe message", async ({ page }) => {
-    // seed-assignment-assigned is the one seed fixture with a real, USED
-    // external submission session and its own immutable submission batch
-    // (see seed-assignments-data.ts's "seed-session-used"/"seed-submission-1") -
-    // reachable only via Super Admin's GLOBAL scope (this file's default
-    // authenticated identity).
-    await page.goto("/assignments/seed-assignment-assigned");
+  test("cancellation blocked once the Assignment's Content thread has at least one submitted revision", async ({ page }) => {
+    // Step 11A.1: seed-assignment-accepted's own thread
+    // (seed-content-under-review) has a real, submitted revision - the
+    // irreversible-evidence blocker is now driven entirely by the
+    // Content thread's own status (see assignment-lifecycle-service.ts's
+    // updated comment), not the retired assignmentExternalSubmissions
+    // collection.
+    await page.goto("/assignments/seed-assignment-accepted");
     await page.getByRole("button", { name: "Cancel assignment" }).click();
     await page.getByLabel(/Reason for cancelling/).fill("Trying anyway.");
     await page.getByRole("button", { name: "Confirm cancellation" }).click();
     // The blockers banner (not the generic error string) is what renders
-    // here, matching Campaign's own not_ready precedent exactly - the
-    // blocker's own message is the real backend text from
-    // assignment-lifecycle-service.ts's EXTERNAL_EVIDENCE_EXISTS blocker.
+    // here, matching Campaign's own not_ready precedent exactly.
     await expect(page.getByText("Not ready.")).toBeVisible();
-    await expect(page.getByText(/At least one external submission batch already exists for this Assignment/)).toBeVisible();
+    await expect(page.getByText(/already has canonical publication evidence/)).toBeVisible();
     // Status must NOT have changed - the block is real, not cosmetic.
-    await expect(page.locator(".detailcontext").getByText("Assigned", { exact: true })).toBeVisible();
+    await expect(page.locator(".detailcontext").getByText("Accepted", { exact: true })).toBeVisible();
   });
 
-  test("completion stays unavailable/not-ready until Content exists - never a fake success path", async ({ page }) => {
+  test("completion stays not-ready until the Assignment's own thread is Approved - never a fake success path", async ({ page }) => {
+    // seed-assignment-in-progress's own thread (seed-content-revision-
+    // requested) is REVISION_REQUESTED, not APPROVED - the Assignment
+    // must stay unfulfilled with no Complete button. Both the Next Action
+    // panel and the Content panel render the same single-thread status
+    // independently (one shared hook, two consumers - see
+    // useAssignmentContentFulfillment.ts), so the assertion is scoped to
+    // the Next Action panel specifically to avoid a strict-mode ambiguity
+    // across the two matching elements.
     await page.goto("/assignments/seed-assignment-in-progress");
-    await expect(page.getByText("Completion pending Content - not available yet")).toBeVisible();
+    const nextActionPanel = page.locator(".panel").filter({ hasText: "Next action" });
+    await expect(nextActionPanel.getByText("Content fulfillment in progress")).toBeVisible();
+    await expect(nextActionPanel.getByText(/Submission thread is revision requested/i)).toBeVisible();
     await expect(page.getByRole("button", { name: /Complete/ })).toHaveCount(0);
   });
 
@@ -633,7 +681,7 @@ test.describe("Public submission page", () => {
     await expect(page.getByRole("button", { name: "Remove row" }).first()).toBeVisible();
   });
 
-  test("a valid multi-link submission succeeds, consumes the token, and a refresh shows the generic unavailable state", async ({ page }) => {
+  test("Step 11A.1: a valid multi-link submission succeeds and locks the page - the SAME token stays valid, never a terminal 'no longer active' state", async ({ page }) => {
     const assignment = await createAssignedAssignmentViaApi(page);
     const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
 
@@ -647,15 +695,18 @@ test.describe("Public submission page", () => {
     await page.getByLabel("Published URL").nth(1).fill("https://instagram.com/p/e2e-2");
 
     await page.getByRole("button", { name: "Submit Links" }).click();
-    await expect(page.getByText("Links submitted successfully")).toBeVisible();
-    await expect(page.getByText("This submission link is no longer active.")).toBeVisible();
+    await expect(page.getByText("Links submitted for review")).toBeVisible();
+    await expect(page.getByText("This page will become available again if changes are requested.")).toBeVisible();
 
+    // The SAME token still resolves after a refresh, showing the exact
+    // same locked (not generic-unavailable) state - the page reopens
+    // automatically once a revision is requested, never a dead link.
     await page.reload();
-    await expect(page.getByText("This submission link is no longer available.")).toBeVisible();
-    await expect(page.getByText("Please contact the CreatorOps team if you need a new link.")).toBeVisible();
+    await expect(page.getByText("Links submitted for review")).toBeVisible();
+    await expect(page.getByText("This submission link is no longer available.")).toHaveCount(0);
   });
 
-  test("duplicate platform+URL rows are rejected without consuming the token", async ({ page }) => {
+  test("duplicate platform+URL rows are rejected without locking the page", async ({ page }) => {
     const assignment = await createAssignedAssignmentViaApi(page);
     const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
 
@@ -669,18 +720,86 @@ test.describe("Public submission page", () => {
 
     await page.getByRole("button", { name: "Submit Links" }).click();
     await expect(page.getByRole("alert")).toBeVisible();
-    await expect(page.getByText("Links submitted successfully")).toHaveCount(0);
+    await expect(page.getByText("Links submitted for review")).toHaveCount(0);
 
-    // The token is still usable after a validation error.
+    // The token/page is still usable and editable after a validation error.
     await page.getByLabel("Published URL").nth(1).fill("https://instagram.com/p/not-a-dup");
     await page.getByRole("button", { name: "Submit Links" }).click();
-    await expect(page.getByText("Links submitted successfully")).toBeVisible();
+    await expect(page.getByText("Links submitted for review")).toBeVisible();
   });
 
   test("an invalid/unknown token shows the same generic unavailable state", async ({ page }) => {
     await page.context().clearCookies();
     await page.goto("/submit/not-a-real-token-at-all");
     await expect(page.getByText("This submission link is no longer available.")).toBeVisible();
+  });
+
+  test("Step 11A.1: Manager requests revision reopens the SAME public page, prefilled with the latest links, and shows the real reason - no new token is ever minted", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
+
+    await page.context().clearCookies();
+    await page.goto(`/submit/${token}`);
+    await page.getByLabel("Platform").first().selectOption("instagram");
+    await page.getByLabel("Published URL").first().fill("https://instagram.com/p/needs-changes");
+    await page.getByRole("button", { name: "Submit Links" }).click();
+    await expect(page.getByText("Links submitted for review")).toBeVisible();
+
+    // The public page's own browser context is now deliberately
+    // anonymous (cookies cleared above) - the Manager's review decision
+    // is a separate, authenticated staff action, so it runs in its own
+    // fresh browser context rather than disturbing the anonymous page's
+    // own session/navigation.
+    const adminContext = await page.context().browser()!.newContext();
+    const adminPage = await adminContext.newPage();
+    await signInAs(adminPage, "admin");
+    const thread = await getThreadViaApi(adminPage, assignment.assignmentRef);
+    expect(thread.status).toBe("UNDER_REVIEW");
+    await requestRevisionViaApi(adminPage, thread, "Please retake the shot in better lighting.");
+    await adminContext.close();
+
+    // The SAME URL/token reopens, prefilled with the previously submitted
+    // link, showing the real revision reason above the form.
+    await page.reload();
+    await expect(page.getByText("Changes requested")).toBeVisible();
+    await expect(page.getByText("Please retake the shot in better lighting.")).toBeVisible();
+    await expect(page.getByLabel("Published URL").first()).toHaveValue("https://instagram.com/p/needs-changes");
+    await expect(page.getByRole("button", { name: "Resubmit Links" })).toBeVisible();
+
+    await page.getByLabel("Published URL").first().fill("https://instagram.com/p/corrected");
+    await page.getByRole("button", { name: "Resubmit Links" }).click();
+    await expect(page.getByText("Links submitted for review")).toBeVisible();
+
+    const adminContext2 = await page.context().browser()!.newContext();
+    const adminPage2 = await adminContext2.newPage();
+    await signInAs(adminPage2, "admin");
+    const resubmittedThread = await getThreadViaApi(adminPage2, assignment.assignmentRef);
+    expect(resubmittedThread.status).toBe("UNDER_REVIEW");
+    await adminContext2.close();
+  });
+
+  test("Step 11A.1: once Approved, the page shows the closed state and is never editable again", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
+
+    await page.context().clearCookies();
+    await page.goto(`/submit/${token}`);
+    await page.getByLabel("Platform").first().selectOption("instagram");
+    await page.getByLabel("Published URL").first().fill("https://instagram.com/p/final-approval");
+    await page.getByRole("button", { name: "Submit Links" }).click();
+    await expect(page.getByText("Links submitted for review")).toBeVisible();
+
+    const adminContext = await page.context().browser()!.newContext();
+    const adminPage = await adminContext.newPage();
+    await signInAs(adminPage, "admin");
+    const thread = await getThreadViaApi(adminPage, assignment.assignmentRef);
+    await approveThreadViaApi(adminPage, thread);
+    await adminContext.close();
+
+    await page.reload();
+    await expect(page.getByText("Links approved")).toBeVisible();
+    await expect(page.getByText("This submission is closed.")).toBeVisible();
+    await expect(page.getByLabel("Published URL")).toHaveCount(0);
   });
 });
 

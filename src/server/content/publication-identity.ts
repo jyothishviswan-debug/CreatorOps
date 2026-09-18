@@ -6,7 +6,7 @@
 // params - that would be inventing unapproved normalization behavior).
 // An unparseable value normalizes to its own trimmed, lowercased string
 // as a safe fallback - never thrown, since this must never block a
-// staff-facing write with an unhandled exception.
+// public submission with an unhandled exception.
 export function normalizeContentUrl(rawUrl: string): string {
   try {
     const url = new URL(rawUrl);
@@ -21,16 +21,15 @@ export function normalizeContentUrl(rawUrl: string): string {
   }
 }
 
-// The identity keys claimed transactionally by content-lifecycle-
-// service.ts's addPublicationEvidence - namespaced per platform so the
-// same normalized URL/id under a different platform is never treated as
-// the same identity. platformContentId is NEVER inferred from a URL
-// (Step 11A's own explicit rule) - only ever used here when staff
-// supplied it directly.
+// The identity key claimed transactionally by the public submit flow
+// (see external-submission-service.ts's submitExternalLinks) -
+// namespaced per platform so the same normalized URL under a different
+// platform is never treated as the same identity.
+//
+// Step 11A.1: publicationContentIdIdentityKey is retired - platformContentId
+// no longer legitimately exists anywhere on the collected data shape (the
+// public form never collects it), so a platform-content-id identity claim
+// is dead code and has been removed rather than left unused.
 export function publicationUrlIdentityKey(platform: string, normalizedUrl: string): string {
   return `url:${platform}:${normalizedUrl}`;
-}
-
-export function publicationContentIdIdentityKey(platform: string, platformContentId: string): string {
-  return `pcid:${platform}:${platformContentId}`;
 }

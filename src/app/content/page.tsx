@@ -33,7 +33,7 @@ export default async function ContentPage() {
         <div>
           <div className="eyebrow">PLAN &amp; DELIVER</div>
           <h1>Content</h1>
-          <p>Production, review-policy, submission and publication evidence.</p>
+          <p>Submitted links and review decisions for every Assignment.</p>
         </div>
       </div>
 

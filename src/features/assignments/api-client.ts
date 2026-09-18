@@ -12,6 +12,7 @@ import type { TransitionAssignmentInput } from "@/server/assignments/assignment-
 import type { AssignmentListCursor } from "@/server/assignments/firestore";
 import type { AssignmentEventListCursor } from "@/server/assignments/assignment-events";
 import type { CreateExternalSubmissionSessionInput, SafeSubmissionSessionDto, SafeVendorOption } from "@/server/assignments/external-submission-service";
+import type { SubmissionRecipientType } from "@/server/assignments/external-submission-types";
 
 export type AssignmentsApiErrorCode = "unauthorized" | "not_found" | "invalid_input" | "stale_write" | "not_ready" | "conflict" | "internal" | "network_error";
 
@@ -127,4 +128,18 @@ export function getAssignmentCurrentVendor(assignmentRef: string): Promise<Assig
 // checkbox was toggled. Returns the raw bearer token exactly once.
 export function createSubmissionSession(assignmentRef: string, input: CreateExternalSubmissionSessionInput): Promise<AssignmentsApiResult<{ session: SafeSubmissionSessionDto; rawToken: string }>> {
   return call(`/api/assignments/${encodeURIComponent(assignmentRef)}/submission-sessions`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// Step 11A.1: a bounded, read-only pre-check for an already-eligible
+// active session for this exact (assignmentRef, recipientType,
+// recipientRef) triple - so the Share dialog can warn the user BEFORE a
+// blind create-then-fail against createSubmissionSession's own reuse
+// guard.
+export function getActiveSubmissionSession(
+  assignmentRef: string,
+  recipientType: SubmissionRecipientType,
+  recipientRef?: string,
+): Promise<AssignmentsApiResult<{ session: SafeSubmissionSessionDto | null }>> {
+  const qs = query({ recipientType, recipientRef });
+  return call(`/api/assignments/${encodeURIComponent(assignmentRef)}/submission-sessions${qs}`);
 }

@@ -13,7 +13,7 @@ import type { ContentDto } from "@/server/content/client-dto";
 import type { ContentListCursor } from "@/server/content/firestore";
 import { CONTENT_STATUSES, type ContentStatus } from "@/server/content/types";
 import { listContent } from "./api-client";
-import { contentDisplayTitle, contentTypeLabel, platformLabel, STATUS_LABELS, statusTone } from "./format";
+import { contentDisplayTitle, platformLabel, STATUS_LABELS, statusTone } from "./format";
 
 const PAGE_SIZE = 10;
 
@@ -89,7 +89,7 @@ export function ContentWorkspace({ initialContent, initialNextCursor }: { initia
     searchTerm.length === 0
       ? pageRows
       : pageRows.filter((c) => {
-          const haystack = [contentDisplayTitle(c), c.partnerDisplayName, c.campaignName, contentTypeLabel(c.contentType), platformLabel(c.platform), ...c.regionIds]
+          const haystack = [contentDisplayTitle(c), c.partnerDisplayName, c.campaignName, ...c.currentLinks.map((l) => platformLabel(l.platform)), ...c.regionIds]
             .filter(Boolean)
             .join(" ")
             .toLowerCase();
@@ -178,8 +178,14 @@ function recordLabel(c: ContentDto): string {
   return contentDisplayTitle(c);
 }
 
+// Step 11A.1: Content no longer has one fixed platform/contentType at
+// its root (links carry their own platform per row) - derive a truthful
+// Context column from the current link count + revision number instead
+// of inventing fake data.
 function contextLabel(c: ContentDto): string {
-  return `${contentTypeLabel(c.contentType)} · ${platformLabel(c.platform)}`;
+  if (c.currentLinks.length === 0) return "No links yet";
+  const linkWord = c.currentLinks.length === 1 ? "link" : "links";
+  return `${c.currentLinks.length} ${linkWord} · rev ${c.currentRevisionNumber}`;
 }
 
 function RecordCards({ rows, onOpen, compact }: { rows: ContentDto[]; onOpen: (contentRef: string) => void; compact: boolean }) {

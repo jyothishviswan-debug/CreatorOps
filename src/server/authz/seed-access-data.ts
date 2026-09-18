@@ -175,11 +175,7 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // same-scope role denial - see content.emulator.test.ts.
       content: featureGrant(true, {
         create: true,
-        manage_content_production: true,
-        submit_content_for_review: true,
         review_content: true,
-        manage_content_publication: true,
-        complete_content: true,
         cancel_content: true,
       }),
     },
@@ -251,11 +247,7 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // Vendors'/Campaigns' own head-only governance split above.
       content: featureGrant(true, {
         create: true,
-        manage_content_production: true,
-        submit_content_for_review: true,
         review_content: true,
-        manage_content_publication: true,
-        complete_content: true,
         cancel_content: true,
       }),
     },

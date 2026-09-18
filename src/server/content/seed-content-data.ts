@@ -1,18 +1,21 @@
-// Step 11A section 19: a compact, deterministic Content dataset covering
-// every canonical status in BOTH review-policy lifecycle graphs, the
+// Step 11A.1: a compact, deterministic Content dataset covering every
+// canonical thread status (OPEN, UNDER_REVIEW, REVISION_REQUESTED,
+// APPROVED, CANCELLED - Step 11A/11B's two-policy production/review/
+// publication model is retired entirely, see types.ts), the
 // EXPLICIT_RECORD scope fixture partnership_head's own scope grant
-// already depends on (community-story-reel-01), a multi-evidence
-// record, a fixed-identity "collision source" record (with its own
-// pre-seeded publication claim docs, so a live test can attempt to
-// claim the same identity against a DIFFERENT Content and assert
-// conflict), and the two fulfillment-proof fixtures (a "stays blocked"
-// partially-fulfilled Assignment and a "reaches COMPLETED" fully-
-// fulfilled one). Mirrors Assignments'/Campaigns'/Partners' own
+// already depends on (community-story-reel-01), and a fixed-identity
+// "collision source" thread (with its own pre-seeded publication claim
+// doc, so a live test can attempt to claim the same identity against a
+// DIFFERENT thread and assert conflict). Exactly ONE thread per
+// Assignment (Step 11A.1's own core simplification) - see
+// seed-assignments-data.ts (run BEFORE this file - see
+// emulator-reset.ts's own ordering) for the Assignments each thread
+// below belongs to. Mirrors Assignments'/Campaigns'/Partners' own
 // seed-*-data.ts idiom exactly (fixed doc ids, full overwrite via
 // .set(), safe synthetic values only, idempotent across repeated
 // resets). No Finance dependencies anywhere.
 //
-// Written directly (not through generateContentFromAssignment/the
+// Written directly (not through resolveOrCreateContentThread/the
 // lifecycle services) - same "static end-state snapshot, not a
 // simulated live sequence" idiom every other seed-*-data.ts file
 // already uses. The real behavioral proof that these services actually
@@ -21,25 +24,9 @@
 import { getAdminAuth } from "@/server/firebase/admin";
 import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
 import { getUserDoc } from "@/server/authz/firestore";
-import {
-  contentCollection,
-  contentEventsCollection,
-  contentPublicationClaimId,
-  contentPublicationClaimsCollection,
-  contentRequiredSlotClaimDocId,
-  contentRequiredSlotClaimsCollection,
-  contentVersionsCollection,
-} from "./firestore";
-import { normalizeContentUrl, publicationContentIdIdentityKey, publicationUrlIdentityKey } from "./publication-identity";
-import type {
-  ContentDoc,
-  ContentEvent,
-  ContentEventKind,
-  ContentPublicationClaimDoc,
-  ContentRequiredSlotClaimDoc,
-  ContentVersionDoc,
-  PublicationEvidenceItem,
-} from "./types";
+import { contentAssignmentThreadClaimsCollection, contentCollection, contentEventsCollection, contentPublicationClaimId, contentPublicationClaimsCollection, contentRevisionsCollection } from "./firestore";
+import { normalizeContentUrl, publicationUrlIdentityKey } from "./publication-identity";
+import type { ContentAssignmentThreadClaimDoc, ContentDoc, ContentEvent, ContentEventKind, ContentLinkRow, ContentPublicationClaimDoc, ContentRevisionDoc } from "./types";
 
 async function uidFor(email: string): Promise<string> {
   const user = await getAdminAuth().getUserByEmail(email);
@@ -63,10 +50,12 @@ export async function seedContentData(): Promise<void> {
   const now = new Date();
   const nowIso = now.toISOString();
 
-  function base(uid: string, assignmentRef: string, campaignRef: string, partnerRef: string): Pick<
-    ContentDoc,
-    "uid" | "contentRef" | "version" | "assignmentRef" | "campaignRef" | "partnerRef" | "createdAt" | "createdByUserRef" | "updatedAt" | "updatedByUserRef"
-  > {
+  function base(
+    uid: string,
+    assignmentRef: string,
+    campaignRef: string,
+    partnerRef: string,
+  ): Pick<ContentDoc, "uid" | "contentRef" | "version" | "assignmentRef" | "campaignRef" | "partnerRef" | "openedAt" | "createdAt" | "createdByUserRef" | "updatedAt" | "updatedByUserRef"> {
     return {
       uid,
       contentRef: uid,
@@ -74,6 +63,7 @@ export async function seedContentData(): Promise<void> {
       assignmentRef,
       campaignRef,
       partnerRef,
+      openedAt: nowIso,
       createdAt: nowIso,
       createdByUserRef: headUserRef,
       updatedAt: nowIso,
@@ -81,265 +71,108 @@ export async function seedContentData(): Promise<void> {
     };
   }
 
-  function evidenceItem(evidenceId: string, platform: string, url: string, platformContentId: string | null = null): PublicationEvidenceItem {
-    return {
-      evidenceId,
-      platform,
-      originalUrl: url,
-      normalizedUrl: normalizeContentUrl(url),
-      platformContentId,
-      partnerAccountRef: null,
-      publishedAt: null,
-      recordedAt: nowIso,
-      recordedByUserRef: headUserRef,
-      provenance: "STAFF_RECORDED",
-      sourceExternalSubmissionRef: null,
-    };
+  function linkRow(platform: string, url: string): ContentLinkRow {
+    return { platform, originalUrl: url, normalizedUrl: normalizeContentUrl(url), recordedAt: nowIso };
   }
 
-  // ---- REVIEW_REQUIRED: every canonical status --------------------------
-  const reviewRequired: ContentDoc[] = [
+  const contentDocs: ContentDoc[] = [
     {
-      ...base("seed-content-planned-review-required", "seed-assignment-draft", "seed-campaign-planned", "seed-partner-direct"),
-      partnerAccountRef: null,
-      platform: "instagram",
-      contentType: "reel",
-      title: "South Programmes launch reel",
-      status: "PLANNED",
+      // OPEN - no submission has ever been made yet.
+      ...base("seed-content-open", "seed-assignment-assigned", "civic-voices", "creator-house"),
+      status: "OPEN",
       statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 0,
-      lastSubmittedVersion: null,
-      publicationEvidence: [],
+      currentRevisionNumber: 0,
+      reviewedRevisionNumber: null,
+      currentLinks: [],
       qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
       dueAt: null,
-      productionStartedAt: null,
-      submittedAt: null,
+      firstSubmittedAt: null,
+      lastSubmittedAt: null,
       approvedAt: null,
-      postedAt: null,
-      completedAt: null,
-      cancelledAt: null,
-      ownerUid: managerUid,
-      regionIds: ["Kerala", "Maharashtra"],
-      teamIds: ["kerala-programmes", "maharashtra-programmes"],
-    },
-    {
-      ...base("seed-content-in-production-review-required", "seed-assignment-assigned", "civic-voices", "creator-house"),
-      partnerAccountRef: "seed-account-creatorhouse-yt",
-      platform: "youtube",
-      contentType: "video",
-      title: null,
-      status: "IN_PRODUCTION",
-      statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: null,
-      publicationEvidence: [],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: null,
-      approvedAt: null,
-      postedAt: null,
-      completedAt: null,
       cancelledAt: null,
       ownerUid: null,
       regionIds: [],
       teamIds: [],
     },
     {
-      ...base("seed-content-submitted-review-required", "seed-assignment-accepted", "seed-campaign-planned", "creator-house"),
-      partnerAccountRef: "seed-account-creatorhouse-ig-primary",
-      platform: "instagram",
-      contentType: "carousel",
-      title: "Launch carousel",
-      status: "SUBMITTED",
+      // UNDER_REVIEW - revision 1 submitted, awaiting a Manager decision.
+      ...base("seed-content-under-review", "seed-assignment-accepted", "seed-campaign-planned", "creator-house"),
+      status: "UNDER_REVIEW",
       statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: 1,
-      publicationEvidence: [],
+      currentRevisionNumber: 1,
+      reviewedRevisionNumber: 1,
+      currentLinks: [linkRow("instagram", "https://instagram.com/p/seed-under-review-1")],
       qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
       dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: nowIso,
+      firstSubmittedAt: nowIso,
+      lastSubmittedAt: nowIso,
       approvedAt: null,
-      postedAt: null,
-      completedAt: null,
       cancelledAt: null,
       ownerUid: managerUid,
       regionIds: ["Kerala", "Maharashtra"],
       teamIds: ["kerala-programmes", "maharashtra-programmes"],
     },
     {
-      // Two real versions + a real "review_decision" (CHANGES_REQUIRED)
-      // event in its own history - see seedContentData's own event/
-      // version writes below.
-      ...base("seed-content-changes-requested", "seed-assignment-accepted", "seed-campaign-planned", "creator-house"),
-      partnerAccountRef: null,
-      platform: "instagram",
-      contentType: "reel",
-      title: "Revision-loop reel",
-      status: "CHANGES_REQUIRED",
+      // REVISION_REQUESTED - revision 1 was rejected-for-changes with a
+      // real reason; the same public page reopens for correction (see
+      // seed-assignments-data.ts's seed-session-partner-active, linked to
+      // this exact thread).
+      ...base("seed-content-revision-requested", "seed-assignment-in-progress", "civic-voices", "seed-partner-direct"),
+      status: "REVISION_REQUESTED",
       statusReason: "Please retake the intro shot in better lighting and re-submit.",
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 2,
-      lastSubmittedVersion: 1,
-      publicationEvidence: [],
+      currentRevisionNumber: 1,
+      reviewedRevisionNumber: 1,
+      currentLinks: [linkRow("youtube", "https://youtube.com/watch?v=seed-revision-requested-1")],
       qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
       dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: nowIso,
+      firstSubmittedAt: nowIso,
+      lastSubmittedAt: nowIso,
       approvedAt: null,
-      postedAt: null,
-      completedAt: null,
-      cancelledAt: null,
-      ownerUid: managerUid,
-      regionIds: ["Kerala", "Maharashtra"],
-      teamIds: ["kerala-programmes", "maharashtra-programmes"],
-    },
-    {
-      ...base("seed-content-approved-review-required", "seed-assignment-assigned", "civic-voices", "creator-house"),
-      partnerAccountRef: null,
-      platform: "youtube",
-      contentType: "video",
-      title: null,
-      status: "APPROVED",
-      statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: 1,
-      publicationEvidence: [],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: nowIso,
-      approvedAt: nowIso,
-      postedAt: null,
-      completedAt: null,
       cancelledAt: null,
       ownerUid: null,
       regionIds: [],
       teamIds: [],
     },
     {
-      ...base("seed-content-rejected-review-required", "seed-assignment-assigned", "civic-voices", "creator-house"),
-      partnerAccountRef: null,
-      platform: "youtube",
-      contentType: "video",
-      title: null,
-      status: "REJECTED",
-      statusReason: "Does not meet brand guidelines - off-brief messaging.",
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: 1,
-      publicationEvidence: [],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: nowIso,
-      approvedAt: null,
-      postedAt: null,
-      completedAt: null,
-      cancelledAt: null,
-      ownerUid: null,
-      regionIds: [],
-      teamIds: [],
-    },
-    {
-      // Multi-evidence fixture - 2 distinct publication URLs on one
-      // record.
-      ...base("seed-content-posted-multi-evidence", "seed-assignment-accepted", "seed-campaign-planned", "creator-house"),
-      partnerAccountRef: "seed-account-creatorhouse-ig-primary",
-      platform: "instagram",
-      contentType: "carousel",
-      title: "Multi-post launch carousel",
-      status: "POSTED",
-      statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: 1,
-      publicationEvidence: [
-        evidenceItem("seed-evidence-multi-1", "instagram", "https://instagram.com/p/seed-multi-evidence-one"),
-        evidenceItem("seed-evidence-multi-2", "instagram", "https://instagram.com/p/seed-multi-evidence-two"),
-      ],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: nowIso,
-      approvedAt: nowIso,
-      postedAt: nowIso,
-      completedAt: null,
-      cancelledAt: null,
-      ownerUid: managerUid,
-      regionIds: ["Kerala", "Maharashtra"],
-      teamIds: ["kerala-programmes", "maharashtra-programmes"],
-    },
-    {
-      ...base("seed-content-completed-review-required", "seed-assignment-assigned", "civic-voices", "creator-house"),
-      partnerAccountRef: null,
-      platform: "youtube",
-      contentType: "video",
-      title: null,
-      status: "COMPLETED",
-      statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: 1,
-      publicationEvidence: [evidenceItem("seed-evidence-completed-1", "youtube", "https://youtube.com/watch?v=seed-content-completed")],
-      qualifyingFulfillment: { kind: "QUALIFYING_EXTRA", reasonCode: null, determinedAt: nowIso },
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: nowIso,
-      approvedAt: nowIso,
-      postedAt: nowIso,
-      completedAt: nowIso,
-      cancelledAt: null,
-      ownerUid: null,
-      regionIds: [],
-      teamIds: [],
-    },
-    {
-      ...base("seed-content-cancelled-review-required", "seed-assignment-cancelled", "civic-voices", "seed-partner-inactive"),
-      partnerAccountRef: null,
-      platform: "youtube",
-      contentType: "video",
-      title: null,
+      // CANCELLED - cancelled before any submission was ever made.
+      ...base("seed-content-cancelled", "seed-assignment-cancelled", "civic-voices", "seed-partner-inactive"),
       status: "CANCELLED",
       statusReason: "Partner became unavailable before this obligation could proceed.",
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 0,
-      lastSubmittedVersion: null,
-      publicationEvidence: [],
+      currentRevisionNumber: 0,
+      reviewedRevisionNumber: null,
+      currentLinks: [],
       qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
       dueAt: null,
-      productionStartedAt: null,
-      submittedAt: null,
+      firstSubmittedAt: null,
+      lastSubmittedAt: null,
       approvedAt: null,
-      postedAt: null,
-      completedAt: null,
       cancelledAt: nowIso,
       ownerUid: null,
       regionIds: [],
       teamIds: [],
+    },
+    {
+      // APPROVED - the "reaches COMPLETED" fulfillment-proof fixture.
+      // Matches seed-assignment-content-fulfilled's own already-seeded
+      // COMPLETED end-state (see seed-assignments-data.ts). A read/
+      // display snapshot only - the real behavioral proof that
+      // approveContentThread's own transaction is what drives this is a
+      // live emulator test.
+      ...base("seed-content-approved", "seed-assignment-content-fulfilled", "seed-campaign-planned", "seed-partner-archived"),
+      status: "APPROVED",
+      statusReason: null,
+      currentRevisionNumber: 1,
+      reviewedRevisionNumber: 1,
+      currentLinks: [linkRow("instagram", "https://instagram.com/p/seed-approved-1")],
+      qualifyingFulfillment: { kind: "QUALIFYING_REQUIRED", reasonCode: null, determinedAt: nowIso },
+      dueAt: null,
+      firstSubmittedAt: nowIso,
+      lastSubmittedAt: nowIso,
+      approvedAt: nowIso,
+      cancelledAt: null,
+      ownerUid: managerUid,
+      regionIds: ["Kerala", "Maharashtra"],
+      teamIds: ["kerala-programmes", "maharashtra-programmes"],
     },
     {
       // EXPLICIT_RECORD scope fixture - see seed-access-data.ts's
@@ -351,26 +184,17 @@ export async function seedContentData(): Promise<void> {
       // programmes, maharashtra-programmes) - so this record is reachable
       // ONLY through the explicit grant, proving it actually does the
       // work rather than region/team coincidentally covering it too.
-      ...base("community-story-reel-01", "seed-assignment-assigned", "civic-voices", "creator-house"),
-      partnerAccountRef: null,
-      platform: "instagram",
-      contentType: "reel",
-      title: "Community story reel",
+      ...base("community-story-reel-01", "seed-assignment-community-story", "civic-voices", "seed-partner-archived"),
       status: "APPROVED",
       statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: 1,
-      publicationEvidence: [],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
+      currentRevisionNumber: 1,
+      reviewedRevisionNumber: 1,
+      currentLinks: [linkRow("instagram", "https://instagram.com/p/seed-community-story")],
+      qualifyingFulfillment: { kind: "QUALIFYING_REQUIRED", reasonCode: null, determinedAt: nowIso },
       dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: nowIso,
+      firstSubmittedAt: nowIso,
+      lastSubmittedAt: nowIso,
       approvedAt: nowIso,
-      postedAt: null,
-      completedAt: null,
       cancelledAt: null,
       ownerUid: null,
       regionIds: ["Punjab"],
@@ -378,335 +202,93 @@ export async function seedContentData(): Promise<void> {
     },
     {
       // Fixed-identity "collision source" - a live test can attempt to
-      // claim this exact URL/platformContentId against a DIFFERENT
-      // seeded Content and assert `conflict`. Its own claim docs are
-      // seeded below via seedPublicationClaims (generic, driven by every
-      // fixture's own publicationEvidence array).
-      ...base("seed-content-collision-source", "seed-assignment-accepted", "seed-campaign-planned", "creator-house"),
-      partnerAccountRef: null,
-      platform: "instagram",
-      contentType: "reel",
-      title: "Collision-identity source record",
-      status: "POSTED",
+      // claim this exact URL against a DIFFERENT seeded thread and assert
+      // `conflict`. Its own claim doc is seeded below, generic, driven by
+      // this fixture's own currentLinks.
+      ...base("seed-content-collision-source", "seed-assignment-collision-source", "seed-campaign-planned", "seed-partner-inactive"),
+      status: "APPROVED",
       statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: 1,
-      publicationEvidence: [evidenceItem("seed-evidence-collision-1", "instagram", "https://instagram.com/p/seed-content-collision", "seed-pcid-collision")],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: nowIso,
-      approvedAt: nowIso,
-      postedAt: nowIso,
-      completedAt: null,
-      cancelledAt: null,
-      ownerUid: managerUid,
-      regionIds: ["Kerala", "Maharashtra"],
-      teamIds: ["kerala-programmes", "maharashtra-programmes"],
-    },
-  ];
-
-  // ---- NO_PREPOST_REVIEW: every canonical status -------------------------
-  const noPrepostReview: ContentDoc[] = [
-    {
-      ...base("seed-content-planned-no-review", "seed-assignment-draft", "seed-campaign-planned", "seed-partner-direct"),
-      partnerAccountRef: null,
-      platform: "instagram",
-      contentType: "story",
-      title: null,
-      status: "PLANNED",
-      statusReason: null,
-      reviewPolicy: "NO_PREPOST_REVIEW",
-      currentVersion: 0,
-      lastSubmittedVersion: null,
-      publicationEvidence: [],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: null,
-      submittedAt: null,
-      approvedAt: null,
-      postedAt: null,
-      completedAt: null,
-      cancelledAt: null,
-      ownerUid: managerUid,
-      regionIds: ["Kerala", "Maharashtra"],
-      teamIds: ["kerala-programmes", "maharashtra-programmes"],
-    },
-    {
-      ...base("seed-content-in-production-no-review", "seed-assignment-accepted", "seed-campaign-planned", "creator-house"),
-      partnerAccountRef: null,
-      platform: "youtube",
-      contentType: "video",
-      title: null,
-      status: "IN_PRODUCTION",
-      statusReason: null,
-      reviewPolicy: "NO_PREPOST_REVIEW",
-      currentVersion: 1,
-      lastSubmittedVersion: null,
-      publicationEvidence: [],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: null,
-      approvedAt: null,
-      postedAt: null,
-      completedAt: null,
-      cancelledAt: null,
-      ownerUid: managerUid,
-      regionIds: ["Kerala", "Maharashtra"],
-      teamIds: ["kerala-programmes", "maharashtra-programmes"],
-    },
-    {
-      ...base("seed-content-posted-no-review", "seed-assignment-assigned", "civic-voices", "creator-house"),
-      partnerAccountRef: null,
-      platform: "youtube",
-      contentType: "video",
-      title: null,
-      status: "POSTED",
-      statusReason: null,
-      reviewPolicy: "NO_PREPOST_REVIEW",
-      currentVersion: 1,
-      lastSubmittedVersion: null,
-      publicationEvidence: [evidenceItem("seed-evidence-no-review-posted-1", "youtube", "https://youtube.com/watch?v=seed-no-review-posted")],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: null,
-      approvedAt: null,
-      postedAt: nowIso,
-      completedAt: null,
-      cancelledAt: null,
-      ownerUid: null,
-      regionIds: [],
-      teamIds: [],
-    },
-    {
-      ...base("seed-content-completed-no-review", "seed-assignment-assigned", "civic-voices", "creator-house"),
-      partnerAccountRef: null,
-      platform: "youtube",
-      contentType: "video",
-      title: null,
-      status: "COMPLETED",
-      statusReason: null,
-      reviewPolicy: "NO_PREPOST_REVIEW",
-      currentVersion: 1,
-      lastSubmittedVersion: null,
-      publicationEvidence: [evidenceItem("seed-evidence-no-review-completed-1", "youtube", "https://youtube.com/watch?v=seed-no-review-completed")],
-      qualifyingFulfillment: { kind: "QUALIFYING_EXTRA", reasonCode: null, determinedAt: nowIso },
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: null,
-      approvedAt: null,
-      postedAt: nowIso,
-      completedAt: nowIso,
-      cancelledAt: null,
-      ownerUid: null,
-      regionIds: [],
-      teamIds: [],
-    },
-    {
-      ...base("seed-content-cancelled-no-review", "seed-assignment-draft", "seed-campaign-planned", "seed-partner-direct"),
-      partnerAccountRef: null,
-      platform: "instagram",
-      contentType: "story",
-      title: null,
-      status: "CANCELLED",
-      statusReason: "No longer needed for this obligation.",
-      reviewPolicy: "NO_PREPOST_REVIEW",
-      currentVersion: 0,
-      lastSubmittedVersion: null,
-      publicationEvidence: [],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: null,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: null,
-      submittedAt: null,
-      approvedAt: null,
-      postedAt: null,
-      completedAt: null,
-      cancelledAt: nowIso,
-      ownerUid: managerUid,
-      regionIds: ["Kerala", "Maharashtra"],
-      teamIds: ["kerala-programmes", "maharashtra-programmes"],
-    },
-  ];
-
-  // ---- Fulfillment proof pair --------------------------------------------
-  // (a) "stays blocked": seed-assignment-in-progress (civic-voices/
-  // seed-partner-direct, requiredCount 2) - slot 0 is COMPLETED +
-  // QUALIFYING_REQUIRED, slot 1 is still IN_PRODUCTION (claimed, not
-  // completed) - the Assignment must stay unfulfilled.
-  const fulfillmentPartial: ContentDoc[] = [
-    {
-      ...base("seed-content-fulfillment-partial-slot0", "seed-assignment-in-progress", "civic-voices", "seed-partner-direct"),
-      partnerAccountRef: null,
-      platform: "youtube",
-      contentType: "reel",
-      title: null,
-      status: "COMPLETED",
-      statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: 1,
-      publicationEvidence: [evidenceItem("seed-evidence-partial-slot0-1", "youtube", "https://youtube.com/watch?v=seed-partial-slot0")],
+      currentRevisionNumber: 1,
+      reviewedRevisionNumber: 1,
+      currentLinks: [linkRow("instagram", "https://instagram.com/p/seed-content-collision")],
       qualifyingFulfillment: { kind: "QUALIFYING_REQUIRED", reasonCode: null, determinedAt: nowIso },
-      requiredSlotIndex: 0,
-      supersedesContentRef: null,
       dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: nowIso,
+      firstSubmittedAt: nowIso,
+      lastSubmittedAt: nowIso,
       approvedAt: nowIso,
-      postedAt: nowIso,
-      completedAt: nowIso,
       cancelledAt: null,
-      ownerUid: null,
-      regionIds: [],
-      teamIds: [],
-    },
-    {
-      ...base("seed-content-fulfillment-partial-slot1", "seed-assignment-in-progress", "civic-voices", "seed-partner-direct"),
-      partnerAccountRef: null,
-      platform: "youtube",
-      contentType: "carousel",
-      title: null,
-      status: "IN_PRODUCTION",
-      statusReason: null,
-      reviewPolicy: "REVIEW_REQUIRED",
-      currentVersion: 1,
-      lastSubmittedVersion: null,
-      publicationEvidence: [],
-      qualifyingFulfillment: null,
-      requiredSlotIndex: 1,
-      supersedesContentRef: null,
-      dueAt: null,
-      productionStartedAt: nowIso,
-      submittedAt: null,
-      approvedAt: null,
-      postedAt: null,
-      completedAt: null,
-      cancelledAt: null,
-      ownerUid: null,
-      regionIds: [],
-      teamIds: [],
+      ownerUid: managerUid,
+      regionIds: ["Kerala", "Maharashtra"],
+      teamIds: ["kerala-programmes", "maharashtra-programmes"],
     },
   ];
 
-  // (b) "reaches COMPLETED": seed-assignment-content-fulfilled
-  // (requiredCount 1) - its one and only required slot is COMPLETED +
-  // QUALIFYING_REQUIRED, matching the Assignment's own already-seeded
-  // COMPLETED end-state (see seed-assignments-data.ts). A read/display
-  // snapshot only - the real behavioral proof that completeContent's own
-  // transaction is what drives this is a live emulator test.
-  const fulfillmentComplete: ContentDoc = {
-    ...base("seed-content-fulfillment-complete", "seed-assignment-content-fulfilled", "seed-campaign-planned", "seed-partner-archived"),
-    partnerAccountRef: null,
-    platform: "instagram",
-    contentType: "reel",
-    title: null,
-    status: "COMPLETED",
-    statusReason: null,
-    reviewPolicy: "REVIEW_REQUIRED",
-    currentVersion: 1,
-    lastSubmittedVersion: 1,
-    publicationEvidence: [evidenceItem("seed-evidence-fulfillment-complete-1", "instagram", "https://instagram.com/p/seed-fulfillment-complete")],
-    qualifyingFulfillment: { kind: "QUALIFYING_REQUIRED", reasonCode: null, determinedAt: nowIso },
-    requiredSlotIndex: 0,
-    supersedesContentRef: null,
-    dueAt: null,
-    productionStartedAt: nowIso,
-    submittedAt: nowIso,
-    approvedAt: nowIso,
-    postedAt: nowIso,
-    completedAt: nowIso,
-    cancelledAt: null,
-    ownerUid: managerUid,
-    regionIds: ["Kerala", "Maharashtra"],
-    teamIds: ["kerala-programmes", "maharashtra-programmes"],
-  };
-
-  const allContent: ContentDoc[] = [...reviewRequired, ...noPrepostReview, ...fulfillmentPartial, fulfillmentComplete];
-
-  for (const doc of allContent) {
+  for (const doc of contentDocs) {
     await contentCollection().doc(doc.uid).set(doc);
 
-    // Every evidence item's own claim doc - generic, driven by whatever
-    // publicationEvidence each fixture actually carries (this is what
-    // makes seed-content-collision-source's own fixed identity actually
-    // "claimed" in storage, and every other multi-evidence fixture
-    // internally consistent).
-    for (const evidence of doc.publicationEvidence) {
-      const urlKey = publicationUrlIdentityKey(doc.platform, evidence.normalizedUrl);
-      const urlClaim: ContentPublicationClaimDoc = { key: urlKey, contentRef: doc.contentRef, contentUid: doc.uid, evidenceId: evidence.evidenceId, claimedAt: evidence.recordedAt };
-      await contentPublicationClaimsCollection().doc(contentPublicationClaimId(urlKey)).set(urlClaim);
+    // The one-canonical-thread-per-Assignment claim - every seeded
+    // thread's own lock (doc id = assignmentRef directly).
+    const threadClaim: ContentAssignmentThreadClaimDoc = { assignmentRef: doc.assignmentRef, contentRef: doc.contentRef, contentUid: doc.uid, claimedAt: doc.createdAt };
+    await contentAssignmentThreadClaimsCollection().doc(doc.assignmentRef).set(threadClaim);
 
-      if (evidence.platformContentId) {
-        const pcidKey = publicationContentIdIdentityKey(doc.platform, evidence.platformContentId);
-        const pcidClaim: ContentPublicationClaimDoc = { key: pcidKey, contentRef: doc.contentRef, contentUid: doc.uid, evidenceId: evidence.evidenceId, claimedAt: evidence.recordedAt };
-        await contentPublicationClaimsCollection().doc(contentPublicationClaimId(pcidKey)).set(pcidClaim);
-      }
+    // Every current-link's own publication-identity claim - generic,
+    // driven by whatever currentLinks each fixture actually carries
+    // (this is what makes seed-content-collision-source's own fixed
+    // identity actually "claimed" in storage).
+    for (const link of doc.currentLinks) {
+      const key = publicationUrlIdentityKey(link.platform, link.normalizedUrl);
+      const urlClaim: ContentPublicationClaimDoc = { key, contentRef: doc.contentRef, contentUid: doc.uid, revisionNumber: doc.currentRevisionNumber, claimedAt: link.recordedAt };
+      await contentPublicationClaimsCollection().doc(contentPublicationClaimId(key)).set(urlClaim);
     }
 
-    // Every required-obligation slot this fixture claims - CLAIMED (none
-    // of these seed fixtures represent a released slot; the released-
-    // slot/supersession case is proven live, in content.emulator.test.ts,
-    // by actually cancelling a required Content and re-generating).
-    if (doc.requiredSlotIndex !== null) {
-      const claim: ContentRequiredSlotClaimDoc = {
-        assignmentRef: doc.assignmentRef,
-        slotIndex: doc.requiredSlotIndex,
-        contentRef: doc.contentRef,
-        contentUid: doc.uid,
-        state: "CLAIMED",
-        claimedAt: doc.createdAt,
-        releasedAt: null,
+    // Revision 1's own immutable snapshot, for every fixture that has
+    // ever had a link submitted.
+    if (doc.currentRevisionNumber >= 1) {
+      const revisionUid = contentRevisionsCollection(doc.uid).doc().id;
+      const revisionDoc: ContentRevisionDoc = {
+        uid: revisionUid,
+        revisionNumber: 1,
+        rows: doc.currentLinks.map((link) => ({ platform: link.platform, originalUrl: link.originalUrl, normalizedUrl: link.normalizedUrl })),
+        recipientType: "PARTNER",
+        recipientRef: doc.partnerRef,
+        submittedAt: doc.firstSubmittedAt ?? doc.createdAt,
       };
-      await contentRequiredSlotClaimsCollection().doc(contentRequiredSlotClaimDocId(doc.assignmentRef, doc.requiredSlotIndex)).set(claim);
-    }
-
-    // Real immutable version docs, 1..currentVersion, for every fixture
-    // that has ever had a version saved.
-    for (let versionNumber = 1; versionNumber <= doc.currentVersion; versionNumber += 1) {
-      const versionUid = contentVersionsCollection(doc.uid).doc().id;
-      const versionDoc: ContentVersionDoc = {
-        uid: versionUid,
-        versionNumber,
-        captionText: `Seed caption v${versionNumber} for ${doc.contentRef}.`,
-        sourceUrl: null,
-        submissionNotes: versionNumber === doc.currentVersion ? "Ready for review." : null,
-        attachmentRefs: [],
-        createdAt: doc.createdAt,
-        createdByUserRef: doc.createdByUserRef,
-      };
-      await contentVersionsCollection(doc.uid).doc(versionUid).set(versionDoc);
+      await contentRevisionsCollection(doc.uid).doc(revisionUid).set(revisionDoc);
     }
   }
 
-  // The CHANGES_REQUIRED fixture's own real review_decision event -
-  // proves history/audit trail for a resubmission-loop record.
+  // Real event/audit history for every fixture - proves the append-only
+  // history is populated consistently with each thread's own status.
   async function writeEvent(contentUid: string, kind: ContentEventKind, metadata: Record<string, unknown> | null): Promise<void> {
     const eventUid = contentEventsCollection(contentUid).doc().id;
     const event: ContentEvent = { kind, actorUserRef: headUserRef, metadata, requestId: "seed", createdAt: nowIso };
     await contentEventsCollection(contentUid).doc(eventUid).set(event);
   }
 
-  await writeEvent("seed-content-changes-requested", "created", { assignmentRef: "seed-assignment-accepted" });
-  await writeEvent("seed-content-changes-requested", "submitted", { version: 1 });
-  await writeEvent("seed-content-changes-requested", "review_decision", {
-    decision: "CHANGES_REQUIRED",
-    version: 1,
-    comment: "Please retake the intro shot in better lighting and re-submit.",
+  await writeEvent("seed-content-open", "created", { assignmentRef: "seed-assignment-assigned" });
+
+  await writeEvent("seed-content-under-review", "created", { assignmentRef: "seed-assignment-accepted" });
+  await writeEvent("seed-content-under-review", "submitted", { revisionNumber: 1 });
+
+  await writeEvent("seed-content-revision-requested", "created", { assignmentRef: "seed-assignment-in-progress" });
+  await writeEvent("seed-content-revision-requested", "submitted", { revisionNumber: 1 });
+  await writeEvent("seed-content-revision-requested", "revision_requested", {
+    revisionNumber: 1,
+    reason: "Please retake the intro shot in better lighting and re-submit.",
   });
-  await writeEvent("seed-content-changes-requested", "version_saved", { versionNumber: 2 });
+
+  await writeEvent("seed-content-cancelled", "created", { assignmentRef: "seed-assignment-cancelled" });
+  await writeEvent("seed-content-cancelled", "cancelled", { reason: "Partner became unavailable before this obligation could proceed." });
+
+  await writeEvent("seed-content-approved", "created", { assignmentRef: "seed-assignment-content-fulfilled" });
+  await writeEvent("seed-content-approved", "submitted", { revisionNumber: 1 });
+  await writeEvent("seed-content-approved", "approved", { revisionNumber: 1 });
+
+  await writeEvent("community-story-reel-01", "created", { assignmentRef: "seed-assignment-community-story" });
+  await writeEvent("community-story-reel-01", "submitted", { revisionNumber: 1 });
+  await writeEvent("community-story-reel-01", "approved", { revisionNumber: 1 });
+
+  await writeEvent("seed-content-collision-source", "created", { assignmentRef: "seed-assignment-collision-source" });
+  await writeEvent("seed-content-collision-source", "submitted", { revisionNumber: 1 });
+  await writeEvent("seed-content-collision-source", "approved", { revisionNumber: 1 });
 }

@@ -176,11 +176,13 @@ async function deleteAssignmentsCollectionWithEvents(): Promise<void> {
   }
 }
 
-// content/{uid}/events AND content/{uid}/versions are BOTH
+// content/{uid}/events AND content/{uid}/revisions are BOTH
 // subcollections - unlike every other single-subcollection domain above,
 // Content has two, and each must be deleted explicitly before (or
 // regardless of) the content document itself, or they'd linger as
-// orphaned, inaccessible-via-list data.
+// orphaned, inaccessible-via-list data. Step 11A.1: contentVersions is
+// retired (replaced by contentRevisions - the immutable revision
+// history), same cascade treatment just renamed.
 async function deleteContentCollectionWithSubcollections(): Promise<void> {
   const db = getAdminFirestore();
   const contentRef = db.collection(CONTENT_COLLECTIONS.content);
@@ -189,7 +191,7 @@ async function deleteContentCollectionWithSubcollections(): Promise<void> {
     if (snapshot.empty) return;
     for (const doc of snapshot.docs) {
       await deleteCollection(doc.ref.collection(CONTENT_COLLECTIONS.contentEvents));
-      await deleteCollection(doc.ref.collection(CONTENT_COLLECTIONS.contentVersions));
+      await deleteCollection(doc.ref.collection(CONTENT_COLLECTIONS.contentRevisions));
     }
     const batch = db.batch();
     for (const doc of snapshot.docs) batch.delete(doc.ref);
@@ -228,7 +230,7 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await deleteCollection(db.collection(ASSIGNMENTS_COLLECTIONS.assignmentSubmissionSessions));
   await deleteCollection(db.collection(ASSIGNMENTS_COLLECTIONS.assignmentExternalSubmissions));
   await deleteContentCollectionWithSubcollections();
-  await deleteCollection(db.collection(CONTENT_COLLECTIONS.contentRequiredSlotClaims));
+  await deleteCollection(db.collection(CONTENT_COLLECTIONS.contentAssignmentThreadClaims));
   await deleteCollection(db.collection(CONTENT_COLLECTIONS.contentPublicationClaims));
 
   await seedEmulatorTestUsers(password);

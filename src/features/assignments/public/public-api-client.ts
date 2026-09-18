@@ -2,7 +2,7 @@
 // this app (/api/public/submissions/[token], Step 10A) - no session, no
 // cookie, no Content-Type-only header beyond JSON. The bearer token lives
 // only in the URL path here, never in any other client-side storage.
-export type SubmitRowsResult = { ok: true; submissionRef: string } | { ok: false; code: "invalid" | "unusable" | "network_error"; error: string };
+export type SubmitRowsResult = { ok: true; revisionNumber: number } | { ok: false; code: "invalid" | "unusable" | "network_error"; error: string };
 
 export async function submitPublicLinks(token: string, rows: { platform: string; url: string }[]): Promise<SubmitRowsResult> {
   let res: Response;
@@ -17,8 +17,8 @@ export async function submitPublicLinks(token: string, rows: { platform: string;
   }
 
   if (res.ok) {
-    const data = (await res.json()) as { submissionRef: string };
-    return { ok: true, submissionRef: data.submissionRef };
+    const data = (await res.json()) as { revisionNumber: number };
+    return { ok: true, revisionNumber: data.revisionNumber };
   }
 
   let error = "This submission link is no longer valid.";

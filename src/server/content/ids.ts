@@ -6,11 +6,3 @@ import { randomUUID } from "node:crypto";
 export function generateContentRef(): string {
   return randomUUID();
 }
-
-export function generateContentVersionRef(): string {
-  return randomUUID();
-}
-
-export function generatePublicationEvidenceId(): string {
-  return randomUUID();
-}

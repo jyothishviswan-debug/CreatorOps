@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { CONTENT_STATUSES } from "@/server/content/types";
-import { contentDisplayTitle, contentTypeLabel, platformLabel, STATUS_LABELS, statusTone } from "./format";
+import { contentDisplayTitle, platformLabel, STATUS_LABELS, statusTone } from "./format";
 
 describe("STATUS_LABELS", () => {
   it("has a label for every real ContentStatus, no extras, no gaps", () => {
@@ -17,27 +17,28 @@ describe("statusTone", () => {
     for (const status of CONTENT_STATUSES) {
       expect(statusTone(status)).toBeTruthy();
     }
-    expect(statusTone("COMPLETED")).toBe("purple");
+    expect(statusTone("APPROVED")).toBe("purple");
     expect(statusTone("CANCELLED")).toBe("red");
-    expect(statusTone("REJECTED")).toBe("red");
-    expect(statusTone("CHANGES_REQUIRED")).toBe("orange");
+    expect(statusTone("REVISION_REQUESTED")).toBe("orange");
+    expect(statusTone("UNDER_REVIEW")).toBe("blue");
+    expect(statusTone("OPEN")).toBe("gray");
   });
 });
 
-describe("platformLabel / contentTypeLabel", () => {
+describe("platformLabel", () => {
   it("title-cases the first letter only, without altering the stored value elsewhere", () => {
     expect(platformLabel("instagram")).toBe("Instagram");
-    expect(contentTypeLabel("reel")).toBe("Reel");
     expect(platformLabel("")).toBe("");
   });
 });
 
 describe("contentDisplayTitle", () => {
-  it("prefers the real title when present", () => {
-    expect(contentDisplayTitle({ title: "Community story reel", contentType: "reel", platform: "instagram" })).toBe("Community story reel");
+  it("derives a truthful label from the current links - never a raw ref", () => {
+    expect(contentDisplayTitle({ currentLinks: [{ platform: "instagram" }], currentRevisionNumber: 1 })).toBe("Instagram · 1 link (rev 1)");
+    expect(contentDisplayTitle({ currentLinks: [{ platform: "instagram" }, { platform: "youtube" }], currentRevisionNumber: 2 })).toBe("Instagram, Youtube · 2 links (rev 2)");
   });
 
-  it("falls back to a safe, derived label - never a raw ref - when there is no title", () => {
-    expect(contentDisplayTitle({ title: null, contentType: "reel", platform: "instagram" })).toBe("Reel · Instagram");
+  it("falls back to a safe label when there are no links yet", () => {
+    expect(contentDisplayTitle({ currentLinks: [], currentRevisionNumber: 0 })).toBe("Submission thread (no links yet)");
   });
 });

@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { DialogShell } from "@/ui/Dialog";
 import type { AssignmentDto } from "@/server/assignments/client-dto";
 import type { SubmissionRecipientType } from "@/server/assignments/external-submission-types";
-import { createSubmissionSession, getAssignment, getAssignmentCurrentVendor } from "./api-client";
+import { createSubmissionSession, getActiveSubmissionSession, getAssignment, getAssignmentCurrentVendor } from "./api-client";
 import { buildWhatsAppDeepLink, buildWhatsAppShareMessage } from "./whatsapp";
 import { SHARE_ELIGIBLE_STATUSES } from "./format";
 
@@ -130,6 +130,21 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
     }
 
     const recipientRef = recipientType === "VENDOR" ? (vendorRef ?? undefined) : undefined;
+
+    // Step 11A.1 section 12: proactively check for an already-eligible
+    // active session for this exact recipient BEFORE attempting
+    // creation, so the dialog can surface a clear message instead of a
+    // blind create-then-fail - never mints a second competing token/page
+    // for the same live conversation.
+    const existing = await getActiveSubmissionSession(assignment.assignmentRef, recipientType, recipientRef);
+    if (existing.ok && existing.data.session) {
+      pending?.close();
+      creatingRef.current = false;
+      setBusy(false);
+      setError("An active submission link already exists for this recipient. Revoke it first (from the submission session's own history) to issue a new one.");
+      return;
+    }
+
     const result = await createSubmissionSession(assignment.assignmentRef, { recipientType, recipientRef });
 
     if (!result.ok) {

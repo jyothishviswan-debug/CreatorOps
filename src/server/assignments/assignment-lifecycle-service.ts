@@ -128,11 +128,22 @@ export async function transitionAssignmentLifecycle(
       const evidenceSnap = await tx.get(assignmentExternalSubmissionsCollection().where("assignmentRef", "==", freshCurrent.assignmentRef).limit(1));
       if (!evidenceSnap.empty) return { kind: "blocked_by_evidence" };
 
-      // Step 11A: a second, Content-specific blocker query - mirrors the
+      // Step 11A.1: a second, Content-specific blocker query - mirrors the
       // external-submission-evidence check immediately above, just
-      // against canonical Content publication evidence instead of
-      // intake-only external submission rows.
-      const contentEvidenceSnap = await tx.get(contentCollection().where("assignmentRef", "==", freshCurrent.assignmentRef).where("status", "in", ["POSTED", "COMPLETED"]).limit(1));
+      // against the Assignment's own canonical Content thread instead of
+      // intake-only external submission rows. UNDER_REVIEW/
+      // REVISION_REQUESTED/APPROVED all imply at least one revision has
+      // already been submitted (currentRevisionNumber > 0) - irreversible
+      // evidence. Only a still-untouched OPEN thread (or no thread at
+      // all) leaves cancellation unblocked; a CANCELLED thread never
+      // blocks (it is itself already a closed dead end, not live
+      // evidence). Uses a single equality-friendly "in" filter (never a
+      // compound inequality on two different fields, which Firestore
+      // does not support without extra indexing) - same discipline as
+      // the external-submission-evidence query above.
+      const contentEvidenceSnap = await tx.get(
+        contentCollection().where("assignmentRef", "==", freshCurrent.assignmentRef).where("status", "in", ["UNDER_REVIEW", "REVISION_REQUESTED", "APPROVED"]).limit(1),
+      );
       if (!contentEvidenceSnap.empty) return { kind: "blocked_by_content_evidence" };
     }
 

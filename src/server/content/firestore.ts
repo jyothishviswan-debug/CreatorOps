@@ -19,21 +19,21 @@ import {
   type SortDirection,
 } from "@/server/shared/scoped-list";
 import {
+  contentAssignmentThreadClaimDocSchema,
   contentDocSchema,
   contentPublicationClaimDocSchema,
-  contentRequiredSlotClaimDocSchema,
-  contentVersionDocSchema,
+  contentRevisionDocSchema,
+  type ContentAssignmentThreadClaimDoc,
   type ContentDoc,
   type ContentPublicationClaimDoc,
-  type ContentRequiredSlotClaimDoc,
-  type ContentVersionDoc,
+  type ContentRevisionDoc,
 } from "./types";
 
 export const CONTENT_COLLECTIONS = {
   content: "content",
   contentEvents: "events", // subcollection name under content/{uid}
-  contentVersions: "versions", // subcollection name under content/{uid}
-  contentRequiredSlotClaims: "contentRequiredSlotClaims",
+  contentRevisions: "revisions", // subcollection name under content/{uid}
+  contentAssignmentThreadClaims: "contentAssignmentThreadClaims",
   contentPublicationClaims: "contentPublicationClaims",
 } as const;
 
@@ -52,27 +52,29 @@ export function contentEventsCollection(contentUid: string) {
   return contentCollection().doc(contentUid).collection(CONTENT_COLLECTIONS.contentEvents);
 }
 
-export function contentVersionsCollection(contentUid: string) {
-  return contentCollection().doc(contentUid).collection(CONTENT_COLLECTIONS.contentVersions);
+export function contentRevisionsCollection(contentUid: string) {
+  return contentCollection().doc(contentUid).collection(CONTENT_COLLECTIONS.contentRevisions);
 }
 
-// Race-safe required-obligation-slot claims - see types.ts's own comment
-// on contentRequiredSlotClaimDocSchema. Doc id is the deterministic
-// composite `${assignmentRef}:${slotIndex}` (assignmentActiveClaimDocId's
-// own precedent applied here).
-export function contentRequiredSlotClaimsCollection() {
-  return getAdminFirestore().collection(CONTENT_COLLECTIONS.contentRequiredSlotClaims);
+// One-canonical-thread-per-Assignment claim - see types.ts's own comment
+// on contentAssignmentThreadClaimDocSchema. Doc id is the assignmentRef
+// directly (one field, no composite key needed).
+export function contentAssignmentThreadClaimsCollection() {
+  return getAdminFirestore().collection(CONTENT_COLLECTIONS.contentAssignmentThreadClaims);
 }
 
-export function contentRequiredSlotClaimDocId(assignmentRef: string, slotIndex: number): string {
-  return `${assignmentRef}:${slotIndex}`;
+export async function getContentAssignmentThreadClaim(assignmentRef: string): Promise<ContentAssignmentThreadClaimDoc | null> {
+  const snapshot = await contentAssignmentThreadClaimsCollection().doc(assignmentRef).get();
+  if (!snapshot.exists) return null;
+  const result = contentAssignmentThreadClaimDocSchema.safeParse(snapshot.data());
+  return result.success ? result.data : null;
 }
 
 // Publication identity uniqueness claims - see types.ts's own comment on
 // contentPublicationClaimDocSchema. Doc id is sha256(identityKey), the
 // exact precedent from src/server/partners/identity.ts's claimIdFor - a
-// raw URL/platform-content-id cannot safely be a Firestore doc id itself
-// (can contain "/", exceed length limits, etc).
+// raw URL cannot safely be a Firestore doc id itself (can contain "/",
+// exceed length limits, etc).
 export function contentPublicationClaimsCollection() {
   return getAdminFirestore().collection(CONTENT_COLLECTIONS.contentPublicationClaims);
 }
@@ -117,25 +119,10 @@ export async function getContentDocsByRefs(contentRefs: string[]): Promise<Map<s
   return result;
 }
 
-export async function getContentRequiredSlotClaim(assignmentRef: string, slotIndex: number): Promise<ContentRequiredSlotClaimDoc | null> {
-  const snapshot = await contentRequiredSlotClaimsCollection().doc(contentRequiredSlotClaimDocId(assignmentRef, slotIndex)).get();
-  if (!snapshot.exists) return null;
-  const result = contentRequiredSlotClaimDocSchema.safeParse(snapshot.data());
-  return result.success ? result.data : null;
-}
-
-// Every required-slot claim for one Assignment - bounded by the
-// Assignment's own requiredCount cap (max 1000), used by the fulfillment
-// evaluator to count qualifying Content without ever fetching Content
-// broadly.
-export async function listContentRequiredSlotClaimsForAssignment(assignmentRef: string): Promise<ContentRequiredSlotClaimDoc[]> {
-  const snapshot = await contentRequiredSlotClaimsCollection().where("assignmentRef", "==", assignmentRef).get();
-  const claims: ContentRequiredSlotClaimDoc[] = [];
-  for (const doc of snapshot.docs) {
-    const parsed = contentRequiredSlotClaimDocSchema.safeParse(doc.data());
-    if (parsed.success) claims.push(parsed.data);
-  }
-  return claims;
+export async function getContentDocByAssignmentRef(assignmentRef: string): Promise<ContentDoc | null> {
+  const claim = await getContentAssignmentThreadClaim(assignmentRef);
+  if (!claim) return null;
+  return getContentDocByUid(claim.contentUid);
 }
 
 export async function getContentPublicationClaimByKey(identityKey: string): Promise<ContentPublicationClaimDoc | null> {
@@ -145,18 +132,28 @@ export async function getContentPublicationClaimByKey(identityKey: string): Prom
   return result.success ? result.data : null;
 }
 
-export async function getContentVersionDoc(contentUid: string, versionUid: string): Promise<ContentVersionDoc | null> {
-  const snapshot = await contentVersionsCollection(contentUid).doc(versionUid).get();
+export async function getContentRevisionDoc(contentUid: string, revisionUid: string): Promise<ContentRevisionDoc | null> {
+  const snapshot = await contentRevisionsCollection(contentUid).doc(revisionUid).get();
   if (!snapshot.exists) return null;
-  const result = contentVersionDocSchema.safeParse(snapshot.data());
+  const result = contentRevisionDocSchema.safeParse(snapshot.data());
   return result.success ? result.data : null;
 }
 
-export async function getContentVersionDocByNumber(contentUid: string, versionNumber: number): Promise<ContentVersionDoc | null> {
-  const snapshot = await contentVersionsCollection(contentUid).where("versionNumber", "==", versionNumber).limit(1).get();
+export async function getContentRevisionDocByNumber(contentUid: string, revisionNumber: number): Promise<ContentRevisionDoc | null> {
+  const snapshot = await contentRevisionsCollection(contentUid).where("revisionNumber", "==", revisionNumber).limit(1).get();
   if (snapshot.empty) return null;
-  const result = contentVersionDocSchema.safeParse(snapshot.docs[0]!.data());
+  const result = contentRevisionDocSchema.safeParse(snapshot.docs[0]!.data());
   return result.success ? result.data : null;
+}
+
+export async function listContentRevisionDocs(contentUid: string): Promise<ContentRevisionDoc[]> {
+  const snapshot = await contentRevisionsCollection(contentUid).orderBy("revisionNumber", "desc").get();
+  const revisions: ContentRevisionDoc[] = [];
+  for (const doc of snapshot.docs) {
+    const parsed = contentRevisionDocSchema.safeParse(doc.data());
+    if (parsed.success) revisions.push(parsed.data);
+  }
+  return revisions;
 }
 
 export type ContentMutationResult = { kind: "ok"; doc: ContentDoc } | { kind: "stale" } | { kind: "not_found" };
@@ -202,30 +199,24 @@ export type ContentListQueryOptions = {
   assignmentRef?: string;
   campaignRef?: string;
   partnerRef?: string;
-  platform?: string;
-  reviewPolicy?: string;
   ownerUid?: string;
 };
 
 // Pure query planner - builds the branch plan only, never touches
 // Firestore. Exported for unit tests. Mirrors Assignments' own
 // planAssignmentListQuery, simplified further: every requested business
-// filter here (status/assignmentRef/campaignRef/partnerRef/platform/
-// reviewPolicy) is a plain equality filter, never array-type, so - unlike
-// Assignment's own `platform` (an array-contains against brief.platforms)
-// - there is never a competing second array-type filter to arbitrate
-// between a business filter and a REGION/TEAM scope branch's own
-// array-contains-any. Every shared filter can therefore be pushed
-// directly into every branch, region/team included, with no postFilter
-// demotion needed.
+// filter here (status/assignmentRef/campaignRef/partnerRef) is a plain
+// equality filter, never array-type, so there is never a competing second
+// array-type filter to arbitrate between a business filter and a
+// REGION/TEAM scope branch's own array-contains-any. Every shared filter
+// can therefore be pushed directly into every branch, region/team
+// included, with no postFilter demotion needed.
 export function planContentListQuery(options: ContentListQueryOptions): { plan: ListQueryPlan; orderField: string; orderDirection: SortDirection } {
   const sharedFilters: FirestoreFieldFilter[] = [];
   if (options.status) sharedFilters.push({ field: "status", op: "==", value: options.status });
   if (options.assignmentRef) sharedFilters.push({ field: "assignmentRef", op: "==", value: options.assignmentRef });
   if (options.campaignRef) sharedFilters.push({ field: "campaignRef", op: "==", value: options.campaignRef });
   if (options.partnerRef) sharedFilters.push({ field: "partnerRef", op: "==", value: options.partnerRef });
-  if (options.platform) sharedFilters.push({ field: "platform", op: "==", value: options.platform });
-  if (options.reviewPolicy) sharedFilters.push({ field: "reviewPolicy", op: "==", value: options.reviewPolicy });
   if (options.ownerUid) sharedFilters.push({ field: "ownerUid", op: "==", value: options.ownerUid });
 
   const orderField = "createdAt";

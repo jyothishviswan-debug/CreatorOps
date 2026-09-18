@@ -7,29 +7,26 @@ import { getPartnerDocByRef } from "@/server/partners/firestore";
 import { getVendorDocByRef, vendorPartnerActiveClaimsCollection } from "@/server/vendors/firestore";
 import { vendorPartnerActiveClaimDocSchema } from "@/server/vendors/types";
 import { normalizePlatformIdentifier } from "@/server/shared/platform";
+import { resolveOrCreateContentThread } from "@/server/content/content-service";
+import { writeContentEvent } from "@/server/content/content-events";
+import { contentCollection, contentPublicationClaimId, contentPublicationClaimsCollection, contentRevisionsCollection, getContentDocByRef } from "@/server/content/firestore";
+import { normalizeContentUrl, publicationUrlIdentityKey } from "@/server/content/publication-identity";
+import { contentDocSchema, contentPublicationClaimDocSchema, contentRevisionDocSchema, type ContentDoc } from "@/server/content/types";
 import { loadAuthorizedAssignment } from "./assignment-service";
 import { writeAssignmentEvent } from "./assignment-events";
-import {
-  assignmentExternalSubmissionsCollection,
-  assignmentSubmissionSessionsCollection,
-  assignmentsCollection,
-  getAssignmentDocByRef,
-  getSubmissionSessionDocByRef,
-} from "./firestore";
-import { generateSubmissionRef, generateSubmissionSessionRef } from "./ids";
+import { assignmentsCollection, assignmentSubmissionSessionsCollection, getAssignmentDocByRef, getSubmissionSessionDocByRef } from "./firestore";
+import { generateSubmissionSessionRef } from "./ids";
 import { assignmentDocSchema, assignmentsConflictResult, assignmentsInvalidInputResult, type AssignmentDoc, type AssignmentsServiceResult } from "./types";
 import {
-  assignmentExternalSubmissionDocSchema,
   assignmentSubmissionSessionDocSchema,
   submissionRecipientTypeSchema,
   submissionRowsInputSchema,
   DEFAULT_SESSION_TTL_MS,
   MAX_SESSION_TTL_MS,
   MIN_SESSION_EXPIRY_MS,
-  type AssignmentExternalSubmissionDoc,
   type AssignmentSubmissionSessionDoc,
   type PublicAssignmentSubmissionDto,
-  type SubmissionRow,
+  type SubmissionRecipientType,
 } from "./external-submission-types";
 
 // ---- Token generation/hashing --------------------------------------------
@@ -48,8 +45,10 @@ function hashSubmissionToken(rawToken: string): string {
 // The Assignment states a submission session may be created for, and that
 // public access/submission re-checks against - Step 10A section 11's
 // "Assignment cancellation/non-accepting state invalidates use". DRAFT is
-// excluded (nothing has been issued yet to submit against); COMPLETED/
-// CANCELLED are excluded (submission is already done or moot).
+// excluded (nothing has been issued yet to submit against); COMPLETED is
+// excluded from CREATION (nothing new should be issued once the
+// Assignment's one thread has already been approved and closed it) -
+// but NOT from public resolution/rendering, see loadValidSession below.
 const ASSIGNMENT_STATES_ACCEPTING_SUBMISSION: ReadonlySet<AssignmentDoc["status"]> = new Set(["ASSIGNED", "ACCEPTED", "IN_PROGRESS"]);
 
 // The one safe shape a session is ever handed back to STAFF in - never
@@ -62,7 +61,7 @@ export type SafeSubmissionSessionDto = {
   state: AssignmentSubmissionSessionDoc["state"];
   createdAt: string;
   expiresAt: string;
-  consumedAt: string | null;
+  lastSubmittedAt: string | null;
   revokedAt: string | null;
 };
 
@@ -75,9 +74,61 @@ function toSafeSessionDto(doc: AssignmentSubmissionSessionDoc): SafeSubmissionSe
     state: doc.state,
     createdAt: doc.createdAt,
     expiresAt: doc.expiresAt,
-    consumedAt: doc.consumedAt,
+    lastSubmittedAt: doc.lastSubmittedAt,
     revokedAt: doc.revokedAt,
   };
+}
+
+// A session is eligible for reuse (Section 12's "for the same Assignment
+// + intended recipient + active canonical submission thread, do not
+// create competing public revision links") when it is still ACTIVE, not
+// time-expired, and its linked Content thread has not yet reached a
+// closed state (APPROVED/CANCELLED) - OPEN/UNDER_REVIEW/REVISION_REQUESTED
+// are all still "the same live conversation" the same page should keep
+// serving.
+async function findEligibleActiveSession(assignmentRef: string, recipientType: SubmissionRecipientType, recipientRef: string): Promise<AssignmentSubmissionSessionDoc | null> {
+  const snapshot = await assignmentSubmissionSessionsCollection()
+    .where("assignmentRef", "==", assignmentRef)
+    .where("recipientType", "==", recipientType)
+    .where("recipientRef", "==", recipientRef)
+    .where("state", "==", "ACTIVE")
+    .get();
+
+  const now = Date.now();
+  for (const doc of snapshot.docs) {
+    const parsed = assignmentSubmissionSessionDocSchema.safeParse(doc.data());
+    if (!parsed.success) continue;
+    const session = parsed.data;
+    if (new Date(session.expiresAt).getTime() <= now) continue;
+    const thread = await getContentDocByRef(session.contentRef);
+    if (!thread) continue;
+    if (thread.status === "APPROVED" || thread.status === "CANCELLED") continue;
+    return session;
+  }
+  return null;
+}
+
+// ---- Read: does an eligible active session already exist? ---------------
+// Section 12's "the Share dialog should proactively check BEFORE
+// attempting creation" - a new small trusted read, same action gate as
+// session creation/revoke, so the dialog can adjust its own UI instead of
+// blind create-then-fail.
+export async function getActiveSubmissionSessionForRecipient(
+  actor: ActorContext | null,
+  assignmentRef: unknown,
+  recipientType: unknown,
+  recipientRef: unknown,
+): Promise<AssignmentsServiceResult<{ session: SafeSubmissionSessionDto | null }>> {
+  const loaded = await loadAuthorizedAssignment(actor, assignmentRef, "manage_assignment_external_submission");
+  if (!loaded.ok) return loaded.error;
+
+  const parsedRecipientType = submissionRecipientTypeSchema.safeParse(recipientType);
+  if (!parsedRecipientType.success) return assignmentsInvalidInputResult("Invalid recipientType.");
+  const resolvedRecipientRef = parsedRecipientType.data === "PARTNER" ? loaded.assignment.partnerRef : recipientRef;
+  if (typeof resolvedRecipientRef !== "string" || resolvedRecipientRef.length === 0) return assignmentsInvalidInputResult("Missing recipientRef.");
+
+  const existing = await findEligibleActiveSession(loaded.assignment.assignmentRef, parsedRecipientType.data, resolvedRecipientRef);
+  return { ok: true, data: { session: existing ? toSafeSessionDto(existing) : null } };
 }
 
 // ---- Create session (internal, staff-triggered ONLY - never automatic) --
@@ -134,9 +185,27 @@ export async function createExternalSubmissionSession(
     recipientRef = input.recipientRef;
   }
 
+  // Section 12: reuse rule - never mint a second competing token/session
+  // for the same Assignment + recipient while an eligible one is still
+  // live. Since the raw token cannot be re-derived from its stored hash
+  // (one-way, Step 10A's own "never store the raw bearer token" rule),
+  // "reuse" here means returning a typed conflict result identifying the
+  // existing session only by sessionRef - the caller (the Share dialog)
+  // either re-shares its own already-known link from this browser
+  // session, or explicitly revokes-and-reissues.
+  const existing = await findEligibleActiveSession(assignment.assignmentRef, input.recipientType, recipientRef);
+  if (existing) {
+    return assignmentsConflictResult(`An active submission link already exists for this recipient (sessionRef ${existing.sessionRef}). Revoke it before issuing a new one.`);
+  }
+
   const now = Date.now();
   const expiresAt = new Date(now + (input.expiresInMs ?? DEFAULT_SESSION_TTL_MS)).toISOString();
   const nowIso = new Date(now).toISOString();
+
+  // Resolve-or-create the Assignment's own single canonical Content
+  // thread - the ONLY place a Content thread is ever created (no manual
+  // "Plan Content" operation exists anymore).
+  const thread = await resolveOrCreateContentThread(assignment.assignmentRef, actor!.userRef, requestId);
 
   const rawToken = generateSubmissionToken();
   const tokenHash = hashSubmissionToken(rawToken);
@@ -150,12 +219,13 @@ export async function createExternalSubmissionSession(
     recipientType: input.recipientType,
     recipientRef,
     state: "ACTIVE",
+    contentRef: thread.contentRef,
     createdAt: nowIso,
     createdByUserRef: actor!.userRef,
     expiresAt,
     briefVersion: assignment.version,
     allowedPlatforms: assignment.brief.platforms,
-    consumedAt: null,
+    lastSubmittedAt: null,
     revokedAt: null,
     version: 1,
   });
@@ -209,7 +279,7 @@ export async function revokeExternalSubmissionSession(
     return next;
   });
 
-  if (!updated) return assignmentsConflictResult("This submission session is already used, revoked, or no longer exists.");
+  if (!updated) return assignmentsConflictResult("This submission session is already revoked or no longer exists.");
 
   await writeAssignmentEvent({ assignmentUid: loaded.assignment.uid, kind: "external_submission_link_revoked", actorUserRef: actor!.userRef, metadata: { recipientType: session.recipientType }, requestId });
 
@@ -245,12 +315,25 @@ export async function getAssignmentCurrentVendorOption(
 
 // ---- Public: resolve token -> safe DTO -----------------------------------
 // The unauthenticated allowlist (Step 10A section 12) - built entirely
-// from the Assignment's own already-frozen brief (see types.ts), never a
-// fresh Campaign read, since campaignName/campaignObjective/reviewPolicy
-// are already snapshotted there.
+// from the Assignment's own already-frozen brief (see types.ts) plus the
+// linked Content thread's own safe status/links, never a fresh Campaign
+// read.
 type PublicResolveResult = { ok: true; data: PublicAssignmentSubmissionDto } | { ok: false };
 
-async function loadValidSession(rawToken: string): Promise<{ session: AssignmentSubmissionSessionDoc; assignment: AssignmentDoc } | null> {
+type ValidSession = { session: AssignmentSubmissionSessionDoc; assignment: AssignmentDoc; thread: ContentDoc };
+
+// Step 11A.1: a session/Assignment/thread triple is valid whenever the
+// session itself is ACTIVE and not expired, the Assignment is not
+// CANCELLED (COMPLETED is fine - it is reachable the instant the
+// Assignment's one thread is approved, and must still resolve to the
+// real "closed" view, never the generic unavailable card), the linked
+// Content thread is not CANCELLED (APPROVED is fine, same reasoning),
+// and - for a VENDOR recipient - the Vendor relationship is still the
+// Partner's current active one. Shared by both the public resolve (GET)
+// and submit (POST) paths - what differs between them is only whether
+// the thread's CURRENT status additionally permits accepting new rows
+// (see submitExternalLinks's own extra check).
+async function loadValidSession(rawToken: string): Promise<ValidSession | null> {
   const tokenHash = hashSubmissionToken(rawToken);
   const snapshot = await assignmentSubmissionSessionsCollection().doc(tokenHash).get();
   if (!snapshot.exists) return null;
@@ -262,7 +345,10 @@ async function loadValidSession(rawToken: string): Promise<{ session: Assignment
   if (new Date(session.expiresAt).getTime() <= Date.now()) return null;
 
   const assignment = await getAssignmentDocByRef(session.assignmentRef);
-  if (!assignment || !ASSIGNMENT_STATES_ACCEPTING_SUBMISSION.has(assignment.status)) return null;
+  if (!assignment || assignment.status === "CANCELLED") return null;
+
+  const thread = await getContentDocByRef(session.contentRef);
+  if (!thread || thread.status === "CANCELLED") return null;
 
   if (session.recipientType === "VENDOR") {
     const claimSnap = await vendorPartnerActiveClaimsCollection().doc(session.partnerRef).get();
@@ -270,7 +356,7 @@ async function loadValidSession(rawToken: string): Promise<{ session: Assignment
     if (!claim?.success || claim.data.vendorRef !== session.recipientRef) return null;
   }
 
-  return { session, assignment };
+  return { session, assignment, thread };
 }
 
 export async function resolveExternalSubmission(rawToken: unknown): Promise<PublicResolveResult> {
@@ -278,7 +364,7 @@ export async function resolveExternalSubmission(rawToken: unknown): Promise<Publ
 
   const loaded = await loadValidSession(rawToken);
   if (!loaded) return { ok: false };
-  const { assignment } = loaded;
+  const { assignment, thread } = loaded;
 
   const dto: PublicAssignmentSubmissionDto = {
     campaignName: assignment.brief.campaignName,
@@ -295,29 +381,50 @@ export async function resolveExternalSubmission(rawToken: unknown): Promise<Publ
     // authoring detail, never useful to the external recipient).
     resourceLinks: assignment.brief.resourceLinks.filter((link) => link.shareExternally).map((link) => ({ label: link.label, url: link.url })),
     reviewPolicyNote: assignment.brief.reviewPolicy === "REVIEW_REQUIRED" ? "Content from this Assignment is reviewed before it is considered final." : null,
+    threadStatus: thread.status,
+    revisionNote: thread.status === "REVISION_REQUESTED" ? thread.statusReason : null,
+    currentLinks: thread.currentLinks.map((link) => ({ platform: link.platform, url: link.originalUrl })),
   };
   return { ok: true, data: dto };
 }
 
 // ---- Public: submit rows --------------------------------------------------
-type SubmitResult = { ok: true; data: { submissionRef: string } } | { ok: false; code: "invalid" | "unusable"; message: string };
+type SubmitResult = { ok: true; data: { revisionNumber: number } } | { ok: false; code: "invalid" | "unusable"; message: string };
 
-type SubmitTxResult = { kind: "ok"; doc: AssignmentExternalSubmissionDoc } | { kind: "unusable" };
+type SubmitTxResult = { kind: "ok"; revisionNumber: number } | { kind: "unusable" } | { kind: "conflict" };
 
+// Step 11A.1: the SAME token/session is reused across the WHOLE revision
+// loop - this function never mints a new token, never marks the session
+// "used". It is the linked Content THREAD's own status that governs
+// editability: only OPEN (first submit) or REVISION_REQUESTED (a
+// correction after a Manager's decision) accept new rows; UNDER_REVIEW/
+// APPROVED/CANCELLED do not. Each successful call appends exactly one new
+// immutable revision doc under content/{uid}/revisions - revision 1 is
+// never overwritten or deleted by revision 2, etc. No longer writes to
+// the old assignmentExternalSubmissions collection at all (that
+// collection's pre-existing rows stay as historical evidence only - see
+// this step's own completion report for why).
 export async function submitExternalLinks(rawToken: unknown, rawRows: unknown): Promise<SubmitResult> {
   if (typeof rawToken !== "string" || rawToken.length === 0) return { ok: false, code: "unusable", message: "This submission link is no longer valid." };
 
   const loaded = await loadValidSession(rawToken);
   if (!loaded) return { ok: false, code: "unusable", message: "This submission link is no longer valid." };
-  const { session, assignment } = loaded;
+  const { session, assignment, thread } = loaded;
 
-  // Row validation happens entirely BEFORE the token-consuming
-  // transaction - Step 10A section 11's "invalid form validation must NOT
-  // consume the token".
+  // Fast, pre-transaction check - matches "no editable form" for
+  // UNDER_REVIEW/APPROVED. Re-verified again, for real, inside the
+  // transaction below (a concurrent Manager decision or resubmit may
+  // land between this check and the transaction).
+  if (thread.status !== "OPEN" && thread.status !== "REVISION_REQUESTED") {
+    return { ok: false, code: "unusable", message: "This submission is not open for edits." };
+  }
+
+  // Row validation happens entirely BEFORE the transaction - Step 10A
+  // section 11's "invalid form validation must NOT consume the token".
   const parsedRows = submissionRowsInputSchema.safeParse(rawRows);
   if (!parsedRows.success) return { ok: false, code: "invalid", message: parsedRows.error.issues.map((issue) => issue.message).join("; ") };
 
-  const rows: SubmissionRow[] = parsedRows.data.map((row) => ({ platform: normalizePlatformIdentifier(row.platform), url: row.url }));
+  const rows = parsedRows.data.map((row) => ({ platform: normalizePlatformIdentifier(row.platform), url: row.url }));
 
   const seen = new Set<string>();
   for (const row of rows) {
@@ -337,70 +444,118 @@ export async function submitExternalLinks(rawToken: unknown, rawRows: unknown): 
 
   const db = getAdminFirestore();
   const sessionDocRef = assignmentSubmissionSessionsCollection().doc(session.tokenHash);
-  const submissionUid = assignmentExternalSubmissionsCollection().doc().id;
-  const submissionRef = generateSubmissionRef();
+  const assignmentDocRef = assignmentsCollection().doc(assignment.uid);
+  const contentDocRef = contentCollection().doc(thread.uid);
   const now = new Date().toISOString();
 
-  const submissionDoc: AssignmentExternalSubmissionDoc = assignmentExternalSubmissionDocSchema.parse({
-    uid: submissionUid,
-    submissionRef,
-    sessionRef: session.tokenHash,
-    assignmentRef: assignment.assignmentRef,
-    campaignRef: assignment.campaignRef,
-    partnerRef: assignment.partnerRef,
-    recipientType: session.recipientType,
-    recipientRef: session.recipientRef,
-    rows,
-    submittedAt: now,
+  const claimEntries = rows.map((row) => {
+    const normalizedUrl = normalizeContentUrl(row.url);
+    const key = publicationUrlIdentityKey(row.platform, normalizedUrl);
+    return { platform: row.platform, originalUrl: row.url, normalizedUrl, key, ref: contentPublicationClaimsCollection().doc(contentPublicationClaimId(key)) };
   });
 
-  // The transactional core of "single-use": re-read the session's live
-  // state inside the transaction and only mark it USED + write the
-  // submission batch if it is still ACTIVE. Under a concurrent
-  // double-submit, the Admin SDK's automatic optimistic-transaction retry
-  // guarantees exactly one caller observes state==="ACTIVE" and wins; the
-  // loser's retry re-reads state==="USED" and correctly returns
-  // "unusable" - exactly one immutable submission batch ever exists for
-  // this session, matching Step 10A section 14's own requirement.
-  //
-  // Step 10A.1 section 2/3: ALSO re-reads the live Assignment doc inside
-  // this same transaction (not just via the earlier, non-transactional
-  // loadValidSession above) and re-verifies it is still accepting. This
-  // is what makes this transaction and a concurrent CANCELLED transition
-  // (which writes to this exact Assignment doc - see
-  // assignment-lifecycle-service.ts) properly serialize: whichever
-  // commits first is what the other observes on its forced retry, so a
-  // race between "cancel" and "submit" can never let both win.
-  const assignmentDocRef = assignmentsCollection().doc(assignment.uid);
+  // The transactional core: every read via tx.getAll() before any write
+  // (mirrors this same file's own long-standing discipline). ALSO
+  // re-reads the live Assignment doc inside this same transaction (not
+  // just via the earlier, non-transactional loadValidSession above) so
+  // this transaction and a concurrent CANCELLED transition (which writes
+  // to this exact Assignment doc) properly serialize - whichever commits
+  // first is what the other observes on its forced retry.
   const txResult = await db.runTransaction<SubmitTxResult>(async (tx) => {
-    const [snap, assignmentSnap] = await tx.getAll(sessionDocRef, assignmentDocRef);
-    if (!snap.exists) return { kind: "unusable" };
-    const parsed = assignmentSubmissionSessionDocSchema.safeParse(snap.data());
-    if (!parsed.success || parsed.data.state !== "ACTIVE") return { kind: "unusable" };
+    const refs = [sessionDocRef, assignmentDocRef, contentDocRef, ...claimEntries.map((c) => c.ref)];
+    const snaps = await tx.getAll(...refs);
+    const sessionSnap = snaps[0]!;
+    const assignmentSnap = snaps[1]!;
+    const contentSnap = snaps[2]!;
+    const claimSnaps = snaps.slice(3);
 
-    const freshAssignment = assignmentSnap.exists ? assignmentDocSchema.safeParse(assignmentSnap.data()) : null;
-    if (!freshAssignment?.success || !ASSIGNMENT_STATES_ACCEPTING_SUBMISSION.has(freshAssignment.data.status)) return { kind: "unusable" };
+    if (!sessionSnap.exists) return { kind: "unusable" };
+    const parsedSession = assignmentSubmissionSessionDocSchema.safeParse(sessionSnap.data());
+    if (!parsedSession.success || parsedSession.data.state !== "ACTIVE") return { kind: "unusable" };
+    if (new Date(parsedSession.data.expiresAt).getTime() <= Date.now()) return { kind: "unusable" };
 
-    const next: typeof parsed.data = { ...parsed.data, state: "USED", consumedAt: now, version: parsed.data.version + 1 };
-    tx.set(sessionDocRef, next);
-    tx.set(assignmentExternalSubmissionsCollection().doc(submissionUid), submissionDoc);
-    return { kind: "ok", doc: submissionDoc };
+    const parsedAssignment = assignmentSnap.exists ? assignmentDocSchema.safeParse(assignmentSnap.data()) : null;
+    if (!parsedAssignment?.success || parsedAssignment.data.status === "CANCELLED") return { kind: "unusable" };
+
+    if (!contentSnap.exists) return { kind: "unusable" };
+    const parsedContent = contentDocSchema.safeParse(contentSnap.data());
+    if (!parsedContent.success) return { kind: "unusable" };
+    const freshThread = parsedContent.data;
+    // The real, race-safe gate: only OPEN/REVISION_REQUESTED accept a
+    // new revision. This is what makes a decision-vs-resubmit race and a
+    // concurrent double-resubmit both serialize safely - whichever
+    // transaction commits first moves the thread to UNDER_REVIEW (or
+    // APPROVED), and every loser's forced retry observes that fresh
+    // status and correctly returns "unusable".
+    if (freshThread.status !== "OPEN" && freshThread.status !== "REVISION_REQUESTED") return { kind: "unusable" };
+
+    // Publication-identity claim check - same-thread re-claim allowed
+    // (this thread revising its own link across revisions is not a
+    // collision), cross-thread collision blocked. A genuine cross-thread
+    // collision fails the WHOLE submit atomically - never a partial
+    // accept.
+    for (let i = 0; i < claimEntries.length; i += 1) {
+      const snap = claimSnaps[i];
+      if (!snap?.exists) continue;
+      const parsedClaim = contentPublicationClaimDocSchema.safeParse(snap.data());
+      if (parsedClaim.success && parsedClaim.data.contentUid !== freshThread.uid) return { kind: "conflict" };
+    }
+
+    const revisionNumber = freshThread.currentRevisionNumber + 1;
+    const revisionUid = contentRevisionsCollection(freshThread.uid).doc().id;
+    const revisionDoc = contentRevisionDocSchema.parse({
+      uid: revisionUid,
+      revisionNumber,
+      rows: claimEntries.map((c) => ({ platform: c.platform, originalUrl: c.originalUrl, normalizedUrl: c.normalizedUrl })),
+      recipientType: parsedSession.data.recipientType,
+      recipientRef: parsedSession.data.recipientRef,
+      submittedAt: now,
+    });
+    tx.set(contentRevisionsCollection(freshThread.uid).doc(revisionUid), revisionDoc);
+
+    const updatedThread: ContentDoc = {
+      ...freshThread,
+      status: "UNDER_REVIEW",
+      statusReason: null,
+      currentRevisionNumber: revisionNumber,
+      reviewedRevisionNumber: revisionNumber,
+      currentLinks: claimEntries.map((c) => ({ platform: c.platform, originalUrl: c.originalUrl, normalizedUrl: c.normalizedUrl, recordedAt: now })),
+      firstSubmittedAt: freshThread.firstSubmittedAt ?? now,
+      lastSubmittedAt: now,
+      version: freshThread.version + 1,
+      updatedAt: now,
+      updatedByUserRef: parsedSession.data.createdByUserRef,
+    };
+    tx.set(contentDocRef, updatedThread);
+
+    for (const entry of claimEntries) {
+      tx.set(entry.ref, contentPublicationClaimDocSchema.parse({ key: entry.key, contentRef: freshThread.contentRef, contentUid: freshThread.uid, revisionNumber, claimedAt: now }));
+    }
+
+    const nextSession: AssignmentSubmissionSessionDoc = { ...parsedSession.data, lastSubmittedAt: now, version: parsedSession.data.version + 1 };
+    tx.set(sessionDocRef, nextSession);
+
+    return { kind: "ok", revisionNumber };
   });
 
   if (txResult.kind === "unusable") return { ok: false, code: "unusable", message: "This submission link is no longer valid." };
+  if (txResult.kind === "conflict") return { ok: false, code: "invalid", message: "One or more of these links is already claimed by a different submission." };
+
+  const requestId = `public-submit-${thread.uid}-r${txResult.revisionNumber}`;
+
+  await writeContentEvent({ contentUid: thread.uid, kind: "submitted", actorUserRef: session.createdByUserRef, metadata: { revisionNumber: txResult.revisionNumber }, requestId });
 
   // Never the raw URLs - platform + row count only, per this event
-  // module's own redaction discipline and Step 10A section 18's "no
-  // private recipient contact data" spirit applied conservatively here.
+  // module's own redaction discipline.
   await writeAssignmentEvent({
     assignmentUid: assignment.uid,
     kind: "external_links_submitted",
     actorUserRef: session.createdByUserRef,
-    metadata: { recipientType: session.recipientType, rowCount: rows.length, platforms: [...new Set(rows.map((r) => r.platform))] },
-    requestId: submissionRef,
+    metadata: { recipientType: session.recipientType, rowCount: rows.length, platforms: [...new Set(rows.map((r) => r.platform))], revisionNumber: txResult.revisionNumber },
+    requestId,
   });
 
-  return { ok: true, data: { submissionRef } };
+  return { ok: true, data: { revisionNumber: txResult.revisionNumber } };
 }
 
 // ---- WhatsApp/share DTO-only contract (Step 10A section 15) -------------
