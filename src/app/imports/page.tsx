@@ -1,7 +1,7 @@
 import { AppShell } from "@/ui/AppShell";
 import { Icon } from "@/ui/icons";
 import { Checklist } from "@/ui/Form";
-import { EmptyState } from "@/ui/States";
+import { ImportCenterPanel } from "@/features/imports/ImportCenterPanel";
 
 export default function ImportsPage() {
   return (
@@ -16,12 +16,11 @@ export default function ImportsPage() {
 
       <div className="grid">
         <section className="panel s8">
+          <div className="panelhead">
+            <h2>Analytics import</h2>
+          </div>
           <div className="panelbody">
-            <EmptyState
-              title="No imports yet"
-              description="Upload, validation and review steps are a later build step — this skeleton only proves the route and navigation."
-              icon="upload"
-            />
+            <ImportCenterPanel />
           </div>
         </section>
         <section className="panel s4">

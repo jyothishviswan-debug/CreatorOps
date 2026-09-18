@@ -20,6 +20,8 @@
 // emulator config's globalSetup) call this.
 import { getAdminAuth, getAdminFirestore } from "@/server/firebase/admin";
 import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
+import { ANALYTICS_COLLECTIONS } from "@/server/analytics/firestore";
+import { seedAnalyticsData } from "@/server/analytics/seed-analytics-data";
 import { ASSIGNMENTS_COLLECTIONS } from "@/server/assignments/firestore";
 import { seedAssignmentsData } from "@/server/assignments/seed-assignments-data";
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
@@ -199,6 +201,27 @@ async function deleteContentCollectionWithSubcollections(): Promise<void> {
   }
 }
 
+// analyticsContentSourceRecords/{uid}/corrections and
+// analyticsChannelSourceRecords/{uid}/corrections are subcollections -
+// same cascade concern as every other domain's own subcollections above
+// (leads/partners/vendors/campaigns/assignments/content). Each source
+// record's own corrections must be deleted explicitly before (or
+// regardless of) the record document itself.
+async function deleteAnalyticsSourceRecordsWithCorrections(collectionName: string): Promise<void> {
+  const db = getAdminFirestore();
+  const recordsRef = db.collection(collectionName);
+  for (;;) {
+    const snapshot = await recordsRef.limit(200).get();
+    if (snapshot.empty) return;
+    for (const doc of snapshot.docs) {
+      await deleteCollection(doc.ref.collection(ANALYTICS_COLLECTIONS.corrections));
+    }
+    const batch = db.batch();
+    for (const doc of snapshot.docs) batch.delete(doc.ref);
+    await batch.commit();
+  }
+}
+
 // Wipes every Auth account and every Firestore collection this app
 // writes to, then reseeds the canonical baseline. Idempotent in effect
 // (running it twice in a row produces the same end state), but NOT a
@@ -232,6 +255,11 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await deleteContentCollectionWithSubcollections();
   await deleteCollection(db.collection(CONTENT_COLLECTIONS.contentAssignmentThreadClaims));
   await deleteCollection(db.collection(CONTENT_COLLECTIONS.contentPublicationClaims));
+  await deleteAnalyticsSourceRecordsWithCorrections(ANALYTICS_COLLECTIONS.analyticsContentSourceRecords);
+  await deleteAnalyticsSourceRecordsWithCorrections(ANALYTICS_COLLECTIONS.analyticsChannelSourceRecords);
+  await deleteCollection(db.collection(ANALYTICS_COLLECTIONS.analyticsImportBatches));
+  await deleteCollection(db.collection(ANALYTICS_COLLECTIONS.analyticsImportBatchClaims));
+  await deleteCollection(db.collection(ANALYTICS_COLLECTIONS.analyticsReadModelSnapshots));
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();
@@ -241,4 +269,5 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await seedCampaignsData();
   await seedAssignmentsData();
   await seedContentData();
+  await seedAnalyticsData();
 }

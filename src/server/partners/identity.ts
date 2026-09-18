@@ -43,15 +43,24 @@ export type IdentityEvidence = {
 // original local name here so nothing else in this file changes.
 const normalizePlatform = normalizePlatformIdentifier;
 
-function normalizePlatformAccountId(value: string): string {
+// Step 12A: exported (previously module-private) so Analytics' own
+// Partner Account fallback-scan matcher (see
+// @/server/analytics/partner-account-matcher.ts) can normalize an
+// ALREADY-STORED account's own handle/profileUrl/platformAccountId
+// fields using the exact same per-field algorithm computeNormalizedIdentity
+// uses internally, rather than duplicating this logic a second time
+// anywhere else. Purely additive - nothing about the functions themselves
+// changed, and every existing caller of computeNormalizedIdentity/
+// claimIdFor is unaffected.
+export function normalizePlatformAccountId(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function normalizeProfileUrl(value: string): string {
+export function normalizeProfileUrl(value: string): string {
   return value.trim().toLowerCase().replace(/\/+$/, "");
 }
 
-function normalizeHandle(value: string): string {
+export function normalizeHandle(value: string): string {
   return value.trim().toLowerCase().replace(/^@/, "");
 }
 

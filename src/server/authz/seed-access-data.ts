@@ -65,18 +65,21 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
     features: featuresOf(["dashboard", "discovery", "partners", "vendors", "campaigns", "analytics", "partner_reviews", "reports"]),
   },
   analyst: {
-    features: featuresOf([
-      "dashboard",
-      "discovery",
-      "partners",
-      "vendors",
-      "campaigns",
-      "analytics",
-      "partner_reviews",
-      "reports",
-      "imports",
-      "exports",
-    ]),
+    features: {
+      ...featuresOf(["dashboard", "discovery", "partners", "vendors", "campaigns", "analytics", "partner_reviews", "reports", "imports", "exports"]),
+      // Step 12A: Analyst holds BOTH Analytics action permissions
+      // (day-to-day read via Explore, AND import/correction operations)
+      // - the ground truth's own "Analyst - Analytics read + approved
+      // Analytics import/correction operations" role description. Also
+      // the only non-Head/non-Super-Admin role trusted to actually
+      // execute an import through the Import Center for the Analytics
+      // target (manage_imports), matching the module's own already-
+      // established Analyst-yes shape (Analyst already held Import/
+      // Export Center view access before this step; this adds the real
+      // action behind it now that a real target exists).
+      analytics: featureGrant(true, { explore: true, manage_analytics_data: true }),
+      imports: featureGrant(true, { manage_imports: true }),
+    },
   },
   partnership_manager: {
     features: {
@@ -178,6 +181,20 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         review_content: true,
         cancel_content: true,
       }),
+      // Step 12A: non-monotonic on purpose, same day-to-day-but-not-
+      // governance shape as Finance's approve_payables/Partners'/
+      // Vendors'/Campaigns' own Manager-vs-Head splits above - Manager
+      // can EXPLORE Analytics data day-to-day but cannot import or
+      // correct it by default (manage_analytics_data: false); a real
+      // grant would have to be added explicitly (matching the
+      // established non-monotonic pattern this whole file already
+      // uses). Deliberately NOT extended to the "imports" feature itself
+      // - Import Center access is, and stays, Analyst/Super-Admin-only
+      // (see seed-access-data.emulator.test.ts's own pre-existing "no
+      // role-rank fallback" proof: Partnership Head - otherwise broader
+      // than Analyst - does NOT have Import Center access, and nothing
+      // here reintroduces a rank-based exception for Manager either).
+      analytics: featureGrant(true, { explore: true, manage_analytics_data: false }),
     },
   },
   partnership_head: {
@@ -250,6 +267,22 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         review_content: true,
         cancel_content: true,
       }),
+      // Step 12A: the Head-vs-Manager governance split's "yes" side -
+      // Partnership Head holds BOTH explore and manage_analytics_data,
+      // matching the Manager-vs-Head "day-to-day-but-not-governance"
+      // split precedent used everywhere else in this file (Finance's
+      // approve_payables, Partners'/Vendors'/Campaigns' own governance
+      // actions). Deliberately NOT extended to the "imports" feature -
+      // see partnership_manager's own analytics comment above for why
+      // Import Center access stays Analyst/Super-Admin-only rather than
+      // being widened here (a genuine conflict was found with this
+      // file's own pre-existing "no role-rank fallback" regression proof
+      // in seed-access-data.emulator.test.ts - resolved by keeping that
+      // established invariant rather than the task's own softer, "your
+      // call on the exact mechanism" suggestion to mirror the split onto
+      // Import Center itself; see the Step 12A completion report for the
+      // full reasoning).
+      analytics: featureGrant(true, { explore: true, manage_analytics_data: true }),
     },
   },
   super_admin: {
