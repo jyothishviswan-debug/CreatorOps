@@ -9,7 +9,7 @@ import { EmptyState } from "@/ui/States";
 import { Icon } from "@/ui/icons";
 import type { AssignmentDto } from "@/server/assignments/client-dto";
 import { ASSIGNMENT_STATUSES, type AssignmentStatus } from "@/server/assignments/types";
-import { absoluteTime, dateLabel, platformLabel, STATUS_LABELS, statusTone } from "./format";
+import { absoluteTime, dateLabel, platformLabel, SHARE_ELIGIBLE_STATUSES, STATUS_LABELS, statusTone } from "./format";
 import { AssignmentHistoryDialog } from "./AssignmentHistoryDialog";
 import { AssignmentNotesDialog } from "./AssignmentNotesDialog";
 import { AssignmentNextActionPanel } from "./AssignmentNextActionPanel";
@@ -31,13 +31,6 @@ import { AssignmentWorkflowPanel } from "./AssignmentWorkflowPanel";
 // position (reachable from every non-terminal state, not one linear
 // point).
 const WORKFLOW_STEPS: AssignmentStatus[] = ["DRAFT", "ASSIGNED", "ACCEPTED", "IN_PROGRESS", "COMPLETED"];
-
-// Step 10C section 4: the Assignment must actually be issued and still
-// operational - never DRAFT (nothing to share yet) or a terminal state.
-// Server remains authoritative regardless (every mutation this dialog can
-// trigger re-verifies status itself); this only controls whether the
-// header action is offered at all.
-const SHARE_ELIGIBLE_STATUSES: AssignmentStatus[] = ["ASSIGNED", "ACCEPTED", "IN_PROGRESS"];
 
 export function AssignmentDetail({ initialAssignment }: { initialAssignment: AssignmentDto }) {
   const [assignment, setAssignment] = useState(initialAssignment);

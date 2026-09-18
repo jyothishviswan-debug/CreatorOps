@@ -17,7 +17,15 @@ import { getFeatureForPath } from "@/server/authz/features";
 const PUBLIC_PATHS = ["/sign-in", "/submit"];
 const ACCESS_DENIED_PATH = "/access-denied";
 
-function isPublicPath(pathname: string): boolean {
+// Step 10C.1: exact/segment-aware by construction - a path is public only
+// when it equals a PUBLIC_PATHS entry exactly, or starts with that entry
+// PLUS a "/" separator. A prefix-collision path that merely begins with
+// the same characters (e.g. "/submit-admin", "/submitanything") never
+// matches either branch, since neither "===" nor a "/"-suffixed
+// startsWith can be satisfied by a same-prefix-different-next-character
+// string. Exported for direct unit coverage (see proxy.test.ts) - the
+// pure part of this module, with no Next.js/Firebase dependency.
+export function isPublicPath(pathname: string): boolean {
   if (pathname.startsWith("/api/")) return true;
   return PUBLIC_PATHS.some((path) => pathname === path || pathname.startsWith(`${path}/`));
 }

@@ -5,8 +5,9 @@ import { useEffect, useRef, useState } from "react";
 import { DialogShell } from "@/ui/Dialog";
 import type { AssignmentDto } from "@/server/assignments/client-dto";
 import type { SubmissionRecipientType } from "@/server/assignments/external-submission-types";
-import { createSubmissionSession, getAssignmentCurrentVendor } from "./api-client";
+import { createSubmissionSession, getAssignment, getAssignmentCurrentVendor } from "./api-client";
 import { buildWhatsAppDeepLink, buildWhatsAppShareMessage } from "./whatsapp";
+import { SHARE_ELIGIBLE_STATUSES } from "./format";
 
 // Step 10C: the one new secondary Detail-header action - a focused dialog
 // reusing the accepted DialogShell, never a new panel/tab/route. The
@@ -83,24 +84,50 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
   });
 
   async function handleConfirm() {
-    if (!includeLink) {
-      // No session, no token - the deep link is built and opened entirely
-      // synchronously from this click, so no popup blocker ever fires.
-      const deepLink = buildWhatsAppDeepLink(previewMessage);
-      window.open(deepLink, "_blank", "noopener,noreferrer");
-      resetAndClose();
-      return;
-    }
-
     if (creatingRef.current) return;
     creatingRef.current = true;
     setError(null);
     setBusy(true);
 
     // Open a blank tab SYNCHRONOUSLY, before any await, so the browser
-    // still attributes it to this click - then, once the session is
-    // created, navigate that same tab to the real deep link (section 6).
+    // still attributes it to this click - regardless of checkbox state,
+    // since the final confirmation is now always asynchronous (Step
+    // 10C.1: every final action re-validates the Assignment first, even
+    // when checkbox OFF never touches the session API).
     const pending = window.open("", "_blank");
+
+    // Trusted re-read on every final confirmation, OFF or ON - an
+    // Assignment that moved to DRAFT/COMPLETED/CANCELLED, went out of
+    // scope, or was deleted after this dialog opened must never be
+    // shared from stale client state. This is the ONLY network call the
+    // OFF path ever makes - still zero submission sessions, zero tokens.
+    const fresh = await getAssignment(assignment.assignmentRef);
+    if (!fresh.ok || !SHARE_ELIGIBLE_STATUSES.includes(fresh.data.status)) {
+      pending?.close();
+      creatingRef.current = false;
+      setBusy(false);
+      setError(fresh.ok ? "This Assignment is no longer available to share." : fresh.error);
+      return;
+    }
+
+    const freshSummary = fresh.data.brief.instructions ?? fresh.data.brief.contentRequirementSummary;
+    const freshMessageFields = {
+      campaignName: fresh.data.brief.campaignName,
+      partnerDisplayName: fresh.data.partnerDisplayName,
+      dueAt: fresh.data.brief.dueAt,
+      platforms: fresh.data.brief.platforms,
+      summary: freshSummary,
+    };
+
+    if (!includeLink) {
+      // No session, no token - the message is rebuilt from the just-
+      // revalidated Assignment, never the stale prop.
+      const deepLink = buildWhatsAppDeepLink(buildWhatsAppShareMessage(freshMessageFields));
+      if (pending) pending.location.href = deepLink;
+      else window.open(deepLink, "_blank", "noopener,noreferrer");
+      resetAndClose();
+      return;
+    }
 
     const recipientRef = recipientType === "VENDOR" ? (vendorRef ?? undefined) : undefined;
     const result = await createSubmissionSession(assignment.assignmentRef, { recipientType, recipientRef });
@@ -114,15 +141,7 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
     }
 
     const url = `${window.location.origin}/submit/${result.data.rawToken}`;
-    const message = buildWhatsAppShareMessage({
-      campaignName: assignment.brief.campaignName,
-      partnerDisplayName: assignment.partnerDisplayName,
-      dueAt: assignment.brief.dueAt,
-      platforms: assignment.brief.platforms,
-      summary,
-      submissionUrl: url,
-    });
-    const deepLink = buildWhatsAppDeepLink(message);
+    const deepLink = buildWhatsAppDeepLink(buildWhatsAppShareMessage({ ...freshMessageFields, submissionUrl: url }));
 
     if (pending) pending.location.href = deepLink;
     else window.open(deepLink, "_blank", "noopener,noreferrer");
@@ -154,7 +173,7 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
             Cancel
           </button>
           <button type="button" className="btn primary" disabled={busy || (includeLink && recipientType === "VENDOR" && !vendorRef)} onClick={handleConfirm}>
-            {busy ? "Creating link…" : "Open WhatsApp"}
+            {busy ? "Working…" : "Open WhatsApp"}
           </button>
         </>
       }

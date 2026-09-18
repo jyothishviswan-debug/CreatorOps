@@ -15,6 +15,14 @@ export const STATUS_LABELS: Record<AssignmentStatus, string> = {
   CANCELLED: "Cancelled",
 };
 
+// The Assignment must actually be issued and still operational to be
+// shareable via WhatsApp (Step 10C section 4 / Step 10C.1's own
+// revalidation) - never DRAFT (nothing to share yet) or a terminal
+// state. Shared by AssignmentDetail (header action visibility) and
+// AssignmentShareDialog (final-confirmation revalidation), so the two
+// checks can never drift apart.
+export const SHARE_ELIGIBLE_STATUSES: AssignmentStatus[] = ["ASSIGNED", "ACCEPTED", "IN_PROGRESS"];
+
 export function statusTone(status: AssignmentStatus): "default" | "orange" | "blue" | "purple" | "red" | "gray" {
   if (status === "IN_PROGRESS") return "default";
   if (status === "ASSIGNED") return "blue";

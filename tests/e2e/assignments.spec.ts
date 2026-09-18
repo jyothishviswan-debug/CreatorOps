@@ -393,13 +393,16 @@ test.describe("WhatsApp sharing", () => {
     await expect(page.getByRole("button", { name: "Share via WhatsApp" })).toBeVisible();
   });
 
-  test("checkbox OFF: opening/toggling the dialog and confirming never creates a submission session", async ({ page }) => {
+  test("checkbox OFF: opening/toggling the dialog and confirming never creates a submission session, but the final confirmation still performs a trusted Assignment revalidation", async ({ page }) => {
     const assignment = await createAssignedAssignmentViaApi(page);
     await page.goto(`/assignments/${assignment.assignmentRef}`);
 
     let sessionCalls = 0;
+    let revalidateGetCalls = 0;
+    const revalidatePattern = new RegExp(`/api/assignments/${assignment.assignmentRef}$`);
     page.on("request", (request) => {
       if (request.method() === "POST" && request.url().includes("/submission-sessions")) sessionCalls += 1;
+      if (request.method() === "GET" && revalidatePattern.test(request.url())) revalidateGetCalls += 1;
     });
 
     await page.getByRole("button", { name: "Share via WhatsApp" }).click();
@@ -428,6 +431,36 @@ test.describe("WhatsApp sharing", () => {
     expect(decodeURIComponent(popup.url())).not.toContain("/submit/");
     await popup.close();
 
+    expect(sessionCalls).toBe(0);
+    // The one and only network call the OFF path is allowed to make -
+    // the trusted authenticated Assignment re-read, never the session API.
+    expect(revalidateGetCalls).toBe(1);
+  });
+
+  test("checkbox OFF: if the Assignment changes to a non-shareable state after the dialog opened, revalidation blocks the share - zero sessions, WhatsApp never opens, a safe error is shown", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    await page.goto(`/assignments/${assignment.assignmentRef}`);
+
+    let sessionCalls = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().includes("/submission-sessions")) sessionCalls += 1;
+    });
+
+    await page.getByRole("button", { name: "Share via WhatsApp" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Share Assignment via WhatsApp")).toBeVisible();
+
+    // The Assignment moves to a terminal, non-shareable state out from
+    // under the still-open dialog - the exact "stale client state" this
+    // revalidation exists to catch.
+    await transitionViaApi(page, assignment.assignmentRef, "CANCELLED", assignment.version, "Cancelled while the share dialog was open.");
+
+    const [popup] = await Promise.all([page.waitForEvent("popup"), dialog.getByRole("button", { name: "Open WhatsApp" }).click()]);
+    // The blank tab opened synchronously for the popup-safe pattern is
+    // closed again once revalidation fails - it must never reach wa.me.
+    await popup.waitForEvent("close", { timeout: 10_000 });
+
+    await expect(dialog.getByRole("alert")).toBeVisible();
     expect(sessionCalls).toBe(0);
   });
 
@@ -486,9 +519,9 @@ test.describe("WhatsApp sharing", () => {
     await dialog.getByRole("checkbox", { name: "Include public submission link" }).check();
 
     // Located by its stable footer position, not by name - its own
-    // accessible name changes to "Creating link…" once busy, so a
-    // name-bound locator would stop matching anything at exactly the
-    // moment this test needs to observe it.
+    // accessible name changes to "Working…" once busy, so a name-bound
+    // locator would stop matching anything at exactly the moment this
+    // test needs to observe it.
     const confirmButton = dialog.locator(".dialogfoot button.primary");
     await expect(confirmButton).toHaveText("Open WhatsApp");
     const [popup] = await Promise.all([page.waitForEvent("popup"), confirmButton.click()]);
@@ -498,7 +531,7 @@ test.describe("WhatsApp sharing", () => {
     // real browsers never deliver a click to a disabled button, so this
     // is what actually prevents a second session, not just cosmetic.
     await expect(confirmButton).toBeDisabled();
-    await expect(confirmButton).toHaveText("Creating link…");
+    await expect(confirmButton).toHaveText("Working…");
 
     await popup.waitForURL(/wa\.me|whatsapp\.com/, { waitUntil: "commit", timeout: 10_000 });
     await popup.close();
@@ -544,6 +577,15 @@ test.describe("Public submission page", () => {
     await expect(page.locator('nav[aria-label="Global navigation"]')).toHaveCount(0);
 
     await page.goto("/assignments");
+    await expect(page).toHaveURL(/\/sign-in/);
+  });
+
+  test("Step 10C.1: the public-route exception is segment-aware - a prefix-collision path is never accidentally made public", async ({ page }) => {
+    await page.context().clearCookies();
+    // A synthetic route that merely starts with the same characters as
+    // the public "/submit" prefix - must be redirected to sign-in the
+    // same as any other protected route, never served directly.
+    await page.goto("/submit-not-public");
     await expect(page).toHaveURL(/\/sign-in/);
   });
 
