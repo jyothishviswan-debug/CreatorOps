@@ -13,6 +13,7 @@ import { absoluteTime, dateLabel, platformLabel, STATUS_LABELS, statusTone } fro
 import { AssignmentHistoryDialog } from "./AssignmentHistoryDialog";
 import { AssignmentNotesDialog } from "./AssignmentNotesDialog";
 import { AssignmentNextActionPanel } from "./AssignmentNextActionPanel";
+import { AssignmentShareDialog } from "./AssignmentShareDialog";
 import { AssignmentWorkflowPanel } from "./AssignmentWorkflowPanel";
 
 // Step 10B: the frozen golden-master Assignment Detail structure,
@@ -31,10 +32,18 @@ import { AssignmentWorkflowPanel } from "./AssignmentWorkflowPanel";
 // point).
 const WORKFLOW_STEPS: AssignmentStatus[] = ["DRAFT", "ASSIGNED", "ACCEPTED", "IN_PROGRESS", "COMPLETED"];
 
+// Step 10C section 4: the Assignment must actually be issued and still
+// operational - never DRAFT (nothing to share yet) or a terminal state.
+// Server remains authoritative regardless (every mutation this dialog can
+// trigger re-verifies status itself); this only controls whether the
+// header action is offered at all.
+const SHARE_ELIGIBLE_STATUSES: AssignmentStatus[] = ["ASSIGNED", "ACCEPTED", "IN_PROGRESS"];
+
 export function AssignmentDetail({ initialAssignment }: { initialAssignment: AssignmentDto }) {
   const [assignment, setAssignment] = useState(initialAssignment);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
+  const [shareOpen, setShareOpen] = useState(false);
 
   function handleAssignmentUpdated(updated: AssignmentDto) {
     setAssignment(updated);
@@ -54,6 +63,11 @@ export function AssignmentDetail({ initialAssignment }: { initialAssignment: Ass
           <p>{assignment.brief.campaignName}</p>
         </div>
         <div className="actions">
+          {SHARE_ELIGIBLE_STATUSES.includes(assignment.status) && (
+            <button type="button" className="btn" onClick={() => setShareOpen(true)}>
+              Share via WhatsApp
+            </button>
+          )}
           <Link href="/assignments" className="btn">
             Back to assignments
           </Link>
@@ -157,6 +171,7 @@ export function AssignmentDetail({ initialAssignment }: { initialAssignment: Ass
 
       <AssignmentHistoryDialog assignmentRef={assignment.assignmentRef} open={historyOpen} onClose={() => setHistoryOpen(false)} />
       <AssignmentNotesDialog open={notesOpen} onClose={() => setNotesOpen(false)} />
+      {SHARE_ELIGIBLE_STATUSES.includes(assignment.status) && <AssignmentShareDialog assignment={assignment} open={shareOpen} onClose={() => setShareOpen(false)} />}
     </>
   );
 }

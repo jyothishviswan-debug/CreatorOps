@@ -11,6 +11,7 @@ import type { EditAssignmentBriefInput, ListAssignmentHistoryInput, ListAssignme
 import type { TransitionAssignmentInput } from "@/server/assignments/assignment-lifecycle-service";
 import type { AssignmentListCursor } from "@/server/assignments/firestore";
 import type { AssignmentEventListCursor } from "@/server/assignments/assignment-events";
+import type { CreateExternalSubmissionSessionInput, SafeSubmissionSessionDto, SafeVendorOption } from "@/server/assignments/external-submission-service";
 
 export type AssignmentsApiErrorCode = "unauthorized" | "not_found" | "invalid_input" | "stale_write" | "not_ready" | "conflict" | "internal" | "network_error";
 
@@ -109,4 +110,21 @@ export function getAssignmentHistory(assignmentRef: string, input: ListAssignmen
     cursorId: input.cursor?.id,
   });
   return call(`/api/assignments/${encodeURIComponent(assignmentRef)}/history${qs}`);
+}
+
+// ---- WhatsApp share dialog support (Step 10C) ----
+
+// A bounded, read-only lookup - never a broad Vendor list. Used only to
+// decide whether the share dialog's "Current Vendor" recipient option
+// should render at all.
+export function getAssignmentCurrentVendor(assignmentRef: string): Promise<AssignmentsApiResult<{ vendor: SafeVendorOption | null }>> {
+  return call(`/api/assignments/${encodeURIComponent(assignmentRef)}/current-vendor`);
+}
+
+// Creates a real, single-use external submission session - called ONLY
+// from the share dialog's final "Open WhatsApp" confirmation with the
+// public-link checkbox ON, never merely because the dialog opened or the
+// checkbox was toggled. Returns the raw bearer token exactly once.
+export function createSubmissionSession(assignmentRef: string, input: CreateExternalSubmissionSessionInput): Promise<AssignmentsApiResult<{ session: SafeSubmissionSessionDto; rawToken: string }>> {
+  return call(`/api/assignments/${encodeURIComponent(assignmentRef)}/submission-sessions`, { method: "POST", body: JSON.stringify(input) });
 }

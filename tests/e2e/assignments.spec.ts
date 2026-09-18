@@ -56,6 +56,40 @@ async function transitionViaApi(page: Page, assignmentRef: string, to: string, e
   return (await response.json()) as AssignmentApi;
 }
 
+// Step 10C - a fresh Assignment already moved to ASSIGNED (share-eligible),
+// against a given partnerRef (defaults to seed-partner-direct; pass
+// "creator-house" for the Vendor-option tests - it has a real active
+// Vendor, seed-vendor-agency).
+async function createAssignedAssignmentViaApi(page: Page, partnerRef = "seed-partner-direct"): Promise<AssignmentApi> {
+  const created = await createAssignmentViaApi(page, { partnerRef });
+  // The lifecycle endpoint's own response body is only {version, status} -
+  // no assignmentRef (see assignment-lifecycle-service.ts) - so it must be
+  // merged back onto `created`, never returned on its own.
+  const transitioned = await transitionViaApi(page, created.assignmentRef, "ASSIGNED", created.version);
+  return { ...created, ...transitioned };
+}
+
+// Every seeded ACTIVE Partner already has a real active Vendor link (see
+// seed-vendors-data.ts) - a genuinely vendor-less Partner needs a fresh
+// one created here for the "no Vendor option" case.
+async function createVendorlessPartnerRefViaApi(page: Page): Promise<string> {
+  const response = await page.request.post("/api/partners", { data: { displayName: uniqueName("Vendor-less Partner") } });
+  expect(response.ok()).toBeTruthy();
+  const body = (await response.json()) as { partnerRef: string };
+  return body.partnerRef;
+}
+
+// Creates a real, single-use PARTNER submission session via the already-
+// accepted trusted API and returns its raw bearer token - the same
+// primitive the WhatsApp share dialog itself calls, used here to drive
+// the public /submit/[token] page tests directly without the UI.
+async function createSubmissionTokenViaApi(page: Page, assignmentRef: string): Promise<string> {
+  const response = await page.request.post(`/api/assignments/${assignmentRef}/submission-sessions`, { data: { recipientType: "PARTNER" } });
+  expect(response.ok()).toBeTruthy();
+  const body = (await response.json()) as { rawToken: string };
+  return body.rawToken;
+}
+
 // ---- Authorization ----
 
 test.describe("Authorization", () => {
@@ -347,6 +381,267 @@ test.describe("Lifecycle", () => {
   });
 });
 
+// ---- WhatsApp sharing (Step 10C) ----
+
+test.describe("WhatsApp sharing", () => {
+  test("the header action only appears for ASSIGNED/ACCEPTED/IN_PROGRESS, never DRAFT/COMPLETED/CANCELLED", async ({ page }) => {
+    await page.goto("/assignments/seed-assignment-draft");
+    await expect(page.getByRole("button", { name: "Share via WhatsApp" })).toHaveCount(0);
+
+    const assignment = await createAssignedAssignmentViaApi(page);
+    await page.goto(`/assignments/${assignment.assignmentRef}`);
+    await expect(page.getByRole("button", { name: "Share via WhatsApp" })).toBeVisible();
+  });
+
+  test("checkbox OFF: opening/toggling the dialog and confirming never creates a submission session", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    await page.goto(`/assignments/${assignment.assignmentRef}`);
+
+    let sessionCalls = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().includes("/submission-sessions")) sessionCalls += 1;
+    });
+
+    await page.getByRole("button", { name: "Share via WhatsApp" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Share Assignment via WhatsApp")).toBeVisible();
+    const checkbox = dialog.getByRole("checkbox", { name: "Include public submission link" });
+    await expect(checkbox).not.toBeChecked();
+    expect(sessionCalls).toBe(0);
+
+    // Toggling on/off without confirming must never call the API either.
+    await checkbox.check();
+    await expect(dialog.getByText("Submission recipient")).toBeVisible();
+    await checkbox.uncheck();
+    await expect(dialog.getByText("Submission recipient")).toHaveCount(0);
+    expect(sessionCalls).toBe(0);
+
+    // Safe preview text is present, with no /submit/ URL and no raw refs,
+    // while OFF.
+    const preview = dialog.locator(".scopebox");
+    await expect(preview).toContainText("Assignment for");
+    await expect(preview).not.toContainText("/submit/");
+    await expect(preview).not.toContainText(assignment.assignmentRef);
+
+    const [popup] = await Promise.all([page.waitForEvent("popup"), dialog.getByRole("button", { name: "Open WhatsApp" }).click()]);
+    await popup.waitForURL(/wa\.me|whatsapp\.com/, { waitUntil: "commit", timeout: 10_000 });
+    expect(decodeURIComponent(popup.url())).not.toContain("/submit/");
+    await popup.close();
+
+    expect(sessionCalls).toBe(0);
+  });
+
+  test("checkbox ON / Partner: final confirmation creates exactly one session and the WhatsApp message carries exactly one /submit/ URL", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    await page.goto(`/assignments/${assignment.assignmentRef}`);
+
+    let sessionCalls = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().includes("/submission-sessions")) sessionCalls += 1;
+    });
+
+    await page.getByRole("button", { name: "Share via WhatsApp" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("checkbox", { name: "Include public submission link" }).check();
+    await expect(dialog.getByRole("radio", { name: "Partner" })).toBeChecked();
+
+    const [popup] = await Promise.all([page.waitForEvent("popup"), dialog.getByRole("button", { name: "Open WhatsApp" }).click()]);
+    await popup.waitForURL(/wa\.me|whatsapp\.com/, { waitUntil: "commit", timeout: 10_000 });
+    const message = decodeURIComponent(popup.url());
+    const submitUrlCount = (message.match(/\/submit\//g) ?? []).length;
+    expect(submitUrlCount).toBe(1);
+    await popup.close();
+
+    expect(sessionCalls).toBe(1);
+
+    // The dialog also exposes the generated link for copying - the same
+    // session, not a second one.
+    await expect(dialog.getByLabel("Generated submission link")).toBeVisible();
+    expect(sessionCalls).toBe(1);
+
+    // Never written to localStorage/sessionStorage.
+    const storageDump = await page.evaluate(() => JSON.stringify(localStorage) + JSON.stringify(sessionStorage));
+    expect(storageDump).not.toContain("/submit/");
+  });
+
+  test("double-click protection: the confirm button disables while creation is in flight, never issuing two sessions", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    await page.goto(`/assignments/${assignment.assignmentRef}`);
+
+    let sessionCalls = 0;
+    page.on("request", (request) => {
+      if (request.method() === "POST" && request.url().includes("/submission-sessions")) sessionCalls += 1;
+    });
+
+    // The real local emulator round trip is fast enough that a bare
+    // click-then-assert can race past the disabled window - hold the
+    // response briefly so the in-flight state is reliably observable.
+    await page.route("**/submission-sessions", async (route) => {
+      await new Promise((resolve) => setTimeout(resolve, 500));
+      await route.continue();
+    });
+
+    await page.getByRole("button", { name: "Share via WhatsApp" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("checkbox", { name: "Include public submission link" }).check();
+
+    // Located by its stable footer position, not by name - its own
+    // accessible name changes to "Creating link…" once busy, so a
+    // name-bound locator would stop matching anything at exactly the
+    // moment this test needs to observe it.
+    const confirmButton = dialog.locator(".dialogfoot button.primary");
+    await expect(confirmButton).toHaveText("Open WhatsApp");
+    const [popup] = await Promise.all([page.waitForEvent("popup"), confirmButton.click()]);
+
+    // Still genuinely in flight (the 500ms delayed response above), the
+    // button is disabled and its own label reflects the in-flight state -
+    // real browsers never deliver a click to a disabled button, so this
+    // is what actually prevents a second session, not just cosmetic.
+    await expect(confirmButton).toBeDisabled();
+    await expect(confirmButton).toHaveText("Creating link…");
+
+    await popup.waitForURL(/wa\.me|whatsapp\.com/, { waitUntil: "commit", timeout: 10_000 });
+    await popup.close();
+
+    expect(sessionCalls).toBe(1);
+  });
+
+  test("Vendor option appears only when a current active Vendor exists, and shows only the safe display label", async ({ page }) => {
+    const vendorlessPartnerRef = await createVendorlessPartnerRefViaApi(page);
+    const withoutVendor = await createAssignedAssignmentViaApi(page, vendorlessPartnerRef);
+    await page.goto(`/assignments/${withoutVendor.assignmentRef}`);
+    await page.getByRole("button", { name: "Share via WhatsApp" }).click();
+    const dialogA = page.getByRole("dialog");
+    await dialogA.getByRole("checkbox", { name: "Include public submission link" }).check();
+    await expect(dialogA.getByRole("radio", { name: "Partner" })).toBeVisible();
+    await expect(dialogA.getByText(/Current Vendor/)).toHaveCount(0);
+    await page.getByRole("button", { name: "Close dialog" }).click();
+
+    // creator-house: real active Vendor, seed-vendor-agency / "Northline Talent Agency".
+    const withVendor = await createAssignedAssignmentViaApi(page, "creator-house");
+    await page.goto(`/assignments/${withVendor.assignmentRef}`);
+    await page.getByRole("button", { name: "Share via WhatsApp" }).click();
+    const dialogB = page.getByRole("dialog");
+    await dialogB.getByRole("checkbox", { name: "Include public submission link" }).check();
+    await expect(dialogB.getByText("Current Vendor — Northline Talent Agency")).toBeVisible();
+    // No raw vendorRef ever shown.
+    await expect(dialogB.getByText("seed-vendor-agency")).toHaveCount(0);
+  });
+});
+
+// ---- Public submission page (Step 10C) ----
+
+test.describe("Public submission page", () => {
+  test("anonymous browser can open a valid token, sees no CreatorOps shell/nav, and cannot open /assignments", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
+
+    await page.context().clearCookies();
+    await page.goto(`/submit/${token}`);
+    await expect(page.getByText("Submit published links")).toBeVisible();
+    await expect(page.locator(".sidebar")).toHaveCount(0);
+    await expect(page.locator(".topbar")).toHaveCount(0);
+    await expect(page.locator('nav[aria-label="Global navigation"]')).toHaveCount(0);
+
+    await page.goto("/assignments");
+    await expect(page).toHaveURL(/\/sign-in/);
+  });
+
+  test("security headers: noindex/nofollow, referrer policy, no token in the document title", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
+
+    await page.context().clearCookies();
+    await page.goto(`/submit/${token}`);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /noindex/);
+    await expect(page.locator('meta[name="robots"]')).toHaveAttribute("content", /nofollow/);
+    await expect(page.locator('meta[name="referrer"]')).toHaveAttribute("content", "no-referrer");
+    const title = await page.title();
+    expect(title).not.toContain(token);
+  });
+
+  test("external resource links render with rel=noreferrer noopener", async ({ page }) => {
+    // seed-assignment-assigned carries the seeded brief's real resourceLinks
+    // (one shareExternally:true, one shareExternally:false - see
+    // seed-assignments-data.ts's briefBase()); a freshly API-created
+    // Assignment has no resourceLinks at all.
+    const token = await createSubmissionTokenViaApi(page, "seed-assignment-assigned");
+
+    await page.context().clearCookies();
+    await page.goto(`/submit/${token}`);
+    const link = page.getByRole("link", { name: "Public brand guidelines" });
+    await expect(link).toBeVisible();
+    await expect(link).toHaveAttribute("rel", "noreferrer noopener");
+    await expect(link).toHaveAttribute("target", "_blank");
+    // The internal-only link never reaches this page at all.
+    await expect(page.getByText("Internal negotiation notes")).toHaveCount(0);
+  });
+
+  test("default one row, add up to 10, remove control appears once there's more than one row", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
+
+    await page.context().clearCookies();
+    await page.goto(`/submit/${token}`);
+    await expect(page.getByRole("button", { name: "Remove row" })).toHaveCount(0);
+
+    for (let i = 0; i < 9; i += 1) await page.getByRole("button", { name: "+ Add another link" }).click();
+    await expect(page.getByLabel("Published URL")).toHaveCount(10);
+    await expect(page.getByRole("button", { name: "+ Add another link" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Remove row" }).first()).toBeVisible();
+  });
+
+  test("a valid multi-link submission succeeds, consumes the token, and a refresh shows the generic unavailable state", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
+
+    await page.context().clearCookies();
+    await page.goto(`/submit/${token}`);
+
+    await page.getByLabel("Platform").first().selectOption("instagram");
+    await page.getByLabel("Published URL").first().fill("https://instagram.com/p/e2e-1");
+    await page.getByRole("button", { name: "+ Add another link" }).click();
+    await page.getByLabel("Platform").nth(1).selectOption("instagram");
+    await page.getByLabel("Published URL").nth(1).fill("https://instagram.com/p/e2e-2");
+
+    await page.getByRole("button", { name: "Submit Links" }).click();
+    await expect(page.getByText("Links submitted successfully")).toBeVisible();
+    await expect(page.getByText("This submission link is no longer active.")).toBeVisible();
+
+    await page.reload();
+    await expect(page.getByText("This submission link is no longer available.")).toBeVisible();
+    await expect(page.getByText("Please contact the CreatorOps team if you need a new link.")).toBeVisible();
+  });
+
+  test("duplicate platform+URL rows are rejected without consuming the token", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
+
+    await page.context().clearCookies();
+    await page.goto(`/submit/${token}`);
+    await page.getByLabel("Platform").first().selectOption("instagram");
+    await page.getByLabel("Published URL").first().fill("https://instagram.com/p/dup");
+    await page.getByRole("button", { name: "+ Add another link" }).click();
+    await page.getByLabel("Platform").nth(1).selectOption("instagram");
+    await page.getByLabel("Published URL").nth(1).fill("https://instagram.com/p/dup");
+
+    await page.getByRole("button", { name: "Submit Links" }).click();
+    await expect(page.getByRole("alert")).toBeVisible();
+    await expect(page.getByText("Links submitted successfully")).toHaveCount(0);
+
+    // The token is still usable after a validation error.
+    await page.getByLabel("Published URL").nth(1).fill("https://instagram.com/p/not-a-dup");
+    await page.getByRole("button", { name: "Submit Links" }).click();
+    await expect(page.getByText("Links submitted successfully")).toBeVisible();
+  });
+
+  test("an invalid/unknown token shows the same generic unavailable state", async ({ page }) => {
+    await page.context().clearCookies();
+    await page.goto("/submit/not-a-real-token-at-all");
+    await expect(page.getByText("This submission link is no longer available.")).toBeVisible();
+  });
+});
+
 // ---- Responsive ----
 
 test.describe("Mobile", () => {
@@ -360,6 +655,33 @@ test.describe("Mobile", () => {
     await page.goto("/assignments/seed-assignment-draft");
     await expect(page.locator("h1")).toBeVisible();
     overflow = await page.evaluate(() => document.body.scrollWidth - document.documentElement.clientWidth);
+    expect(overflow).toBeLessThanOrEqual(1);
+  });
+
+  test("WhatsApp share dialog stays usable at 390×844", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const assignment = await createAssignedAssignmentViaApi(page);
+    await page.goto(`/assignments/${assignment.assignmentRef}`);
+    await page.getByRole("button", { name: "Share via WhatsApp" }).click();
+    const dialog = page.getByRole("dialog");
+    await expect(dialog.getByText("Share Assignment via WhatsApp")).toBeVisible();
+    await dialog.getByRole("checkbox", { name: "Include public submission link" }).check();
+    await expect(dialog.getByRole("radio", { name: "Partner" })).toBeVisible();
+    await expect(dialog.getByRole("button", { name: "Open WhatsApp" })).toBeVisible();
+  });
+
+  test("public submission form stays usable at 390×844, no horizontal overflow, Add-another still works", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    const assignment = await createAssignedAssignmentViaApi(page);
+    const token = await createSubmissionTokenViaApi(page, assignment.assignmentRef);
+
+    await page.context().clearCookies();
+    await page.goto(`/submit/${token}`);
+    await expect(page.getByText("Submit published links")).toBeVisible();
+    await page.getByRole("button", { name: "+ Add another link" }).click();
+    await expect(page.getByLabel("Published URL")).toHaveCount(2);
+
+    const overflow = await page.evaluate(() => document.body.scrollWidth - document.documentElement.clientWidth);
     expect(overflow).toBeLessThanOrEqual(1);
   });
 });

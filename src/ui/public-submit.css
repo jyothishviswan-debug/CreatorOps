@@ -1,0 +1,60 @@
+/* Step 10C: the smallest coherent CreatorOps-branded focused page for the
+   public, token-scoped /submit/[token] route - no sidebar/topbar/nav, just
+   one centered content surface on the Foundation canvas. Reuses Foundation
+   tokens/classes (.panel/.field/.btn/.banner/etc. from foundation.css,
+   already loaded globally) rather than re-declaring them. */
+.publicwrap {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 40px 16px;
+  background: var(--canvas);
+}
+.publicbrand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin-bottom: 26px;
+  font-size: 17px;
+  font-weight: 700;
+  letter-spacing: -0.4px;
+  color: var(--ink);
+}
+.publicbrand span {
+  display: grid;
+  place-items: center;
+  background: var(--bright);
+  color: white;
+  border-radius: 9px;
+  width: 30px;
+  height: 30px;
+}
+.publiccard {
+  width: 100%;
+  max-width: 520px;
+}
+.publicrow {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 10px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+@media (max-width: 480px) {
+  .publicrow {
+    grid-template-columns: 1fr;
+  }
+}
+.publictags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 4px;
+}
+.publicfoot {
+  margin-top: 22px;
+  font-size: 10px;
+  color: var(--muted);
+  text-align: center;
+}

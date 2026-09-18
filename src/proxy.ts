@@ -8,9 +8,13 @@ import { getFeatureForPath } from "@/server/authz/features";
 // Step 4B: full pipeline - Authentication, then Active User / Admission,
 // then Feature Access, on every request to every gated route. Nothing
 // here trusts client state; every stage re-reads from Firebase/Firestore
-// (or the local emulator). Only the sign-in page itself and the session
-// API are exempt from all of this.
-const PUBLIC_PATHS = ["/sign-in"];
+// (or the local emulator). Only the sign-in page itself, the session API,
+// and the Step 10C public token-scoped submission page are exempt from
+// all of this - /submit/[token] is deliberately outside the authenticated
+// CreatorOps workspace; the bearer token in its own URL is its sole
+// authorization primitive, verified server-side (never a CreatorOps
+// session). No other route is affected by this exemption.
+const PUBLIC_PATHS = ["/sign-in", "/submit"];
 const ACCESS_DENIED_PATH = "/access-denied";
 
 function isPublicPath(pathname: string): boolean {

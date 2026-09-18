@@ -15,11 +15,12 @@ import { transitionCampaignLifecycle } from "@/server/campaigns/campaign-lifecyc
 import { getCampaign } from "@/server/campaigns/campaign-service";
 import { seedCampaignsData } from "@/server/campaigns/seed-campaigns-data";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
+import { createPartner } from "@/server/partners/partner-service";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
 import { seedVendorsData } from "@/server/vendors/seed-vendors-data";
 import { createAssignment, editAssignmentBrief, getAssignment } from "./assignment-service";
 import { transitionAssignmentLifecycle } from "./assignment-lifecycle-service";
-import { createExternalSubmissionSession, resolveExternalSubmission, revokeExternalSubmissionSession, submitExternalLinks } from "./external-submission-service";
+import { createExternalSubmissionSession, getAssignmentCurrentVendorOption, resolveExternalSubmission, revokeExternalSubmissionSession, submitExternalLinks } from "./external-submission-service";
 import { seedAssignmentsData } from "./seed-assignments-data";
 import type { AssignmentDto } from "./client-dto";
 
@@ -140,6 +141,51 @@ describe("Recipient rules", () => {
   it("the real active-Vendor seeded session (seed-vendor-agency for creator-house) resolves successfully", async () => {
     const resolved = await resolveExternalSubmission("seed-submission-token-vendor-active");
     expect(resolved.ok).toBe(true);
+  });
+});
+
+// Step 10C section 17: the bounded, Assignment-scoped read the WhatsApp
+// share dialog uses to decide whether to offer a Vendor recipient option -
+// never a broad Vendor list, never contact/bank/tax/payee fields.
+describe("getAssignmentCurrentVendorOption", () => {
+  it("returns the safe display label + opaque vendorRef for a Partner with a current active Vendor (creator-house / seed-vendor-agency)", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createAssignedAssignment(head, "creator-house");
+    const result = await getAssignmentCurrentVendorOption(head, assignment.assignmentRef);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.vendor).toEqual({ vendorRef: "seed-vendor-agency", displayName: "Northline Talent Agency" });
+  });
+
+  it("returns vendor: null for a Partner with no current active Vendor", async () => {
+    const head = await actorFor("partnership_head");
+    // Every seeded ACTIVE Partner already has a real active Vendor link
+    // (see seed-vendors-data.ts) - a genuinely vendor-less Partner needs
+    // a fresh one created here.
+    const partner = await createPartner(head, { displayName: uniqueName("Vendor-less Partner") }, "req");
+    if (!partner.ok) throw new Error("unreachable");
+    const assignment = await createAssignedAssignment(head, partner.data.partnerRef);
+    const result = await getAssignmentCurrentVendorOption(head, assignment.assignmentRef);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.vendor).toBeNull();
+  });
+
+  it("never exposes contact/bank/tax/payee fields - only vendorRef and displayName", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createAssignedAssignment(head, "creator-house");
+    const result = await getAssignmentCurrentVendorOption(head, assignment.assignmentRef);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(Object.keys(result.data.vendor ?? {}).sort()).toEqual(["displayName", "vendorRef"]);
+  });
+
+  it("is denied for an actor without Assignments access, same gate as session creation", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createAssignedAssignment(head, "creator-house");
+    const viewer = await actorFor("viewer");
+    const result = await getAssignmentCurrentVendorOption(viewer, assignment.assignmentRef);
+    expect(result.ok).toBe(false);
   });
 });
 

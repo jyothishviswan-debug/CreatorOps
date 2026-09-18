@@ -4,7 +4,7 @@ import { z } from "zod";
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ActorContext } from "@/server/authz/types";
 import { getPartnerDocByRef } from "@/server/partners/firestore";
-import { vendorPartnerActiveClaimsCollection } from "@/server/vendors/firestore";
+import { getVendorDocByRef, vendorPartnerActiveClaimsCollection } from "@/server/vendors/firestore";
 import { vendorPartnerActiveClaimDocSchema } from "@/server/vendors/types";
 import { normalizePlatformIdentifier } from "@/server/shared/platform";
 import { loadAuthorizedAssignment } from "./assignment-service";
@@ -214,6 +214,33 @@ export async function revokeExternalSubmissionSession(
   await writeAssignmentEvent({ assignmentUid: loaded.assignment.uid, kind: "external_submission_link_revoked", actorUserRef: actor!.userRef, metadata: { recipientType: session.recipientType }, requestId });
 
   return { ok: true, data: toSafeSessionDto(updated) };
+}
+
+// ---- Current active Vendor (internal, read-only) --------------------------
+// Step 10C section 17: a bounded, Assignment-scoped read so the WhatsApp
+// share dialog can offer a Vendor recipient option without ever fetching
+// a broad Vendor list or exposing raw refs. Same action gate as session
+// creation/revoke - this is purely supporting data for that flow, never
+// useful on its own. Returns only a safe display label + the opaque
+// vendorRef the dialog needs to pass back into
+// createExternalSubmissionSession - no contact/bank/tax/payee fields.
+export type SafeVendorOption = { vendorRef: string; displayName: string };
+
+export async function getAssignmentCurrentVendorOption(
+  actor: ActorContext | null,
+  assignmentRef: unknown,
+): Promise<AssignmentsServiceResult<{ vendor: SafeVendorOption | null }>> {
+  const loaded = await loadAuthorizedAssignment(actor, assignmentRef, "manage_assignment_external_submission");
+  if (!loaded.ok) return loaded.error;
+
+  const claimSnap = await vendorPartnerActiveClaimsCollection().doc(loaded.assignment.partnerRef).get();
+  const claim = claimSnap.exists ? vendorPartnerActiveClaimDocSchema.safeParse(claimSnap.data()) : null;
+  if (!claim?.success) return { ok: true, data: { vendor: null } };
+
+  const vendor = await getVendorDocByRef(claim.data.vendorRef);
+  if (!vendor) return { ok: true, data: { vendor: null } };
+
+  return { ok: true, data: { vendor: { vendorRef: vendor.vendorRef, displayName: vendor.displayName } } };
 }
 
 // ---- Public: resolve token -> safe DTO -----------------------------------
