@@ -60,7 +60,7 @@ test.describe("Overview", () => {
 
     // Exactly the approved 4 KPI titles, in order.
     const kpiLabels = await page.locator(".ov-kpi-label").allTextContents();
-    expect(kpiLabels).toEqual(["Active campaigns", "Partners staffed", "Content completed", "Overdue content"]);
+    expect(kpiLabels).toEqual(["Active campaigns", "Assigned Partners", "Content completed", "Overdue content"]);
 
     // Exactly the approved 3 top / 4 bottom panel titles, in order.
     const panelTitles = await page.locator(".ov-panel h2").allTextContents();
