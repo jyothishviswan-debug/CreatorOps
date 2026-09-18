@@ -57,7 +57,7 @@ export default async function CampaignsOverviewPage() {
   // explicit rule: a slot is filled with real data only where the
   // APPROVED SLOT'S OWN meaning genuinely is Campaign-owned - not merely
   // because a same-category Campaign-only signal could be invented for
-  // it. Every approved slot here (Creators staffed, Content completed,
+  // it. Every approved slot here (Partners staffed, Content completed,
   // Overdue content, Campaign Execution, Delivery State, Staffing
   // Readiness, Tracking Readiness, Execution Exceptions) is defined by
   // Content/Assignment/Staffing/Analytics-tracking specifics that don't
@@ -71,7 +71,7 @@ export default async function CampaignsOverviewPage() {
       kind: "campaignboard",
       icon: "clock",
       title: "Campaign Execution",
-      note: "Not yet available - deliverable tracking depends on Content, which is not built yet.",
+      note: "Not yet available — tracking depends on the Content module, which is not built yet.",
       foot: "This panel will populate once Content is built.",
       span: 6,
       rows: [],
@@ -171,7 +171,7 @@ export default async function CampaignsOverviewPage() {
         <CampaignsHome
           kpis={[
             { icon: "check", label: "Active campaigns", value: String(active), hint: "current period" },
-            { icon: "users", label: "Creators staffed", value: "—", hint: "Not yet available" },
+            { icon: "users", label: "Partners staffed", value: "—", hint: "Not yet available" },
             { icon: "brief", label: "Content completed", value: "—", hint: "Not yet available" },
             { icon: "alert", label: "Overdue content", value: "—", hint: "Not yet available" },
           ]}

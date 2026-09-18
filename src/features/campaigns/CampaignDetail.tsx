@@ -125,7 +125,7 @@ export function CampaignDetail({ initialCampaign }: { initialCampaign: CampaignD
               <PanelHead title="Downstream availability" description="Truthful placeholders only - these domains are not built yet, so nothing here is fabricated." />
               <PanelBody>
                 <div className="stategrid">
-                  {(["Commercial Agreements", "Assignments", "Content", "Analytics"] as const).map((label) => (
+                  {(["Assignments", "Content", "Analytics"] as const).map((label) => (
                     <div className="statecard" key={label}>
                       <EmptyState title={label} description="Not yet built - no real trusted source is wired to this Campaign yet." icon="clock" />
                     </div>

@@ -60,7 +60,7 @@ test.describe("Overview", () => {
 
     // Exactly the approved 4 KPI titles, in order.
     const kpiLabels = await page.locator(".ov-kpi-label").allTextContents();
-    expect(kpiLabels).toEqual(["Active campaigns", "Creators staffed", "Content completed", "Overdue content"]);
+    expect(kpiLabels).toEqual(["Active campaigns", "Partners staffed", "Content completed", "Overdue content"]);
 
     // Exactly the approved 3 top / 4 bottom panel titles, in order.
     const panelTitles = await page.locator(".ov-panel h2").allTextContents();
@@ -69,7 +69,7 @@ test.describe("Overview", () => {
     // Downstream-domain slots (Content/Assignments/Analytics don't exist
     // yet) show a truthful placeholder, never a fabricated number.
     await expect(page.getByText("Not yet available").first()).toBeVisible();
-    await expect(page.getByText(/deliverable tracking depends on Content/)).toBeVisible();
+    await expect(page.getByText(/tracking depends on the Content module/)).toBeVisible();
     await expect(page.getByText(/depends on Assignments/)).toBeVisible();
 
     // Campaign-owned real signals.
@@ -181,6 +181,11 @@ test.describe("Create Campaign", () => {
 
     const labels = (await page.locator("label").allTextContents()).map((l) => l.toLowerCase());
     expect(labels.some((l) => l.includes("tier"))).toBe(false);
+  });
+
+  test("no Agreement/Finance/Payable/Invoice/Payment/Payee/compensation field anywhere on the Create form", async ({ page }) => {
+    await page.goto("/campaigns/new");
+    await expect(page.getByLabel(/Agreement|Finance|Payable|Invoice|Payment|Payee|compensation/i)).toHaveCount(0);
   });
 
   test("normalized platform identifiers are accepted; a post-normalization duplicate is rejected, not silently merged; no old fixed platform whitelist is reintroduced", async ({ page }) => {
@@ -395,16 +400,31 @@ test.describe("History", () => {
 // ---- Downstream truth boundaries ----
 
 test.describe("Downstream truth boundaries", () => {
-  test("Overview tab shows truthful not-yet-built placeholders for Agreements/Assignments/Content/Analytics, never a fabricated count", async ({ page }) => {
+  test("Overview tab shows truthful not-yet-built placeholders for Assignments/Content/Analytics, never a fabricated count", async ({ page }) => {
     const campaign = await createCampaignViaApi(page);
     await page.goto(`/campaigns/${campaign.campaignRef}`);
-    for (const label of ["Commercial Agreements", "Assignments", "Content", "Analytics"]) {
+    const downstreamLabels = ["Assignments", "Content", "Analytics"];
+    for (const label of downstreamLabels) {
       await expect(page.getByRole("heading", { name: label })).toBeVisible();
     }
+    await expect(page.locator(".statecard")).toHaveCount(downstreamLabels.length);
     await expect(page.getByText("Not yet built").first()).toBeVisible();
     for (const fabricated of ["Partners assigned", "Content pieces", "delivery complete"]) {
       await expect(page.getByText(fabricated)).toHaveCount(0);
     }
+  });
+
+  test("Campaign Detail has no Agreement/Finance section, placeholder, action, or link - Finance is a fully separate, un-referenced domain", async ({ page }) => {
+    const campaign = await createCampaignViaApi(page);
+    await page.goto(`/campaigns/${campaign.campaignRef}`);
+    // Scoped to the page's own main content, excluding the AppShell's
+    // global navigation (which legitimately links to /finance from every
+    // page - that's not a Campaign-owned reference).
+    const main = page.locator("#main");
+    await expect(main.getByRole("heading", { name: "Commercial Agreements" })).toHaveCount(0);
+    await expect(main.getByRole("heading", { name: /Agreement|Finance|Payable|Invoice|Payment/i })).toHaveCount(0);
+    await expect(main.getByRole("button", { name: /Agreement|Finance|Payable|Invoice|Payment/i })).toHaveCount(0);
+    await expect(main.getByRole("link", { name: /Agreement|Finance|Payable|Invoice|Payment/i })).toHaveCount(0);
   });
 });
 
