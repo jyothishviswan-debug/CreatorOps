@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { ScopeGrant } from "@/server/authz/types";
+import { planAssignmentListQuery } from "@/server/assignments/firestore";
 import { planCampaignListQuery } from "@/server/campaigns/firestore";
 import { planLeadListQuery } from "@/server/discovery/firestore";
 import { planPartnerListQuery } from "@/server/partners/firestore";
@@ -281,5 +282,73 @@ describe("mergeListBranches - deterministic pagination across merged branches", 
     expect(page2.page).toEqual(["a2"]);
     const seen = [...page1.page, ...page2.page];
     expect(new Set(seen).size).toBe(seen.length);
+  });
+});
+
+// Step 10A: planAssignmentListQuery has its own describe block rather than
+// joining the shared loop above - its options shape has no caller-facing
+// `region` filter (region is a scope dimension only for Assignment, never
+// a requested business filter - see firestore.ts's own comment), so the
+// shared scenarios (which all pass `region`) don't apply uniformly.
+describe("planAssignmentListQuery - production-valid by construction and specific shapes", () => {
+  const scenarios: Array<{ label: string; grants: ScopeGrant[]; hasGlobal: boolean; platform?: string }> = [
+    { label: "no grants", grants: [], hasGlobal: false },
+    { label: "GLOBAL", grants: [], hasGlobal: true },
+    { label: "SELF only", grants: [self()], hasGlobal: false },
+    { label: "REGION only", grants: [region("Kerala")], hasGlobal: false },
+    { label: "TEAM only", grants: [team("t1")], hasGlobal: false },
+    { label: "EXPLICIT_RECORD only", grants: [explicit("assignment", "x1")], hasGlobal: false },
+    { label: "SELF+REGION+TEAM+EXPLICIT", grants: [self(), region("Kerala"), team("t1"), explicit("assignment", "x1")], hasGlobal: false },
+    { label: "SELF+REGION+TEAM+EXPLICIT, platform filter", grants: [self(), region("Kerala"), team("t1"), explicit("assignment", "x1")], hasGlobal: false, platform: "youtube" },
+    { label: "GLOBAL, platform filter", grants: [], hasGlobal: true, platform: "youtube" },
+  ];
+
+  for (const scenario of scenarios) {
+    it(`"${scenario.label}" never produces a production-invalid branch`, () => {
+      const { plan } = planAssignmentListQuery({ actorUid: ACTOR_UID, grants: scenario.grants, hasGlobal: scenario.hasGlobal, platform: scenario.platform });
+      expect(() => assertProductionValidPlan(plan)).not.toThrow();
+      for (const branch of firestoreBranches(plan)) {
+        expect(arrayFilterCount(branch)).toBeLessThanOrEqual(1);
+      }
+    });
+  }
+
+  it("GLOBAL collapses to a single unscoped main branch", () => {
+    const { plan } = planAssignmentListQuery({ actorUid: ACTOR_UID, grants: [], hasGlobal: true });
+    expect(branchNames(plan)).toEqual(["main"]);
+  });
+
+  it("no grants at all produces zero branches", () => {
+    const { plan } = planAssignmentListQuery({ actorUid: ACTOR_UID, grants: [], hasGlobal: false });
+    expect(plan.branches).toHaveLength(0);
+  });
+
+  it("explicit-record-only scope produces exactly one bounded-ids branch, no firestore-query branch", () => {
+    const { plan } = planAssignmentListQuery({ actorUid: ACTOR_UID, grants: [explicit("assignment", "a1")], hasGlobal: false });
+    expect(plan.branches).toHaveLength(1);
+    expect(plan.branches[0]!.kind).toBe("bounded-ids");
+  });
+
+  it("a platform filter on a region/team branch is always a postFilter, never pushed alongside the branch's own scope-exclusion array filter", () => {
+    const { plan } = planAssignmentListQuery({ actorUid: ACTOR_UID, grants: [region("Kerala")], hasGlobal: false, platform: "youtube" });
+    const regionBranch = plan.branches.find((b) => b.name === "region") as FirestoreListBranchPlan;
+    expect(regionBranch.pushedFilters.some((f) => f.field === "brief.platforms")).toBe(false);
+    expect(regionBranch.postFilters.some((f) => f.field === "brief.platforms" && f.op === "array-contains" && f.value === "youtube")).toBe(true);
+    expect(arrayFilterCount(regionBranch)).toBe(1);
+  });
+
+  it("a platform filter on the self/main branch (no other array filter yet) is pushed directly", () => {
+    const { plan } = planAssignmentListQuery({ actorUid: ACTOR_UID, grants: [self()], hasGlobal: false, platform: "youtube" });
+    const selfBranch = plan.branches.find((b) => b.name === "self") as FirestoreListBranchPlan;
+    expect(selfBranch.pushedFilters.some((f) => f.field === "brief.platforms" && f.op === "array-contains" && f.value === "youtube")).toBe(true);
+  });
+
+  it("explicit + self overlap: the explicit branch excludes anything the self branch would already cover", () => {
+    const { plan } = planAssignmentListQuery({ actorUid: ACTOR_UID, grants: [self(), explicit("assignment", "a1")], hasGlobal: false });
+    const explicitBranch = plan.branches.find((b) => b.name === "explicit")!;
+    const ownDoc = { ownerUid: ACTOR_UID };
+    expect(passesBranchPostFilters(ownDoc, explicitBranch)).toBe(false);
+    const otherDoc = { ownerUid: "someone-else" };
+    expect(passesBranchPostFilters(otherDoc, explicitBranch)).toBe(true);
   });
 });

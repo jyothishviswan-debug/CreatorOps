@@ -20,6 +20,8 @@
 // emulator config's globalSetup) call this.
 import { getAdminAuth, getAdminFirestore } from "@/server/firebase/admin";
 import { getServerEnv, isUsingEmulators } from "@/lib/env/server";
+import { ASSIGNMENTS_COLLECTIONS } from "@/server/assignments/firestore";
+import { seedAssignmentsData } from "@/server/assignments/seed-assignments-data";
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
 import { COLLECTIONS } from "@/server/authz/firestore";
 import { seedAccessControlData } from "@/server/authz/seed-access-data";
@@ -154,6 +156,24 @@ async function deleteCampaignsCollectionWithEvents(): Promise<void> {
   }
 }
 
+// assignments/{uid}/events is a subcollection - same cascade concern as
+// leads/{uid}/events, partners/{uid}/events, vendors/{uid}/events, and
+// campaigns/{uid}/events above.
+async function deleteAssignmentsCollectionWithEvents(): Promise<void> {
+  const db = getAdminFirestore();
+  const assignmentsRef = db.collection(ASSIGNMENTS_COLLECTIONS.assignments);
+  for (;;) {
+    const snapshot = await assignmentsRef.limit(200).get();
+    if (snapshot.empty) return;
+    for (const doc of snapshot.docs) {
+      await deleteCollection(doc.ref.collection(ASSIGNMENTS_COLLECTIONS.assignmentEvents));
+    }
+    const batch = db.batch();
+    for (const doc of snapshot.docs) batch.delete(doc.ref);
+    await batch.commit();
+  }
+}
+
 // Wipes every Auth account and every Firestore collection this app
 // writes to, then reseeds the canonical baseline. Idempotent in effect
 // (running it twice in a row produces the same end state), but NOT a
@@ -180,6 +200,10 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   // collection - covers both Partner and Vendor subjects, deleted once.
   await deleteCollection(db.collection(RESTRICTED_FINANCIAL_IDENTITIES_COLLECTION));
   await deleteCampaignsCollectionWithEvents();
+  await deleteAssignmentsCollectionWithEvents();
+  await deleteCollection(db.collection(ASSIGNMENTS_COLLECTIONS.assignmentActiveClaims));
+  await deleteCollection(db.collection(ASSIGNMENTS_COLLECTIONS.assignmentSubmissionSessions));
+  await deleteCollection(db.collection(ASSIGNMENTS_COLLECTIONS.assignmentExternalSubmissions));
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();
@@ -187,4 +211,5 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await seedPartnersData();
   await seedVendorsData();
   await seedCampaignsData();
+  await seedAssignmentsData();
 }

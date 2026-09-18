@@ -73,6 +73,14 @@ export const ACTIONS = [
   "cancel_campaign",
   "archive_campaign",
   "manage_campaign_resources",
+  // Step 10A: Assignments' own granular actions, beyond the shared
+  // generic create/edit already used for ordinary create/edit-draft-brief
+  // (see module-actions.ts) - same "one generic ordinary-transition
+  // action plus separate reasoned/consequential ones" shape as Campaigns'
+  // own transition_campaign_lifecycle/cancel_campaign split.
+  "transition_assignment_lifecycle",
+  "cancel_assignment",
+  "manage_assignment_external_submission",
   // Content
   "submit_review",
   "approve_publish",

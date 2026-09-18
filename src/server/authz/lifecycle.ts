@@ -72,6 +72,27 @@ export const CAMPAIGN_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
   ARCHIVED: ["COMPLETED", "CANCELLED"],
 };
 
+// Step 10A: the canonical, compact Assignment execution lifecycle -
+// deliberately execution-level only, never duplicating Content/review
+// states (no SUBMITTED/APPROVED/REVISION_REQUESTED/POSTED/PUBLISHED
+// here - those are Content's own future territory). CANCELLED is reached
+// from every non-terminal state per the authority doc's own guarded list;
+// COMPLETED and CANCELLED are both terminal (neither appears as an
+// allowed predecessor of anything). IN_PROGRESS -> CANCELLED is
+// unconditionally allowed for now ("only while cancellation remains
+// reversible" - Step 10A section 5); the intended future check ("does
+// irreversible Content/publication evidence exist yet") has an explicit
+// extension point in assignment-lifecycle-service.ts's own comment, since
+// Content doesn't exist yet to check against.
+export const ASSIGNMENT_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  DRAFT: [],
+  ASSIGNED: ["DRAFT"],
+  ACCEPTED: ["ASSIGNED"],
+  IN_PROGRESS: ["ACCEPTED"],
+  COMPLETED: ["IN_PROGRESS"],
+  CANCELLED: ["DRAFT", "ASSIGNED", "ACCEPTED", "IN_PROGRESS"],
+};
+
 export function canTransitionLifecycle(currentState: string, nextState: string, transitions: LifecycleTransitionMap): boolean {
   const allowedFrom = transitions[nextState];
   if (!allowedFrom) return false;

@@ -63,9 +63,15 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "manage_campaign_resources", label: "Manage resources" },
     { id: "export", label: "Export" },
   ],
+  // Step 10A: extends the earlier UI-skeleton-era stub (create/edit/
+  // export only) with Assignment's real granular actions, same pattern
+  // Campaigns' own stub->real extension used.
   assignments: [
-    { id: "create", label: "Create" },
-    { id: "edit", label: "Edit" },
+    { id: "create", label: "Create Assignment" },
+    { id: "edit", label: "Edit draft brief" },
+    { id: "transition_assignment_lifecycle", label: "Transition lifecycle (assign/accept/start/complete)" },
+    { id: "cancel_assignment", label: "Cancel" },
+    { id: "manage_assignment_external_submission", label: "Manage external submission links" },
     { id: "export", label: "Export" },
   ],
   content: [

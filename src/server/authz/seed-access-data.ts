@@ -132,6 +132,21 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         cancel_campaign: false,
         archive_campaign: false,
       }),
+      // Step 10A: full operational Assignment access - this compact
+      // execution lifecycle has no separate "approval" step the way
+      // Finance's approve_payables does, so unlike the day-to-day-but-
+      // not-governance splits above, Manager and Head get the identical
+      // action set here (see partnership_head's own assignments grant
+      // below). `assignments` itself was already view:true for every
+      // role before Step 10A (see featuresOf(...) above) - this only adds
+      // the operational actions.
+      assignments: featureGrant(true, {
+        create: true,
+        edit: true,
+        transition_assignment_lifecycle: true,
+        cancel_assignment: true,
+        manage_assignment_external_submission: true,
+      }),
     },
   },
   partnership_head: {
@@ -186,6 +201,15 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_campaign_resources: true,
         cancel_campaign: true,
         archive_campaign: true,
+      }),
+      // Step 10A: identical action set to partnership_manager's own
+      // assignments grant above - see that grant's comment for why.
+      assignments: featureGrant(true, {
+        create: true,
+        edit: true,
+        transition_assignment_lifecycle: true,
+        cancel_assignment: true,
+        manage_assignment_external_submission: true,
       }),
     },
   },
