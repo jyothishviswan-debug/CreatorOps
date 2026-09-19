@@ -182,10 +182,17 @@ test.describe("Create Campaign", () => {
     await expect(page.locator(".pill", { hasText: "Draft" })).toBeVisible({ timeout: 5000 });
   });
 
-  test("Target Audience offers exactly the five accepted values, with no Tier field anywhere on the form", async ({ page }) => {
+  test("Target Audience offers exactly the five accepted values (multi-select), with no Tier field anywhere on the form", async ({ page }) => {
     await page.goto("/campaigns/new");
-    const options = await formField(page, "Target Audience").locator("option").allTextContents();
-    expect(options.map((o) => o.trim())).toEqual(["Not set", "India Alpha", "India 1", "India 2", "India 3", "India 4"]);
+    await page.getByRole("button", { name: "Select Target Audience…" }).click();
+    const listbox = page.getByRole("listbox");
+    // No "Not set" placeholder row here - an empty selection already
+    // means "not set", so the dropdown offers exactly the five real
+    // values and nothing else.
+    await expect(listbox.getByRole("checkbox")).toHaveCount(5);
+    for (const audience of ["India Alpha", "India 1", "India 2", "India 3", "India 4"]) {
+      await expect(listbox.getByRole("checkbox", { name: audience })).toBeVisible();
+    }
 
     const labels = (await page.locator("label").allTextContents()).map((l) => l.toLowerCase());
     expect(labels.some((l) => l.includes("tier"))).toBe(false);

@@ -199,21 +199,21 @@ describe("Campaign contract", () => {
     expect(good.data.resources[0]!.resourceRef).toBeTruthy();
   });
 
-  it("targeting criteria accepts the canonical Target Audience taxonomy, rejects an unrecognized value, and never accepts tier at all", async () => {
+  it("targeting criteria accepts the canonical Target Audience taxonomy (multi-value), rejects an unrecognized value, and never accepts tier at all", async () => {
     const head = await actorFor("partnership_head");
     const good = await createCampaign(
       head,
-      { name: uniqueName("Audience Good"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "REVIEW_REQUIRED", criteria: { targetAudience: "India 2" } },
+      { name: uniqueName("Audience Good"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "REVIEW_REQUIRED", criteria: { targetAudience: ["India 2", "India 3"] } },
       "req-audience-good",
     );
     expect(good.ok).toBe(true);
     if (!good.ok) throw new Error("unreachable");
-    expect(good.data.criteria.targetAudience).toBe("India 2");
+    expect(good.data.criteria.targetAudience).toEqual(["India 2", "India 3"]);
     expect(good.data.criteria).not.toHaveProperty("tier");
 
     const badAudience = await createCampaign(
       head,
-      { name: uniqueName("Audience Bad"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "REVIEW_REQUIRED", criteria: { targetAudience: "India 99" } },
+      { name: uniqueName("Audience Bad"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "REVIEW_REQUIRED", criteria: { targetAudience: ["India 99"] } },
       "req-audience-bad",
     );
     expect(badAudience.ok).toBe(false);

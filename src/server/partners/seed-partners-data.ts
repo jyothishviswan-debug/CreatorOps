@@ -65,7 +65,7 @@ export async function seedPartnersData(): Promise<void> {
       categoryIds: [],
       tier: null,
       priority: null,
-      targetAudience: null,
+      targetAudience: [],
       email: `${uid}@example-partner.test`,
       phone: "+91 90000 00001",
       originLeadRefs: [],
@@ -88,6 +88,8 @@ export async function seedPartnersData(): Promise<void> {
       regionIds: ["Karnataka"],
       teamIds: [],
       ownerUid: null,
+      // A genuinely multi-value fixture - spans more than one segment.
+      targetAudience: ["India Alpha", "India 1"],
     },
     {
       ...base("seed-partner-direct", "Meera Krishnan"),

@@ -26,7 +26,7 @@ function fullyReadyLead(overrides: Partial<LeadDoc> = {}): LeadDoc {
     regionIds: ["Kerala"],
     teamId: null,
     ownerUid: "owner-uid",
-    research: { targetAudience: "India 1", updatedAt: now, updatedByUserRef: "ref-1" },
+    research: { targetAudience: ["India 1"], updatedAt: now, updatedByUserRef: "ref-1" },
     latestReview: { outcome: "SHORTLIST", dimensions: {}, actorUserRef: "ref-1", createdAt: now },
     outreachSummary: { totalCount: 2, lastDirection: "INBOUND", lastChannel: "email", lastOutcome: "Interested", lastAt: now, nextFollowUpAt: null },
     respondedAt: now,
@@ -75,7 +75,7 @@ describe("evaluateLeadReadiness", () => {
 
   it("blocks when research is not complete", async () => {
     getUserDocMock.mockResolvedValue({ uid: "manager-uid", active: true });
-    const result = await evaluateLeadReadiness(fullyReadyLead({ research: { targetAudience: null, updatedAt: "now", updatedByUserRef: "ref-1" } }));
+    const result = await evaluateLeadReadiness(fullyReadyLead({ research: { targetAudience: [], updatedAt: "now", updatedByUserRef: "ref-1" } }));
     expect(result.blockers.map((b) => b.code)).toContain("RESEARCH_INCOMPLETE");
   });
 

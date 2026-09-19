@@ -10,10 +10,10 @@ import { Icon } from "@/ui/icons";
 import { initialsOf } from "@/features/shared/types";
 import { Pager } from "@/features/administration/Pager";
 import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
+import { TargetAudienceMultiSelect } from "@/features/shared/TargetAudienceMultiSelect";
 import type { PartnerDto } from "@/server/partners/client-dto";
 import type { PartnerListCursor } from "@/server/partners/firestore";
-import { PARTNER_STATUSES, type PartnerStatus } from "@/server/partners/types";
-import { TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
+import { PARTNER_STATUSES, type PartnerStatus, type TargetAudience } from "@/server/partners/types";
 import { listPartners } from "./api-client";
 import { STATUS_LABELS, statusTone } from "./format";
 
@@ -43,7 +43,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
   const tier = useDebouncedValue(tierInput, DEBOUNCE_MS);
 
   const [status, setStatus] = useState<PartnerStatus | "all">("all");
-  const [targetAudience, setTargetAudience] = useState<TargetAudience | "all">("all");
+  const [targetAudienceFilter, setTargetAudienceFilter] = useState<TargetAudience[]>([]);
   const [assignedToMe, setAssignedToMe] = useState(false);
   const [pendingSetup, setPendingSetup] = useState(false);
   const [layout, setLayout] = useState<"table" | "cards">("table");
@@ -55,7 +55,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
     status: status === "all" ? undefined : status,
     region: regionFilter.length > 0 ? regionFilter : undefined,
     tier: tier.trim() || undefined,
-    targetAudience: targetAudience === "all" ? undefined : targetAudience,
+    targetAudience: targetAudienceFilter.length > 0 ? targetAudienceFilter : undefined,
     assignedToMe: assignedToMe || undefined,
     displayNamePrefix: search.trim() || undefined,
     pendingPartnerAccountSetup: pendingSetup || undefined,
@@ -88,7 +88,7 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
       cancelled = true;
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [status, regionFilter, tier, targetAudience, assignedToMe, search, pendingSetup]);
+  }, [status, regionFilter, tier, targetAudienceFilter, assignedToMe, search, pendingSetup]);
 
   async function goToPage(page: number) {
     if (page < 1 || page === currentPage) return;
@@ -123,12 +123,12 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
     setRegionFilter([]);
     setTierInput("");
     setStatus("all");
-    setTargetAudience("all");
+    setTargetAudienceFilter([]);
     setAssignedToMe(false);
     setPendingSetup(false);
   }
 
-  const anyFilterActive = Boolean(searchInput || regionFilter.length > 0 || tierInput || status !== "all" || targetAudience !== "all" || assignedToMe || pendingSetup);
+  const anyFilterActive = Boolean(searchInput || regionFilter.length > 0 || tierInput || status !== "all" || targetAudienceFilter.length > 0 || assignedToMe || pendingSetup);
 
   return (
     <section className="panel">
@@ -142,14 +142,9 @@ export function PartnersWorkspace({ initialPartners, initialNextCursor }: { init
             </option>
           ))}
         </select>
-        <select aria-label="Filter target audience" value={targetAudience} onChange={(e) => setTargetAudience(e.target.value as TargetAudience | "all")}>
-          <option value="all">All target audiences</option>
-          {TARGET_AUDIENCES.map((ta) => (
-            <option key={ta} value={ta}>
-              {ta}
-            </option>
-          ))}
-        </select>
+        <div style={{ minWidth: 160, maxWidth: 220 }}>
+          <TargetAudienceMultiSelect value={targetAudienceFilter} onChange={setTargetAudienceFilter} />
+        </div>
         <div style={{ minWidth: 160, maxWidth: 220 }}>
           <RegionMultiSelect value={regionFilter} onChange={setRegionFilter} />
         </div>
@@ -218,7 +213,7 @@ function RecordCards({ rows, onOpen }: { rows: PartnerDto[]; onOpen: (partnerRef
             <span className="avatar">{initialsOf(partner.displayName)}</span>
             <span>
               <b>{partner.displayName}</b>
-              <small>{partner.targetAudience ?? "Target Audience not tagged"}</small>
+              <small>{partner.targetAudience[0] ?? "Target Audience not tagged"}</small>
             </span>
           </button>
           <div style={{ marginTop: 13 }}>
@@ -270,7 +265,7 @@ function RecordTable({ rows, onOpen }: { rows: PartnerDto[]; onOpen: (partnerRef
                 <Pill tone={statusTone(partner.status)}>{STATUS_LABELS[partner.status]}</Pill>
               </td>
               <td>
-                <Pill tone={partner.targetAudience ? "default" : "red"}>{partner.targetAudience ?? "Not tagged"}</Pill>
+                <Pill tone={partner.targetAudience.length > 0 ? "default" : "red"}>{partner.targetAudience[0] ?? "Not tagged"}</Pill>
               </td>
               <td>{partner.regionIds[0] ?? "—"}</td>
               <td>{partner.ownerDisplayName ?? "Unassigned"}</td>

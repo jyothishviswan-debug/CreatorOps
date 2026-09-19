@@ -7,9 +7,10 @@ import { useRouter } from "next/navigation";
 import { FormLayout, FormSection, Fields, Field, FormFoot, Checklist } from "@/ui/Form";
 import { Icon } from "@/ui/icons";
 import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
+import { TargetAudienceMultiSelect } from "@/features/shared/TargetAudienceMultiSelect";
 import type { PartnerDto } from "@/server/partners/client-dto";
 import type { PartnerOwnerCandidateDto } from "@/server/partners/user-picker";
-import { DISCOVERY_PLATFORMS, TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
+import { DISCOVERY_PLATFORMS, type TargetAudience } from "@/server/discovery/types";
 import { PARTNER_PRIORITIES, PARTNER_TIERS, type PartnerDuplicateCheckResult } from "@/server/partners/types";
 import { createPartner, createPartnerAccount, editPartner, precheckPartnerDuplicates } from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
@@ -39,7 +40,7 @@ export function PartnerForm(props: Props) {
   // captured here directly for a Partner created without a Discovery
   // origin. One of the primary classification fields, not an optional
   // afterthought like tier/priority - shown right under the name.
-  const [targetAudience, setTargetAudience] = useState<TargetAudience | "">((initial?.targetAudience as TargetAudience | null) ?? "");
+  const [targetAudience, setTargetAudience] = useState<TargetAudience[]>(initial?.targetAudience ?? []);
   const [legalName, setLegalName] = useState(initial?.legalName ?? "");
   const [email, setEmail] = useState(initial?.email ?? "");
   const [phone, setPhone] = useState(initial?.phone ?? "");
@@ -121,7 +122,7 @@ export function PartnerForm(props: Props) {
     if (props.mode === "create") {
       const result = await createPartner({
         displayName,
-        targetAudience: targetAudience || undefined,
+        targetAudience,
         legalName: legalName.trim() || undefined,
         email: email.trim() || undefined,
         phone: phone.trim() || undefined,
@@ -158,7 +159,7 @@ export function PartnerForm(props: Props) {
     const partner = props.partner;
     const result = await editPartner(partner.partnerRef, {
       displayName,
-      targetAudience: targetAudience || null,
+      targetAudience,
       legalName: legalName.trim() || null,
       email: email.trim() || null,
       phone: phone.trim() || null,
@@ -201,14 +202,7 @@ export function PartnerForm(props: Props) {
               <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={200} />
             </Field>
             <Field label="Target Audience">
-              <select value={targetAudience} onChange={(e) => setTargetAudience(e.target.value as TargetAudience | "")}>
-                <option value="">Not yet tagged</option>
-                {TARGET_AUDIENCES.map((ta) => (
-                  <option key={ta} value={ta}>
-                    {ta}
-                  </option>
-                ))}
-              </select>
+              <TargetAudienceMultiSelect value={targetAudience} onChange={setTargetAudience} />
             </Field>
             <Field label="Legal name">
               <input type="text" value={legalName} onChange={(e) => setLegalName(e.target.value)} maxLength={200} />

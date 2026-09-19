@@ -5,8 +5,9 @@ import { useState, type FormEvent } from "react";
 import { Field, Fields } from "@/ui/Form";
 import { MultiSelectDropdown } from "@/features/shared/MultiSelectDropdown";
 import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
+import { TargetAudienceMultiSelect } from "@/features/shared/TargetAudienceMultiSelect";
 import type { CampaignDto } from "@/server/campaigns/client-dto";
-import { TARGET_AUDIENCES, type TargetAudience } from "@/server/campaigns/types";
+import type { TargetAudience } from "@/server/campaigns/types";
 import { editCampaign } from "./api-client";
 import { REVIEW_POLICY_LABELS } from "./format";
 
@@ -32,7 +33,7 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
   const [startDate, setStartDate] = useState(campaign.startDate);
   const [endDate, setEndDate] = useState(campaign.endDate);
   const [platforms, setPlatforms] = useState<string[]>(campaign.platforms);
-  const [targetAudience, setTargetAudience] = useState<TargetAudience | "">(campaign.criteria.targetAudience ?? "");
+  const [targetAudience, setTargetAudience] = useState<TargetAudience[]>(campaign.criteria.targetAudience);
   const [regions, setRegions] = useState<string[]>(campaign.regionIds);
   const [languages, setLanguages] = useState(campaign.criteria.languageIds.join(", "));
   const [categories, setCategories] = useState(campaign.criteria.categoryIds.join(", "));
@@ -55,7 +56,7 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
       regionIds: regions,
       defaultReviewPolicy: reviewPolicy,
       criteria: {
-        targetAudience: targetAudience || null,
+        targetAudience,
         regionIds: regions,
         languageIds: fromCsv(languages),
         categoryIds: fromCsv(categories),
@@ -105,14 +106,7 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
           <MultiSelectDropdown value={platforms} onChange={setPlatforms} groups={PLATFORM_GROUPS} placeholder="Select platforms…" allowCustom customPlaceholder="Other platform…" />
         </Field>
         <Field label="Target Audience">
-          <select value={targetAudience} onChange={(e) => setTargetAudience(e.target.value as TargetAudience | "")}>
-            <option value="">Not set</option>
-            {TARGET_AUDIENCES.map((a) => (
-              <option key={a} value={a}>
-                {a}
-              </option>
-            ))}
-          </select>
+          <TargetAudienceMultiSelect value={targetAudience} onChange={setTargetAudience} />
         </Field>
         <Field label="Regions" full>
           <RegionMultiSelect value={regions} onChange={setRegions} />

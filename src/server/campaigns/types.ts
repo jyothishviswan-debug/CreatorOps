@@ -5,8 +5,8 @@ import { z } from "zod";
 // partner-service.ts's own targetAudience field). Step 9A REVISED section
 // 4 is explicit: Campaign targeting reuses this exact taxonomy, never a
 // second Campaign-only one.
-import { targetAudienceSchema } from "@/server/discovery/types";
-export { TARGET_AUDIENCES, targetAudienceSchema, type TargetAudience } from "@/server/discovery/types";
+import { targetAudienceArraySchema } from "@/server/discovery/types";
+export { TARGET_AUDIENCES, targetAudienceSchema, targetAudienceArraySchema, type TargetAudience } from "@/server/discovery/types";
 
 // Step 9A.1: Campaign platform identity reuses Partner Account's own
 // accepted platform-identifier contract (extracted to
@@ -57,18 +57,19 @@ export type ReviewPolicy = z.infer<typeof reviewPolicySchema>;
 // dimension. targetAudience is the CANONICAL audience-segmentation
 // criterion (Step 9A REVISED section 4), reusing Discovery/Partners'
 // existing accepted taxonomy verbatim rather than a second Campaign-only
-// one. Partner `tier` is deliberately NOT a targeting criterion here -
-// REVISED section 4 explicitly withholds it pending separate approval.
-// Distinct from the Campaign's own top-level `platforms` (which
-// platforms this programme actually runs/publishes on) -
-// criteria.platforms describes which Partners are being targeted (e.g.
-// "Partners active on YouTube"), which is not always identical to where
-// the Campaign itself publishes. Uses the EXACT same shared platform-
-// identifier contract as the top-level field (Step 9A.1 section 3) -
-// never a second representation.
+// one - now multi-select, same array contract Discovery/Partners use
+// (a Campaign may target more than one segment). Partner `tier` is
+// deliberately NOT a targeting criterion here - REVISED section 4
+// explicitly withholds it pending separate approval. Distinct from the
+// Campaign's own top-level `platforms` (which platforms this programme
+// actually runs/publishes on) - criteria.platforms describes which
+// Partners are being targeted (e.g. "Partners active on YouTube"), which
+// is not always identical to where the Campaign itself publishes. Uses
+// the EXACT same shared platform-identifier contract as the top-level
+// field (Step 9A.1 section 3) - never a second representation.
 export const campaignCriteriaSchema = z
   .object({
-    targetAudience: targetAudienceSchema.nullable().default(null),
+    targetAudience: targetAudienceArraySchema,
     regionIds: z.array(z.string().min(1)).max(50).default([]),
     languageIds: z.array(z.string().min(1)).max(50).default([]),
     categoryIds: z.array(z.string().min(1)).max(50).default([]),

@@ -51,9 +51,10 @@ describe("firestore.indexes.json - Partners", () => {
   });
 
   // Standalone secondary filters (tier / targetAudience / pendingPartnerAccountSetup), each + createdAt-desc.
+  // targetAudience is now an array field (multi-select) - array-contains, not equality.
   it("has a standalone createdAt-desc index for tier, targetAudience, and pendingPartnerAccountSetup", () => {
     expect(hasIndex("partners", [{ fieldPath: "tier", order: "ASCENDING" }, createdAtDesc])).toBe(true);
-    expect(hasIndex("partners", [{ fieldPath: "targetAudience", order: "ASCENDING" }, createdAtDesc])).toBe(true);
+    expect(hasIndex("partners", [{ fieldPath: "targetAudience", arrayConfig: "CONTAINS" }, createdAtDesc])).toBe(true);
     expect(hasIndex("partners", [{ fieldPath: "pendingPartnerAccountSetup", order: "ASCENDING" }, createdAtDesc])).toBe(true);
   });
 

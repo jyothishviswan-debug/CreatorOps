@@ -7,7 +7,8 @@ import { Pill } from "@/ui/Badge";
 import { Icon } from "@/ui/icons";
 import type { LeadDto } from "@/server/discovery/client-dto";
 import type { ManagerCandidateDto } from "@/server/discovery/user-picker";
-import { ASSET_DECISIONS, REVIEW_OUTCOMES, TARGET_AUDIENCES, type AssetDecisionKind, type LeadKycAttachment, type ReviewOutcome, type TargetAudience } from "@/server/discovery/types";
+import { ASSET_DECISIONS, REVIEW_OUTCOMES, type AssetDecisionKind, type LeadKycAttachment, type ReviewOutcome, type TargetAudience } from "@/server/discovery/types";
+import { TargetAudienceMultiSelect } from "@/features/shared/TargetAudienceMultiSelect";
 import type { DiscoveryApiResult } from "./api-client";
 import {
   addKycLinkAttachment,
@@ -112,7 +113,7 @@ export function LeadStage({ lead }: StageProps) {
 
 export function ResearchStage({ lead, onSaved }: StageProps) {
   const r = lead.research;
-  const [targetAudience, setTargetAudience] = useState<TargetAudience | "">((r?.targetAudience as TargetAudience | null) ?? "");
+  const [targetAudience, setTargetAudience] = useState<TargetAudience[]>(r?.targetAudience ?? []);
   const [language, setLanguage] = useState(r?.language ?? "");
   const [location, setLocation] = useState(r?.location ?? "");
   const [category, setCategory] = useState(r?.category ?? "");
@@ -124,7 +125,7 @@ export function ResearchStage({ lead, onSaved }: StageProps) {
     e.preventDefault();
     await run(() =>
       saveResearch(lead.leadRef, {
-        targetAudience: targetAudience || null,
+        targetAudience,
         language: language.trim() || undefined,
         location: location.trim() || undefined,
         category: category.trim() || undefined,
@@ -140,22 +141,15 @@ export function ResearchStage({ lead, onSaved }: StageProps) {
       {r && (
         <div className="kv">
           <span>Saved Target Audience</span>
-          <Pill tone={r.targetAudience ? "default" : "red"}>{r.targetAudience ?? "Not approved"}</Pill>
+          <Pill tone={r.targetAudience.length > 0 ? "default" : "red"}>{r.targetAudience.length > 0 ? r.targetAudience.join(", ") : "Not approved"}</Pill>
         </div>
       )}
-      <p className="foundationnote">Only Target Audience is mandatory and gates progress. Language, location, category, notes and follower count are optional context.</p>
+      <p className="foundationnote">At least one Target Audience is mandatory and gates progress. Language, location, category, notes and follower count are optional context.</p>
       <form onSubmit={handleSubmit}>
         <div className="fields">
           <div className="field">
             <label htmlFor="research-target-audience">Target Audience (required)</label>
-            <select id="research-target-audience" value={targetAudience} onChange={(e) => setTargetAudience(e.target.value as TargetAudience)} required>
-              <option value="">Select…</option>
-              {TARGET_AUDIENCES.map((ta) => (
-                <option key={ta} value={ta}>
-                  {ta}
-                </option>
-              ))}
-            </select>
+            <TargetAudienceMultiSelect value={targetAudience} onChange={setTargetAudience} />
           </div>
           <div className="field">
             <label htmlFor="research-language">Language (optional)</label>

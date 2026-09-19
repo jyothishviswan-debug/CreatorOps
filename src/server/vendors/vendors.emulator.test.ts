@@ -689,7 +689,7 @@ describe("Regression", () => {
     const lead = await createLead(head, { displayName: uniqueName("No Vendor Lead"), source: { type: "referral" }, regionIds: ["Kerala"], email: `${uniqueName("novendor").replace(/\s+/g, "")}@example.com` }, "req-no-vendor-create");
     if (!lead.ok) throw new Error("unreachable");
     let version = lead.data.version;
-    const research = await saveResearch(head, lead.data.leadRef, { targetAudience: "India 1", expectedVersion: version }, "req-nv-research");
+    const research = await saveResearch(head, lead.data.leadRef, { targetAudience: ["India 1"], expectedVersion: version }, "req-nv-research");
     if (!research.ok) throw new Error("unreachable");
     version = research.data.version;
     const outbound = await recordOutreach(head, lead.data.leadRef, { direction: "OUTBOUND", channel: "email", summary: "hi", outcome: "sent", expectedVersion: version }, "req-nv-out1");

@@ -24,7 +24,7 @@ export type PartnerDto = {
   categoryIds: string[];
   tier: string | null;
   priority: string | null;
-  targetAudience: TargetAudience | null;
+  targetAudience: TargetAudience[];
   email: string | null;
   phone: string | null;
   ownerRef: string | null;

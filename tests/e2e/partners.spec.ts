@@ -100,14 +100,16 @@ test.describe("Workspace", () => {
   });
 
   test("Target Audience filter auto-applies via a real bounded query", async ({ page }) => {
-    const partner = await createPartnerViaApi(page, { displayName: uniqueName("Tagged Workspace Partner"), targetAudience: "India Alpha" });
+    const partner = await createPartnerViaApi(page, { displayName: uniqueName("Tagged Workspace Partner"), targetAudience: ["India Alpha"] });
 
     await page.goto("/partners/workspace");
     await page.getByLabel("Search partners by name").fill(partner.displayName);
     await expect(page.getByText(partner.displayName)).toBeVisible({ timeout: 5000 });
 
     await page.getByLabel("Search partners by name").fill("");
-    await page.getByLabel("Filter target audience").selectOption("India Alpha");
+    await page.getByRole("button", { name: "Select Target Audience…" }).click();
+    await page.getByRole("checkbox", { name: "India Alpha" }).check();
+    await page.getByLabel("Search partners by name").click(); // closes the dropdown via outside click
     await expect(page.getByText(partner.displayName)).toBeVisible({ timeout: 5000 });
 
     await page.getByLabel("Search partners by name").fill("");
@@ -189,19 +191,24 @@ test.describe("Create Partner", () => {
     }
   });
 
-  test("captures Target Audience directly, and it can be changed via ordinary edit", async ({ page }) => {
+  test("captures Target Audience directly (multi-value), and it can be changed via ordinary edit", async ({ page }) => {
     await page.goto("/partners/new");
     const name = uniqueName("Tagged Partner");
     await formField(page, "Full name").fill(name);
-    await formField(page, "Target Audience").selectOption("India 2");
+    await page.getByRole("button", { name: "Select Target Audience…" }).click();
+    await page.getByRole("checkbox", { name: "India 2" }).check();
+    await page.getByRole("checkbox", { name: "India 3" }).check();
     await page.getByRole("button", { name: "Create partner" }).click();
 
-    await expect(page.locator(".head p").first()).toHaveText("India 2");
-    await expect(page.locator(".kv", { hasText: "Target Audience" }).getByText("India 2")).toBeVisible();
+    await expect(page.locator(".head p").first()).toHaveText("India 2, India 3");
+    await expect(page.locator(".kv", { hasText: "Target Audience" }).getByText("India 2, India 3")).toBeVisible();
 
     const partnerRef = page.url().split("/partners/")[1];
     await page.goto(`/partners/${partnerRef}/edit`);
-    await formField(page, "Target Audience").selectOption("India 4");
+    await page.getByRole("button", { name: "India 2, India 3" }).click();
+    await page.getByRole("checkbox", { name: "India 2" }).uncheck();
+    await page.getByRole("checkbox", { name: "India 3" }).uncheck();
+    await page.getByRole("checkbox", { name: "India 4" }).check();
     await page.getByRole("button", { name: "Save changes" }).click();
     await expect(page.locator(".head p").first()).toHaveText("India 4");
   });
@@ -361,7 +368,7 @@ test.describe("NEW_ACCOUNT pending setup", () => {
     const lead = (await leadResponse.json()) as { leadRef: string; version: number };
     let version = lead.version;
 
-    const research = await page.request.post(`/api/discovery/leads/${lead.leadRef}/research`, { data: { targetAudience: "India 1", expectedVersion: version } });
+    const research = await page.request.post(`/api/discovery/leads/${lead.leadRef}/research`, { data: { targetAudience: ["India 1"], expectedVersion: version } });
     version = (await research.json()).version;
     const outbound = await page.request.post(`/api/discovery/leads/${lead.leadRef}/outreach`, {
       data: { direction: "OUTBOUND", channel: "email", summary: "hi", outcome: "sent", expectedVersion: version },

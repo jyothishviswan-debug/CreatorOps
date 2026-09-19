@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-import { assetDecisionKindSchema, leadSourceSchema, targetAudienceSchema, type AssetDecisionKind, type TargetAudience } from "@/server/discovery/types";
+import { assetDecisionKindSchema, leadSourceSchema, targetAudienceArraySchema, type AssetDecisionKind, type TargetAudience } from "@/server/discovery/types";
 
 // Step 7A: the canonical Partner + Partner Account domain. Partner = one
 // individual creator/influencer/person. Partner Account = one platform/
@@ -62,11 +62,13 @@ export const partnerDocSchema = z.object({
   tier: z.string().min(1).max(60).nullable().default(null),
   priority: z.string().min(1).max(60).nullable().default(null),
   // Same fixed list Discovery's Research stage uses (see
-  // targetAudienceSchema's own comment) - carried over verbatim from the
-  // origin Lead's research.targetAudience on Discovery conversion (when
-  // present), or captured directly at Partner creation/edit otherwise.
-  // Never re-derived or guessed - null simply means not yet tagged.
-  targetAudience: targetAudienceSchema.nullable().default(null),
+  // targetAudienceArraySchema's own comment) - carried over verbatim from
+  // the origin Lead's research.targetAudience on Discovery conversion
+  // (when present), or captured directly at Partner creation/edit
+  // otherwise. Never re-derived or guessed - an empty array simply means
+  // not yet tagged. Multi-value: a Partner can span more than one
+  // segment.
+  targetAudience: targetAudienceArraySchema,
 
   // Safe contact data only - never restricted financial/KYC values (see
   // restrictedFinancialIdentityDocSchema below for those).

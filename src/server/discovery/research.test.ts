@@ -4,7 +4,7 @@ import { isApprovedTargetAudience, isResearchComplete } from "./research";
 import type { LeadResearch } from "./types";
 
 function research(overrides: Partial<LeadResearch>): LeadResearch {
-  return { targetAudience: null, updatedAt: "2026-01-01T00:00:00.000Z", updatedByUserRef: "ref-1", ...overrides };
+  return { targetAudience: [], updatedAt: "2026-01-01T00:00:00.000Z", updatedByUserRef: "ref-1", ...overrides };
 }
 
 describe("isApprovedTargetAudience", () => {
@@ -23,16 +23,20 @@ describe("isApprovedTargetAudience", () => {
 
 describe("isResearchComplete - the one shared canonical Research-completion function", () => {
   it("is complete when exactly one approved Target Audience is recorded, with no other fields at all", () => {
-    expect(isResearchComplete(research({ targetAudience: "India 1" }))).toBe(true);
+    expect(isResearchComplete(research({ targetAudience: ["India 1"] }))).toBe(true);
+  });
+
+  it("is complete when more than one approved Target Audience is recorded (a Lead may span more than one segment)", () => {
+    expect(isResearchComplete(research({ targetAudience: ["India 1", "India Alpha"] }))).toBe(true);
   });
 
   it("is incomplete when there is no research record at all", () => {
     expect(isResearchComplete(null)).toBe(false);
   });
 
-  it("is incomplete when targetAudience is null, no matter how much optional context is filled in", () => {
+  it("is incomplete when targetAudience is an empty array, no matter how much optional context is filled in", () => {
     const thorough = research({
-      targetAudience: null,
+      targetAudience: [],
       language: "Malayalam",
       location: "Kochi",
       category: "Travel",
@@ -42,9 +46,7 @@ describe("isResearchComplete - the one shared canonical Research-completion func
     expect(isResearchComplete(thorough)).toBe(false);
   });
 
-  it("is incomplete for every disallowed value, even ones that look plausible", () => {
-    for (const disallowed of ["Pan India", "Regional", "Local/City", "Other", "india 1", ""]) {
-      expect(isResearchComplete(research({ targetAudience: disallowed as never }))).toBe(false);
-    }
+  it("is incomplete when targetAudience contains only disallowed/unapproved-looking values", () => {
+    expect(isResearchComplete(research({ targetAudience: ["Pan India", "Regional"] as never }))).toBe(false);
   });
 });

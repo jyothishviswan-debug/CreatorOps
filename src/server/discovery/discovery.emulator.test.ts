@@ -372,7 +372,7 @@ describe("Discovery domain (real emulator)", () => {
       const leadRef = created.data.leadRef;
       let version = created.data.version;
 
-      const research = await saveResearch(head, leadRef, { targetAudience: "India 1", expectedVersion: version }, "req-cf-research");
+      const research = await saveResearch(head, leadRef, { targetAudience: ["India 1"], expectedVersion: version }, "req-cf-research");
       if (!research.ok) throw new Error("unreachable");
       version = research.data.version;
 

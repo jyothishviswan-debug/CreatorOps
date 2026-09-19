@@ -203,7 +203,7 @@ export type PartnerListQueryOptions = {
   region?: string | string[];
   ownerUid?: string;
   tier?: string;
-  targetAudience?: string;
+  targetAudience?: string | string[];
   pendingPartnerAccountSetup?: boolean;
 };
 
@@ -229,7 +229,6 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
   if (options.status) sharedFilters.push({ field: "status", op: "==", value: options.status });
   if (options.ownerUid) sharedFilters.push({ field: "ownerUid", op: "==", value: options.ownerUid });
   if (options.tier) sharedFilters.push({ field: "tier", op: "==", value: options.tier });
-  if (options.targetAudience) sharedFilters.push({ field: "targetAudience", op: "==", value: options.targetAudience });
   if (options.pendingPartnerAccountSetup) sharedFilters.push({ field: "pendingPartnerAccountSetup", op: "==", value: true });
 
   let orderField = "createdAt";
@@ -247,6 +246,27 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
 
   const requestedRegions = toValueArray(options.region);
   const regionArrayContains: FirestoreFieldFilter | null = requestedRegions.length > 0 ? { field: "regionIds", op: "array-contains-any", value: requestedRegions } : null;
+
+  // targetAudience is now also an array field (a Partner can span more
+  // than one segment) - an operator-selected filter means "any of
+  // these", via array-contains-any, the same idiom as region. Firestore
+  // still allows only one array-type filter per query, so in a branch
+  // that has no array-type filter of its own already spoken for (main/
+  // self below), region keeps the one pushed slot when both are active
+  // (it was already the established citizen here) and targetAudience is
+  // applied as a postFilter instead - bounded and safe (never wrong
+  // data, at most an extra page turn on the rare combination of both
+  // filters at once), the same trade-off already accepted for
+  // region-vs-team below. In every branch that already carries its OWN
+  // mandatory array filter (region/team/main-region-granted), a
+  // targetAudience filter always defers to postFilter - it never gets a
+  // chance to be pushed there regardless of whether region is active.
+  const requestedTargetAudiences = toValueArray(options.targetAudience);
+  const targetAudienceArrayContains: FirestoreFieldFilter | null =
+    requestedTargetAudiences.length > 0 ? { field: "targetAudience", op: "array-contains-any", value: requestedTargetAudiences } : null;
+  const pushableArrayFilter = (): FirestoreFieldFilter | null => regionArrayContains ?? targetAudienceArrayContains;
+  const deferredArrayFilter = (): FirestoreFieldFilter[] => (regionArrayContains && targetAudienceArrayContains ? [targetAudienceArrayContains] : []);
+
   const branches: ListBranchPlan[] = [];
 
   const explicitPartnerUids = [
@@ -257,11 +277,12 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
   ].slice(0, MAX_SCOPE_IN_VALUES);
 
   if (options.hasGlobal) {
+    const pushed = pushableArrayFilter();
     branches.push({
       kind: "firestore-query",
       name: "main",
-      pushedFilters: [...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : [])],
-      postFilters: [],
+      pushedFilters: [...sharedFilters, ...(pushed ? [pushed] : [])],
+      postFilters: deferredArrayFilter(),
       excludePostFilters: [],
       orderField,
       orderDirection,
@@ -279,7 +300,15 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
     // regardless of ownerUid/teamIds - a strict superset of what
     // SELF/TEAM/EXPLICIT could otherwise contribute once also filtered
     // to this same region, so this fully replaces every other branch.
-    branches.push({ kind: "firestore-query", name: "main", pushedFilters: [...sharedFilters, regionArrayContains!], postFilters: [], excludePostFilters: [], orderField, orderDirection });
+    branches.push({
+      kind: "firestore-query",
+      name: "main",
+      pushedFilters: [...sharedFilters, regionArrayContains!],
+      postFilters: targetAudienceArrayContains ? [targetAudienceArrayContains] : [],
+      excludePostFilters: [],
+      orderField,
+      orderDirection,
+    });
     return { plan: { branches }, orderField, orderDirection };
   }
 
@@ -288,11 +317,12 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
   const teamExclude: FirestoreFieldFilter | null = grantedTeams.length > 0 ? { field: "teamIds", op: "array-contains-any", value: grantedTeams } : null;
 
   if (selfGranted) {
+    const pushed = pushableArrayFilter();
     branches.push({
       kind: "firestore-query",
       name: "self",
-      pushedFilters: [selfExclude, ...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : [])],
-      postFilters: [],
+      pushedFilters: [selfExclude, ...sharedFilters, ...(pushed ? [pushed] : [])],
+      postFilters: deferredArrayFilter(),
       excludePostFilters: [],
       orderField,
       orderDirection,
@@ -309,7 +339,7 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
       kind: "firestore-query",
       name: "region",
       pushedFilters: [regionExclude, ...sharedFilters],
-      postFilters: [],
+      postFilters: targetAudienceArrayContains ? [targetAudienceArrayContains] : [],
       excludePostFilters: selfGranted ? [selfExclude] : [],
       orderField,
       orderDirection,
@@ -330,7 +360,7 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
       kind: "firestore-query",
       name: "team",
       pushedFilters: [teamExclude, ...sharedFilters],
-      postFilters: requestedRegions.length > 0 ? [regionArrayContains!] : [],
+      postFilters: [...(requestedRegions.length > 0 ? [regionArrayContains!] : []), ...(targetAudienceArrayContains ? [targetAudienceArrayContains] : [])],
       excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(requestedRegions.length === 0 && regionExclude ? [regionExclude] : [])],
       orderField,
       orderDirection,
@@ -342,7 +372,7 @@ export function planPartnerListQuery(options: PartnerListQueryOptions): { plan: 
       kind: "bounded-ids",
       name: "explicit",
       ids: explicitPartnerUids,
-      postFilters: [...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : [])],
+      postFilters: [...sharedFilters, ...(regionArrayContains ? [regionArrayContains] : []), ...(targetAudienceArrayContains ? [targetAudienceArrayContains] : [])],
       excludePostFilters: [...(selfGranted ? [selfExclude] : []), ...(regionExclude ? [regionExclude] : []), ...(teamExclude ? [teamExclude] : [])],
     });
   }

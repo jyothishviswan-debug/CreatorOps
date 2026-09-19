@@ -8,7 +8,8 @@ import { FormLayout, FormSection, Fields, Field, FormFoot, Checklist } from "@/u
 import { Icon } from "@/ui/icons";
 import { MultiSelectDropdown } from "@/features/shared/MultiSelectDropdown";
 import { RegionMultiSelect } from "@/features/shared/RegionMultiSelect";
-import { TARGET_AUDIENCES, type TargetAudience } from "@/server/campaigns/types";
+import { TargetAudienceMultiSelect } from "@/features/shared/TargetAudienceMultiSelect";
+import type { TargetAudience } from "@/server/campaigns/types";
 import type { CampaignOwnerCandidateDto } from "@/server/campaigns/user-picker";
 import { createCampaign } from "./api-client";
 import { CampaignOwnerPicker } from "./CampaignOwnerPicker";
@@ -44,7 +45,7 @@ export function CampaignForm() {
 
   const [platforms, setPlatforms] = useState<string[]>([]);
 
-  const [targetAudience, setTargetAudience] = useState<TargetAudience | "">("");
+  const [targetAudience, setTargetAudience] = useState<TargetAudience[]>([]);
   const [regions, setRegions] = useState<string[]>([]);
   const [languages, setLanguages] = useState("");
   const [categories, setCategories] = useState("");
@@ -74,7 +75,7 @@ export function CampaignForm() {
       ownerUserRef: owner?.userRef,
       defaultReviewPolicy: reviewPolicy,
       criteria: {
-        targetAudience: targetAudience || null,
+        targetAudience,
         regionIds: regions,
         languageIds: fromCsv(languages),
         categoryIds: fromCsv(categories),
@@ -119,14 +120,7 @@ export function CampaignForm() {
         <FormSection title="Targeting" description="Business intent for who this programme is for - never authorization scope.">
           <Fields>
             <Field label="Target Audience">
-              <select value={targetAudience} onChange={(e) => setTargetAudience(e.target.value as TargetAudience | "")}>
-                <option value="">Not set</option>
-                {TARGET_AUDIENCES.map((a) => (
-                  <option key={a} value={a}>
-                    {a}
-                  </option>
-                ))}
-              </select>
+              <TargetAudienceMultiSelect value={targetAudience} onChange={setTargetAudience} />
             </Field>
             <Field label="Regions" full>
               <RegionMultiSelect value={regions} onChange={setRegions} />

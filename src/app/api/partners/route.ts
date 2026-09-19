@@ -21,7 +21,8 @@ export async function GET(request: Request) {
   const regionValues = url.searchParams.getAll("region");
   const region = regionValues.length > 0 ? regionValues : undefined;
   const tier = url.searchParams.get("tier") ?? undefined;
-  const targetAudience = url.searchParams.get("targetAudience") ?? undefined;
+  const targetAudienceValues = url.searchParams.getAll("targetAudience");
+  const targetAudience = targetAudienceValues.length > 0 ? targetAudienceValues : undefined;
   const assignedToMe = url.searchParams.get("assignedToMe") === "true" ? true : undefined;
   const pendingPartnerAccountSetup = url.searchParams.get("pendingPartnerAccountSetup") === "true" ? true : undefined;
 

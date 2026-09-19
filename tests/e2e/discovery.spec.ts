@@ -240,10 +240,23 @@ test.describe("Detail workflow", () => {
     await page.goto(`/discovery/${lead.leadRef}`);
 
     await page.getByRole("tab", { name: "Research" }).click();
-    await page.getByLabel("Target Audience (required)").selectOption("India 1");
+    await page.getByRole("button", { name: "Select Target Audience…" }).click();
+    await page.getByRole("checkbox", { name: "India 1" }).check();
     await page.getByRole("button", { name: "Save research" }).click();
     await expect(page.getByText("Saved Target Audience")).toBeVisible();
     await expect(page.locator(".step", { hasText: "Research" })).toHaveClass(/done/);
+  });
+
+  test("Research: more than one Target Audience can be selected and saved at once", async ({ page }) => {
+    const lead = await createLeadViaApi(page);
+    await page.goto(`/discovery/${lead.leadRef}`);
+
+    await page.getByRole("tab", { name: "Research" }).click();
+    await page.getByRole("button", { name: "Select Target Audience…" }).click();
+    await page.getByRole("checkbox", { name: "India 1" }).check();
+    await page.getByRole("checkbox", { name: "India 2" }).check();
+    await page.getByRole("button", { name: "Save research" }).click();
+    await expect(page.getByText("India 1, India 2")).toBeVisible();
   });
 
   test("the first outbound contact advances NEW to CONTACTED, and a meaningful inbound response advances it to RESPONDED", async ({ page }) => {
@@ -435,7 +448,7 @@ test.describe("Readiness and conversion", () => {
     const lead = await createLeadViaApi(page, { email: `${uniqueName("readystate").replace(/\s+/g, "")}@example.com` });
     let version = lead.version;
 
-    const research = await page.request.post(`/api/discovery/leads/${lead.leadRef}/research`, { data: { targetAudience: "India 1", expectedVersion: version } });
+    const research = await page.request.post(`/api/discovery/leads/${lead.leadRef}/research`, { data: { targetAudience: ["India 1"], expectedVersion: version } });
     version = (await research.json()).version;
     const outbound = await page.request.post(`/api/discovery/leads/${lead.leadRef}/outreach`, {
       data: { direction: "OUTBOUND", channel: "email", summary: "hi", outcome: "sent", expectedVersion: version },
@@ -487,7 +500,7 @@ test.describe("Readiness and conversion", () => {
     const lead = await createLeadViaApi(page, { email: `${uniqueName("conv").replace(/\s+/g, "")}@example.com` });
     let version = lead.version;
 
-    const research = await page.request.post(`/api/discovery/leads/${lead.leadRef}/research`, { data: { targetAudience: "India 1", expectedVersion: version } });
+    const research = await page.request.post(`/api/discovery/leads/${lead.leadRef}/research`, { data: { targetAudience: ["India 1"], expectedVersion: version } });
     version = (await research.json()).version;
     const outbound = await page.request.post(`/api/discovery/leads/${lead.leadRef}/outreach`, {
       data: { direction: "OUTBOUND", channel: "email", summary: "hi", outcome: "sent", expectedVersion: version },

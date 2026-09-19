@@ -80,19 +80,41 @@ export const REGION_ZONE_NAMES = Object.keys(REGION_ZONES) as RegionZoneName[];
 export const DISCOVERY_REGIONS = REGION_ZONE_NAMES.flatMap((zone) => REGION_ZONES[zone]);
 
 // --- Research policy ---------------------------------------------------
-// Step 6A section 3: research completion requires exactly one approved
-// Target Audience from this fixed list - no "Pan India", "Regional",
-// "Local/City", "Other", or free-form value ever satisfies it. See
-// research.ts's isResearchComplete, the one shared canonical function.
+// Step 6A section 3 (revised): research completion requires at least one
+// approved Target Audience from this fixed list - no "Pan India",
+// "Regional", "Local/City", "Other", or free-form value ever satisfies
+// it. Multiple approved values may be recorded at once (a Lead can span
+// more than one segment). See research.ts's isResearchComplete, the one
+// shared canonical function.
 export const TARGET_AUDIENCES = ["India Alpha", "India 1", "India 2", "India 3", "India 4"] as const;
 export const targetAudienceSchema = z.enum(TARGET_AUDIENCES);
 export type TargetAudience = z.infer<typeof targetAudienceSchema>;
+
+// Bounded multi-select array of the same closed taxonomy - duplicates
+// are REJECTED (not silently dropped), mirroring shared/platform.ts's
+// platformIdentifierArraySchema's own "surface caller inconsistency as
+// invalid_input" rule. Shared by Discovery Research, Partners, and
+// Campaigns - one array contract, never a second representation.
+export const targetAudienceArraySchema = z
+  .array(targetAudienceSchema)
+  .max(TARGET_AUDIENCES.length)
+  .default([])
+  .superRefine((values, ctx) => {
+    const seen = new Set<string>();
+    for (const value of values) {
+      if (seen.has(value)) {
+        ctx.addIssue({ code: z.ZodIssueCode.custom, message: `Duplicate Target Audience "${value}".` });
+        return;
+      }
+      seen.add(value);
+    }
+  });
 
 // Optional context only - MUST NOT participate in the completion gate
 // (see research.ts). Free-form, deliberately unvalidated beyond a length
 // bound.
 export const researchSchema = z.object({
-  targetAudience: targetAudienceSchema.nullable().default(null),
+  targetAudience: targetAudienceArraySchema,
   language: z.string().min(1).max(80).optional(),
   location: z.string().min(1).max(120).optional(),
   category: z.string().min(1).max(80).optional(),

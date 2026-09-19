@@ -232,7 +232,7 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
       // Carried over verbatim from Discovery's own Research evidence when
       // present - the origin Lead already captured it, so conversion
       // never leaves it blank only to make the operator retype it.
-      targetAudience: freshLead.research?.targetAudience ?? null,
+      targetAudience: freshLead.research?.targetAudience ?? [],
       email: freshLead.email,
       phone: freshLead.phone,
       ownerUid: freshLead.ownerUid,

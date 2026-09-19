@@ -28,7 +28,7 @@ import {
   researchSchema,
   reviewDimensionsSchema,
   reviewOutcomeSchema,
-  targetAudienceSchema,
+  targetAudienceArraySchema,
   type DiscoveryErrorResult,
   type DiscoveryServiceResult,
   type LeadDoc,
@@ -265,7 +265,7 @@ export async function updateLead(actor: ActorContext | null, leadRef: unknown, r
 // ---- Research ----
 
 const saveResearchInputSchema = z.object({
-  targetAudience: targetAudienceSchema.nullable(),
+  targetAudience: targetAudienceArraySchema,
   language: z.string().min(1).max(80).optional(),
   location: z.string().min(1).max(120).optional(),
   category: z.string().min(1).max(80).optional(),

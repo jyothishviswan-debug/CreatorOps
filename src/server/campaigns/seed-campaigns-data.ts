@@ -80,7 +80,7 @@ export async function seedCampaignsData(): Promise<void> {
       regionIds: ["Kerala"],
       teamIds: [],
       ownerUid: null,
-      criteria: { targetAudience: "India 1", regionIds: ["Kerala"], languageIds: [], categoryIds: [], platforms: [] },
+      criteria: { targetAudience: ["India 1"], regionIds: ["Kerala"], languageIds: [], categoryIds: [], platforms: [] },
       resources: [],
       defaultReviewPolicy: "REVIEW_REQUIRED",
     },
@@ -95,7 +95,7 @@ export async function seedCampaignsData(): Promise<void> {
       // isolating that one scope dimension cleanly, same idiom as
       // Vendors'/Partners' own seed-vendor-payee/seed-partner-direct.
       ownerUid: managerUid,
-      criteria: { targetAudience: "India Alpha", regionIds: ["Kerala", "Maharashtra"], languageIds: [], categoryIds: [], platforms: ["instagram"] },
+      criteria: { targetAudience: ["India Alpha", "India 2"], regionIds: ["Kerala", "Maharashtra"], languageIds: [], categoryIds: [], platforms: ["instagram"] },
       resources: [resourceFixture("Launch Brief")],
       defaultReviewPolicy: "NO_PREPOST_REVIEW",
     },
@@ -110,7 +110,7 @@ export async function seedCampaignsData(): Promise<void> {
       // Reachable for Partnership Head ONLY through the explicit CAMPAIGN
       // scope grant naming this exact uid (see seed-access-data.ts's
       // SCOPE_GRANTS) - Tamil Nadu is not itself a region Head holds.
-      criteria: { regionIds: [], languageIds: [], categoryIds: [], targetAudience: null, platforms: ["youtube"] },
+      criteria: { regionIds: [], languageIds: [], categoryIds: [], targetAudience: [], platforms: ["youtube"] },
       resources: [resourceFixture("Civic Voices Brief")],
       defaultReviewPolicy: "REVIEW_REQUIRED",
     },
@@ -122,7 +122,7 @@ export async function seedCampaignsData(): Promise<void> {
       regionIds: ["Uttar Pradesh"],
       teamIds: [],
       ownerUid: null,
-      criteria: { regionIds: ["Uttar Pradesh"], languageIds: [], categoryIds: [], targetAudience: null, platforms: [] },
+      criteria: { regionIds: ["Uttar Pradesh"], languageIds: [], categoryIds: [], targetAudience: [], platforms: [] },
       resources: [],
       defaultReviewPolicy: "REVIEW_REQUIRED",
     },
@@ -134,7 +134,7 @@ export async function seedCampaignsData(): Promise<void> {
       regionIds: ["Gujarat"],
       teamIds: [],
       ownerUid: null,
-      criteria: { regionIds: ["Gujarat"], languageIds: [], categoryIds: [], targetAudience: null, platforms: [] },
+      criteria: { regionIds: ["Gujarat"], languageIds: [], categoryIds: [], targetAudience: [], platforms: [] },
       resources: [resourceFixture("Retrospective Deck")],
       defaultReviewPolicy: "NO_PREPOST_REVIEW",
     },
@@ -146,7 +146,7 @@ export async function seedCampaignsData(): Promise<void> {
       regionIds: ["Kerala"],
       teamIds: ["kerala-programmes"],
       ownerUid: null,
-      criteria: { regionIds: [], languageIds: [], categoryIds: [], targetAudience: null, platforms: [] },
+      criteria: { regionIds: [], languageIds: [], categoryIds: [], targetAudience: [], platforms: [] },
       resources: [],
       defaultReviewPolicy: "REVIEW_REQUIRED",
     },
@@ -158,7 +158,7 @@ export async function seedCampaignsData(): Promise<void> {
       regionIds: ["Maharashtra"],
       teamIds: ["maharashtra-programmes"],
       ownerUid: null,
-      criteria: { regionIds: [], languageIds: [], categoryIds: [], targetAudience: null, platforms: [] },
+      criteria: { regionIds: [], languageIds: [], categoryIds: [], targetAudience: [], platforms: [] },
       resources: [],
       defaultReviewPolicy: "NO_PREPOST_REVIEW",
     },

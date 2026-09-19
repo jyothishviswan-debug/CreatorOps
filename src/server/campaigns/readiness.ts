@@ -46,8 +46,9 @@ export async function evaluateCampaignReadiness(campaign: CampaignDoc): Promise<
   // Also covers Step 9A REVISED section 7's own explicit readiness rule
   // ("any Target Audience criteria use only the accepted India Alpha/
   // India 1/India 2/India 3/India 4 taxonomy") - campaignCriteriaSchema's
-  // targetAudience field is that exact closed enum, so a criteria object
-  // carrying anything else already fails this one structural check.
+  // targetAudience field is a bounded array over that exact closed enum
+  // (multi-select), so a criteria object carrying anything outside it
+  // already fails this one structural check.
   if (!campaignCriteriaSchema.safeParse(campaign.criteria).success) {
     blockers.push(blocker("CRITERIA_INVALID", "Targeting criteria is not structurally valid."));
   }

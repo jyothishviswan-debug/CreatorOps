@@ -170,7 +170,7 @@
       "collectionGroup": "partners",
       "queryScope": "COLLECTION",
       "fields": [
-        { "fieldPath": "targetAudience", "order": "ASCENDING" },
+        { "fieldPath": "targetAudience", "arrayConfig": "CONTAINS" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
     },

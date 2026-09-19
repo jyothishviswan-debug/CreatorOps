@@ -104,7 +104,7 @@ export function CampaignDetail({ initialCampaign }: { initialCampaign: CampaignD
                 </div>
                 <div className="kv">
                   <span>Target Audience</span>
-                  <span>{campaign.criteria.targetAudience ?? "—"}</span>
+                  <span>{campaign.criteria.targetAudience.length > 0 ? campaign.criteria.targetAudience.join(", ") : "—"}</span>
                 </div>
                 <div className="kv">
                   <span>Default review policy</span>
@@ -158,7 +158,7 @@ export function CampaignDetail({ initialCampaign }: { initialCampaign: CampaignD
               </div>
               <div className="kv">
                 <span>Target Audience</span>
-                <span>{campaign.criteria.targetAudience ?? "—"}</span>
+                <span>{campaign.criteria.targetAudience.length > 0 ? campaign.criteria.targetAudience.join(", ") : "—"}</span>
               </div>
               <div className="kv">
                 <span>Regions</span>

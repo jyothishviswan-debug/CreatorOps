@@ -57,7 +57,7 @@ export function PartnerDetail({ initialPartner }: { initialPartner: PartnerDto }
         <div>
           <div className="eyebrow">PARTNERS / RECORD DETAIL</div>
           <h1>{partner.displayName}</h1>
-          <p>{partner.targetAudience ?? "Target Audience not yet tagged"}</p>
+          <p>{partner.targetAudience.length > 0 ? partner.targetAudience.join(", ") : "Target Audience not yet tagged"}</p>
         </div>
         <div className="actions">
           <Link href="/partners/workspace" className="btn">
@@ -113,7 +113,7 @@ export function PartnerDetail({ initialPartner }: { initialPartner: PartnerDto }
                 <div className="kv">
                   <span>Target Audience</span>
                   <span>
-                    <Pill tone={partner.targetAudience ? "default" : "red"}>{partner.targetAudience ?? "Not yet tagged"}</Pill>
+                    <Pill tone={partner.targetAudience.length > 0 ? "default" : "red"}>{partner.targetAudience.length > 0 ? partner.targetAudience.join(", ") : "Not yet tagged"}</Pill>
                   </span>
                 </div>
                 <div className="kv">

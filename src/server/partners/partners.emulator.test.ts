@@ -75,7 +75,7 @@ async function convertFreshLeadToPartner(assetDecision: "NEW_ACCOUNT" | "MAINTAI
   if (!lead.ok) throw new Error("unreachable");
   let version = lead.data.version;
 
-  const research = await saveResearch(head, lead.data.leadRef, { targetAudience: "India 1", expectedVersion: version }, "req-handoff-research");
+  const research = await saveResearch(head, lead.data.leadRef, { targetAudience: ["India 1"], expectedVersion: version }, "req-handoff-research");
   if (!research.ok) throw new Error("unreachable");
   version = research.data.version;
   const outbound = await recordOutreach(head, lead.data.leadRef, { direction: "OUTBOUND", channel: "email", summary: "hi", outcome: "sent", expectedVersion: version }, "req-handoff-out");
@@ -203,23 +203,30 @@ describe("Partners domain (real emulator)", () => {
       expect(partnerDocSchema.safeParse(doc).success).toBe(true);
     });
 
-    it("Target Audience can be captured directly at create, changed via ordinary edit, and filtered on in listPartners", async () => {
+    it("Target Audience can be captured directly at create (multi-value), changed via ordinary edit, and filtered on (any-of) in listPartners", async () => {
       const head = await actorFor("partnership_head");
-      const created = await createPartner(head, { displayName: uniqueName("Tagged Direct"), regionIds: ["Kerala"], targetAudience: "India 2" }, "req-ta-create");
+      const created = await createPartner(head, { displayName: uniqueName("Tagged Direct"), regionIds: ["Kerala"], targetAudience: ["India 2", "India 3"] }, "req-ta-create");
       expect(created.ok).toBe(true);
       if (!created.ok) throw new Error("unreachable");
-      expect(created.data.targetAudience).toBe("India 2");
+      expect(created.data.targetAudience).toEqual(["India 2", "India 3"]);
 
-      const edited = await editPartner(head, created.data.partnerRef, { targetAudience: "India 4", expectedVersion: created.data.version }, "req-ta-edit");
+      const edited = await editPartner(head, created.data.partnerRef, { targetAudience: ["India 4"], expectedVersion: created.data.version }, "req-ta-edit");
       expect(edited.ok).toBe(true);
       if (!edited.ok) throw new Error("unreachable");
-      expect(edited.data.targetAudience).toBe("India 4");
+      expect(edited.data.targetAudience).toEqual(["India 4"]);
 
       const filtered = await listPartners(head, { limit: 50, targetAudience: "India 4" });
       expect(filtered.ok).toBe(true);
       if (!filtered.ok) throw new Error("unreachable");
       expect(filtered.data.partners.some((p) => p.partnerRef === created.data.partnerRef)).toBe(true);
-      expect(filtered.data.partners.every((p) => p.targetAudience === "India 4")).toBe(true);
+      expect(filtered.data.partners.every((p) => p.targetAudience.includes("India 4"))).toBe(true);
+
+      // "any of" semantics - a filter naming two values matches a Partner
+      // carrying either.
+      const filteredAnyOf = await listPartners(head, { limit: 50, targetAudience: ["India 4", "India 2"] });
+      expect(filteredAnyOf.ok).toBe(true);
+      if (!filteredAnyOf.ok) throw new Error("unreachable");
+      expect(filteredAnyOf.data.partners.some((p) => p.partnerRef === created.data.partnerRef)).toBe(true);
     });
 
     it("the ordinary DTO never includes restricted financial identity fields", async () => {
@@ -836,9 +843,9 @@ describe("Partners domain (real emulator)", () => {
       expect(partnerDoc?.sourceDiscovery?.leadRef).toBe(lead.leadRef);
       expect(partnerDoc?.pendingPartnerAccountSetup).toBe(true);
       // Carried over verbatim from the origin Lead's own Research
-      // evidence (convertFreshLeadToPartner always sets "India 1") -
+      // evidence (convertFreshLeadToPartner always sets ["India 1"]) -
       // never left blank when Discovery already captured it.
-      expect(partnerDoc?.targetAudience).toBe("India 1");
+      expect(partnerDoc?.targetAudience).toEqual(["India 1"]);
     });
 
     it("pending account setup can later be resolved by creating a real Partner Account", async () => {
