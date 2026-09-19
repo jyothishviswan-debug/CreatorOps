@@ -7,7 +7,7 @@
 // boundary, not used by anything this UI step calls, but kept for shape
 // parity with the server's own AssignmentsServiceErrorCode).
 import type { AssignmentDto } from "@/server/assignments/client-dto";
-import type { EditAssignmentBriefInput, ListAssignmentHistoryInput, ListAssignmentsInput, AssignmentHistoryEventDto } from "@/server/assignments/assignment-service";
+import type { CreateAssignmentInput, EditAssignmentBriefInput, ListAssignmentHistoryInput, ListAssignmentsInput, AssignmentHistoryEventDto } from "@/server/assignments/assignment-service";
 import type { TransitionAssignmentInput } from "@/server/assignments/assignment-lifecycle-service";
 import type { AssignmentListCursor } from "@/server/assignments/firestore";
 import type { AssignmentEventListCursor } from "@/server/assignments/assignment-events";
@@ -18,7 +18,7 @@ export type AssignmentsApiErrorCode = "unauthorized" | "not_found" | "invalid_in
 
 export type ReadinessIssue = { code: string; message: string };
 
-export type AssignmentsApiResult<T> = { ok: true; data: T } | { ok: false; status: number; code: AssignmentsApiErrorCode; error: string; blockers?: ReadinessIssue[] };
+export type AssignmentsApiResult<T> = { ok: true; data: T; status?: number } | { ok: false; status: number; code: AssignmentsApiErrorCode; error: string; blockers?: ReadinessIssue[] };
 
 async function call<T>(input: string, init?: RequestInit): Promise<AssignmentsApiResult<T>> {
   let res: Response;
@@ -30,7 +30,7 @@ async function call<T>(input: string, init?: RequestInit): Promise<AssignmentsAp
 
   if (res.ok) {
     const data = (await res.json()) as T;
-    return { ok: true, data };
+    return { ok: true, data, status: res.status };
   }
 
   let error = "Something went wrong.";
@@ -88,6 +88,20 @@ export function listAssignments(input: ListAssignmentsInput = {}): Promise<Assig
 
 export function getAssignment(assignmentRef: string): Promise<AssignmentsApiResult<AssignmentDto>> {
   return call(`/api/assignments/${encodeURIComponent(assignmentRef)}`);
+}
+
+// Step 12C.1: contextual create from Campaign Detail. POST /api/assignments
+// answers 201 when THIS call created the canonical Assignment and 200 when
+// the permanent (campaign, partner) claim already existed and the existing
+// Assignment was returned untouched (it also sends `X-Assignment-Outcome`).
+// Anything other than a 201 is therefore reported as "existing" - never a
+// false "created". The dialog must never treat "existing" as a fresh create.
+export type CreateAssignmentOutcome = "created" | "existing";
+
+export async function createAssignment(input: CreateAssignmentInput): Promise<AssignmentsApiResult<{ assignment: AssignmentDto; outcome: CreateAssignmentOutcome }>> {
+  const result = await call<AssignmentDto>("/api/assignments", { method: "POST", body: JSON.stringify(input) });
+  if (!result.ok) return result;
+  return { ok: true, data: { assignment: result.data, outcome: result.status === 201 ? "created" : "existing" } };
 }
 
 export function editAssignmentBrief(assignmentRef: string, input: EditAssignmentBriefInput): Promise<AssignmentsApiResult<AssignmentDto>> {

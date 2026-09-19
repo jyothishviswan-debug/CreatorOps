@@ -22,6 +22,8 @@ import type { CampaignListCursor } from "@/server/campaigns/firestore";
 import type { CampaignEventListCursor } from "@/server/campaigns/campaign-events";
 import type { CampaignReadinessResult } from "@/server/campaigns/types";
 import type { CampaignOwnerCandidateDto } from "@/server/campaigns/user-picker";
+import type { CampaignDownstreamSummaryDto } from "@/server/campaigns/detail-downstream-service";
+import type { AssignmentCreateOptionsDto } from "@/server/campaigns/assignment-options-service";
 
 export type CampaignsApiErrorCode = "unauthorized" | "not_found" | "invalid_input" | "stale_write" | "not_ready" | "internal" | "network_error";
 
@@ -154,4 +156,19 @@ export function removeCampaignResource(campaignRef: string, input: RemoveCampaig
 
 export function searchCampaignOwnerCandidates(emailPrefix: string): Promise<CampaignsApiResult<CampaignOwnerCandidateDto[]>> {
   return call(`/api/campaigns/users/search${query({ emailPrefix })}`);
+}
+
+// ---- Step 12C.1: Campaign Detail downstream summary + Create Assignment ----
+
+// Re-fetched after a successful Assignment create (and after any Campaign
+// lifecycle change) - router.refresh alone would not update Campaign
+// Detail's client state.
+export function getCampaignDownstream(campaignRef: string): Promise<CampaignsApiResult<CampaignDownstreamSummaryDto>> {
+  return call(`/api/campaigns/${encodeURIComponent(campaignRef)}/downstream`);
+}
+
+// Partner search (`q`, bounded to 10 server-side) OR one Partner's selectable
+// Partner Accounts + existing-Assignment state (`partnerRef`). Never both.
+export function getAssignmentCreateOptions(campaignRef: string, input: { q?: string; partnerRef?: string } = {}, signal?: AbortSignal): Promise<CampaignsApiResult<AssignmentCreateOptionsDto>> {
+  return call(`/api/campaigns/${encodeURIComponent(campaignRef)}/assignment-options${query({ q: input.q, partnerRef: input.partnerRef })}`, { signal });
 }

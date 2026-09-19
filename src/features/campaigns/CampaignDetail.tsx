@@ -1,15 +1,16 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useState } from "react";
 import Link from "next/link";
 
 import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
-import { EmptyState } from "@/ui/States";
 import type { CampaignDto } from "@/server/campaigns/client-dto";
+import type { CampaignDownstreamSummaryDto } from "@/server/campaigns/detail-downstream-service";
 import { absoluteTime, dateLabel, platformLabel, REVIEW_POLICY_LABELS, STATUS_LABELS, statusTone } from "./format";
 import { CampaignHistoryPanel } from "./CampaignHistoryPanel";
 import { CampaignLifecyclePanel } from "./CampaignLifecyclePanel";
+import { CampaignDownstreamPanel } from "./CampaignDownstreamPanel";
 import { CampaignOwnerTeamPanel } from "./CampaignOwnerTeamPanel";
 import { CampaignPlanEditPanel } from "./CampaignPlanEditPanel";
 import { CampaignReadinessPanel } from "./CampaignReadinessPanel";
@@ -24,13 +25,18 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "history", label: "History" },
 ];
 
-export function CampaignDetail({ initialCampaign }: { initialCampaign: CampaignDto }) {
+export function CampaignDetail({ initialCampaign, initialDownstream }: { initialCampaign: CampaignDto; initialDownstream: CampaignDownstreamSummaryDto | null }) {
   const [campaign, setCampaign] = useState(initialCampaign);
+  // Held here (not inside the panel) so it survives tab switches; `key` is
+  // the refreshKey the summary was derived at (see CampaignDownstreamPanel).
+  const [downstream, setDownstream] = useState({ summary: initialDownstream, key: 0 });
   const [selectedTab, setSelectedTab] = useState<TabKey>("overview");
   // Bumped on every successful mutation - campaignRef alone never changes
   // across those, so History/Readiness need their own explicit refresh
   // signal (see Vendors' own HistoryPanel comment for why).
   const [refreshKey, setRefreshKey] = useState(0);
+
+  const handleDownstreamChange = useCallback((summary: CampaignDownstreamSummaryDto, key: number) => setDownstream({ summary, key }), []);
 
   function handleCampaignUpdated(updated: CampaignDto) {
     setCampaign(updated);
@@ -121,18 +127,7 @@ export function CampaignDetail({ initialCampaign }: { initialCampaign: CampaignD
             <CampaignLifecyclePanel campaign={campaign} onSaved={handleCampaignUpdated} />
           </PanelGrid>
           <PanelGrid>
-            <Panel span={12}>
-              <PanelHead title="Downstream availability" description="Truthful placeholders only - these domains are not built yet, so nothing here is fabricated." />
-              <PanelBody>
-                <div className="stategrid">
-                  {(["Assignments", "Content", "Analytics"] as const).map((label) => (
-                    <div className="statecard" key={label}>
-                      <EmptyState title={label} description="Not yet built - no real trusted source is wired to this Campaign yet." icon="clock" />
-                    </div>
-                  ))}
-                </div>
-              </PanelBody>
-            </Panel>
+            <CampaignDownstreamPanel campaignRef={campaign.campaignRef} summary={downstream.summary} summaryKey={downstream.key} onSummaryChange={handleDownstreamChange} refreshKey={refreshKey} />
           </PanelGrid>
         </>
       )}

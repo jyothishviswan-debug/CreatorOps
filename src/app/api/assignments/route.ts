@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 
-import { createAssignment, listAssignments } from "@/server/assignments/assignment-service";
+import { createAssignmentWithOutcome, listAssignments } from "@/server/assignments/assignment-service";
 import { newRequestId, parseJsonBody, resolveRequestActor, toAssignmentsHttpResponse } from "@/server/assignments/http";
 import type { AssignmentListCursor } from "@/server/assignments/firestore";
 import { compoundListCursorSchema } from "@/server/shared/scoped-list";
@@ -39,12 +39,19 @@ export async function GET(request: Request) {
 
 // POST /api/assignments - direct Assignment creation (trusted server,
 // action-gated, cross-record-validated against the owning Campaign and
-// Partner).
+// Partner). Step 12C.1: the body is always the one canonical Assignment
+// DTO (unchanged shape), but the status now tells a fresh create apart from
+// the idempotent repeat - 201 when THIS call created it, 200 when the
+// permanent (campaign, partner) claim already existed and the existing
+// Assignment was returned untouched. The same fact is also sent as an
+// explicit `X-Assignment-Outcome: created | existing` header. No existing
+// caller/test distinguishes 201 from 200 (all use `.ok`), so nothing breaks.
 export async function POST(request: Request) {
   const actor = await resolveRequestActor();
   const body = await parseJsonBody(request);
   if (body === undefined) return NextResponse.json({ error: "Invalid JSON body." }, { status: 400 });
 
-  const result = await createAssignment(actor, body, newRequestId());
-  return toAssignmentsHttpResponse(result, 201);
+  const result = await createAssignmentWithOutcome(actor, body, newRequestId());
+  if (!result.ok) return toAssignmentsHttpResponse(result);
+  return NextResponse.json(result.data.assignment, { status: result.data.outcome === "created" ? 201 : 200, headers: { "X-Assignment-Outcome": result.data.outcome } });
 }

@@ -415,7 +415,11 @@ test.describe("History", () => {
 // ---- Downstream truth boundaries ----
 
 test.describe("Downstream truth boundaries", () => {
-  test("Overview tab shows truthful not-yet-built placeholders for Assignments/Content/Analytics, never a fabricated count", async ({ page }) => {
+  // Step 12C.1: Assignments/Content/Analytics are all real now, so Campaign
+  // Detail's "Downstream availability" cards show real trusted counts
+  // instead of "Not yet built" placeholders (full coverage, including the
+  // Create Assignment flow, lives in campaign-detail-assignment.spec.ts).
+  test("Overview tab shows real Assignments/Content/Analytics summaries for a fresh Campaign, never a placeholder or fabricated count", async ({ page }) => {
     const campaign = await createCampaignViaApi(page);
     await page.goto(`/campaigns/${campaign.campaignRef}`);
     const downstreamLabels = ["Assignments", "Content", "Analytics"];
@@ -423,7 +427,10 @@ test.describe("Downstream truth boundaries", () => {
       await expect(page.getByRole("heading", { name: label })).toBeVisible();
     }
     await expect(page.locator(".statecard")).toHaveCount(downstreamLabels.length);
-    await expect(page.getByText("Not yet built").first()).toBeVisible();
+    await expect(page.getByText("Not yet built")).toHaveCount(0);
+    // A brand-new Campaign genuinely has nothing linked yet - zeros are the truth, not a fixture.
+    await expect(page.getByText("0 Assignments")).toBeVisible();
+    await expect(page.getByText("No Content records yet")).toBeVisible();
     for (const fabricated of ["Partners assigned", "Content pieces", "delivery complete"]) {
       await expect(page.getByText(fabricated)).toHaveCount(0);
     }

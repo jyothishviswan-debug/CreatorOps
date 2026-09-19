@@ -5,10 +5,11 @@ import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import type { ActorContext } from "@/server/authz/types";
 import { getCampaignDocByRef } from "@/server/campaigns/firestore";
 import { requireCampaignInScope } from "@/server/campaigns/campaigns-gate";
-import type { CampaignDoc } from "@/server/campaigns/types";
 import { getPartnerAccountDocByRef, getPartnerDocByRef } from "@/server/partners/firestore";
 import { getAdminFirestore } from "@/server/firebase/admin";
 import { normalizePlatformIdentifier } from "@/server/shared/platform";
+import { isHttpUrl } from "@/server/shared/http-url";
+import { evaluatePartnerAccountEligibility, isCampaignStatusAllowingAssignmentCreation, PARTNER_ACCOUNT_UNAVAILABLE_INACTIVE } from "./create-eligibility";
 import { toAssignmentDto, toAssignmentDtos, type AssignmentDto } from "./client-dto";
 import { writeAssignmentEvent, listAssignmentEvents, type AssignmentEventListCursor } from "./assignment-events";
 import { requireAssignmentInScope, requireAssignmentsAccess, requireAssignmentsFeatureAccess } from "./assignments-gate";
@@ -27,6 +28,7 @@ import {
   assignmentBriefSchema,
   assignmentDocSchema,
   assignmentPlatformsArraySchema,
+  assignmentsConflictResult,
   assignmentsInvalidInputResult,
   assignmentsUnauthorizedResult,
   type AssignmentActiveClaimDoc,
@@ -35,13 +37,10 @@ import {
   type AssignmentsServiceResult,
 } from "./types";
 
-// Campaign lifecycle states that permit creating/issuing an Assignment
-// under it - judgment call #1 (see the Step 10A plan). PLANNED = the
-// Campaign has passed its own readiness gate; ACTIVE = currently running.
-// DRAFT is pre-readiness (fields not guaranteed valid yet); PAUSED is a
-// deliberate temporary halt during which new obligations shouldn't start;
-// COMPLETED/CANCELLED/ARCHIVED are terminal.
-const CAMPAIGN_STATES_ALLOWING_ASSIGNMENT_CREATION: ReadonlySet<CampaignDoc["status"]> = new Set(["PLANNED", "ACTIVE"]);
+// Campaign lifecycle states that permit creating an Assignment under it
+// (PLANNED/ACTIVE only) live in ./create-eligibility - a pure module shared
+// with the Campaign Detail downstream/create-options services so the rule is
+// defined exactly once.
 
 // Assignment has no separately-settable owner of its own - ownerUid/
 // regionIds/teamIds are always a point-in-time snapshot of the owning
@@ -83,7 +82,21 @@ const createAssignmentBriefInputSchema = z
     language: z.string().min(1).max(60).optional(),
     hashtags: z.array(z.string().min(1).max(60)).max(30).optional(),
     dueAt: z.string().min(1).optional(),
-    resourceLinks: z.array(z.object({ label: z.string().min(1).max(200), url: z.string().min(1).max(1000), shareExternally: z.boolean().optional() }).strict()).max(20).optional(),
+    // Step 12C.1: a CREATE-time resource link must be a real http(s) URL -
+    // enforced here on the trusted server, not only in the create dialog.
+    // (editAssignmentBrief's own schema below is deliberately untouched.)
+    resourceLinks: z
+      .array(
+        z
+          .object({
+            label: z.string().min(1).max(200),
+            url: z.string().min(1).max(1000).refine(isHttpUrl, { message: "Resource link URL must be a valid http(s) URL." }),
+            shareExternally: z.boolean().optional(),
+          })
+          .strict(),
+      )
+      .max(20)
+      .optional(),
   })
   .strict();
 
@@ -97,6 +110,11 @@ const createAssignmentInputSchema = z
   .strict();
 export type CreateAssignmentInput = z.input<typeof createAssignmentInputSchema>;
 
+// "created" = this call wrote the canonical Assignment; "existing" = the
+// permanent (campaignRef, partnerRef) claim already existed, so the one
+// canonical Assignment was returned unchanged (nothing was written).
+export type CreateAssignmentOutcome = { outcome: "created" | "existing"; assignment: AssignmentDto };
+
 type CreateAssignmentTxResult = { kind: "created"; doc: AssignmentDoc } | { kind: "idempotent"; doc: AssignmentDoc } | { kind: "conflict" };
 
 // Step 10A section 4's trusted cross-record validation, then section 2's
@@ -109,7 +127,12 @@ type CreateAssignmentTxResult = { kind: "created"; doc: AssignmentDoc } | { kind
 // Partner-scope check - Step 10A section 6's "Vendor/Partner visibility
 // alone must never broaden Assignment access" holds by construction,
 // since nothing here ever calls requirePartnerInScope).
-export async function createAssignment(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<AssignmentsServiceResult<AssignmentDto>> {
+async function createAssignmentInternal(
+  actor: ActorContext | null,
+  rawInput: unknown,
+  requestId: string,
+  options: { enforceExistingScope: boolean },
+): Promise<AssignmentsServiceResult<CreateAssignmentOutcome>> {
   const gate = await requireAssignmentsAccess(actor, "create");
   if (!gate.ok) return assignmentsUnauthorizedResult(gate.reason);
 
@@ -123,7 +146,7 @@ export async function createAssignment(actor: ActorContext | null, rawInput: unk
   const campaignScopeCheck = await requireCampaignInScope(actor!, campaign);
   if (!campaignScopeCheck.ok) return assignmentsUnauthorizedResult("scope_denied");
 
-  if (!CAMPAIGN_STATES_ALLOWING_ASSIGNMENT_CREATION.has(campaign.status)) {
+  if (!isCampaignStatusAllowingAssignmentCreation(campaign.status)) {
     return assignmentsInvalidInputResult(`Cannot create an Assignment while the Campaign is ${campaign.status}.`);
   }
 
@@ -136,6 +159,19 @@ export async function createAssignment(actor: ActorContext | null, rawInput: unk
     const account = await getPartnerAccountDocByRef(ref);
     if (!account) return assignmentsInvalidInputResult(`partnerAccountRefs contains "${ref}", which does not resolve to a real Partner Account.`);
     if (account.partnerRef !== partner.partnerRef) return assignmentsInvalidInputResult(`Partner Account "${ref}" does not belong to this Partner.`);
+
+    // Step 12C.1: an attached account must also be ACTIVE and on one of
+    // this Campaign's own platforms (shared normalizer, never a local
+    // re-implementation) - the same rule the create dialog's account
+    // picker applies, enforced here so no client can bypass it.
+    const eligibility = evaluatePartnerAccountEligibility(account, campaign.platforms);
+    if (!eligibility.selectable) {
+      return assignmentsInvalidInputResult(
+        eligibility.unavailableReason === PARTNER_ACCOUNT_UNAVAILABLE_INACTIVE
+          ? "A selected Partner Account is inactive and cannot be assigned."
+          : `A selected Partner Account is on a platform (${eligibility.platform}) that is not part of this Campaign's own platforms.`,
+      );
+    }
   }
 
   const requestedPlatforms = input.brief?.platforms ?? [];
@@ -228,11 +264,40 @@ export async function createAssignment(actor: ActorContext | null, rawInput: unk
     return { ok: false, code: "conflict", message: "This Campaign+Partner pair already has an Assignment, and it could not be resolved. Reload and try again." };
   }
 
+  // Step 12C.1: an "existing" result must never hand back an Assignment the
+  // actor may not read (Campaign scope does not imply Assignment scope - an
+  // explicit CAMPAIGN grant, for one, deliberately does not bridge). The pair
+  // is still reported as taken (409), but the other Assignment's identity is
+  // not returned. Only the new outcome-aware entry point enforces this; the
+  // legacy createAssignment wrapper keeps its original behavior exactly.
+  if (txResult.kind === "idempotent" && options.enforceExistingScope) {
+    const existingScope = await requireAssignmentInScope(actor!, txResult.doc);
+    if (!existingScope.ok) return assignmentsConflictResult("An Assignment already exists for this Campaign and Partner.");
+  }
+
   if (txResult.kind === "created") {
     await writeAssignmentEvent({ assignmentUid: uid, kind: "created", actorUserRef: actor!.userRef, metadata: { campaignRef: campaign.campaignRef, partnerRef: partner.partnerRef }, requestId });
   }
 
-  return { ok: true, data: await toAssignmentDto(txResult.doc) };
+  return { ok: true, data: { outcome: txResult.kind === "created" ? "created" : "existing", assignment: await toAssignmentDto(txResult.doc) } };
+}
+
+// The outcome-aware create used by POST /api/assignments (Campaign Detail's
+// contextual create): reports "created" vs "existing" and never returns an
+// existing Assignment outside the actor's own Assignment scope.
+export async function createAssignmentWithOutcome(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<AssignmentsServiceResult<CreateAssignmentOutcome>> {
+  return createAssignmentInternal(actor, rawInput, requestId, { enforceExistingScope: true });
+}
+
+// Thin wrapper preserving createAssignment's original contract exactly -
+// a repeat create for an already-claimed pair is still plain idempotent
+// success returning the one canonical Assignment. Every pre-Step-12C.1
+// caller/test keeps using this unchanged; only the Campaign Detail create
+// flow (via POST /api/assignments) needs to tell "created" from "existing".
+export async function createAssignment(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<AssignmentsServiceResult<AssignmentDto>> {
+  const result = await createAssignmentInternal(actor, rawInput, requestId, { enforceExistingScope: false });
+  if (!result.ok) return result;
+  return { ok: true, data: result.data.assignment };
 }
 
 // ---- Read ----
