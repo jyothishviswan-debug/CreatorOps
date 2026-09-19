@@ -6,6 +6,7 @@ import type { ActorContext } from "@/server/authz/types";
 import { getCampaignDocByRef } from "@/server/campaigns/firestore";
 import { requireCampaignInScope } from "@/server/campaigns/campaigns-gate";
 import { getPartnerAccountDocByRef, getPartnerDocByRef } from "@/server/partners/firestore";
+import { requirePartnerInScope } from "@/server/partners/partners-gate";
 import { getAdminFirestore } from "@/server/firebase/admin";
 import { normalizePlatformIdentifier } from "@/server/shared/platform";
 import { isHttpUrl } from "@/server/shared/http-url";
@@ -34,6 +35,7 @@ import {
   type AssignmentActiveClaimDoc,
   type AssignmentDoc,
   type AssignmentEvent,
+  type AssignmentsErrorResult,
   type AssignmentsServiceResult,
 } from "./types";
 
@@ -68,6 +70,21 @@ export async function loadAuthorizedAssignment(
 
 // ---- Create ----
 
+// Step 12C.2: the ONE resource-link input schema, shared by create and by
+// editAssignmentBrief so a link that could not be created can never be
+// edited in. The URL must be a real http(s) URL - enforced on the trusted
+// server (a bare `z.string()` would let javascript:/data:/ftp:/scheme-less
+// values through), not only in the create dialog. `shareExternally` stays
+// optional here; both callers map an omitted value to the fail-closed
+// `false`, never to an inherited `true`.
+const resourceLinkInputSchema = z
+  .object({
+    label: z.string().min(1).max(200),
+    url: z.string().min(1).max(1000).refine(isHttpUrl, { message: "Resource link URL must be a valid http(s) URL." }),
+    shareExternally: z.boolean().optional(),
+  })
+  .strict();
+
 // Only the caller-editable brief fields - campaignName/campaignObjective/
 // reviewPolicy are always server-derived from the Campaign, never
 // client-supplied (Step 10A section 4's "client must not submit
@@ -82,21 +99,7 @@ const createAssignmentBriefInputSchema = z
     language: z.string().min(1).max(60).optional(),
     hashtags: z.array(z.string().min(1).max(60)).max(30).optional(),
     dueAt: z.string().min(1).optional(),
-    // Step 12C.1: a CREATE-time resource link must be a real http(s) URL -
-    // enforced here on the trusted server, not only in the create dialog.
-    // (editAssignmentBrief's own schema below is deliberately untouched.)
-    resourceLinks: z
-      .array(
-        z
-          .object({
-            label: z.string().min(1).max(200),
-            url: z.string().min(1).max(1000).refine(isHttpUrl, { message: "Resource link URL must be a valid http(s) URL." }),
-            shareExternally: z.boolean().optional(),
-          })
-          .strict(),
-      )
-      .max(20)
-      .optional(),
+    resourceLinks: z.array(resourceLinkInputSchema).max(20).optional(),
   })
   .strict();
 
@@ -117,16 +120,65 @@ export type CreateAssignmentOutcome = { outcome: "created" | "existing"; assignm
 
 type CreateAssignmentTxResult = { kind: "created"; doc: AssignmentDoc } | { kind: "idempotent"; doc: AssignmentDoc } | { kind: "conflict" };
 
+// Step 12C.2: the ONE definition of the Partner Account / brief-platform
+// invariants, called by BOTH createAssignmentInternal and editAssignmentBrief
+// so an Assignment valid at creation can never be edited into an invalid
+// state (and the two paths can never drift apart). Accounts are matched by
+// ref only - never by display name - and every account must (1) exist,
+// (2) belong to the Assignment's canonical Partner, (3) be ACTIVE and (4)
+// have a platform that, after the shared normalizer, is one of the
+// Campaign's own platforms. Returns the error result, or null when valid.
+async function validatePartnerAccountsForCampaign(args: {
+  partnerRef: string;
+  accountRefs: readonly string[];
+  campaignPlatforms: readonly string[];
+  // Wording only: "this Partner" (create) / "this Assignment's Partner" (edit).
+  partnerPhrase: string;
+}): Promise<AssignmentsErrorResult | null> {
+  for (const ref of args.accountRefs) {
+    const account = await getPartnerAccountDocByRef(ref);
+    if (!account) return assignmentsInvalidInputResult(`partnerAccountRefs contains "${ref}", which does not resolve to a real Partner Account.`);
+    if (account.partnerRef !== args.partnerRef) return assignmentsInvalidInputResult(`Partner Account "${ref}" does not belong to ${args.partnerPhrase}.`);
+
+    const eligibility = evaluatePartnerAccountEligibility(account, args.campaignPlatforms);
+    if (!eligibility.selectable) {
+      return assignmentsInvalidInputResult(
+        eligibility.unavailableReason === PARTNER_ACCOUNT_UNAVAILABLE_INACTIVE
+          ? "A selected Partner Account is inactive and cannot be assigned."
+          : `A selected Partner Account is on a platform (${eligibility.platform}) that is not part of this Campaign's own platforms.`,
+      );
+    }
+  }
+  return null;
+}
+
+// Every brief platform must be one of the Campaign's own platforms.
+function validateBriefPlatformsForCampaign(requestedPlatforms: readonly string[], campaignPlatforms: readonly string[]): AssignmentsErrorResult | null {
+  const allowed = new Set(campaignPlatforms);
+  const incompatible = requestedPlatforms.filter((p) => !allowed.has(p));
+  if (incompatible.length > 0) return assignmentsInvalidInputResult(`Platform(s) ${incompatible.join(", ")} are not part of this Campaign's own platforms.`);
+  return null;
+}
+
 // Step 10A section 4's trusted cross-record validation, then section 2's
-// concurrency-safe uniqueness claim. Campaign is the OWNING context here
-// (its own scope is checked for real, via requireCampaignInScope -
-// exactly the same "owning record's scope is checked, linked record is
-// only existence/eligibility-checked" idiom
-// createVendorPartnerLink uses for its Vendor/Partner pair), Partner is
-// only validated for real existence + eligibility (never a separate
-// Partner-scope check - Step 10A section 6's "Vendor/Partner visibility
-// alone must never broaden Assignment access" holds by construction,
-// since nothing here ever calls requirePartnerInScope).
+// concurrency-safe uniqueness claim. Campaign is the OWNING context (its own
+// scope is checked via requireCampaignInScope). Step 12C.2: the selected
+// Partner's own Record Scope is ALSO required, via the accepted
+// requirePartnerInScope check (GLOBAL / self-owner / region / team /
+// PARTNER grant / EXPLICIT_RECORD, reused as-is - no role-rank, no
+// minimum-role, no wildcard, no inference from names/regions/Campaign
+// scope/client options). The scoped Partner picker is a convenience, never
+// an authorization boundary: a forged POST /api/assignments naming an
+// out-of-scope Partner is denied here, before the uniqueness transaction,
+// so a denial writes no Assignment, no claim doc and no event. A missing
+// Partner is still the same invalid_input it always was (checked first),
+// and a denial reuses the existing safe "scope_denied" convention (HTTP 403
+// "Forbidden.") - it never echoes anything about the Partner. This lives in
+// createAssignmentInternal so BOTH createAssignment and
+// createAssignmentWithOutcome are covered. What this does NOT change:
+// Partner visibility still never broadens Assignment READ access (Step 10A
+// section 6) - requirePartnerInScope gates only who may create for a
+// Partner, never who may read the resulting Assignment.
 async function createAssignmentInternal(
   actor: ActorContext | null,
   rawInput: unknown,
@@ -152,34 +204,21 @@ async function createAssignmentInternal(
 
   const partner = await getPartnerDocByRef(input.partnerRef);
   if (!partner) return assignmentsInvalidInputResult("partnerRef does not resolve to a real Partner.");
+
+  // Step 12C.2: Partner Record Scope, before ANY further validation or
+  // write (see the header comment above).
+  const partnerScopeCheck = await requirePartnerInScope(actor!, partner);
+  if (!partnerScopeCheck.ok) return assignmentsUnauthorizedResult("scope_denied");
+
   if (partner.status !== "ACTIVE") return assignmentsInvalidInputResult(`This Partner is ${partner.status.toLowerCase()} and is not eligible for a new Assignment.`);
 
   const partnerAccountRefs = input.partnerAccountRefs ?? [];
-  for (const ref of partnerAccountRefs) {
-    const account = await getPartnerAccountDocByRef(ref);
-    if (!account) return assignmentsInvalidInputResult(`partnerAccountRefs contains "${ref}", which does not resolve to a real Partner Account.`);
-    if (account.partnerRef !== partner.partnerRef) return assignmentsInvalidInputResult(`Partner Account "${ref}" does not belong to this Partner.`);
-
-    // Step 12C.1: an attached account must also be ACTIVE and on one of
-    // this Campaign's own platforms (shared normalizer, never a local
-    // re-implementation) - the same rule the create dialog's account
-    // picker applies, enforced here so no client can bypass it.
-    const eligibility = evaluatePartnerAccountEligibility(account, campaign.platforms);
-    if (!eligibility.selectable) {
-      return assignmentsInvalidInputResult(
-        eligibility.unavailableReason === PARTNER_ACCOUNT_UNAVAILABLE_INACTIVE
-          ? "A selected Partner Account is inactive and cannot be assigned."
-          : `A selected Partner Account is on a platform (${eligibility.platform}) that is not part of this Campaign's own platforms.`,
-      );
-    }
-  }
+  const accountsError = await validatePartnerAccountsForCampaign({ partnerRef: partner.partnerRef, accountRefs: partnerAccountRefs, campaignPlatforms: campaign.platforms, partnerPhrase: "this Partner" });
+  if (accountsError) return accountsError;
 
   const requestedPlatforms = input.brief?.platforms ?? [];
-  const campaignPlatforms = new Set(campaign.platforms);
-  const incompatible = requestedPlatforms.filter((p) => !campaignPlatforms.has(p));
-  if (incompatible.length > 0) {
-    return assignmentsInvalidInputResult(`Platform(s) ${incompatible.join(", ")} are not part of this Campaign's own platforms.`);
-  }
+  const platformsError = validateBriefPlatformsForCampaign(requestedPlatforms, campaign.platforms);
+  if (platformsError) return platformsError;
 
   const now = new Date().toISOString();
   const uid = assignmentsCollection().doc().id;
@@ -362,7 +401,8 @@ const editAssignmentBriefInputSchema = z
     language: z.string().min(1).max(60).nullable().optional(),
     hashtags: z.array(z.string().min(1).max(60)).max(30).optional(),
     dueAt: z.string().min(1).nullable().optional(),
-    resourceLinks: z.array(z.object({ label: z.string().min(1).max(200), url: z.string().min(1).max(1000), shareExternally: z.boolean().optional() }).strict()).max(20).optional(),
+    // Step 12C.2: same http(s)-only validation as create (shared schema).
+    resourceLinks: z.array(resourceLinkInputSchema).max(20).optional(),
     partnerAccountRefs: z.array(z.string().min(1)).max(10).optional(),
     expectedVersion: z.number().int().min(1),
   })
@@ -387,19 +427,29 @@ export async function editAssignmentBrief(actor: ActorContext | null, assignment
   if (!parsed.success) return assignmentsInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
   const input = parsed.data;
 
-  if (input.platforms) {
+  // Step 12C.2: every check below runs BEFORE runAssignmentMutation, so a
+  // rejected edit changes nothing (no version bump, no updatedAt, no brief/
+  // account change, no event). The Campaign is always reloaded server-side
+  // from the Assignment's own immutable campaignRef - never from the payload
+  // (the strict schema rejects campaignRef/partnerRef outright) - and the
+  // Partner is always the Assignment's own canonical partnerRef.
+  if (input.platforms || input.partnerAccountRefs) {
     const campaign = await getCampaignDocByRef(loaded.assignment.campaignRef);
     if (!campaign) return { ok: false, code: "not_found", message: "Owning Campaign not found." };
-    const campaignPlatforms = new Set(campaign.platforms);
-    const incompatible = input.platforms.filter((p) => !campaignPlatforms.has(p));
-    if (incompatible.length > 0) return assignmentsInvalidInputResult(`Platform(s) ${incompatible.join(", ")} are not part of this Campaign's own platforms.`);
-  }
 
-  if (input.partnerAccountRefs) {
-    for (const ref of input.partnerAccountRefs) {
-      const account = await getPartnerAccountDocByRef(ref);
-      if (!account) return assignmentsInvalidInputResult(`partnerAccountRefs contains "${ref}", which does not resolve to a real Partner Account.`);
-      if (account.partnerRef !== loaded.assignment.partnerRef) return assignmentsInvalidInputResult(`Partner Account "${ref}" does not belong to this Assignment's Partner.`);
+    if (input.platforms) {
+      const platformsError = validateBriefPlatformsForCampaign(input.platforms, campaign.platforms);
+      if (platformsError) return platformsError;
+    }
+
+    if (input.partnerAccountRefs) {
+      const accountsError = await validatePartnerAccountsForCampaign({
+        partnerRef: loaded.assignment.partnerRef,
+        accountRefs: input.partnerAccountRefs,
+        campaignPlatforms: campaign.platforms,
+        partnerPhrase: "this Assignment's Partner",
+      });
+      if (accountsError) return accountsError;
     }
   }
 

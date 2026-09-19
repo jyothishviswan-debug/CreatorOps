@@ -6,8 +6,9 @@
 // (listAssignmentDocs/listContentDocs/evaluateCampaignAnalyticsReadiness)
 // after Campaign Detail's own getCampaign gate - the same
 // "join other domains' own canonical data via campaignRef/assignmentRef"
-// discipline as execution-integration-service.ts, reusing its documented
-// MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY bound.
+// discipline as execution-integration-service.ts, reusing the SAME shared
+// cursor-following bound (./bounded-pages.ts) - so Overview and Detail can
+// never disagree on what "bounded" or "truncated" means.
 //
 // Definitions (identical to Step 12C's accepted semantics):
 //  - "Assignments" = Campaign-linked Assignments excluding CANCELLED. DRAFT
@@ -26,14 +27,14 @@ import { requireAnalyticsExploreAccess } from "@/server/analytics/analytics-gate
 import { evaluateCampaignAnalyticsReadiness, type CampaignAnalyticsReadiness } from "@/server/analytics/campaign-readiness";
 import { isCampaignStatusAllowingAssignmentCreation } from "@/server/assignments/create-eligibility";
 import { requireAssignmentsAccess, requireAssignmentsFeatureAccess } from "@/server/assignments/assignments-gate";
-import { listAssignmentDocs, MAX_ASSIGNMENT_PAGE_SIZE } from "@/server/assignments/firestore";
+import { listAssignmentDocs, type AssignmentListCursor } from "@/server/assignments/firestore";
 import type { AssignmentStatus } from "@/server/assignments/types";
 import { requireContentFeatureAccess } from "@/server/content/content-gate";
-import { listContentDocs, MAX_CONTENT_PAGE_SIZE } from "@/server/content/firestore";
+import { listContentDocs, type ContentListCursor } from "@/server/content/firestore";
 import type { ContentStatus } from "@/server/content/types";
 
+import { collectBounded, MAX_RELEVANT_ITEMS_PER_CAMPAIGN, MAX_SCANNED_ROWS_PER_CAMPAIGN } from "./bounded-pages";
 import { getCampaign } from "./campaign-service";
-import { MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY } from "./execution-integration-service";
 import type { CampaignsServiceResult, CampaignStatus } from "./types";
 
 // Assignments whose status makes them "issued" work (same set as
@@ -115,23 +116,15 @@ export function computeCanCreateAssignment(campaignStatus: CampaignStatus, actor
 
 // ---- Bounded, scope-constrained fetch ----------------------------------
 
-// listAssignmentDocs/listContentDocs cap a single page at 100, so the
-// documented 200-per-Campaign bound is reached by following the cursor at
-// most MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY / pageCap times - never an
-// unbounded loop. `truncated` is true only when a further page genuinely
-// remains after the bound.
-async function fetchBounded<T>(pageCap: number, fetchPage: (limit: number, cursor: unknown) => Promise<{ items: T[]; nextCursor: unknown | null }>): Promise<{ items: T[]; truncated: boolean }> {
-  const maxPages = Math.ceil(MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY / pageCap);
-  const items: T[] = [];
-  let cursor: unknown = undefined;
-  for (let page = 0; page < maxPages; page += 1) {
-    const result = await fetchPage(Math.min(pageCap, MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY - items.length), cursor);
-    items.push(...result.items);
-    if (!result.nextCursor) return { items, truncated: false };
-    cursor = result.nextCursor;
-  }
-  return { items, truncated: true };
-}
+// listAssignmentDocs/listContentDocs clamp one page to 100 rows, so the
+// documented per-Campaign bound is reached by following the deterministic
+// cursor page by page through the shared collectBounded helper (never an
+// unbounded loop, never fetch-all). Assignments: the bound is
+// MAX_RELEVANT_ITEMS_PER_CAMPAIGN NON-CANCELLED rows (CANCELLED rows are
+// skipped and never consume it; DRAFT ones count, this card is a linked-
+// records summary). Content: every thread counts, up to the scan ceiling.
+// `truncated` is true only when a further relevant row genuinely remains
+// beyond the bound, or the scan ceiling was hit with pages remaining.
 
 export async function getCampaignDownstreamSummary(actor: ActorContext | null, campaignRef: unknown): Promise<CampaignsServiceResult<CampaignDownstreamSummaryDto>> {
   // getCampaign is the exact same feature + Record Scope gate every other
@@ -163,15 +156,25 @@ export async function getCampaignDownstreamSummary(actor: ActorContext | null, c
   let contentList: { items: DownstreamContentInput[]; truncated: boolean } = { items: [], truncated: false };
 
   if (assignmentsAvailable || contentAvailable) {
-    assignmentList = await fetchBounded(MAX_ASSIGNMENT_PAGE_SIZE, async (limit, cursor) => {
-      const page = await listAssignmentDocs({ ...scope, campaignRef: campaign.campaignRef, limit, cursor: cursor as Parameters<typeof listAssignmentDocs>[0]["cursor"] });
-      return { items: page.assignments.map((a) => ({ assignmentRef: a.assignmentRef, partnerRef: a.partnerRef, status: a.status })), nextCursor: page.nextCursor };
+    assignmentList = await collectBounded({
+      fetchPage: async (limit, cursor: AssignmentListCursor | undefined) => {
+        const page = await listAssignmentDocs({ ...scope, campaignRef: campaign.campaignRef, limit, cursor });
+        return { items: page.assignments, nextCursor: page.nextCursor };
+      },
+      select: (a): DownstreamAssignmentInput | null => (a.status === "CANCELLED" ? null : { assignmentRef: a.assignmentRef, partnerRef: a.partnerRef, status: a.status }),
+      maxItems: MAX_RELEVANT_ITEMS_PER_CAMPAIGN,
+      maxScannedRows: MAX_SCANNED_ROWS_PER_CAMPAIGN,
     });
   }
   if (contentAvailable) {
-    contentList = await fetchBounded(MAX_CONTENT_PAGE_SIZE, async (limit, cursor) => {
-      const page = await listContentDocs({ ...scope, campaignRef: campaign.campaignRef, limit, cursor: cursor as Parameters<typeof listContentDocs>[0]["cursor"] });
-      return { items: page.content.map((c) => ({ assignmentRef: c.assignmentRef, status: c.status })), nextCursor: page.nextCursor };
+    contentList = await collectBounded({
+      fetchPage: async (limit, cursor: ContentListCursor | undefined) => {
+        const page = await listContentDocs({ ...scope, campaignRef: campaign.campaignRef, limit, cursor });
+        return { items: page.content, nextCursor: page.nextCursor };
+      },
+      select: (c): DownstreamContentInput => ({ assignmentRef: c.assignmentRef, status: c.status }),
+      maxItems: MAX_SCANNED_ROWS_PER_CAMPAIGN,
+      maxScannedRows: MAX_SCANNED_ROWS_PER_CAMPAIGN,
     });
   }
 

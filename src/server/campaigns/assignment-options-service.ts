@@ -4,7 +4,9 @@
 // additive and read-only - it never creates an Assignment, Partner Account,
 // Content, token or anything else; the write itself is the already-accepted
 // POST /api/assignments (createAssignmentWithOutcome), which independently
-// re-validates every choice made here.
+// re-validates every choice made here - including (Step 12C.2) the Partner's
+// own Record Scope, so this scoped picker is a convenience, never the
+// authorization boundary.
 //
 // Every request:
 //  1. reloads the Campaign server-side through getCampaign (feature +

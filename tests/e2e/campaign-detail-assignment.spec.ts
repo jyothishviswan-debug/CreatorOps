@@ -316,6 +316,65 @@ test.describe("Create Assignment - flow", () => {
     await expect(page.locator(".pill", { hasText: "Active" }).first()).toBeVisible(); // Campaign lifecycle untouched
   });
 
+  test("the disabled Create Assignment button is visibly disabled (muted, not-allowed, readable, no hover change) and returns to the orange primary once valid choices are made", async ({ page }) => {
+    const campaign = await createCampaignViaApi(page, { state: "PLANNED" });
+    // Two compatible accounts, so nothing is pre-selected and the button stays disabled after choosing the Partner.
+    const partner = await createPartnerViaApi(page, [
+      { platform: "instagram", handle: "e2edisa", displayName: "E2E Disabled A" },
+      { platform: "instagram", handle: "e2edisb", displayName: "E2E Disabled B" },
+    ]);
+    await signInAs(page, "manager");
+    await page.goto(`/campaigns/${campaign.campaignRef}`);
+    const dialog = await openCreateDialog(page);
+    const create = dialog.getByRole("button", { name: "Create Assignment" });
+    await waitUntilHydrated(create);
+
+    // Computed look, plus the WCAG contrast ratio of its text on its own background, computed in-page.
+    const look = () =>
+      create.evaluate((element) => {
+        const style = getComputedStyle(element);
+        const channels = (value: string) => (value.match(/[\d.]+/g) ?? []).slice(0, 3).map(Number);
+        const luminance = ([r, g, b]: number[]) => {
+          const linear = [r, g, b].map((c) => {
+            const v = c! / 255;
+            return v <= 0.03928 ? v / 12.92 : ((v + 0.055) / 1.055) ** 2.4;
+          });
+          return 0.2126 * linear[0]! + 0.7152 * linear[1]! + 0.0722 * linear[2]!;
+        };
+        const l1 = luminance(channels(style.color));
+        const l2 = luminance(channels(style.backgroundColor));
+        return { background: style.backgroundColor, color: style.color, cursor: style.cursor, contrast: (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05) };
+      });
+
+    // Before a Partner and account are chosen: natively disabled AND visibly so.
+    await expect(create).toBeDisabled();
+    const ORANGE = "rgb(201, 76, 22)";
+    const disabled = await look();
+    expect(disabled.cursor).toBe("not-allowed");
+    expect(disabled.background).not.toBe(ORANGE);
+    expect(disabled.color).not.toBe("rgb(255, 255, 255)");
+    expect(disabled.contrast).toBeGreaterThanOrEqual(4.5);
+
+    // Hovering it shows no hover/active treatment implying it is clickable.
+    await create.hover({ force: true });
+    expect(await look()).toEqual(disabled);
+
+    // Still disabled after choosing only the Partner (two candidate accounts, none selected)...
+    await choosePartner(dialog, partner);
+    await expect(dialog.getByRole("checkbox", { name: /E2E Disabled A/ })).toBeEnabled();
+    await expect(create).toBeDisabled();
+    expect(await look()).toEqual(disabled);
+
+    // ...and enabled - the ordinary orange primary with a pointer - once an account is chosen.
+    await dialog.getByRole("checkbox", { name: /E2E Disabled A/ }).check();
+    await expect(create).toBeEnabled();
+    const enabled = await look();
+    expect(enabled.background).toBe(ORANGE);
+    expect(enabled.color).toBe("rgb(255, 255, 255)");
+    expect(enabled.cursor).toBe("pointer");
+    expect(enabled.contrast).toBeGreaterThanOrEqual(4.5);
+  });
+
   test("closing the success dialog refreshes the Campaign Detail counts in place", async ({ page }) => {
     const campaign = await createCampaignViaApi(page, { state: "PLANNED" });
     const partner = await createPartnerViaApi(page, [{ platform: "instagram", handle: "e2eone", displayName: "E2E One" }]);

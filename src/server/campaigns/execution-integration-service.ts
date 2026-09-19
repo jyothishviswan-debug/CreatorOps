@@ -19,11 +19,12 @@ import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import type { ActorContext } from "@/server/authz/types";
 
 import { evaluateCampaignAnalyticsReadiness, type CampaignAnalyticsReadiness } from "@/server/analytics/campaign-readiness";
-import { listAssignmentDocs } from "@/server/assignments/firestore";
+import { listAssignmentDocs, type AssignmentListCursor } from "@/server/assignments/firestore";
 import type { AssignmentStatus } from "@/server/assignments/types";
-import { listContentDocs } from "@/server/content/firestore";
+import { listContentDocs, type ContentListCursor } from "@/server/content/firestore";
 import type { ContentStatus } from "@/server/content/types";
 
+import { collectBounded, MAX_RELEVANT_ITEMS_PER_CAMPAIGN, MAX_SCANNED_ROWS_PER_CAMPAIGN } from "./bounded-pages";
 import type { CampaignDto } from "./client-dto";
 import { getCampaign, listCampaigns } from "./campaign-service";
 import { requireCampaignsFeatureAccess } from "./campaigns-gate";
@@ -31,13 +32,19 @@ import { campaignsUnauthorizedResult, type CampaignsServiceResult } from "./type
 
 export const EXECUTION_OBLIGATION_ASSIGNMENT_STATUSES: ReadonlySet<AssignmentStatus> = new Set(["ASSIGNED", "ACCEPTED", "IN_PROGRESS", "COMPLETED"]);
 
-// Firm, documented bound - emulator-scale data (dozens, not thousands of
-// Assignments/Content threads per Campaign) is expected to stay well
-// under this in a single bounded list call; never a fetch-all loop. If a
-// real deployment's per-Campaign obligation count ever needs to exceed
-// this, that's a signal to build a persisted projection, not to quietly
-// raise this number.
-export const MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY = 200;
+// Firm, documented bound on RELEVANT obligations read per Campaign (see
+// ./bounded-pages.ts): the list functions clamp one page to 100 rows, so the
+// bound is reached by following deterministic cursors page by page (never a
+// fetch-all, never browser fan-out). DRAFT/CANCELLED Assignments are not
+// obligations and never consume this budget. A hard scan ceiling
+// (MAX_SCANNED_ROWS_PER_CAMPAIGN = 500 rows per collection) additionally
+// caps how much is ever read. A Campaign that exceeds either is reported
+// with an explicit `truncated` flag and every count derived from it is a
+// lower bound - never presented as exact. If a real deployment's
+// per-Campaign obligation count ever needs to exceed this, that's a signal
+// to build a persisted projection, not to quietly raise this number.
+export const MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY = MAX_RELEVANT_ITEMS_PER_CAMPAIGN;
+export { MAX_SCANNED_ROWS_PER_CAMPAIGN };
 
 // Firm, documented bound on the portfolio-wide ACTIVE Campaign scan: 2
 // pages x 100 = 200 Campaigns max. Emulator-scale data is small; if a
@@ -66,6 +73,11 @@ export type CampaignExecutionSummary = {
   revisionRequestedCount: number;
   analyticsReadiness: CampaignAnalyticsReadiness;
   sourceLinksComplete: boolean;
+  // Step 12C.2: true when this Campaign has MORE than the bounded number of
+  // obligations (or a scan ceiling was hit) - every count above is then a
+  // lower bound over the first MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY
+  // obligations, never the exact total.
+  truncated: boolean;
 };
 
 export type CampaignExecutionOverview = {
@@ -74,7 +86,9 @@ export type CampaignExecutionOverview = {
   totalObligations: number;
   approvedObligations: number;
   overdueObligations: number;
-  perCampaignExecution: Array<{ campaignRef: string; campaignName: string; approvedCount: number; totalCount: number }>;
+  // `truncated` per Campaign: totalCount/approvedCount are then lower bounds
+  // over the first MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY obligations.
+  perCampaignExecution: Array<{ campaignRef: string; campaignName: string; approvedCount: number; totalCount: number; truncated: boolean }>;
   deliveryState: { completed: number; inProgress: number; notStarted: number };
   trackingReadiness: {
     trackingConfiguredRow: { label: string; detail: string; badge: string };
@@ -83,6 +97,13 @@ export type CampaignExecutionOverview = {
     campaignsUnstaffedRow: { label: string; detail: string; badge: string };
   };
   executionExceptions: { overdueContent: number; awaitingReview: number; changesRequested: number; campaignsWithoutAssignments: number };
+  // Step 12C.2: true when ANY contributing Campaign is truncated - every
+  // portfolio total above (obligations, approved, overdue, distinct
+  // Partners, delivery state, exception counts) is then a lower bound, and
+  // no exact-looking percentage may be derived from it. `campaignsWithout
+  // Assignments` stays exact: a truncated Campaign is never "unstaffed".
+  truncated: boolean;
+  truncatedCampaignCount: number;
 };
 
 // ---- Overdue / delivery-state classification (pure, unit-tested) --------
@@ -117,31 +138,46 @@ export function classifyObligationDeliveryState(obligation: CampaignExecutionObl
 
 type ObligationScope = { actorUid: string; grants: Awaited<ReturnType<typeof getActorScopeGrants>>; hasGlobal: boolean };
 
-// ONE bulk listContentDocs({campaignRef}) call per Campaign, mapped by
-// assignmentRef client-side - never an N+1 per-Assignment lookup (a
-// getContentDocByAssignmentRef O(1) helper exists but is deliberately
-// unused here for exactly that reason).
-async function buildCampaignObligations(scope: ObligationScope, campaignRef: string): Promise<CampaignExecutionObligation[]> {
-  const assignmentsPage = await listAssignmentDocs({
-    actorUid: scope.actorUid,
-    grants: scope.grants,
-    hasGlobal: scope.hasGlobal,
-    campaignRef,
-    limit: MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY,
-  });
-  const obligationAssignments = assignmentsPage.assignments.filter((a) => EXECUTION_OBLIGATION_ASSIGNMENT_STATUSES.has(a.status));
-  if (obligationAssignments.length === 0) return [];
+// Step 12C.2: cursor-followed, scope-constrained, bounded reads (see
+// ./bounded-pages.ts) - NOT a single list call: listAssignmentDocs/
+// listContentDocs clamp one page to 100 rows, so a bare `limit: 200` only
+// ever read the first 100. Assignments are paged (100/page, newest first)
+// until MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY RELEVANT obligations are found -
+// DRAFT/CANCELLED rows are skipped and never consume that budget - or the
+// MAX_SCANNED_ROWS_PER_CAMPAIGN ceiling is reached. `truncated` is true when
+// a further relevant obligation exists beyond the kept ones, or when the
+// scan ceiling was hit with pages remaining. Content threads are then
+// fetched with the same cursor helper (campaignRef-scoped, joined by
+// assignmentRef client-side - never an N+1 per-Assignment lookup) and, if
+// THEIR scan ceiling is hit with pages remaining, the Campaign is also
+// flagged truncated (an obligation's thread might be missing from the join).
+export type CampaignObligationsResult = { obligations: CampaignExecutionObligation[]; truncated: boolean };
 
-  const contentPage = await listContentDocs({
-    actorUid: scope.actorUid,
-    grants: scope.grants,
-    hasGlobal: scope.hasGlobal,
-    campaignRef,
-    limit: MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY,
+async function buildCampaignObligations(scope: ObligationScope, campaignRef: string): Promise<CampaignObligationsResult> {
+  const assignmentResult = await collectBounded({
+    fetchPage: async (limit, cursor: AssignmentListCursor | undefined) => {
+      const page = await listAssignmentDocs({ actorUid: scope.actorUid, grants: scope.grants, hasGlobal: scope.hasGlobal, campaignRef, limit, cursor });
+      return { items: page.assignments, nextCursor: page.nextCursor };
+    },
+    select: (a) => (EXECUTION_OBLIGATION_ASSIGNMENT_STATUSES.has(a.status) ? a : null),
+    maxItems: MAX_OBLIGATIONS_PER_CAMPAIGN_QUERY,
+    maxScannedRows: MAX_SCANNED_ROWS_PER_CAMPAIGN,
   });
-  const contentByAssignmentRef = new Map(contentPage.content.map((c) => [c.assignmentRef, c]));
+  const obligationAssignments = assignmentResult.items;
+  if (obligationAssignments.length === 0) return { obligations: [], truncated: assignmentResult.truncated };
 
-  return obligationAssignments.map((a) => {
+  const contentResult = await collectBounded({
+    fetchPage: async (limit, cursor: ContentListCursor | undefined) => {
+      const page = await listContentDocs({ actorUid: scope.actorUid, grants: scope.grants, hasGlobal: scope.hasGlobal, campaignRef, limit, cursor });
+      return { items: page.content, nextCursor: page.nextCursor };
+    },
+    select: (c) => c,
+    maxItems: MAX_SCANNED_ROWS_PER_CAMPAIGN,
+    maxScannedRows: MAX_SCANNED_ROWS_PER_CAMPAIGN,
+  });
+  const contentByAssignmentRef = new Map(contentResult.items.map((c) => [c.assignmentRef, c]));
+
+  const obligations = obligationAssignments.map((a) => {
     const content = contentByAssignmentRef.get(a.assignmentRef) ?? null;
     return {
       assignmentRef: a.assignmentRef,
@@ -152,6 +188,7 @@ async function buildCampaignObligations(scope: ObligationScope, campaignRef: str
       contentCurrentLinksCount: content?.currentLinks.length ?? 0,
     };
   });
+  return { obligations, truncated: assignmentResult.truncated || contentResult.truncated };
 }
 
 // ---- Per-Campaign summary -------------------------------------------
@@ -164,7 +201,7 @@ async function buildCampaignObligations(scope: ObligationScope, campaignRef: str
 // service.ts's editCampaign - and is exercised deterministically in unit
 // tests via obligations whose dueAt sits far in the past/future rather
 // than an injected clock).
-export function computeCampaignExecutionSummary(campaignRef: string, obligations: CampaignExecutionObligation[], analyticsReadiness: CampaignAnalyticsReadiness): CampaignExecutionSummary {
+export function computeCampaignExecutionSummary(campaignRef: string, obligations: CampaignExecutionObligation[], analyticsReadiness: CampaignAnalyticsReadiness, truncated: boolean): CampaignExecutionSummary {
   const nowIso = new Date().toISOString();
 
   const deliveryState = { completed: 0, inProgress: 0, notStarted: 0 };
@@ -182,7 +219,9 @@ export function computeCampaignExecutionSummary(campaignRef: string, obligations
     underReviewCount: obligations.filter((o) => o.contentStatus === "UNDER_REVIEW").length,
     revisionRequestedCount: obligations.filter((o) => o.contentStatus === "REVISION_REQUESTED").length,
     analyticsReadiness,
-    sourceLinksComplete: obligations.length > 0 && obligations.every((o) => o.contentCurrentLinksCount >= 1),
+    // Never claimed complete over an incomplete obligation set.
+    sourceLinksComplete: !truncated && obligations.length > 0 && obligations.every((o) => o.contentCurrentLinksCount >= 1),
+    truncated,
   };
 }
 
@@ -199,12 +238,12 @@ export async function getCampaignExecutionSummary(actor: ActorContext | null, ca
   const grants = await getActorScopeGrants(actor!);
   const scope: ObligationScope = { actorUid: actor!.uid, grants, hasGlobal: hasGlobalScope(grants) };
 
-  const [obligations, analyticsReadiness] = await Promise.all([
+  const [{ obligations, truncated }, analyticsReadiness] = await Promise.all([
     buildCampaignObligations(scope, campaignResult.data.campaignRef),
     evaluateCampaignAnalyticsReadiness(campaignResult.data.campaignRef),
   ]);
 
-  return { ok: true, data: computeCampaignExecutionSummary(campaignResult.data.campaignRef, obligations, analyticsReadiness) };
+  return { ok: true, data: computeCampaignExecutionSummary(campaignResult.data.campaignRef, obligations, analyticsReadiness, truncated) };
 }
 
 // ---- Portfolio-wide overview -----------------------------------------
@@ -222,7 +261,14 @@ async function fetchActiveCampaignsBounded(actor: ActorContext): Promise<Campaig
   return campaigns;
 }
 
-type PerCampaignExecutionInput = { campaign: Pick<CampaignDto, "campaignRef" | "name" | "updatedAt">; obligations: CampaignExecutionObligation[]; analyticsReadiness: CampaignAnalyticsReadiness };
+type PerCampaignExecutionInput = {
+  campaign: Pick<CampaignDto, "campaignRef" | "name" | "updatedAt">;
+  obligations: CampaignExecutionObligation[];
+  analyticsReadiness: CampaignAnalyticsReadiness;
+  // See CampaignObligationsResult - this Campaign has more obligations than
+  // were read, so `obligations` is only its first bounded slice.
+  truncated: boolean;
+};
 
 // Pure aggregation over already-fetched per-Campaign data - independently
 // unit-testable against synthetic fixtures, no I/O of its own (same "one
@@ -243,17 +289,21 @@ export function computeCampaignExecutionOverview(perCampaign: PerCampaignExecuti
   // Campaigns with zero obligations are excluded from the row list itself
   // (a 0/0 ring would render a misleading percentage) - their signal is
   // carried instead by "Campaigns unstaffed" / "Campaigns without
-  // assignments" below, never fabricated as a bar. Sorted by updatedAt
+  // assignments" below, never fabricated as a bar. A TRUNCATED Campaign is
+  // never unstaffed (obligations may exist beyond the scan ceiling), so it
+  // stays a row - flagged, so its count/percentage is not shown as exact.
+  // Sorted by updatedAt
   // descending (most-recently-touched Campaign first), ties broken by
   // campaignRef ascending for full determinism - documented choice, never
   // random/insertion order.
   const perCampaignExecution = perCampaign
-    .filter((p) => p.obligations.length > 0)
+    .filter((p) => p.obligations.length > 0 || p.truncated)
     .map((p) => ({
       campaignRef: p.campaign.campaignRef,
       campaignName: p.campaign.name,
       approvedCount: p.obligations.filter((o) => o.contentStatus === "APPROVED").length,
       totalCount: p.obligations.length,
+      truncated: p.truncated,
     }))
     .sort((a, b) => {
       const campaignA = perCampaign.find((p) => p.campaign.campaignRef === a.campaignRef)!.campaign;
@@ -263,7 +313,8 @@ export function computeCampaignExecutionOverview(perCampaign: PerCampaignExecuti
     })
     .slice(0, 4);
 
-  const campaignsUnstaffedCount = perCampaign.filter((p) => p.obligations.length === 0).length;
+  const truncatedCampaignCount = perCampaign.filter((p) => p.truncated).length;
+  const campaignsUnstaffedCount = perCampaign.filter((p) => p.obligations.length === 0 && !p.truncated).length;
 
   const anyHasLinkedSourceRecords = perCampaign.some((p) => p.analyticsReadiness.hasLinkedSourceRecords);
   const trackingConfiguredRow = {
@@ -273,11 +324,15 @@ export function computeCampaignExecutionOverview(perCampaign: PerCampaignExecuti
   };
 
   const sourceLinksCompleteOverall = totalObligations > 0 && allObligations.every((o) => o.contentCurrentLinksCount >= 1);
-  const sourceLinksCompleteRow = {
-    label: "Source links complete",
-    detail: totalObligations === 0 ? "No obligations yet" : sourceLinksCompleteOverall ? "Every obligation's Content thread has at least one submitted link" : "Some obligations are still missing a submitted link",
-    badge: totalObligations === 0 ? "Review" : sourceLinksCompleteOverall ? "Current" : "Partial",
-  };
+  const sourceLinksCompleteRow =
+    truncatedCampaignCount > 0 && (totalObligations === 0 || sourceLinksCompleteOverall)
+      ? // Step 12C.2: never claim completeness over an incomplete set.
+        { label: "Source links complete", detail: "Only the first obligations per Campaign were checked; some Campaigns have more.", badge: "Partial" }
+      : {
+          label: "Source links complete",
+          detail: totalObligations === 0 ? "No obligations yet" : sourceLinksCompleteOverall ? "Every obligation's Content thread has at least one submitted link" : "Some obligations are still missing a submitted link",
+          badge: totalObligations === 0 ? "Review" : sourceLinksCompleteOverall ? "Current" : "Partial",
+        };
 
   // The Analytics readiness helper (evaluateCampaignAnalyticsReadiness)
   // exposes hasLinkedSourceRecords/matchedCount/unmatchedCount/lastDataAt
@@ -306,6 +361,8 @@ export function computeCampaignExecutionOverview(perCampaign: PerCampaignExecuti
       changesRequested: allObligations.filter((o) => o.contentStatus === "REVISION_REQUESTED").length,
       campaignsWithoutAssignments: campaignsUnstaffedCount,
     },
+    truncated: truncatedCampaignCount > 0,
+    truncatedCampaignCount,
   };
 }
 
@@ -319,8 +376,8 @@ export async function getCampaignExecutionOverview(actor: ActorContext | null): 
 
   const perCampaign: PerCampaignExecutionInput[] = await Promise.all(
     activeCampaigns.map(async (campaign) => {
-      const [obligations, analyticsReadiness] = await Promise.all([buildCampaignObligations(scope, campaign.campaignRef), evaluateCampaignAnalyticsReadiness(campaign.campaignRef)]);
-      return { campaign, obligations, analyticsReadiness };
+      const [{ obligations, truncated }, analyticsReadiness] = await Promise.all([buildCampaignObligations(scope, campaign.campaignRef), evaluateCampaignAnalyticsReadiness(campaign.campaignRef)]);
+      return { campaign, obligations, analyticsReadiness, truncated };
     }),
   );
 
@@ -331,7 +388,11 @@ export async function getCampaignExecutionOverview(actor: ActorContext | null): 
 // own buildIngestionExceptionCategories discipline exactly - never padded
 // to a fixed row count) --------------------------------------------------
 
-export type ExecutionExceptionCategory = { title: string; detail: string; count: number; href: string };
+// `count` is always the raw number; `countLabel` is what the Overview shows -
+// a lower-bound "N+" for the three obligation-derived categories when any
+// contributing Campaign is truncated (Step 12C.2), the plain number otherwise
+// ("Campaigns without assignments" is exact even then).
+export type ExecutionExceptionCategory = { title: string; detail: string; count: number; countLabel: string; href: string };
 
 // Deep-link targets: neither /assignments nor /content genuinely supports
 // a URL-driven status filter query param today (both filter via
@@ -340,11 +401,12 @@ export type ExecutionExceptionCategory = { title: string; detail: string; count:
 // real, unfiltered /assignments workspace rather than inventing a filter
 // param neither page would honor. Campaigns-without-assignments links to
 // the real, unfiltered /campaigns route.
-export function buildExecutionExceptionCategories(exceptions: CampaignExecutionOverview["executionExceptions"]): ExecutionExceptionCategory[] {
+export function buildExecutionExceptionCategories(exceptions: CampaignExecutionOverview["executionExceptions"], truncated = false): ExecutionExceptionCategory[] {
+  const label = (count: number, lowerBound: boolean) => (lowerBound ? `${count}+` : String(count));
   const rows: ExecutionExceptionCategory[] = [];
-  if (exceptions.overdueContent > 0) rows.push({ title: "Overdue content", detail: "Resolve", count: exceptions.overdueContent, href: "/assignments" });
-  if (exceptions.awaitingReview > 0) rows.push({ title: "Awaiting review", detail: "Review", count: exceptions.awaitingReview, href: "/assignments" });
-  if (exceptions.changesRequested > 0) rows.push({ title: "Changes requested", detail: "Follow up", count: exceptions.changesRequested, href: "/assignments" });
-  if (exceptions.campaignsWithoutAssignments > 0) rows.push({ title: "Campaigns without assignments", detail: "Review", count: exceptions.campaignsWithoutAssignments, href: "/campaigns" });
+  if (exceptions.overdueContent > 0) rows.push({ title: "Overdue content", detail: "Resolve", count: exceptions.overdueContent, countLabel: label(exceptions.overdueContent, truncated), href: "/assignments" });
+  if (exceptions.awaitingReview > 0) rows.push({ title: "Awaiting review", detail: "Review", count: exceptions.awaitingReview, countLabel: label(exceptions.awaitingReview, truncated), href: "/assignments" });
+  if (exceptions.changesRequested > 0) rows.push({ title: "Changes requested", detail: "Follow up", count: exceptions.changesRequested, countLabel: label(exceptions.changesRequested, truncated), href: "/assignments" });
+  if (exceptions.campaignsWithoutAssignments > 0) rows.push({ title: "Campaigns without assignments", detail: "Review", count: exceptions.campaignsWithoutAssignments, countLabel: String(exceptions.campaignsWithoutAssignments), href: "/campaigns" });
   return rows;
 }

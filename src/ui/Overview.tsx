@@ -7,6 +7,7 @@ import type { CSSProperties, ReactNode } from "react";
 import Link from "next/link";
 
 import { Icon, type IconName } from "./icons";
+import { campaignBoardRowDisplay, type CampaignBoardRow } from "@/features/shared/campaign-board";
 import type { OverviewPanelData } from "@/features/shared/types";
 import { formatCompact } from "@/features/shared/types";
 
@@ -336,15 +337,19 @@ export function Events({
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 20;
 
-export function CampaignBoard({ rows }: { rows: { name: string; completed: number; required: number }[] }) {
+export function CampaignBoard({ rows }: { rows: CampaignBoardRow[] }) {
   return (
     <div className="ov-campaign-board">
       {rows.map((row, i) => {
-        const rate = row.completed / row.required;
+        // Step 12C.2: a truncated row (more obligations than the trusted
+        // read's bound) shows "N+" and an unavailable percentage instead of
+        // an exact-looking ring - see campaignBoardRowDisplay. Same markup
+        // and layout either way.
+        const display = campaignBoardRowDisplay(row);
         const color = TONES[i % TONES.length].tone;
         return (
           <div className="ov-campaign-card" key={row.name}>
-            <svg viewBox="0 0 50 50" role="img" aria-label={`${row.name}: ${row.completed} of ${row.required} completed`}>
+            <svg viewBox="0 0 50 50" role="img" aria-label={`${row.name}: ${display.ariaLabel}`}>
               <circle cx="25" cy="25" r="20" stroke="#edf2f7" strokeWidth="5" fill="none" />
               <circle
                 cx="25"
@@ -353,17 +358,17 @@ export function CampaignBoard({ rows }: { rows: { name: string; completed: numbe
                 stroke={color}
                 strokeWidth="5"
                 fill="none"
-                strokeDasharray={`${rate * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
+                strokeDasharray={`${display.rate * RING_CIRCUMFERENCE} ${RING_CIRCUMFERENCE}`}
                 transform="rotate(-90 25 25)"
               />
               <text x="25" y="28" fontSize="10" fill="#344963" textAnchor="middle">
-                {Math.round(rate * 100)}%
+                {display.percentLabel}
               </text>
             </svg>
             <div>
               <b>{row.name}</b>
               <strong>
-                {row.completed} <small>/ {row.required}</small>
+                {row.completed} <small>/ {display.requiredLabel}</small>
               </strong>
               <small>obligations approved</small>
             </div>

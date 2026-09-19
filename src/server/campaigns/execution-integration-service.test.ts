@@ -107,7 +107,7 @@ describe("computeCampaignExecutionSummary", () => {
       obligation({ assignmentRef: "a4", partnerRef: "p3", assignmentStatus: "ASSIGNED", contentStatus: null, contentCurrentLinksCount: 0, dueAt: FAR_PAST }),
     ];
 
-    const summary = computeCampaignExecutionSummary("campaign-1", obligations, HAS_ANALYTICS);
+    const summary = computeCampaignExecutionSummary("campaign-1", obligations, HAS_ANALYTICS, false);
 
     expect(summary.campaignRef).toBe("campaign-1");
     expect(summary.totalObligations).toBe(4);
@@ -123,13 +123,26 @@ describe("computeCampaignExecutionSummary", () => {
   });
 
   it("sourceLinksComplete is true only when there is at least one obligation AND every one has a link", () => {
-    expect(computeCampaignExecutionSummary("c", [], NO_ANALYTICS).sourceLinksComplete).toBe(false);
-    expect(computeCampaignExecutionSummary("c", [obligation({ contentCurrentLinksCount: 1 })], NO_ANALYTICS).sourceLinksComplete).toBe(true);
-    expect(computeCampaignExecutionSummary("c", [obligation({ contentCurrentLinksCount: 1 }), obligation({ contentCurrentLinksCount: 0 })], NO_ANALYTICS).sourceLinksComplete).toBe(false);
+    expect(computeCampaignExecutionSummary("c", [], NO_ANALYTICS, false).sourceLinksComplete).toBe(false);
+    expect(computeCampaignExecutionSummary("c", [obligation({ contentCurrentLinksCount: 1 })], NO_ANALYTICS, false).sourceLinksComplete).toBe(true);
+    expect(computeCampaignExecutionSummary("c", [obligation({ contentCurrentLinksCount: 1 }), obligation({ contentCurrentLinksCount: 0 })], NO_ANALYTICS, false).sourceLinksComplete).toBe(false);
+  });
+
+  it("carries the truncated flag through, and never claims source links complete over a truncated set", () => {
+    const linked = [obligation({ contentCurrentLinksCount: 1 })];
+    const exact = computeCampaignExecutionSummary("c", linked, NO_ANALYTICS, false);
+    expect(exact.truncated).toBe(false);
+    expect(exact.sourceLinksComplete).toBe(true);
+
+    const truncated = computeCampaignExecutionSummary("c", linked, NO_ANALYTICS, true);
+    expect(truncated.truncated).toBe(true);
+    expect(truncated.sourceLinksComplete).toBe(false);
+    // Counts over the kept obligations still reconcile with each other.
+    expect(truncated.deliveryState.completed + truncated.deliveryState.inProgress + truncated.deliveryState.notStarted).toBe(truncated.totalObligations);
   });
 
   it("an empty obligation set produces an honest all-zero summary, never a fabricated value", () => {
-    const summary = computeCampaignExecutionSummary("empty-campaign", [], NO_ANALYTICS);
+    const summary = computeCampaignExecutionSummary("empty-campaign", [], NO_ANALYTICS, false);
     expect(summary.totalObligations).toBe(0);
     expect(summary.approvedCount).toBe(0);
     expect(summary.distinctPartnerCount).toBe(0);
@@ -146,23 +159,23 @@ describe("computeCampaignExecutionOverview", () => {
 
   it("excludes zero-obligation Campaigns from perCampaignExecution rows but counts them as unstaffed", () => {
     const overview = computeCampaignExecutionOverview([
-      { campaign: campaign("c1", "Staffed Campaign", "2026-01-01T00:00:00.000Z"), obligations: [obligation({ partnerRef: "p1" })], analyticsReadiness: NO_ANALYTICS },
-      { campaign: campaign("c2", "Empty Campaign", "2026-01-02T00:00:00.000Z"), obligations: [], analyticsReadiness: NO_ANALYTICS },
+      { campaign: campaign("c1", "Staffed Campaign", "2026-01-01T00:00:00.000Z"), obligations: [obligation({ partnerRef: "p1" })], analyticsReadiness: NO_ANALYTICS, truncated: false },
+      { campaign: campaign("c2", "Empty Campaign", "2026-01-02T00:00:00.000Z"), obligations: [], analyticsReadiness: NO_ANALYTICS, truncated: false },
     ]);
 
     expect(overview.activeCampaignCount).toBe(2);
-    expect(overview.perCampaignExecution).toEqual([{ campaignRef: "c1", campaignName: "Staffed Campaign", approvedCount: 0, totalCount: 1 }]);
+    expect(overview.perCampaignExecution).toEqual([{ campaignRef: "c1", campaignName: "Staffed Campaign", approvedCount: 0, totalCount: 1, truncated: false }]);
     expect(overview.trackingReadiness.campaignsUnstaffedRow.badge).toBe("Review");
     expect(overview.executionExceptions.campaignsWithoutAssignments).toBe(1);
   });
 
   it("sorts perCampaignExecution by updatedAt descending, ties broken by campaignRef ascending, capped at 4 rows", () => {
     const perCampaign = [
-      { campaign: campaign("c-b", "B", "2026-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS },
-      { campaign: campaign("c-a", "A", "2026-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS }, // same updatedAt as c-b - tiebreak by ref
-      { campaign: campaign("c-c", "C", "2026-03-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS }, // most recent
-      { campaign: campaign("c-d", "D", "2026-02-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS },
-      { campaign: campaign("c-e", "E", "2025-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS }, // dropped by the 4-row cap
+      { campaign: campaign("c-b", "B", "2026-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS, truncated: false },
+      { campaign: campaign("c-a", "A", "2026-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS, truncated: false }, // same updatedAt as c-b - tiebreak by ref
+      { campaign: campaign("c-c", "C", "2026-03-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS, truncated: false }, // most recent
+      { campaign: campaign("c-d", "D", "2026-02-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS, truncated: false },
+      { campaign: campaign("c-e", "E", "2025-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS, truncated: false }, // dropped by the 4-row cap
     ];
     const overview = computeCampaignExecutionOverview(perCampaign);
     expect(overview.perCampaignExecution.map((r) => r.campaignRef)).toEqual(["c-c", "c-d", "c-a", "c-b"]);
@@ -173,12 +186,12 @@ describe("computeCampaignExecutionOverview", () => {
       {
         campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"),
         obligations: [obligation({ partnerRef: "p1", assignmentStatus: "COMPLETED" }), obligation({ partnerRef: "p2", assignmentStatus: "ASSIGNED" })],
-        analyticsReadiness: NO_ANALYTICS,
+        analyticsReadiness: NO_ANALYTICS, truncated: false,
       },
       {
         campaign: campaign("c2", "Two", "2026-01-02T00:00:00.000Z"),
         obligations: [obligation({ partnerRef: "p1", assignmentStatus: "IN_PROGRESS" })], // p1 repeats - distinct count must not double it
-        analyticsReadiness: HAS_ANALYTICS,
+        analyticsReadiness: HAS_ANALYTICS, truncated: false,
       },
     ]);
     expect(overview.distinctAssignedPartnerCount).toBe(2);
@@ -188,25 +201,25 @@ describe("computeCampaignExecutionOverview", () => {
   });
 
   it("trackingConfiguredRow is Not started when no in-scope active Campaign has linked Analytics data", () => {
-    const overview = computeCampaignExecutionOverview([{ campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS }]);
+    const overview = computeCampaignExecutionOverview([{ campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS, truncated: false }]);
     expect(overview.trackingReadiness.trackingConfiguredRow.badge).toBe("Not started");
   });
 
   it("sourceLinksCompleteRow is Partial when some obligations are missing a submitted link, Current when all have one, Review when there are none", () => {
     const partial = computeCampaignExecutionOverview([
-      { campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [obligation({ contentCurrentLinksCount: 1 }), obligation({ contentCurrentLinksCount: 0 })], analyticsReadiness: NO_ANALYTICS },
+      { campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [obligation({ contentCurrentLinksCount: 1 }), obligation({ contentCurrentLinksCount: 0 })], analyticsReadiness: NO_ANALYTICS, truncated: false },
     ]);
     expect(partial.trackingReadiness.sourceLinksCompleteRow.badge).toBe("Partial");
 
-    const complete = computeCampaignExecutionOverview([{ campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [obligation({ contentCurrentLinksCount: 1 })], analyticsReadiness: NO_ANALYTICS }]);
+    const complete = computeCampaignExecutionOverview([{ campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [obligation({ contentCurrentLinksCount: 1 })], analyticsReadiness: NO_ANALYTICS, truncated: false }]);
     expect(complete.trackingReadiness.sourceLinksCompleteRow.badge).toBe("Current");
 
-    const none = computeCampaignExecutionOverview([{ campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [], analyticsReadiness: NO_ANALYTICS }]);
+    const none = computeCampaignExecutionOverview([{ campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [], analyticsReadiness: NO_ANALYTICS, truncated: false }]);
     expect(none.trackingReadiness.sourceLinksCompleteRow.badge).toBe("Review");
   });
 
   it("reportingEligibleRow is always honestly Unavailable - never an invented formula", () => {
-    const overview = computeCampaignExecutionOverview([{ campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: HAS_ANALYTICS }]);
+    const overview = computeCampaignExecutionOverview([{ campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: HAS_ANALYTICS, truncated: false }]);
     expect(overview.trackingReadiness.reportingEligibleRow.badge).toBe("Unavailable");
   });
 
@@ -219,11 +232,67 @@ describe("computeCampaignExecutionOverview", () => {
           obligation({ assignmentStatus: "ACCEPTED", contentStatus: "REVISION_REQUESTED" }),
           obligation({ assignmentStatus: "ASSIGNED", contentStatus: null }),
         ],
-        analyticsReadiness: NO_ANALYTICS,
+        analyticsReadiness: NO_ANALYTICS, truncated: false,
       },
-      { campaign: campaign("c2", "Two", "2026-01-01T00:00:00.000Z"), obligations: [], analyticsReadiness: NO_ANALYTICS },
+      { campaign: campaign("c2", "Two", "2026-01-01T00:00:00.000Z"), obligations: [], analyticsReadiness: NO_ANALYTICS, truncated: false },
     ]);
     expect(overview.executionExceptions).toEqual({ overdueContent: 1, awaitingReview: 1, changesRequested: 1, campaignsWithoutAssignments: 1 });
+  });
+});
+
+describe("computeCampaignExecutionOverview - truncation (Step 12C.2)", () => {
+  function campaign(campaignRef: string, name: string, updatedAt: string) {
+    return { campaignRef, name, updatedAt };
+  }
+  const manyObligations = (count: number, overrides: Partial<CampaignExecutionObligation> = {}) => Array.from({ length: count }, (_, i) => obligation({ assignmentRef: `a-${i}`, partnerRef: `p-${i}`, ...overrides }));
+
+  it("reports no truncation when every Campaign is exact", () => {
+    const overview = computeCampaignExecutionOverview([{ campaign: campaign("c1", "One", "2026-01-01T00:00:00.000Z"), obligations: [obligation({})], analyticsReadiness: NO_ANALYTICS, truncated: false }]);
+    expect(overview.truncated).toBe(false);
+    expect(overview.truncatedCampaignCount).toBe(0);
+    expect(overview.perCampaignExecution.every((r) => r.truncated === false)).toBe(true);
+  });
+
+  it("flags the truncated Campaign per row and in the aggregate, and counts truncated Campaigns", () => {
+    const overview = computeCampaignExecutionOverview([
+      { campaign: campaign("c1", "Big", "2026-02-01T00:00:00.000Z"), obligations: manyObligations(200), analyticsReadiness: NO_ANALYTICS, truncated: true },
+      { campaign: campaign("c2", "Small", "2026-01-01T00:00:00.000Z"), obligations: manyObligations(3), analyticsReadiness: NO_ANALYTICS, truncated: false },
+      { campaign: campaign("c3", "Big Too", "2026-03-01T00:00:00.000Z"), obligations: manyObligations(200), analyticsReadiness: NO_ANALYTICS, truncated: true },
+    ]);
+    expect(overview.truncated).toBe(true);
+    expect(overview.truncatedCampaignCount).toBe(2);
+    expect(overview.totalObligations).toBe(403); // a lower bound - the presentation layer renders it as "403+"
+    const byRef = Object.fromEntries(overview.perCampaignExecution.map((r) => [r.campaignRef, r]));
+    expect(byRef["c1"]).toMatchObject({ totalCount: 200, truncated: true });
+    expect(byRef["c2"]).toMatchObject({ totalCount: 3, truncated: false });
+    expect(byRef["c3"]).toMatchObject({ totalCount: 200, truncated: true });
+  });
+
+  it("delivery-state totals still reconcile with the (lower-bound) obligation total", () => {
+    const overview = computeCampaignExecutionOverview([
+      { campaign: campaign("c1", "Big", "2026-02-01T00:00:00.000Z"), obligations: [...manyObligations(120, { assignmentStatus: "COMPLETED" }), ...manyObligations(80, { assignmentStatus: "ASSIGNED" })], analyticsReadiness: NO_ANALYTICS, truncated: true },
+    ]);
+    const { completed, inProgress, notStarted } = overview.deliveryState;
+    expect(completed + inProgress + notStarted).toBe(overview.totalObligations);
+    expect(overview.truncated).toBe(true);
+  });
+
+  it("a truncated Campaign is never counted as unstaffed, even with zero obligations found in the scanned rows", () => {
+    const overview = computeCampaignExecutionOverview([
+      { campaign: campaign("c1", "Scan ceiling", "2026-02-01T00:00:00.000Z"), obligations: [], analyticsReadiness: NO_ANALYTICS, truncated: true },
+      { campaign: campaign("c2", "Truly empty", "2026-01-01T00:00:00.000Z"), obligations: [], analyticsReadiness: NO_ANALYTICS, truncated: false },
+    ]);
+    expect(overview.executionExceptions.campaignsWithoutAssignments).toBe(1);
+    expect(overview.trackingReadiness.campaignsUnstaffedRow.detail).toBe("1 active Campaign with no execution obligations");
+    // ...and stays visible as a flagged row rather than disappearing.
+    expect(overview.perCampaignExecution).toEqual([{ campaignRef: "c1", campaignName: "Scan ceiling", approvedCount: 0, totalCount: 0, truncated: true }]);
+  });
+
+  it("never claims source links complete when any Campaign is truncated", () => {
+    const overview = computeCampaignExecutionOverview([
+      { campaign: campaign("c1", "Big", "2026-02-01T00:00:00.000Z"), obligations: manyObligations(200, { contentCurrentLinksCount: 1 }), analyticsReadiness: NO_ANALYTICS, truncated: true },
+    ]);
+    expect(overview.trackingReadiness.sourceLinksCompleteRow.badge).toBe("Partial");
   });
 });
 
@@ -234,6 +303,18 @@ describe("buildExecutionExceptionCategories", () => {
     const rows = buildExecutionExceptionCategories({ overdueContent: 2, awaitingReview: 0, changesRequested: 1, campaignsWithoutAssignments: 0 });
     expect(rows.map((r) => r.title)).toEqual(["Overdue content", "Changes requested"]);
     expect(rows.every((r) => r.href.length > 0)).toBe(true);
+  });
+
+  it("marks obligation-derived counts as lower bounds when truncated, but never the exact unstaffed count", () => {
+    const rows = buildExecutionExceptionCategories({ overdueContent: 4, awaitingReview: 2, changesRequested: 1, campaignsWithoutAssignments: 3 }, true);
+    expect(rows.map((r) => [r.title, r.countLabel])).toEqual([
+      ["Overdue content", "4+"],
+      ["Awaiting review", "2+"],
+      ["Changes requested", "1+"],
+      ["Campaigns without assignments", "3"],
+    ]);
+    const exact = buildExecutionExceptionCategories({ overdueContent: 4, awaitingReview: 0, changesRequested: 0, campaignsWithoutAssignments: 0 });
+    expect(exact.map((r) => r.countLabel)).toEqual(["4"]);
   });
 
   it("every category links to a real, unfiltered route (neither /assignments nor /content supports a URL status filter today)", () => {

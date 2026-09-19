@@ -41,6 +41,11 @@ export async function requireAssignmentsFeatureAccess(actor: ActorContext | null
 // "Vendor context must never broaden Assignment access" (Step 10A section
 // 6's own rule), matching Vendors'/Partners' own precedent of never
 // bridging a linked record's scope into this one.
+// Step 12C.2: the Partner's own Record Scope (requirePartnerInScope) is now
+// REQUIRED to CREATE an Assignment for that Partner (see
+// assignment-service.ts) - but it is a create-time gate only. It never
+// appears here: Partner visibility still never broadens Assignment READ
+// access.
 export async function requireAssignmentInScope(
   actor: ActorContext,
   assignment: { uid: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] },

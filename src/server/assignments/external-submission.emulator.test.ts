@@ -192,7 +192,10 @@ describe("getAssignmentCurrentVendorOption", () => {
     // Every seeded ACTIVE Partner already has a real active Vendor link
     // (see seed-vendors-data.ts) - a genuinely vendor-less Partner needs
     // a fresh one created here.
-    const partner = await createPartner(head, { displayName: uniqueName("Vendor-less Partner") }, "req");
+    // Step 12C.2: Assignment create now requires the actor's own Partner
+    // Record Scope, so this Partner carries a region Head holds (Kerala) -
+    // the test's intent (no Vendor link) is unaffected.
+    const partner = await createPartner(head, { displayName: uniqueName("Vendor-less Partner"), regionIds: ["Kerala"] }, "req");
     if (!partner.ok) throw new Error("unreachable");
     const assignment = await createAssignedAssignment(head, partner.data.partnerRef);
     const result = await getAssignmentCurrentVendorOption(head, assignment.assignmentRef);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useId, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useId, useRef, useState, type CSSProperties, type KeyboardEvent } from "react";
 import Link from "next/link";
 
 import { DialogShell } from "@/ui/Dialog";
@@ -13,6 +13,16 @@ import { buildCreateAssignmentInput, EMPTY_CREATE_ASSIGNMENT_FORM, LIMITS, type 
 import { dateLabel } from "./format";
 
 const SEARCH_DEBOUNCE_MS = 250;
+
+// Step 12C.2: the visibly-disabled treatment for THIS dialog's footer
+// buttons only. There is deliberately no global `.btn:disabled` rule (other
+// screens rely on today's look), so the treatment is applied locally, as an
+// inline style, only while a footer button is `disabled`. Native `disabled`
+// semantics are unchanged. Inline `background` also beats the stylesheet's
+// `.btn:hover` / `.btn.primary:hover` rules (no !important needed), so a
+// disabled button shows no hover/active treatment, and `not-allowed` replaces
+// any action cursor. Colors: #5a6572 on #eceff2 = 5.14:1 contrast (>= 4.5:1).
+const DISABLED_FOOTER_BUTTON_STYLE: CSSProperties = { background: "#eceff2", borderColor: "#d5dae0", color: "#5a6572", cursor: "not-allowed" };
 
 type CreateResult = { kind: "created"; assignmentRef: string } | { kind: "existing"; assignmentRef: string | null };
 
@@ -200,10 +210,10 @@ export function CreateAssignmentDialog({ campaignRef, onClose }: { campaignRef: 
     </button>
   ) : (
     <>
-      <button type="button" className="btn" onClick={handleClose} disabled={submitting}>
+      <button type="button" className="btn" onClick={handleClose} disabled={submitting} style={submitting ? DISABLED_FOOTER_BUTTON_STYLE : undefined}>
         Cancel
       </button>
-      <button type="button" className="btn primary" onClick={() => void submit()} disabled={!canSubmit}>
+      <button type="button" className="btn primary" onClick={() => void submit()} disabled={!canSubmit} style={canSubmit ? undefined : DISABLED_FOOTER_BUTTON_STYLE}>
         {submitting ? "Creating…" : "Create Assignment"}
       </button>
     </>

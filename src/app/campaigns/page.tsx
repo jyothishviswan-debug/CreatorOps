@@ -4,6 +4,7 @@ import { AppShell } from "@/ui/AppShell";
 import { EmptyState } from "@/ui/States";
 import type { OverviewPanelData } from "@/features/shared/types";
 import { CampaignsHome } from "@/features/campaigns/CampaignsHome";
+import { approvedOfTotalLabel, deliveryStateUnavailableNote, exceptionsNote, lowerBoundLabel, toCampaignBoardRows, truncationNote } from "@/features/campaigns/execution-format";
 import { relativeTime } from "@/features/campaigns/format";
 import type { CampaignDto } from "@/server/campaigns/client-dto";
 import { resolveRequestActor } from "@/server/campaigns/http";
@@ -81,10 +82,20 @@ export default async function CampaignsOverviewPage() {
   // permanently, honestly unavailable (same precedent as Analytics'
   // unsupported Reach/Shares metrics) - only "Active campaigns", "Recent
   // Activity" and "Quick Actions" were already genuinely Campaign-owned.
-  const deliveryStateTotal = execution ? execution.deliveryState.completed + execution.deliveryState.inProgress + execution.deliveryState.notStarted : 0;
+  //
+  // Step 12C.2: when ANY contributing Campaign has more obligations than the
+  // trusted read's documented bound (`execution.truncated`), every
+  // portfolio figure below is only a lower bound. Nothing exact-looking is
+  // derived from that incomplete denominator: counts gain a "+" suffix,
+  // per-Campaign percentages/rings and the Delivery State shares become the
+  // neutral "not available" form, and the truncation is stated in the
+  // existing note slots. Non-truncated numbers are exactly as before - see
+  // src/features/campaigns/execution-format.ts (pure, unit-tested).
+  const executionTruncated = execution?.truncated ?? false;
+  const truncatedCampaignCount = execution?.truncatedCampaignCount ?? 0;
+  const deliveryStateTotal = execution && !executionTruncated ? execution.deliveryState.completed + execution.deliveryState.inProgress + execution.deliveryState.notStarted : 0;
 
-  const executionExceptionCategories = execution ? buildExecutionExceptionCategories(execution.executionExceptions) : [];
-  const executionExceptionsTotal = executionExceptionCategories.reduce((sum, c) => sum + c.count, 0);
+  const executionExceptionCategories = execution ? buildExecutionExceptionCategories(execution.executionExceptions, executionTruncated) : [];
 
   const topPanels: OverviewPanelData[] = [
     {
@@ -93,17 +104,21 @@ export default async function CampaignsOverviewPage() {
       title: "Campaign Execution",
       note:
         execution && execution.perCampaignExecution.length > 0
-          ? `${execution.perCampaignExecution.length} active Campaign${execution.perCampaignExecution.length === 1 ? "" : "s"} with assigned obligations`
+          ? [`${execution.perCampaignExecution.length} active Campaign${execution.perCampaignExecution.length === 1 ? "" : "s"} with assigned obligations`, truncationNote(truncatedCampaignCount)].filter(Boolean).join(" · ")
           : "No active Campaign has any assigned obligations yet.",
       foot: "Approved / assigned obligations",
       span: 6,
-      rows: execution ? execution.perCampaignExecution.map((c) => ({ name: c.campaignName, completed: c.approvedCount, required: c.totalCount })) : [],
+      rows: execution ? toCampaignBoardRows(execution.perCampaignExecution) : [],
     },
     {
       kind: "donut",
       icon: "clock",
       title: "Delivery State",
-      note: deliveryStateTotal > 0 ? `${deliveryStateTotal} obligation${deliveryStateTotal === 1 ? "" : "s"} across active Campaigns` : "No execution obligations yet across active Campaigns.",
+      note: executionTruncated
+        ? deliveryStateUnavailableNote(truncatedCampaignCount)!
+        : deliveryStateTotal > 0
+          ? `${deliveryStateTotal} obligation${deliveryStateTotal === 1 ? "" : "s"} across active Campaigns`
+          : "No execution obligations yet across active Campaigns.",
       foot: "Overdue is a separate date condition, not a lifecycle state.",
       span: 3,
       total: deliveryStateTotal > 0 ? deliveryStateTotal : 1,
@@ -151,10 +166,13 @@ export default async function CampaignsOverviewPage() {
       kind: "attention",
       icon: "alert",
       title: "Execution Exceptions",
-      note: executionExceptionCategories.length > 0 ? `${executionExceptionsTotal} exception${executionExceptionsTotal === 1 ? "" : "s"} across ${executionExceptionCategories.length} categor${executionExceptionCategories.length === 1 ? "y" : "ies"}` : "No execution exceptions right now",
+      note: exceptionsNote(
+        executionExceptionCategories.map((c) => c.count),
+        executionTruncated,
+      ),
       foot: "Unavailable values must not appear as zero.",
       span: 3,
-      rows: executionExceptionCategories.map((c) => ({ title: c.title, detail: c.detail, count: String(c.count) })),
+      rows: executionExceptionCategories.map((c) => ({ title: c.title, detail: c.detail, count: c.countLabel })),
     },
     {
       kind: "activity",
@@ -210,14 +228,14 @@ export default async function CampaignsOverviewPage() {
         <CampaignsHome
           kpis={[
             { icon: "check", label: "Active campaigns", value: String(active), hint: "current period" },
-            { icon: "users", label: "Assigned Partners", value: execution ? String(execution.distinctAssignedPartnerCount) : "—", hint: execution ? "distinct Partners" : "Not yet available" },
+            { icon: "users", label: "Assigned Partners", value: execution ? lowerBoundLabel(execution.distinctAssignedPartnerCount, executionTruncated) : "—", hint: execution ? "distinct Partners" : "Not yet available" },
             {
               icon: "brief",
               label: "Content completed",
-              value: execution ? `${execution.approvedObligations} of ${execution.totalObligations}` : "—",
+              value: execution ? approvedOfTotalLabel(execution.approvedObligations, execution.totalObligations, executionTruncated) : "—",
               hint: execution ? "assigned obligations approved" : "Not yet available",
             },
-            { icon: "alert", label: "Overdue content", value: execution ? String(execution.overdueObligations) : "—", hint: execution ? "needs attention" : "Not yet available" },
+            { icon: "alert", label: "Overdue content", value: execution ? lowerBoundLabel(execution.overdueObligations, executionTruncated) : "—", hint: execution ? "needs attention" : "Not yet available" },
           ]}
           topPanels={topPanels}
           bottomPanels={bottomPanels}
