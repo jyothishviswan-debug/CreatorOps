@@ -287,11 +287,21 @@ function AccountForm(props: AccountFormProps) {
         <div className="field">
           <label>Stable platform account id {stableIdLocked && "(locked once set)"}</label>
           <input type="text" value={platformAccountId} onChange={(e) => setPlatformAccountId(e.target.value)} disabled={stableIdLocked} />
-          {stableIdLocked && <small>A stable id already on file cannot be replaced or cleared through an ordinary edit.</small>}
+          {/* Reserved (not conditionally rendered) so this row's height
+              never depends on stableIdLocked - `visibility: hidden` keeps
+              the layout space without showing or announcing it when the
+              id isn't locked, so its "Follower count" sibling never
+              shifts. */}
+          <small style={{ visibility: stableIdLocked ? "visible" : "hidden" }}>A stable id already on file cannot be replaced or cleared through an ordinary edit.</small>
         </div>
         <div className="field">
           <label>Follower count</label>
           <input type="number" min={0} value={followerCount} onChange={(e) => setFollowerCount(e.target.value)} />
+          {/* Matches its row sibling's reserved hint line so both cells
+              in this row are always the same height. */}
+          <small style={{ visibility: "hidden" }} aria-hidden="true">
+            A stable id already on file cannot be replaced or cleared through an ordinary edit.
+          </small>
         </div>
         {props.mode === "create" && (
           <div className="field">

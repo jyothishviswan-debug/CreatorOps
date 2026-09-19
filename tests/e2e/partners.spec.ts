@@ -317,7 +317,12 @@ test.describe("Partner Accounts", () => {
     await page.getByRole("button", { name: "Edit" }).click();
     const lockedField = formField(page, "Stable platform account id (locked once set)");
     await expect(lockedField).toBeDisabled();
-    await expect(page.getByText("A stable id already on file cannot be replaced or cleared through an ordinary edit.")).toBeVisible();
+    // Scoped to the "Stable platform account id" field itself - its
+    // sibling "Follower count" field reserves an identical, visually
+    // hidden copy of this same hint (so the row never misaligns), which
+    // an unscoped getByText would otherwise also match.
+    const stableIdField = page.locator(".field").filter({ has: page.getByText("Stable platform account id", { exact: false }) });
+    await expect(stableIdField.getByText("A stable id already on file cannot be replaced or cleared through an ordinary edit.")).toBeVisible();
     await page.getByRole("button", { name: "Cancel" }).click();
   });
 
