@@ -212,13 +212,24 @@ test.describe("Import History", () => {
 });
 
 test.describe("Sibling navigation", () => {
-  test("ModuleTabs links Overview/Explorer/Import History with correct active state", async ({ page }) => {
+  // Step 12D: the shared Analytics tab bar is now Overview | Instagram | YouTube |
+  // Data Explorer | Import History (the Explorer tab's canonical label became
+  // "Data Explorer"); the full 5-tab / all-five-pages proof lives in
+  // analytics-platform-views.spec.ts.
+  test("ModuleTabs links Overview/Instagram/YouTube/Data Explorer/Import History with correct active state", async ({ page }) => {
     await signInAs(page, "admin");
     await page.goto("/analytics");
+    await expect(page.locator(".tabs .tab")).toHaveText(["Overview", "Instagram", "YouTube", "Data Explorer", "Import History"]);
     await expect(page.locator(".tabs .tab.active")).toHaveText("Overview");
-    await page.locator(".tabs").getByRole("link", { name: "Explorer", exact: true }).click();
+    await page.locator(".tabs").getByRole("link", { name: "Instagram", exact: true }).click();
+    await expect(page).toHaveURL(/\/analytics\/instagram$/);
+    await expect(page.locator(".tabs .tab.active")).toHaveText("Instagram");
+    await page.locator(".tabs").getByRole("link", { name: "YouTube", exact: true }).click();
+    await expect(page).toHaveURL(/\/analytics\/youtube$/);
+    await expect(page.locator(".tabs .tab.active")).toHaveText("YouTube");
+    await page.locator(".tabs").getByRole("link", { name: "Data Explorer", exact: true }).click();
     await expect(page).toHaveURL(/\/analytics\/explorer$/);
-    await expect(page.locator(".tabs .tab.active")).toHaveText("Explorer");
+    await expect(page.locator(".tabs .tab.active")).toHaveText("Data Explorer");
     await page.locator(".tabs").getByRole("link", { name: "Import History", exact: true }).click();
     await expect(page).toHaveURL(/\/analytics\/import-history$/);
     await expect(page.locator(".tabs .tab.active")).toHaveText("Import History");

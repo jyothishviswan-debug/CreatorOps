@@ -4,15 +4,10 @@ import { AppShell } from "@/ui/AppShell";
 import { ModuleTabs } from "@/ui/ModuleTabs";
 import { EmptyState } from "@/ui/States";
 import { AnalyticsImportHistoryWorkspace } from "@/features/analytics/AnalyticsImportHistoryWorkspace";
+import { ANALYTICS_TABS } from "@/features/analytics/analytics-tabs";
 import { requireAnalyticsExploreAccess, requireAnalyticsManageAccess, requireImportsModuleAccess } from "@/server/analytics/analytics-gate";
 import { listAnalyticsImportBatches } from "@/server/analytics/import-history-service";
 import { resolveRequestActor } from "@/server/analytics/http";
-
-const TABS = [
-  { label: "Overview", href: "/analytics" },
-  { label: "Explorer", href: "/analytics/explorer" },
-  { label: "Import History", href: "/analytics/import-history" },
-];
 
 export default async function AnalyticsImportHistoryPage() {
   const actor = await resolveRequestActor();
@@ -27,7 +22,7 @@ export default async function AnalyticsImportHistoryPage() {
             <h1>Import history</h1>
           </div>
         </div>
-        <ModuleTabs tabs={TABS} />
+        <ModuleTabs tabs={ANALYTICS_TABS} />
         <section className="panel" style={{ marginTop: 18 }}>
           <div className="panelbody">
             <EmptyState title="Access denied" description="You don't have permission to view Analytics data." icon="lock" />
@@ -60,7 +55,7 @@ export default async function AnalyticsImportHistoryPage() {
         )}
       </div>
 
-      <ModuleTabs tabs={TABS} />
+      <ModuleTabs tabs={ANALYTICS_TABS} />
 
       <AnalyticsImportHistoryWorkspace initialBatches={initialBatches} initialNextCursor={initialNextCursor} />
     </AppShell>

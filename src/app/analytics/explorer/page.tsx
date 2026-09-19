@@ -2,7 +2,8 @@ import { AppShell } from "@/ui/AppShell";
 import { ModuleTabs } from "@/ui/ModuleTabs";
 import { EmptyState } from "@/ui/States";
 import { AnalyticsExplorerWorkspace } from "@/features/analytics/AnalyticsExplorerWorkspace";
-import { collectChannelLabelRefs, collectContentLabelRefs } from "@/features/analytics/explorer-helpers";
+import { ANALYTICS_TABS } from "@/features/analytics/analytics-tabs";
+import { collectChannelLabelRefs, collectContentLabelRefs, parseExplorerPlatformParam } from "@/features/analytics/explorer-helpers";
 import { canPerformAction } from "@/server/authz/capabilities";
 import { requireAnalyticsExploreAccess } from "@/server/analytics/analytics-gate";
 import { listAnalyticsSourceRecords } from "@/server/analytics/explorer-service";
@@ -10,16 +11,12 @@ import { resolveRequestActor } from "@/server/analytics/http";
 import { resolveAnalyticsLabels, type AnalyticsLabelMaps } from "@/server/analytics/label-resolution";
 import type { AnalyticsMatchState } from "@/server/analytics/types";
 
-const TABS = [
-  { label: "Overview", href: "/analytics" },
-  { label: "Explorer", href: "/analytics/explorer" },
-  { label: "Import History", href: "/analytics/import-history" },
-];
-
 const EMPTY_LABELS: AnalyticsLabelMaps = { content: {}, campaigns: {}, partners: {}, partnerAccounts: {}, batches: {} };
 const MATCH_STATES: AnalyticsMatchState[] = ["MATCHED", "UNMATCHED", "AMBIGUOUS"];
 
-type SearchParams = { recordKind?: string; matchState?: string; platform?: string; batchRef?: string };
+// `platform` may be repeated (?platform=a&platform=b) - Next then hands over a
+// string[]; parseExplorerPlatformParam neutralizes anything that is not one string.
+type SearchParams = { recordKind?: string; matchState?: string; platform?: string | string[]; batchRef?: string };
 
 export default async function AnalyticsExplorerPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const actor = await resolveRequestActor();
@@ -34,7 +31,7 @@ export default async function AnalyticsExplorerPage({ searchParams }: { searchPa
             <h1>Metric explorer</h1>
           </div>
         </div>
-        <ModuleTabs tabs={TABS} />
+        <ModuleTabs tabs={ANALYTICS_TABS} />
         <section className="panel" style={{ marginTop: 18 }}>
           <div className="panelbody">
             <EmptyState title="Access denied" description="You don't have permission to view Analytics data." icon="lock" />
@@ -47,7 +44,10 @@ export default async function AnalyticsExplorerPage({ searchParams }: { searchPa
   const sp = await searchParams;
   const recordKind: "content" | "channel" = sp.recordKind === "channel" ? "channel" : "content";
   const matchState = MATCH_STATES.find((s) => s === sp.matchState);
-  const platform = sp.platform || undefined;
+  // Step 12D: normalized (trim + lowercase) against the offered platforms so a
+  // deep link like ?platform=Instagram filters server-side on the STORED id and
+  // the "Filter platform" select renders it selected on first render.
+  const platform = parseExplorerPlatformParam(sp.platform);
   const batchRef = sp.batchRef || undefined;
 
   const listResult = await listAnalyticsSourceRecords(actor, { recordKind, limit: 20, matchState, platform, batchRef });
@@ -71,7 +71,7 @@ export default async function AnalyticsExplorerPage({ searchParams }: { searchPa
         </div>
       </div>
 
-      <ModuleTabs tabs={TABS} />
+      <ModuleTabs tabs={ANALYTICS_TABS} />
 
       <AnalyticsExplorerWorkspace
         initialRecordKind={recordKind}

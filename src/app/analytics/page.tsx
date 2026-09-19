@@ -4,15 +4,10 @@ import { AppShell } from "@/ui/AppShell";
 import { ModuleTabs } from "@/ui/ModuleTabs";
 import { EmptyState } from "@/ui/States";
 import { ActionGrid, Checks, ContextBanner, OverviewKpiRow, OverviewPanel, OverviewPanels, OverviewRow, Rankings } from "@/ui/Overview";
+import { ANALYTICS_TABS } from "@/features/analytics/analytics-tabs";
 import { IngestionExceptionsPanel } from "@/features/analytics/IngestionExceptionsPanel";
 import { resolveRequestActor } from "@/server/analytics/http";
 import { getAnalyticsOverview } from "@/server/analytics/overview-service";
-
-const TABS = [
-  { label: "Overview", href: "/analytics" },
-  { label: "Explorer", href: "/analytics/explorer" },
-  { label: "Import History", href: "/analytics/import-history" },
-];
 
 export default async function AnalyticsOverviewPage() {
   const actor = await resolveRequestActor();
@@ -27,7 +22,7 @@ export default async function AnalyticsOverviewPage() {
             <h1>Analytics</h1>
           </div>
         </div>
-        <ModuleTabs tabs={TABS} />
+        <ModuleTabs tabs={ANALYTICS_TABS} />
         <section className="panel" style={{ marginTop: 18 }}>
           <div className="panelbody">
             <EmptyState title="Access denied" description="You don't have permission to view Analytics data." icon="lock" />
@@ -61,7 +56,7 @@ export default async function AnalyticsOverviewPage() {
           )}
         </div>
 
-        <ModuleTabs tabs={TABS} />
+        <ModuleTabs tabs={ANALYTICS_TABS} />
 
         <ContextBanner icon="chart" title={o.summary} description="What is happening, what needs attention, and where to act next." chips={chips} />
 

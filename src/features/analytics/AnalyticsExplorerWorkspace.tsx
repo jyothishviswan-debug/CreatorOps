@@ -14,11 +14,10 @@ import type { AnalyticsChannelSourceRecordDoc, AnalyticsContentSourceRecordDoc, 
 import { AnalyticsRecordDialog } from "./AnalyticsRecordDialog";
 import { AnalyticsResolveMatchDialog } from "./AnalyticsResolveMatchDialog";
 import { listAnalyticsRecords, resolveAnalyticsLabels } from "./api-client";
-import { channelRecordLabel, channelScopeLabel, collectChannelLabelRefs, collectContentLabelRefs, contentRecordLabel, contentScopeLabel, sourceLabel } from "./explorer-helpers";
+import { channelRecordLabel, channelScopeLabel, collectChannelLabelRefs, collectContentLabelRefs, contentRecordLabel, contentScopeLabel, EXPLORER_PLATFORM_OPTIONS, sourceLabel } from "./explorer-helpers";
 import { matchStateLabel, matchStateTone, platformLabel } from "./format";
 
 const PAGE_SIZE = 20;
-const PLATFORM_OPTIONS = ["instagram", "youtube", "tiktok"];
 
 export type ExplorerRecord = AnalyticsContentSourceRecordDoc | AnalyticsChannelSourceRecordDoc;
 
@@ -150,7 +149,7 @@ export function AnalyticsExplorerWorkspace({
         <SearchInput placeholder="Search loaded records…" aria-label="Search records" value={searchInput} onChange={(e) => setSearchInput(e.target.value)} />
         <select aria-label="Filter platform" value={filters.platform ?? "all"} onChange={(e) => refetchFromStart(recordKind, { ...filters, platform: e.target.value === "all" ? undefined : e.target.value })}>
           <option value="all">All platforms</option>
-          {PLATFORM_OPTIONS.map((p) => (
+          {EXPLORER_PLATFORM_OPTIONS.map((p) => (
             <option key={p} value={p}>
               {platformLabel(p)}
             </option>

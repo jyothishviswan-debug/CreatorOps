@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import type { ActorContext } from "@/server/authz/types";
+import { platformIdentifierSchema } from "@/server/shared/platform";
 
 import { requireAnalyticsExploreAccess } from "./analytics-gate";
 import {
@@ -30,7 +31,12 @@ const listInputSchema = z.object({
   limit: z.number().int().min(1).max(100).optional(),
   cursor: z.record(z.string(), z.unknown()).optional(),
   matchState: z.enum(["MATCHED", "UNMATCHED", "AMBIGUOUS"]).optional(),
-  platform: z.string().min(1).optional(),
+  // Step 12D: normalized with the ONE shared platform-identifier contract
+  // (trim + lowercase) BEFORE it reaches the query, because stored source
+  // records only ever carry the normalized id - a raw "Instagram" / " YOUTUBE "
+  // filter would otherwise silently match nothing. Whitespace-only / over-long
+  // values are rejected as invalid input rather than quietly matching nothing.
+  platform: platformIdentifierSchema.optional(),
   batchRef: z.string().min(1).optional(),
   matchedCampaignRef: z.string().min(1).optional(),
   matchedPartnerRef: z.string().min(1).optional(),

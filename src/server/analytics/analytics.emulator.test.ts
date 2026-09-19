@@ -160,8 +160,14 @@ describe("Analytics authorization - module access vs target action access are se
 describe("dry-run and execute share the same pipeline; dry-run writes nothing", () => {
   it("dry-run performs matching but creates zero batch/source-record documents", async () => {
     const analyst = await actorFor("analyst");
-    const beforeBatches = (await analyticsImportBatchesCollection().get()).size;
-    const beforeRecords = (await analyticsContentSourceRecordsCollection().get()).size;
+    // Scoped to THIS dry run's own artifacts (its unique filename / its one URL),
+    // never whole-collection sizes: other emulator test files write and delete
+    // Analytics fixtures concurrently in the default parallel mode, which made
+    // a global before/after size comparison intermittently fail.
+    const filename = uniqueFilename("dry");
+    const url = "https://instagram.com/p/seed-community-story";
+    const recordsForUrl = async () => (await analyticsContentSourceRecordsCollection().where("normalizedUrl", "==", url).get()).size;
+    const beforeRecordsForUrl = await recordsForUrl();
 
     // Deliberately NOT the same URL seed-analytics-data.ts already seeds
     // a committed record for (seed-approved-1) - this proves a genuinely
@@ -171,19 +177,19 @@ describe("dry-run and execute share the same pipeline; dry-run writes nothing", 
     // currentLinks URL, untouched by any Analytics seed fixture.
     const buffer = workbookBuffer("Content", [
       ["Post ID", "Post URL", "Comments", "Likes"],
-      [null, "https://instagram.com/p/seed-community-story", "5", "10"],
+      [null, url, "5", "10"],
     ]);
-    const result = await dryRunAnalyticsImport(analyst, { targetKind: "campaign_content", fileBuffer: buffer, filename: uniqueFilename("dry"), mimeType: XLSX_MIME }, "req-3");
+    const result = await dryRunAnalyticsImport(analyst, { targetKind: "campaign_content", fileBuffer: buffer, filename, mimeType: XLSX_MIME }, "req-3");
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.data.batchRef).toBeNull();
       expect(result.data.counts.matched).toBe(1);
     }
 
-    const afterBatches = (await analyticsImportBatchesCollection().get()).size;
-    const afterRecords = (await analyticsContentSourceRecordsCollection().get()).size;
-    expect(afterBatches).toBe(beforeBatches);
-    expect(afterRecords).toBe(beforeRecords);
+    // No batch was created for this file, and no source record for its URL.
+    const batchesForFile = await analyticsImportBatchesCollection().where("sourceFilename", "==", filename).get();
+    expect(batchesForFile.size).toBe(0);
+    expect(await recordsForUrl()).toBe(beforeRecordsForUrl);
   });
 });
 

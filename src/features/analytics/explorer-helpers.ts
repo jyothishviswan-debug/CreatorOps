@@ -4,6 +4,25 @@
 // resolved label hasn't arrived yet.
 import { platformLabel, reportingPeriodLabel } from "./format";
 import type { AnalyticsLabelMaps } from "@/server/analytics/label-resolution";
+import { normalizePlatformIdentifier } from "@/server/shared/platform";
+
+// The platforms the Explorer's "Filter platform" select offers - the single
+// list both the select and the ?platform= deep-link parser below use, so a
+// deep link can never select a value the select has no option for.
+export const EXPLORER_PLATFORM_OPTIONS = ["instagram", "youtube", "tiktok"] as const;
+
+// Step 12D: safely parses the Explorer's ?platform= query parameter. The
+// stored source records only ever carry the NORMALIZED platform id, so the
+// raw value is normalized with the shared normalizePlatformIdentifier
+// (trim + lowercase) before it is used as a server filter or shown in the
+// select. Anything that is not exactly one string naming an offered
+// platform (repeated params, empty/whitespace, unknown or garbage values) is
+// neutralized to `undefined` - i.e. no platform filter - never passed through.
+export function parseExplorerPlatformParam(raw: unknown): (typeof EXPLORER_PLATFORM_OPTIONS)[number] | undefined {
+  if (typeof raw !== "string") return undefined;
+  const normalized = normalizePlatformIdentifier(raw);
+  return (EXPLORER_PLATFORM_OPTIONS as readonly string[]).includes(normalized) ? (normalized as (typeof EXPLORER_PLATFORM_OPTIONS)[number]) : undefined;
+}
 
 export type ExplorerContentRow = {
   platform: string;

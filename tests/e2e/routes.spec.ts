@@ -18,6 +18,8 @@ const STATIC_ROUTES = [
   "/assignments",
   "/content",
   "/analytics",
+  "/analytics/instagram",
+  "/analytics/youtube",
   "/analytics/explorer",
   "/analytics/import-history",
   "/partner-reviews",

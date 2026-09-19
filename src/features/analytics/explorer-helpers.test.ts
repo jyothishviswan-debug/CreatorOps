@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { channelRecordLabel, channelScopeLabel, collectChannelLabelRefs, collectContentLabelRefs, contentRecordLabel, contentScopeLabel, sourceLabel } from "./explorer-helpers";
+import { channelRecordLabel, channelScopeLabel, collectChannelLabelRefs, collectContentLabelRefs, contentRecordLabel, contentScopeLabel, EXPLORER_PLATFORM_OPTIONS, parseExplorerPlatformParam, sourceLabel } from "./explorer-helpers";
 import type { AnalyticsLabelMaps } from "@/server/analytics/label-resolution";
 
 const labels: AnalyticsLabelMaps = {
@@ -76,5 +76,26 @@ describe("collectContentLabelRefs / collectChannelLabelRefs", () => {
   it("does the same for channel refs", () => {
     const records = [{ platform: "youtube", matchState: "MATCHED" as const, reportingPeriod: null, matchedPartnerRef: "p1", matchedPartnerAccountRef: "a1", rawUsername: null, batchRef: "b1", sheetName: "s", sourceRowNumber: 1 }];
     expect(collectChannelLabelRefs(records)).toEqual({ partnerRefs: ["p1"], partnerAccountRefs: ["a1"], batchRefs: ["b1"] });
+  });
+});
+
+describe("parseExplorerPlatformParam - the ?platform= deep link is safely parsed and normalized", () => {
+  it("normalizes case and whitespace to the stored platform id", () => {
+    expect(parseExplorerPlatformParam("instagram")).toBe("instagram");
+    expect(parseExplorerPlatformParam("Instagram")).toBe("instagram");
+    expect(parseExplorerPlatformParam(" YOUTUBE ")).toBe("youtube");
+    expect(parseExplorerPlatformParam("TikTok")).toBe("tiktok");
+  });
+  it("neutralizes garbage, unknown platforms, empty and repeated params to no filter", () => {
+    expect(parseExplorerPlatformParam("insta")).toBeUndefined();
+    expect(parseExplorerPlatformParam("facebook")).toBeUndefined();
+    expect(parseExplorerPlatformParam("")).toBeUndefined();
+    expect(parseExplorerPlatformParam("   ")).toBeUndefined();
+    expect(parseExplorerPlatformParam("instagram; DROP")).toBeUndefined();
+    expect(parseExplorerPlatformParam(["instagram", "youtube"])).toBeUndefined();
+    expect(parseExplorerPlatformParam(undefined)).toBeUndefined();
+  });
+  it("can only ever select a platform the Explorer's select actually offers", () => {
+    for (const raw of ["instagram", "YOUTUBE", " tiktok"]) expect(EXPLORER_PLATFORM_OPTIONS as readonly string[]).toContain(parseExplorerPlatformParam(raw));
   });
 });

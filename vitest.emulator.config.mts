@@ -49,6 +49,15 @@ export default defineConfig({
     // before any *.emulator.test.ts file runs - see
     // tests/emulator-global-setup.ts for why.
     globalSetup: ["./tests/emulator-global-setup.ts"],
+    // Every emulator test file shares ONE single-threaded Firestore emulator
+    // and (by default) runs in parallel with the others, so a heavy multi-step
+    // test can legitimately take longer than vitest's 5s default once the
+    // emulator is busy - which produced spurious, unrelated "timed out in
+    // 5000ms" failures in random files. A larger budget only delays reporting
+    // a genuinely hung test; it weakens no assertion. Files that need more
+    // still set their own vi.setConfig({ testTimeout }).
+    testTimeout: 30_000,
+    hookTimeout: 60_000,
   },
   resolve: {
     alias: {
