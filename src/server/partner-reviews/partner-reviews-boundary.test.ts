@@ -154,3 +154,47 @@ describe("finalize freshness guard is wired before the transaction (Step 13A.1 s
     expect(body.slice(0, tx)).toMatch(/partnerReviewsNotReadyResult\(/);
   });
 });
+
+describe("commercial policy seam boundary (Step 13A.1 revised)", () => {
+  const nonTestFiles = readdirSync(moduleDir).filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"));
+
+  it("the governing policy is fetched in exactly one place - the trusted evidence collector - never by a service, route or client payload", () => {
+    const callers = nonTestFiles.filter((file) => file !== "commercial-policy.ts" && /getGoverningCommercialPolicy\(/.test(codeOnly(readModule(file))));
+    expect(callers).toEqual(["evidence-collector.ts"]);
+
+    const routesDir = path.resolve(moduleDir, "../../app/api/partner-reviews");
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walk(path.join(dir, entry.name)) : entry.name.endsWith(".ts") ? [path.join(dir, entry.name)] : []));
+    for (const file of walk(routesDir)) {
+      expect({ file: path.relative(routesDir, file), policy: /commercial-policy|CommercialPolicy|commercialPolicy/.test(readFileSync(file, "utf8")) }).toEqual({ file: path.relative(routesDir, file), policy: false });
+    }
+  });
+
+  it("no service input schema accepts a policy, requirement, rule or target (nothing Agreement-governed is ever client-supplied or manually editable)", () => {
+    for (const file of ["partner-review-service.ts", "partner-review-lifecycle-service.ts", "finalized-review-handoff-service.ts"]) {
+      const code = codeOnly(readModule(file));
+      expect({ file, hit: /requiredCount|lfcSfc|targetValue|monthlyDeliverableRequirement|commercialPolicy|byFormat/.test(code) }).toEqual({ file, hit: false });
+    }
+  });
+
+  it("the policy provider seam is never imported by the list service graph, and neither is the commercial builder or the handoff", () => {
+    const listGraph = reachableModuleFiles("partner-review-list-service.ts");
+    for (const forbidden of ["commercial-policy.ts", "commercial-builder.ts", "finalized-review-handoff.ts", "finalized-review-handoff-service.ts"]) expect(listGraph.has(forbidden)).toBe(false);
+  });
+
+  it("the builder, fingerprint and redaction stay actor-independent with the commercial modules (no authz/actor import or mention)", () => {
+    for (const file of ["commercial-policy.ts", "commercial-builder.ts", "commercial-neutral.ts", "finalized-review-handoff.ts"]) {
+      const source = readModule(file);
+      expect({ file, authz: importsOf(source).filter((spec) => /authz|partners-gate|-gate/.test(spec)) }).toEqual({ file, authz: [] });
+      expect({ file, actorTypeUsed: /ActorContext|actorUid|getActorScopeGrants|hasGlobalScope/.test(codeOnly(source)) }).toEqual({ file, actorTypeUsed: false });
+    }
+  });
+
+  it("the handoff service uses the read-only feature + live Partner scope chain (no action) and never a write path", () => {
+    const code = codeOnly(readModule("finalized-review-handoff-service.ts"));
+    expect(code.match(/loadAuthorizedReview\(actor, reviewRef, null\)/g)).toHaveLength(2);
+    expect(code).not.toMatch(/requirePartnerReviewsAccess|runTransaction|\.set\(|\.update\(|\.create\(|\.delete\(/);
+    // Same visibility rule as every other read: the actor-scoped redaction is not needed
+    // because the handoff carries no source-record identifiers (asserted on the DTO).
+    expect(code).not.toMatch(/resolveActorSourceAccess|redactVersionForActor/);
+  });
+});

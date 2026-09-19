@@ -1,6 +1,6 @@
 import { requireAnalyticsExploreAccess } from "@/server/analytics/analytics-gate";
-import { analyticsContentSourceRecordsCollection } from "@/server/analytics/firestore";
-import { analyticsContentSourceRecordDocSchema } from "@/server/analytics/types";
+import { analyticsChannelSourceRecordsCollection, analyticsContentSourceRecordsCollection } from "@/server/analytics/firestore";
+import { analyticsChannelSourceRecordDocSchema, analyticsContentSourceRecordDocSchema } from "@/server/analytics/types";
 import { isAssignmentDocInScope, requireAssignmentsFeatureAccess } from "@/server/assignments/assignments-gate";
 import { assignmentsCollection } from "@/server/assignments/firestore";
 import { assignmentDocSchema } from "@/server/assignments/types";
@@ -117,12 +117,28 @@ async function loadAssignmentScopeDocs(refs: string[]): Promise<Map<string, Scop
   return result;
 }
 
+// A snapshot's Analytics refs are content source records and (Step 13A.1
+// revised) the channel snapshot records a followerGrowth target read. Both
+// kinds carry the SAME scope projection and are scoped by the explorer with
+// the SAME plan, so one decision function covers both. Content records are
+// loaded first; only the refs NOT found there are looked up in the channel
+// collection (a snapshot without a followerGrowth target costs nothing extra).
 async function loadAnalyticsScopeDocs(refs: string[]): Promise<Map<string, Pick<ScopeFields, "ownerUid" | "regionIds" | "teamIds">>> {
   const result = new Map<string, Pick<ScopeFields, "ownerUid" | "regionIds" | "teamIds">>();
-  const snapshots = await Promise.all(chunked(refs).map((chunk) => analyticsContentSourceRecordsCollection().where("sourceRef", "in", chunk).get()));
-  for (const snapshot of snapshots) {
+  const contentSnapshots = await Promise.all(chunked(refs).map((chunk) => analyticsContentSourceRecordsCollection().where("sourceRef", "in", chunk).get()));
+  for (const snapshot of contentSnapshots) {
     for (const doc of snapshot.docs) {
       const parsed = analyticsContentSourceRecordDocSchema.safeParse(doc.data());
+      if (parsed.success) result.set(parsed.data.sourceRef, parsed.data);
+    }
+  }
+
+  const remaining = refs.filter((ref) => !result.has(ref));
+  if (remaining.length === 0) return result;
+  const channelSnapshots = await Promise.all(chunked(remaining).map((chunk) => analyticsChannelSourceRecordsCollection().where("sourceRef", "in", chunk).get()));
+  for (const snapshot of channelSnapshots) {
+    for (const doc of snapshot.docs) {
+      const parsed = analyticsChannelSourceRecordDocSchema.safeParse(doc.data());
       if (parsed.success) result.set(parsed.data.sourceRef, parsed.data);
     }
   }

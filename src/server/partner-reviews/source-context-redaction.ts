@@ -1,10 +1,17 @@
 import { randomUUID } from "node:crypto";
 
+import { commercialOrNeutral } from "./commercial-neutral";
 import type {
+  CommercialEvidence,
   EvidenceComplianceAssignment,
+  EvidenceCountUnit,
+  EvidenceLfcSfc,
+  EvidenceLfcSfcUnit,
+  EvidenceMonthlyDeliverable,
   EvidencePerformanceRecord,
   EvidenceProductionAssignment,
   EvidenceSnapshot,
+  EvidenceTarget,
   EvidenceThread,
   PartnerReviewSourceRef,
   PartnerReviewSourceType,
@@ -37,6 +44,15 @@ import type {
 //     so a caller can still pair them. The key is NOT derived from the
 //     real ref, is never persisted and is not comparable across responses
 //     or actors.
+//
+// Step 13A.1 (revised): the commercial section (monthly deliverable, LFC/SFC,
+// targets) is redacted by the SAME rule. Its counts, variances, evaluations,
+// classifications, actual values, ruleRefs and Agreement ref/version are
+// canonical and identical for every actor; only the Assignment / Content /
+// Analytics-record refs that identify WHICH source records were counted are
+// passed through the same per-source access sets (accessible -> ref,
+// inaccessible -> null + a neutral marker). An Agreement ref identifies no
+// Campaign/Assignment/Content/Analytics record, so it is not redacted.
 //
 // Nothing here ever writes or hashes anything: the stored doc and the
 // fingerprint are untouched.
@@ -102,8 +118,42 @@ export type ActorPerformanceRecord = Omit<EvidencePerformanceRecord, "sourceReco
   redactedContext: RedactionMarker[];
 };
 
-export type ActorEvidenceSnapshot = Omit<EvidenceSnapshot, "production" | "compliance" | "performance" | "sourceRefs"> & {
+// Commercial evidence as an actor sees it: same results, source-record refs
+// gated. `itemKey` is the SAME per-response key as the Assignment's
+// Production/Compliance rows, so a caller can pair them.
+export type ActorCountUnit = Omit<EvidenceCountUnit, "assignmentRef" | "contentRef"> & {
+  itemKey: string;
+  assignmentRef: string | null;
+  contentRef: string | null;
+  redactedContext: RedactionMarker[];
+};
+
+export type ActorLfcSfcUnit = Omit<EvidenceLfcSfcUnit, "assignmentRef" | "contentRef"> & {
+  itemKey: string;
+  assignmentRef: string | null;
+  contentRef: string | null;
+  redactedContext: RedactionMarker[];
+};
+
+export type ActorEvidenceTarget = Omit<EvidenceTarget, "provenance"> & {
+  provenance: Omit<EvidenceTarget["provenance"], "refs"> & {
+    // Same order as the canonical list; a withheld record is null.
+    refs: Array<string | null>;
+    redactedContext: RedactionMarker[];
+  };
+};
+
+export type ActorCommercialEvidence = Omit<CommercialEvidence, "monthlyDeliverable" | "lfcSfc" | "targets"> & {
+  monthlyDeliverable: Omit<EvidenceMonthlyDeliverable, "actualCountSources"> & {
+    actualCountSources: { sourceType: "content_thread" | "content_link"; units: ActorCountUnit[] } | null;
+  };
+  lfcSfc: Omit<EvidenceLfcSfc, "units"> & { units: ActorLfcSfcUnit[] };
+  targets: ActorEvidenceTarget[];
+};
+
+export type ActorEvidenceSnapshot = Omit<EvidenceSnapshot, "production" | "compliance" | "performance" | "commercial" | "sourceRefs"> & {
   snapshotView: "actor_scoped";
+  commercial: ActorCommercialEvidence;
   production: { assignments: ActorProductionAssignment[] };
   compliance: { assignments: ActorComplianceAssignment[] };
   performance: Omit<EvidenceSnapshot["performance"], "records"> & { records: ActorPerformanceRecord[] };
@@ -134,6 +184,18 @@ export function collectSnapshotSourceRefs(snapshot: EvidenceSnapshot): SnapshotS
   }
   for (const item of snapshot.compliance.assignments) assignments.add(item.assignmentRef);
   for (const record of snapshot.performance.records) analyticsRecords.add(record.sourceRecordRef);
+  // Commercial evidence names the units it counted and the records it read
+  // (incl. channel snapshot records, which live in the same Analytics scope).
+  const commercial = commercialOrNeutral(snapshot);
+  for (const unit of commercial.monthlyDeliverable.actualCountSources?.units ?? []) {
+    assignments.add(unit.assignmentRef);
+    contents.add(unit.contentRef);
+  }
+  for (const unit of commercial.lfcSfc.units) {
+    assignments.add(unit.assignmentRef);
+    if (unit.contentRef) contents.add(unit.contentRef);
+  }
+  for (const target of commercial.targets) for (const ref of target.provenance.refs) analyticsRecords.add(ref);
   return { assignments: [...assignments], campaigns: [...campaigns], contents: [...contents], analyticsRecords: [...analyticsRecords] };
 }
 
@@ -235,6 +297,57 @@ function redactPerformance(record: EvidencePerformanceRecord, itemKey: string, a
   };
 }
 
+function redactCommercial(commercial: CommercialEvidence, keyForAssignment: (assignmentRef: string) => string, access: SourceAccess): ActorCommercialEvidence {
+  const unitContext = (assignmentRef: string, contentRef: string | null): { assignmentRef: string | null; contentRef: string | null; redactedContext: RedactionMarker[] } => {
+    const assignmentAccessible = access.assignments.has(assignmentRef);
+    const contentAccessible = contentRef === null ? true : access.contents.has(contentRef);
+    const redactedContext: RedactionMarker[] = [];
+    if (!assignmentAccessible) redactedContext.push(marker("assignment"));
+    if (!contentAccessible) redactedContext.push(marker("content"));
+    return { assignmentRef: assignmentAccessible ? assignmentRef : null, contentRef: contentRef !== null && contentAccessible ? contentRef : null, redactedContext };
+  };
+
+  const deliverable = commercial.monthlyDeliverable;
+  return {
+    policyVersion: commercial.policyVersion,
+    governingAgreement: commercial.governingAgreement ? { ...commercial.governingAgreement } : null,
+    monthlyDeliverable: {
+      ...deliverable,
+      requirementSource: deliverable.requirementSource ? { ...deliverable.requirementSource } : null,
+      actualCountSources: deliverable.actualCountSources
+        ? {
+            sourceType: deliverable.actualCountSources.sourceType,
+            units: deliverable.actualCountSources.units.map((unit) => ({ itemKey: keyForAssignment(unit.assignmentRef), unitCount: unit.unitCount, ...unitContext(unit.assignmentRef, unit.contentRef) })),
+          }
+        : null,
+    },
+    lfcSfc: {
+      ...commercial.lfcSfc,
+      ruleSource: commercial.lfcSfc.ruleSource ? { ...commercial.lfcSfc.ruleSource } : null,
+      units: commercial.lfcSfc.units.map((unit) => ({
+        itemKey: keyForAssignment(unit.assignmentRef),
+        unitCount: unit.unitCount,
+        classification: unit.classification,
+        basis: { ...unit.basis },
+        ...unitContext(unit.assignmentRef, unit.contentRef),
+      })),
+    },
+    targets: commercial.targets.map((target) => {
+      const refs = target.provenance.refs.map((ref) => (access.analyticsRecords.has(ref) ? ref : null));
+      return {
+        ...target,
+        provenance: {
+          sourceType: target.provenance.sourceType,
+          refs,
+          recordsWithMetric: target.provenance.recordsWithMetric,
+          recordsMissingMetric: target.provenance.recordsMissingMetric,
+          redactedContext: refs.some((ref) => ref === null) ? [marker("analytics")] : [],
+        },
+      };
+    }),
+  };
+}
+
 function compareRefs(a: PartnerReviewSourceRef, b: PartnerReviewSourceRef): number {
   if (a.type !== b.type) return a.type < b.type ? -1 : 1;
   return a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0;
@@ -262,6 +375,7 @@ export function redactVersionForActor(
   const production = snapshot.production.assignments.map((item) => redactProduction(item, keyForAssignment(item.assignmentRef), access));
   const compliance = snapshot.compliance.assignments.map((item) => redactCompliance(item, keyForAssignment(item.assignmentRef), access));
   const records = snapshot.performance.records.map((record) => redactPerformance(record, newItemKey(), access));
+  const commercial = redactCommercial(commercialOrNeutral(snapshot), keyForAssignment, access);
 
   // The actor-facing ref list is DERIVED FROM what survived redaction, so it
   // can never name a source the response itself withholds.
@@ -276,6 +390,7 @@ export function redactVersionForActor(
   }
   for (const item of compliance) show("assignment", item.assignmentRef);
   for (const record of records) show("analyticsSourceRecord", record.sourceRecordRef);
+  for (const target of commercial.targets) for (const ref of target.provenance.refs) show("analyticsSourceRecord", ref);
   const sourceRefs = [...shown.values()].sort(compareRefs);
 
   const withheldSourceCounts: WithheldSourceCounts = { assignment: 0, content: 0, analyticsSourceRecord: 0, campaign: 0 };
@@ -295,6 +410,7 @@ export function redactVersionForActor(
       evidenceCutoff: snapshot.evidenceCutoff,
       production: { assignments: production },
       compliance: { assignments: compliance },
+      commercial,
       // Aggregates below are canonical and identical for every actor.
       performance: {
         records,

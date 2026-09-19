@@ -11,13 +11,14 @@
 // file's scoped reads.
 import { randomUUID } from "node:crypto";
 
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { FieldValue } from "firebase-admin/firestore";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { analyticsContentSourceRecordsCollection } from "@/server/analytics/firestore";
+import { analyticsChannelSourceRecordsCollection, analyticsContentSourceRecordsCollection } from "@/server/analytics/firestore";
 import { resolveAnalyticsSourceRecordMatch } from "@/server/analytics/correction-service";
 import { listAnalyticsSourceRecords } from "@/server/analytics/explorer-service";
 import { requireAnalyticsExploreAccess } from "@/server/analytics/analytics-gate";
-import { analyticsContentSourceRecordDocSchema } from "@/server/analytics/types";
+import { analyticsChannelSourceRecordDocSchema, analyticsContentSourceRecordDocSchema } from "@/server/analytics/types";
 import { requireAssignmentInScope, requireAssignmentsFeatureAccess } from "@/server/assignments/assignments-gate";
 import { assignmentsCollection } from "@/server/assignments/firestore";
 import { assignmentBriefSchema, assignmentDocSchema } from "@/server/assignments/types";
@@ -39,8 +40,11 @@ import { partnersCollection } from "@/server/partners/firestore";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
 import { partnerDocSchema, type PartnerDoc } from "@/server/partners/types";
 
+import { neutralCommercialEvidence } from "./commercial-neutral";
+import { setCommercialPolicyProviderForTests, type GoverningCommercialPolicy } from "./commercial-policy";
 import { PERFORMANCE_METRIC_IDS } from "./evidence-builder";
 import * as evidenceCollector from "./evidence-collector";
+import { getFinalizedReviewHandoff, getReviewVersionCurrency } from "./finalized-review-handoff-service";
 import { toPartnerReviewsHttpResponse } from "./http";
 import { PARTNER_REVIEWS_COLLECTIONS, partnerReviewEventsCollection, partnerReviewsCollection, partnerReviewVersionsCollection, type PartnerReviewListCursor } from "./firestore";
 import { createPartnerReviewRevision, finalizePartnerReview, submitPartnerReviewForReview } from "./partner-review-lifecycle-service";
@@ -56,6 +60,17 @@ import {
 import { reviewRefFor } from "./period";
 import { resolveActorSourceAccess } from "./source-access";
 import { PARTNER_REVIEW_EVENT_KINDS, type EvidenceSnapshot } from "./types";
+
+// The finalized-review handoff route is exercised at handler level: only the
+// session lookup is replaced (so the test can name the acting user); the real
+// route, service, authz chain and Firestore are all used. Same idiom as
+// campaigns/assignment-integrity.emulator.test.ts.
+let httpActor: ActorContext | null = null;
+vi.mock("@/server/administration/http", async (importOriginal) => {
+  const original = await importOriginal<typeof import("@/server/administration/http")>();
+  return { ...original, resolveRequestActor: async () => httpActor };
+});
+import { GET as getHandoffRoute } from "@/app/api/partner-reviews/[reviewRef]/handoff/route";
 
 // Multi-step review flows plus transaction-contention retries in the
 // emulator can exceed vitest's 5s default on a loaded machine - a longer
@@ -1684,5 +1699,537 @@ describe("finalize never knowingly freezes stale evidence (Step 13A.1)", () => {
     expect(revision.ok).toBe(true);
     expect(JSON.parse(await rawDoc(versionRef(reviewRef, 1))).status).toBe("FINALIZED");
     expect(JSON.parse(await rawDoc(versionRef(reviewRef, 1)))).toEqual(JSON.parse(before.versions[0]!));
+  });
+});
+
+// ==== Step 13A.1 (revised): commercial evidence + finalized-review handoff =========================
+//
+// There is no Agreement module, so every Agreement-governed value reaches the
+// snapshot through the ONE test-injectable CommercialPolicyProvider seam
+// (commercial-policy.ts). Each test names the policy for its OWN unique
+// Partner only (a Map keyed by partnerRef), so nothing here can change another
+// test's - or another file's - evidence. Default provider = none.
+
+const stubPolicies = new Map<string, () => GoverningCommercialPolicy | null>();
+beforeEach(() => {
+  setCommercialPolicyProviderForTests(async (partnerRef) => stubPolicies.get(partnerRef)?.() ?? null);
+});
+afterEach(() => {
+  setCommercialPolicyProviderForTests(null);
+  stubPolicies.clear();
+  httpActor = null;
+});
+
+async function seedChannelRecord(partnerRef: string, over: { accountRef: string; followers: number | null; day: string; regionIds?: string[] }) {
+  const uid = `pr-test-ch-${randomUUID()}`;
+  const record = analyticsChannelSourceRecordDocSchema.parse({
+    uid,
+    sourceRef: uid,
+    batchRef: `pr-test-ch-batch-${runId}`,
+    sheetName: "Channels",
+    sourceRowNumber: 2,
+    platform: "instagram",
+    rowIdentityKey: `pr-test-ch:${uid}`,
+    rawUsername: null,
+    rawProfileUrl: null,
+    rawPlatformAccountId: null,
+    rawFollowers: null,
+    rawAccountOrChannelName: null,
+    normalizedProfileUrl: null,
+    profileFollowers: over.followers,
+    reportingPeriod: { start: over.day, end: over.day },
+    matchState: "MATCHED",
+    matchEvidence: { tier: "identity_claim", value: null, reasonCode: null, candidateCount: 1 },
+    matchedPartnerRef: partnerRef,
+    matchedPartnerAccountRef: over.accountRef,
+    ownerUid: null,
+    regionIds: over.regionIds ?? [PRIVATE_REGION],
+    teamIds: [],
+    createdAt: "2019-04-02T00:00:00.000Z",
+  });
+  const ref = analyticsChannelSourceRecordsCollection().doc(uid);
+  await ref.set(record);
+  analyticsCleanup.push(ref);
+  return record;
+}
+
+// Two in-period Assignments (2019-03): a1 has an APPROVED thread with 2 links,
+// a2 an UNDER_REVIEW thread with 3 raw links (which must never count), a
+// matched Analytics record (likes 120) and two channel snapshots of one
+// account (1000 -> 1100).
+async function seedCommercialPartner(over: { policy?: Partial<GoverningCommercialPolicy> | null } = {}) {
+  const tag = randomUUID().slice(0, 8);
+  const partner = await seedPartner();
+  const a1 = await seedAssignment(partner.partnerRef, { dueAt: "2019-03-10" });
+  const t1 = await seedThread(a1, { status: "APPROVED", approvedAt: "2019-03-09T00:00:00.000Z", links: 2 });
+  const a2 = await seedAssignment(partner.partnerRef, { dueAt: "2019-03-12" });
+  const t2 = await seedThread(a2, { status: "UNDER_REVIEW", links: 3 });
+  const record = await seedAnalyticsRecord(partner.partnerRef, { contentRef: t1.contentRef, likes: 120 });
+  const accountRef = `pr-test-acct-${tag}`;
+  const c1 = await seedChannelRecord(partner.partnerRef, { accountRef, followers: 1000, day: "2019-03-02" });
+  const c2 = await seedChannelRecord(partner.partnerRef, { accountRef, followers: 1100, day: "2019-03-28" });
+
+  const state = {
+    policy: over.policy === null ? null : ({
+      agreementRef: `agr-${tag}`,
+      agreementVersion: 3,
+      monthlyDeliverableRequirement: { requiredCount: 2, qualifyingUnit: "approved_content_thread", requirementSourceRef: `req-${tag}` },
+      lfcSfcRule: { ruleRef: `rule-${tag}`, byFormat: { reel: "SFC" }, affectsPayment: true },
+      targets: [
+        { targetRef: "t-likes", metricId: "likes", targetValue: 100, unit: "count", comparison: "at_least" },
+        { targetRef: "t-reach", metricId: "reach", targetValue: 1000, unit: "count", comparison: "at_least" },
+        { targetRef: "t-growth", metricId: "followerGrowth", targetValue: 50, unit: "followers", comparison: "at_least" },
+      ],
+      ...over.policy,
+    } as GoverningCommercialPolicy),
+  };
+  stubPolicies.set(partner.partnerRef, () => state.policy);
+  return { tag, partner, a1, t1, a2, t2, record, c1, c2, state };
+}
+
+type CommercialFx = Awaited<ReturnType<typeof seedCommercialPartner>>;
+const identifiersOf = (fx: CommercialFx) => [fx.a1.assignmentRef, fx.a2.assignmentRef, fx.a1.campaignRef, fx.t1.contentRef, fx.t2.contentRef, fx.record.sourceRef, fx.c1.sourceRef, fx.c2.sourceRef, fx.t1.currentLinks[0]!.normalizedUrl];
+
+async function generateSubmitFinalize(fx: CommercialFx) {
+  const manager = await actorFor("partnership_manager");
+  const head = await actorFor("partnership_head");
+  const generated = await generateFor(manager, fx.partner.partnerRef);
+  const reviewRef = generated.review.head.reviewRef;
+  const submitted = await submitPartnerReviewForReview(manager, reviewRef, { expectedDocVersion: generated.review.selectedVersion!.docVersion }, "req-submit");
+  if (!submitted.ok) throw new Error(submitted.message);
+  const finalized = await finalizePartnerReview(head, reviewRef, { expectedDocVersion: submitted.data.selectedVersion!.docVersion }, "req-finalize");
+  if (!finalized.ok) throw new Error(finalized.message);
+  return { manager, head, reviewRef, finalized: finalized.data, generated };
+}
+
+async function handoffOf(actor: ActorContext | null, reviewRef: string, version?: number | string) {
+  const result = await getFinalizedReviewHandoff(actor, reviewRef, version);
+  if (!result.ok) throw new Error(`handoff failed: ${result.code} ${result.message}`);
+  return result.data;
+}
+
+describe("commercial evidence in the stored snapshot (Step 13A.1 revised)", () => {
+  it("with NO governing policy the commercial section is the all-unavailable shape: nothing invented, affectsPayment false, requiredCount null even though the Assignment brief has a required count", async () => {
+    const head = await actorFor("partnership_head");
+    const fx = await seedCommercialPartner({ policy: null });
+    const generated = await generateFor(head, fx.partner.partnerRef);
+
+    const stored = JSON.parse(await rawDoc(versionRef(generated.review.head.reviewRef, 1)));
+    expect(stored.snapshot.commercial).toEqual(neutralCommercialEvidence());
+    expect(fx.a1.brief.requiredCount).toBe(2);
+    expect(stored.snapshot.commercial.monthlyDeliverable).toMatchObject({ requiredCount: null, evaluation: "unavailable", unavailableReason: "no_agreement_requirement", affectsPayment: false });
+    expect(stored.snapshot.commercial.lfcSfc).toMatchObject({ status: "unavailable", lfcCount: null, sfcCount: null, affectsPayment: false });
+    expect(stored.snapshot.commercial.targets).toEqual([]);
+    // The channel snapshots are not even read without a followerGrowth target: not among the sources.
+    expect(stored.sourceRefs).not.toContainEqual({ type: "analyticsSourceRecord", ref: fx.c1.sourceRef });
+    expect(generated.review.selectedVersion!.snapshot.commercial).toMatchObject({ governingAgreement: null, monthlyDeliverable: { requiredCount: null, evaluation: "unavailable" } });
+  });
+
+  it("with a stub policy generate stores the correct evaluation: deliverable, LFC/SFC, warning-only targets (incl. followerGrowth from channel snapshots) and the channel records as sources", async () => {
+    const admin = await actorFor("super_admin");
+    const fx = await seedCommercialPartner();
+    const generated = await generateFor(admin, fx.partner.partnerRef);
+    const reviewRef = generated.review.head.reviewRef;
+    const stored = JSON.parse(await rawDoc(versionRef(reviewRef, 1)));
+    const commercial = stored.snapshot.commercial;
+
+    expect(commercial.governingAgreement).toEqual({ agreementRef: `agr-${fx.tag}`, agreementVersion: 3 });
+    // Only a1's thread is APPROVED (a2's 3 raw links never count): 1 of 2 required.
+    expect(commercial.monthlyDeliverable).toEqual({
+      requiredCount: 2,
+      requirementSource: { agreementRef: `agr-${fx.tag}`, agreementVersion: 3, requirementSourceRef: `req-${fx.tag}` },
+      qualifyingUnit: "approved_content_thread",
+      actualQualifyingCount: 1,
+      actualCountSources: { sourceType: "content_thread", units: [{ assignmentRef: fx.a1.assignmentRef, contentRef: fx.t1.contentRef, unitCount: 1 }] },
+      variance: -1,
+      evaluation: "below_requirement",
+      unavailableReason: null,
+      affectsPayment: true,
+    });
+    expect(commercial.lfcSfc).toMatchObject({
+      status: "evaluated",
+      ruleRef: `rule-${fx.tag}`,
+      lfcCount: 0,
+      sfcCount: 1,
+      unclassifiedCount: 0,
+      affectsPayment: true,
+      units: [{ assignmentRef: fx.a1.assignmentRef, contentRef: fx.t1.contentRef, unitCount: 1, classification: "SFC", basis: { ruleRef: `rule-${fx.tag}`, matchedFormat: "reel" } }],
+    });
+    const byRef = Object.fromEntries((commercial.targets as Array<{ targetRef: string }>).map((t) => [t.targetRef, t]));
+    expect(byRef["t-likes"]).toMatchObject({ evaluation: "met", actualValue: 120, affectsPayment: false, provenance: { refs: [fx.record.sourceRef], recordsWithMetric: 1, recordsMissingMetric: 0 } });
+    expect(byRef["t-reach"]).toMatchObject({ evaluation: "unavailable", unavailableReason: "unsupported_metric", actualValue: null, affectsPayment: false });
+    expect(byRef["t-growth"]).toMatchObject({ evaluation: "met", actualValue: 100, affectsPayment: false, provenance: { refs: [fx.c1.sourceRef, fx.c2.sourceRef].sort(), recordsWithMetric: 2, recordsMissingMetric: 0 } });
+
+    // The channel snapshots that fed followerGrowth are recorded as sources.
+    expect(stored.sourceRefs).toEqual(expect.arrayContaining([{ type: "analyticsSourceRecord", ref: fx.c1.sourceRef }, { type: "analyticsSourceRecord", ref: fx.c2.sourceRef }]));
+    // The global actor sees the refs, and freshness is current.
+    const dto = generated.review.selectedVersion!.snapshot.commercial;
+    expect(dto.monthlyDeliverable.actualCountSources!.units[0]).toMatchObject({ assignmentRef: fx.a1.assignmentRef, contentRef: fx.t1.contentRef, redactedContext: [] });
+    expect(generated.review.freshness).toMatchObject({ state: expect.stringMatching(/current|evidence_incomplete/) });
+    expect(generated.review.selectedVersion!.withheldSourceCounts).toEqual({ assignment: 0, campaign: 0, content: 0, analyticsSourceRecord: 0 });
+  });
+
+  it("a single channel snapshot never produces follower growth (unavailable), and a metric absent from every record is unavailable, not zero", async () => {
+    const head = await actorFor("partnership_head");
+    const fx = await seedCommercialPartner({
+      policy: {
+        targets: [
+          { targetRef: "t-growth", metricId: "followerGrowth", targetValue: 1, unit: "followers", comparison: "at_least" },
+          { targetRef: "t-views", metricId: "views", targetValue: 1, unit: "count", comparison: "at_least" },
+        ],
+      },
+    });
+    await analyticsChannelSourceRecordsCollection().doc(fx.c2.uid).delete(); // leaves ONE snapshot
+    const generated = await generateFor(head, fx.partner.partnerRef);
+    const stored = JSON.parse(await rawDoc(versionRef(generated.review.head.reviewRef, 1)));
+    const byRef = Object.fromEntries((stored.snapshot.commercial.targets as Array<{ targetRef: string }>).map((t) => [t.targetRef, t]));
+    expect(byRef["t-growth"]).toMatchObject({ evaluation: "unavailable", unavailableReason: "insufficient_follower_snapshots", actualValue: null });
+    expect(byRef["t-views"]).toMatchObject({ evaluation: "unavailable", unavailableReason: "no_verified_values", actualValue: null });
+    expect(stored.sourceRefs).not.toContainEqual({ type: "analyticsSourceRecord", ref: fx.c1.sourceRef });
+  });
+
+  it("a malformed / client-supplied policy is impossible: generate and refresh reject a policy in the input, writing nothing", async () => {
+    const head = await actorFor("partnership_head");
+    const fx = await seedCommercialPartner();
+    const before = (await getAdminFirestore().collection(PARTNER_REVIEWS_COLLECTIONS.partnerReviews).get()).size;
+    const rejected = await generatePartnerReviewDraft(head, { partnerRef: fx.partner.partnerRef, periodKey: "2019-03", commercialPolicy: { agreementRef: "x", agreementVersion: 1 } }, "req-policy");
+    expect(rejected).toMatchObject({ ok: false, code: "invalid_input" });
+    expect((await getAdminFirestore().collection(PARTNER_REVIEWS_COLLECTIONS.partnerReviews).get()).size).toBe(before);
+
+    const generated = await generateFor(head, fx.partner.partnerRef);
+    const refresh = await refreshPartnerReviewEvidence(head, generated.review.head.reviewRef, { expectedDocVersion: 1, commercialPolicy: { agreementRef: "x", agreementVersion: 1 } }, "req-policy-2");
+    expect(refresh).toMatchObject({ ok: false, code: "invalid_input" });
+  });
+
+  it("an old stored version WITHOUT a commercial key stays readable, is presented as all-unavailable and stays current", async () => {
+    const head = await actorFor("partnership_head");
+    const partner = await seedPartner();
+    const assignment = await seedAssignment(partner.partnerRef);
+    await seedThread(assignment, { status: "APPROVED", approvedAt: "2019-03-09T00:00:00.000Z" });
+    await seedAnalyticsRecord(partner.partnerRef, { likes: 5 });
+    const { reviewRef, finalized } = await generateAndFinalize(partner.partnerRef);
+    expect(finalized.selectedVersion!.status).toBe("FINALIZED");
+
+    // Simulate a version stored before commercial evidence existed.
+    await versionRef(reviewRef, 1).update({ "snapshot.commercial": FieldValue.delete() });
+    expect(JSON.parse(await rawDoc(versionRef(reviewRef, 1))).snapshot).not.toHaveProperty("commercial");
+
+    const read = await getPartnerReviewVersion(head, reviewRef, "1");
+    if (!read.ok) throw new Error(read.message);
+    expect(read.data.version.snapshot.commercial).toMatchObject({ governingAgreement: null, monthlyDeliverable: { evaluation: "unavailable", requiredCount: null, affectsPayment: false }, lfcSfc: { status: "unavailable" }, targets: [] });
+    expect(read.data.freshness.state).toMatch(/current|evidence_incomplete/);
+
+    const handoff = await handoffOf(head, reviewRef);
+    expect(handoff).toMatchObject({ governingAgreement: null, paymentAffectingEvidence: { monthlyDeliverable: null, lfcSfc: null }, warningOnlyTargets: [], versionCurrency: { state: "current_finalized" } });
+  });
+});
+
+describe("finalized-review handoff (Step 13A.1 revised)", () => {
+  it("only FINALIZED or SUPERSEDED versions are handoff-able: a Draft / In Review version and a review with no finalized version are invalid_input ('not finalized')", async () => {
+    const manager = await actorFor("partnership_manager");
+    const fx = await seedCommercialPartner();
+    const generated = await generateFor(manager, fx.partner.partnerRef);
+    const reviewRef = generated.review.head.reviewRef;
+
+    expect(await getFinalizedReviewHandoff(manager, reviewRef)).toMatchObject({ ok: false, code: "invalid_input", message: expect.stringMatching(/not finalized/) });
+    expect(await getFinalizedReviewHandoff(manager, reviewRef, 1)).toMatchObject({ ok: false, code: "invalid_input", message: expect.stringMatching(/not finalized/) });
+    expect(await getReviewVersionCurrency(manager, reviewRef, 1)).toMatchObject({ ok: false, code: "invalid_input" });
+
+    const submitted = await submitPartnerReviewForReview(manager, reviewRef, { expectedDocVersion: 1 }, "req-s");
+    if (!submitted.ok) throw new Error(submitted.message);
+    expect(await getFinalizedReviewHandoff(manager, reviewRef, "1")).toMatchObject({ ok: false, code: "invalid_input" });
+  });
+
+  it("finalize -> the handoff returns the finalized version with payment-affecting and warning-only sections and NO source identifier; Viewer and Analyst can read it", async () => {
+    const viewer = await actorFor("viewer");
+    const analyst = await actorFor("analyst");
+    const fx = await seedCommercialPartner();
+    const { head, reviewRef, finalized } = await generateSubmitFinalize(fx);
+    const stored = JSON.parse(await rawDoc(versionRef(reviewRef, 1)));
+
+    const dto = await handoffOf(head, reviewRef);
+    expect(dto).toMatchObject({
+      contractVersion: 1,
+      reviewRef,
+      reviewVersion: 1,
+      partner: { partnerRef: fx.partner.partnerRef, displayName: fx.partner.displayName },
+      period: { periodKey: "2019-03", periodStart: "2019-03-01", periodEnd: "2019-03-31" },
+      finalizedAt: stored.finalizedAt,
+      evidenceCutoff: stored.evidenceCutoff,
+      sourceFingerprint: stored.sourceFingerprint,
+      governingAgreement: { agreementRef: `agr-${fx.tag}`, agreementVersion: 3 },
+      versionCurrency: { state: "current_finalized", currentFinalizedVersion: 1, referencedVersion: 1 },
+    });
+    expect(dto.paymentAffectingEvidence.monthlyDeliverable).toEqual({
+      requiredCount: 2,
+      requirementSource: { agreementRef: `agr-${fx.tag}`, agreementVersion: 3, requirementSourceRef: `req-${fx.tag}` },
+      qualifyingUnit: "approved_content_thread",
+      actualQualifyingCount: 1,
+      variance: -1,
+      evaluation: "below_requirement",
+    });
+    expect(dto.paymentAffectingEvidence.lfcSfc).toMatchObject({ ruleRef: `rule-${fx.tag}`, lfcCount: 0, sfcCount: 1, unclassifiedCount: 0 });
+    expect(dto.warningOnlyTargets.map((t) => [t.targetRef, t.evaluation, t.actualValue, t.affectsPayment])).toEqual([
+      ["t-growth", "met", 100, false],
+      ["t-likes", "met", 120, false],
+      ["t-reach", "unavailable", null, false],
+    ]);
+    expectNone(JSON.stringify(dto), [...identifiersOf(fx), "campaignRef", "assignmentRef", "contentRef", "sourceRefs"]);
+    expect(finalized.selectedVersion!.sourceFingerprint).toBe(dto.sourceFingerprint);
+
+    // Read-only roles read it; every actor gets the identical DTO.
+    expect(await handoffOf(viewer, reviewRef)).toEqual(dto);
+    expect(await handoffOf(analyst, reviewRef, 1)).toEqual(dto);
+    expect(await getReviewVersionCurrency(analyst, reviewRef, "1")).toEqual({ ok: true, data: { state: "current_finalized", currentFinalizedVersion: 1, referencedVersion: 1 } });
+  });
+
+  it("route authz: unauthenticated 401, cross-scope 403, malformed/unknown reviewRef 404, bad version 400, missing version 404, and a read-only role reads it (200)", async () => {
+    const viewer = await actorFor("viewer");
+    const manager = await actorFor("partnership_manager");
+    const fx = await seedCommercialPartner();
+    const { reviewRef } = await generateSubmitFinalize(fx);
+    const call = async (actor: ActorContext | null, ref: string, query = "") => {
+      httpActor = actor;
+      const response = await getHandoffRoute(new Request(`http://localhost/api/partner-reviews/${ref}/handoff${query}`), { params: Promise.resolve({ reviewRef: ref }) });
+      return { status: response.status, body: await response.json() };
+    };
+
+    expect(await call(null, reviewRef)).toEqual({ status: 401, body: { error: "Forbidden." } });
+    const ok = await call(viewer, reviewRef, "?version=1");
+    expect(ok.status).toBe(200);
+    expect(ok.body).toMatchObject({ contractVersion: 1, reviewRef, reviewVersion: 1 });
+    expect((await call(manager, reviewRef)).status).toBe(200);
+    expect((await call(viewer, "not-a-ref")).status).toBe(404);
+    expect((await call(viewer, `pr_${"0".repeat(20)}`)).status).toBe(404);
+    expect((await call(viewer, reviewRef, "?version=abc")).status).toBe(400);
+    expect((await call(viewer, reviewRef, "?version=0")).status).toBe(400);
+    expect((await call(viewer, reviewRef, "?version=99")).status).toBe(404);
+
+    // Move the Partner out of every seeded actor's scope: cross-scope is denied like every other read.
+    await partnersCollection().doc(fx.partner.uid).update({ regionIds: [PRIVATE_REGION] });
+    expect(await call(manager, reviewRef)).toEqual({ status: 403, body: { error: "Forbidden." } });
+    expect(await call(viewer, reviewRef)).toEqual({ status: 403, body: { error: "Forbidden." } });
+    expect(await getFinalizedReviewHandoff(manager, reviewRef)).toMatchObject({ ok: false, code: "unauthorized", reason: "scope_denied" });
+    expect(await getReviewVersionCurrency(manager, reviewRef, 1)).toMatchObject({ ok: false, code: "unauthorized", reason: "scope_denied" });
+    expect(await getFinalizedReviewHandoff(null, reviewRef)).toMatchObject({ ok: false, code: "unauthorized", reason: "not_authenticated" });
+  });
+
+  it("the handoff and currency reads are strictly read-only: no version/head/event write, no upstream write, no Finance-shaped collection", async () => {
+    const viewer = await actorFor("viewer");
+    const fx = await seedCommercialPartner();
+    const { reviewRef } = await generateSubmitFinalize(fx);
+    const upstream = [assignmentsCollection().doc(fx.a1.uid), contentCollection().doc(fx.t1.uid), analyticsContentSourceRecordsCollection().doc(fx.record.uid), analyticsChannelSourceRecordsCollection().doc(fx.c1.uid), partnersCollection().doc(fx.partner.uid)];
+    const before = { review: await reviewState(reviewRef), upstream: await Promise.all(upstream.map(rawDoc)) };
+    const rootBefore = (await getAdminFirestore().listCollections()).map((c) => c.id).sort();
+
+    await handoffOf(viewer, reviewRef);
+    await handoffOf(viewer, reviewRef, 1);
+    await getReviewVersionCurrency(viewer, reviewRef, 1);
+
+    expect(await reviewState(reviewRef)).toEqual(before.review);
+    expect(await Promise.all(upstream.map(rawDoc))).toEqual(before.upstream);
+    const rootAfter = (await getAdminFirestore().listCollections()).map((c) => c.id).sort();
+    expect(rootAfter).toEqual(rootBefore);
+    expect(rootAfter.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name))).toEqual([]);
+  });
+});
+
+describe("commercial evidence lifecycle: upstream change, revision, supersession (Step 13A.1 revised)", () => {
+  it("a post-finalize upstream change raises revision_available, and the finalized doc AND its handoff stay byte-identical", async () => {
+    const manager = await actorFor("partnership_manager");
+    const fx = await seedCommercialPartner();
+    const { head, reviewRef } = await generateSubmitFinalize(fx);
+    const docBefore = await rawDoc(versionRef(reviewRef, 1));
+    const handoffBefore = JSON.stringify(await handoffOf(head, reviewRef));
+
+    // a2's Content is approved AFTER finalize: the count would now be 2.
+    await contentCollection().doc(fx.t2.uid).update({ status: "APPROVED", approvedAt: "2019-03-15T00:00:00.000Z", version: 4, updatedAt: new Date().toISOString() });
+
+    const freshness = await inspectPartnerReviewFreshness(manager, reviewRef);
+    if (!freshness.ok) throw new Error(freshness.message);
+    expect(freshness.data.freshness).toMatchObject({ state: "revision_available" });
+    expect(freshness.data.freshness.currentFingerprint).not.toBe(freshness.data.freshness.snapshotFingerprint);
+
+    expect(await rawDoc(versionRef(reviewRef, 1))).toBe(docBefore);
+    expect(JSON.stringify(await handoffOf(head, reviewRef))).toBe(handoffBefore);
+    expect((await handoffOf(head, reviewRef)).paymentAffectingEvidence.monthlyDeliverable).toMatchObject({ actualQualifyingCount: 1, evaluation: "below_requirement" });
+  });
+
+  it("revision -> finalize v2 supersedes v1: v1 stays addressable (version read + handoff 'referenced_review_version_is_stale', current = 2) with a byte-identical snapshot/fingerprint; v2's handoff is current_finalized", async () => {
+    const manager = await actorFor("partnership_manager");
+    const head = await actorFor("partnership_head");
+    const fx = await seedCommercialPartner();
+    const first = await generateSubmitFinalize(fx);
+    const reviewRef = first.reviewRef;
+    const v1Before = JSON.parse(await rawDoc(versionRef(reviewRef, 1)));
+    const v1Handoff = await handoffOf(head, reviewRef, 1);
+
+    await contentCollection().doc(fx.t2.uid).update({ status: "APPROVED", approvedAt: "2019-03-15T00:00:00.000Z", version: 4, updatedAt: new Date().toISOString() });
+
+    const revision = await createPartnerReviewRevision(manager, reviewRef, { expectedDocVersion: first.finalized.head.docVersion }, "req-rev");
+    if (!revision.ok) throw new Error(revision.message);
+    expect(revision.data.selectedVersion!.snapshot.commercial.monthlyDeliverable).toMatchObject({ actualQualifyingCount: 2, variance: 0, evaluation: "met" });
+    const submitted = await submitPartnerReviewForReview(manager, reviewRef, { expectedDocVersion: revision.data.selectedVersion!.docVersion }, "req-s2");
+    if (!submitted.ok) throw new Error(submitted.message);
+    const finalized2 = await finalizePartnerReview(head, reviewRef, { expectedDocVersion: submitted.data.selectedVersion!.docVersion }, "req-f2");
+    if (!finalized2.ok) throw new Error(finalized2.message);
+
+    // v1 is SUPERSEDED but its evidence and fingerprint are byte-identical.
+    const v1After = JSON.parse(await rawDoc(versionRef(reviewRef, 1)));
+    expect(v1After.status).toBe("SUPERSEDED");
+    expect(v1After.snapshot).toEqual(v1Before.snapshot);
+    expect(JSON.stringify(v1After.snapshot)).toBe(JSON.stringify(v1Before.snapshot));
+    expect(v1After.sourceFingerprint).toBe(v1Before.sourceFingerprint);
+    expect(v1After.sourceRefs).toEqual(v1Before.sourceRefs);
+
+    // Still fully addressable through the version read...
+    const v1Read = await getPartnerReviewVersion(head, reviewRef, "1");
+    if (!v1Read.ok) throw new Error(v1Read.message);
+    expect(v1Read.data.version).toMatchObject({ version: 1, status: "SUPERSEDED", sourceFingerprint: v1Before.sourceFingerprint });
+    expect(v1Read.data.version.snapshot.commercial.monthlyDeliverable).toMatchObject({ actualQualifyingCount: 1, evaluation: "below_requirement" });
+
+    // ...and through the handoff, which now reports it is stale.
+    const staleHandoff = await handoffOf(head, reviewRef, 1);
+    expect(staleHandoff.versionCurrency).toEqual({ state: "referenced_review_version_is_stale", currentFinalizedVersion: 2, referencedVersion: 1 });
+    expect(staleHandoff.sourceFingerprint).toBe(v1Before.sourceFingerprint);
+    expect({ ...staleHandoff, versionCurrency: null }).toEqual({ ...v1Handoff, versionCurrency: null });
+    expect(await getReviewVersionCurrency(head, reviewRef, 1)).toEqual({ ok: true, data: { state: "referenced_review_version_is_stale", currentFinalizedVersion: 2, referencedVersion: 1 } });
+
+    const currentHandoff = await handoffOf(head, reviewRef);
+    expect(currentHandoff).toMatchObject({ reviewVersion: 2, versionCurrency: { state: "current_finalized", currentFinalizedVersion: 2, referencedVersion: 2 } });
+    expect(currentHandoff.paymentAffectingEvidence.monthlyDeliverable).toMatchObject({ actualQualifyingCount: 2, variance: 0, evaluation: "met" });
+    expect(await handoffOf(head, reviewRef, 2)).toEqual(currentHandoff);
+    expect(await getReviewVersionCurrency(head, reviewRef, 2)).toEqual({ ok: true, data: { state: "current_finalized", currentFinalizedVersion: 2, referencedVersion: 2 } });
+  });
+
+  it("an Agreement version bump (upstream unchanged) makes a Draft refresh_available and a finalized version revision_available; the finalized doc is untouched and a revision then carries the new version", async () => {
+    const manager = await actorFor("partnership_manager");
+    const fx = await seedCommercialPartner();
+
+    // Draft: refresh_available after the bump.
+    const generated = await generateFor(manager, fx.partner.partnerRef);
+    const draftRef = generated.review.head.reviewRef;
+    fx.state.policy = { ...fx.state.policy!, agreementVersion: 4 };
+    const draftFreshness = await inspectPartnerReviewFreshness(manager, draftRef);
+    if (!draftFreshness.ok) throw new Error(draftFreshness.message);
+    expect(draftFreshness.data.freshness.state).toBe("refresh_available");
+    // A refresh incorporates it (same version number, new commercial identity).
+    const refreshed = await refreshPartnerReviewEvidence(manager, draftRef, { expectedDocVersion: 1 }, "req-refresh");
+    if (!refreshed.ok) throw new Error(refreshed.message);
+    expect(refreshed.data.selectedVersion!.snapshot.commercial.governingAgreement).toEqual({ agreementRef: `agr-${fx.tag}`, agreementVersion: 4 });
+    expect(refreshed.data.freshness?.state).toMatch(/current|evidence_incomplete/);
+
+    // Finalized: revision_available after the NEXT bump; nothing upstream changed.
+    const head = await actorFor("partnership_head");
+    const submitted = await submitPartnerReviewForReview(manager, draftRef, { expectedDocVersion: refreshed.data.selectedVersion!.docVersion }, "req-s");
+    if (!submitted.ok) throw new Error(submitted.message);
+    const finalized = await finalizePartnerReview(head, draftRef, { expectedDocVersion: submitted.data.selectedVersion!.docVersion }, "req-f");
+    if (!finalized.ok) throw new Error(finalized.message);
+    const docBefore = await rawDoc(versionRef(draftRef, 1));
+    const handoffBefore = JSON.stringify(await handoffOf(head, draftRef));
+
+    fx.state.policy = { ...fx.state.policy!, agreementVersion: 5, monthlyDeliverableRequirement: { ...fx.state.policy!.monthlyDeliverableRequirement!, requiredCount: 1 } };
+    const finalizedFreshness = await inspectPartnerReviewFreshness(manager, draftRef);
+    if (!finalizedFreshness.ok) throw new Error(finalizedFreshness.message);
+    expect(finalizedFreshness.data.freshness.state).toBe("revision_available");
+    expect(await rawDoc(versionRef(draftRef, 1))).toBe(docBefore);
+    expect(JSON.stringify(await handoffOf(head, draftRef))).toBe(handoffBefore);
+
+    const revision = await createPartnerReviewRevision(manager, draftRef, { expectedDocVersion: finalized.data.head.docVersion }, "req-rev");
+    if (!revision.ok) throw new Error(revision.message);
+    expect(revision.data.selectedVersion!.snapshot.commercial).toMatchObject({ governingAgreement: { agreementVersion: 5 }, monthlyDeliverable: { requiredCount: 1, actualQualifyingCount: 1, evaluation: "met" } });
+    expect(revision.data.selectedVersion!.sourceFingerprint).not.toBe(finalized.data.selectedVersion!.sourceFingerprint);
+  });
+
+  it("finalize still refuses stale evidence when only the policy changed after In Review (REFRESH_REQUIRED, zero writes); an explicit refresh then finalizes; incomplete-but-current still finalizes", async () => {
+    const manager = await actorFor("partnership_manager");
+    const head = await actorFor("partnership_head");
+    const fx = await seedCommercialPartner();
+    // Incomplete-but-current: an Analytics row with no reporting period rides along.
+    await seedAnalyticsRecord(fx.partner.partnerRef, { contentRef: null, period: null });
+    const { reviewRef, inReviewDocVersion } = await generateAndSubmit(fx.partner.partnerRef);
+    const before = await reviewState(reviewRef);
+
+    fx.state.policy = { ...fx.state.policy!, agreementVersion: 4 };
+    const blocked = await finalizePartnerReview(head, reviewRef, { expectedDocVersion: inReviewDocVersion }, "req-blocked");
+    expect(blocked).toMatchObject({ ok: false, code: "not_ready", blockers: [expect.objectContaining({ code: "REFRESH_REQUIRED" })] });
+    expect(await reviewState(reviewRef)).toEqual(before);
+
+    const refreshed = await refreshPartnerReviewEvidence(manager, reviewRef, { expectedDocVersion: inReviewDocVersion }, "req-refresh");
+    if (!refreshed.ok) throw new Error(refreshed.message);
+    const finalized = await finalizePartnerReview(head, reviewRef, { expectedDocVersion: refreshed.data.selectedVersion!.docVersion }, "req-finalize");
+    expect(finalized.ok).toBe(true);
+    if (!finalized.ok) return;
+    expect(finalized.data.freshness).toMatchObject({ state: "evidence_incomplete" });
+    expect(finalized.data.selectedVersion!.snapshot.commercial.governingAgreement).toEqual({ agreementRef: `agr-${fx.tag}`, agreementVersion: 4 });
+  });
+});
+
+describe("commercial evidence is actor-independent and redacted per actor (Step 13A.1 revised)", () => {
+  it("a Manager without the private scope sees the SAME commercial results and fingerprint as the global actor, and none of the out-of-scope Assignment / Content / Analytics identifiers", async () => {
+    const manager = await actorFor("partnership_manager");
+    const admin = await actorFor("super_admin");
+    const fx = await seedScopeFixture();
+    // Both threads APPROVED (a2/t2 are in the private region); a1 and a3 exist as before.
+    await contentCollection().doc(fx.t1.uid).update({ status: "APPROVED", approvedAt: "2019-03-09T00:00:00.000Z", version: 4, updatedAt: new Date().toISOString() });
+    await contentCollection().doc(fx.t2.uid).update({ status: "APPROVED", approvedAt: "2019-03-14T00:00:00.000Z", version: 4, updatedAt: new Date().toISOString() });
+    // One channel snapshot in Kerala (visible to the Manager), one in the private region.
+    const accountRef = `pr-test-acct-${fx.tag}`;
+    const chIn = await seedChannelRecord(fx.partner.partnerRef, { accountRef, followers: 1000, day: "2019-03-02", regionIds: ["Kerala"] });
+    const chOut = await seedChannelRecord(fx.partner.partnerRef, { accountRef, followers: 1300, day: "2019-03-28", regionIds: [PRIVATE_REGION] });
+    stubPolicies.set(fx.partner.partnerRef, () => ({
+      agreementRef: `agr-${fx.tag}`,
+      agreementVersion: 3,
+      monthlyDeliverableRequirement: { requiredCount: 2, qualifyingUnit: "approved_content_thread" },
+      lfcSfcRule: { ruleRef: `rule-${fx.tag}`, byFormat: { reel: "LFC" }, affectsPayment: true },
+      targets: [
+        { targetRef: "t-likes", metricId: "likes", targetValue: 300, unit: "count", comparison: "at_least" },
+        { targetRef: "t-growth", metricId: "followerGrowth", targetValue: 300, unit: "followers", comparison: "at_least" },
+      ],
+    }));
+
+    const generated = await generateFor(manager, fx.partner.partnerRef);
+    const reviewRef = generated.review.head.reviewRef;
+    const managerDetail = await getPartnerReview(manager, reviewRef);
+    const adminDetail = await getPartnerReview(admin, reviewRef);
+    if (!managerDetail.ok || !adminDetail.ok) throw new Error("read failed");
+    const m = managerDetail.data.selectedVersion!;
+    const a = adminDetail.data.selectedVersion!;
+
+    expect(m.sourceFingerprint).toBe(a.sourceFingerprint);
+    // Canonical results: identical for both actors.
+    const results = (commercial: typeof m.snapshot.commercial) => ({
+      agreement: commercial.governingAgreement,
+      deliverable: { ...commercial.monthlyDeliverable, actualCountSources: commercial.monthlyDeliverable.actualCountSources?.units.map((u) => u.unitCount) },
+      lfcSfc: { ...commercial.lfcSfc, units: commercial.lfcSfc.units.map((u) => [u.unitCount, u.classification, u.basis]) },
+      targets: commercial.targets.map((t) => ({ ...t, provenance: { ...t.provenance, refs: t.provenance.refs.length, redactedContext: undefined } })),
+    });
+    expect(results(m.snapshot.commercial)).toEqual(results(a.snapshot.commercial));
+    expect(a.snapshot.commercial.monthlyDeliverable).toMatchObject({ actualQualifyingCount: 2, variance: 0, evaluation: "met" });
+    expect(a.snapshot.commercial.lfcSfc).toMatchObject({ status: "evaluated", lfcCount: 2, sfcCount: 0 });
+    expect(a.snapshot.commercial.targets.map((t) => [t.targetRef, t.evaluation, t.actualValue])).toEqual([
+      ["t-growth", "met", 300],
+      ["t-likes", "met", 333],
+    ]);
+
+    // The Manager's JSON never carries an out-of-scope identifier, in ANY part of the response (commercial included).
+    const managerJson = JSON.stringify(managerDetail.data);
+    expectNone(managerJson, [...fx.hidden, chOut.sourceRef]);
+    expectNone(JSON.stringify(generated.review), [...fx.hidden, chOut.sourceRef]);
+    expectAll(managerJson, [fx.a1.assignmentRef, fx.t1.contentRef, chIn.sourceRef]);
+    // In-scope units carry refs; the out-of-scope unit is null + a neutral marker.
+    const units = m.snapshot.commercial.monthlyDeliverable.actualCountSources!.units;
+    expect(units.map((u) => u.assignmentRef).sort((x, y) => String(x).localeCompare(String(y)))).toEqual([fx.a1.assignmentRef, null].sort((x, y) => String(x).localeCompare(String(y))));
+    expect(units.find((u) => u.assignmentRef === null)!.redactedContext).toEqual(expect.arrayContaining([{ sourceType: "assignment", redacted: true }]));
+    const growth = m.snapshot.commercial.targets.find((t) => t.targetRef === "t-growth")!;
+    expect(growth.provenance.refs.filter((ref) => ref !== null)).toEqual([chIn.sourceRef]);
+    expect(growth.provenance.refs).toHaveLength(2);
+    // The channel snapshot is counted as withheld, not named.
+    expect(m.withheldSourceCounts.analyticsSourceRecord).toBe(2); // r2 (content record) and chOut
+    expect(a.withheldSourceCounts.analyticsSourceRecord).toBe(0);
+
+    // The STORED canonical section is complete (redaction is DTO-only).
+    const stored = JSON.parse(await rawDoc(versionRef(reviewRef, 1)));
+    expectAll(JSON.stringify(stored.snapshot.commercial), [fx.a2.assignmentRef, fx.t2.contentRef, chOut.sourceRef]);
   });
 });

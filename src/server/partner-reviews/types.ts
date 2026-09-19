@@ -188,6 +188,131 @@ export const INCOMPLETE_REASON_CODES = [
   "analytics_records_with_unparseable_reporting_period",
 ] as const;
 
+// --- Commercial evidence (Step 13A.1 revised) -------------------------------------
+// EVIDENCE ONLY: counts, variances, classifications, evaluations and refs.
+// There is no monetary value and no financial calculation anywhere in this
+// shape. Every Agreement-governed input (requirement,
+// LFC/SFC rule, targets) arrives through the ONE replaceable seam in
+// commercial-policy.ts and is copied verbatim - never invented, defaulted or
+// entered manually inside Partner Reviews.
+//
+// The only payment-affecting marker is the boolean `affectsPayment`: on the
+// deliverable / LFC-SFC sections it is true ONLY when the value was
+// evaluated under an Agreement-governed rule; on a target it is the literal
+// `false` (a target miss is a warning and can never change payment-affecting
+// evidence).
+//
+// Old stored versions have no `commercial` key at all: the snapshot schema
+// keeps it OPTIONAL (so a rewrite of an old immutable version stays
+// byte-identical) and every reader goes through commercialOrNeutral()
+// (commercial-builder.ts), which yields the explicit all-unavailable shape.
+
+export const COMMERCIAL_EVIDENCE_POLICY_VERSION = 1;
+
+// The ONLY supported qualifying units. Both are derived from canonical
+// APPROVED Content evidence - never from raw submitted URLs or links of a
+// non-APPROVED thread.
+export const QUALIFYING_UNITS = ["approved_content_thread", "approved_current_link"] as const;
+export const qualifyingUnitSchema = z.enum(QUALIFYING_UNITS);
+export type QualifyingUnit = z.infer<typeof qualifyingUnitSchema>;
+
+const governingIdentitySchema = z.object({ agreementRef: z.string().min(1), agreementVersion: z.number().int().min(1) }).strict();
+export type EvidenceGoverningIdentity = z.infer<typeof governingIdentitySchema>;
+
+export const DELIVERABLE_EVALUATIONS = ["met", "below_requirement", "exceeded", "unavailable"] as const;
+
+export const evidenceCountUnitSchema = z.object({ assignmentRef: z.string().min(1), contentRef: z.string().min(1), unitCount: z.number().int().min(0) }).strict();
+export type EvidenceCountUnit = z.infer<typeof evidenceCountUnitSchema>;
+
+export const evidenceMonthlyDeliverableSchema = z
+  .object({
+    // Copied ONLY from the governing policy; null when there is none.
+    requiredCount: z.number().int().min(0).nullable(),
+    requirementSource: governingIdentitySchema.extend({ requirementSourceRef: z.string().min(1).nullable() }).strict().nullable(),
+    qualifyingUnit: qualifyingUnitSchema.nullable(),
+    actualQualifyingCount: z.number().int().min(0).nullable(),
+    // Exactly the canonical units that were counted (approved threads).
+    actualCountSources: z.object({ sourceType: z.enum(["content_thread", "content_link"]), units: z.array(evidenceCountUnitSchema) }).strict().nullable(),
+    // actual - required (may be negative); null when unavailable.
+    variance: z.number().int().nullable(),
+    evaluation: z.enum(DELIVERABLE_EVALUATIONS),
+    unavailableReason: z.string().min(1).nullable(),
+    affectsPayment: z.boolean(),
+  })
+  .strict();
+export type EvidenceMonthlyDeliverable = z.infer<typeof evidenceMonthlyDeliverableSchema>;
+
+export const LFC_SFC_CLASSIFICATIONS = ["LFC", "SFC", "unclassified"] as const;
+
+export const evidenceLfcSfcUnitSchema = z
+  .object({
+    assignmentRef: z.string().min(1),
+    contentRef: z.string().min(1).nullable(),
+    unitCount: z.number().int().min(0),
+    classification: z.enum(LFC_SFC_CLASSIFICATIONS),
+    // Traceable basis: the rule that classified it and the exact brief
+    // format that matched (null when unclassified).
+    basis: z.object({ ruleRef: z.string().min(1), matchedFormat: z.string().min(1).nullable() }).strict(),
+  })
+  .strict();
+export type EvidenceLfcSfcUnit = z.infer<typeof evidenceLfcSfcUnitSchema>;
+
+export const evidenceLfcSfcSchema = z
+  .object({
+    status: z.enum(["unavailable", "evaluated"]),
+    unavailableReason: z.string().min(1).nullable(),
+    ruleRef: z.string().min(1).nullable(),
+    ruleSource: governingIdentitySchema.nullable(),
+    // The qualifying unit the classification ran over, and where it came from.
+    qualifyingUnit: qualifyingUnitSchema.nullable(),
+    qualifyingUnitSource: z.enum(["agreement_requirement", "default_approved_content_thread"]).nullable(),
+    lfcCount: z.number().int().min(0).nullable(),
+    sfcCount: z.number().int().min(0).nullable(),
+    unclassifiedCount: z.number().int().min(0).nullable(),
+    units: z.array(evidenceLfcSfcUnitSchema),
+    affectsPayment: z.boolean(),
+  })
+  .strict();
+export type EvidenceLfcSfc = z.infer<typeof evidenceLfcSfcSchema>;
+
+export const TARGET_EVALUATIONS = ["met", "not_met", "unavailable"] as const;
+
+export const evidenceTargetSchema = z
+  .object({
+    targetRef: z.string().min(1),
+    metricId: z.string().min(1),
+    targetValue: z.number(),
+    unit: z.string().min(1),
+    comparison: z.literal("at_least"),
+    actualValue: z.number().nullable(),
+    evaluation: z.enum(TARGET_EVALUATIONS),
+    unavailableReason: z.string().min(1).nullable(),
+    provenance: z
+      .object({
+        sourceType: z.literal("analytics_source_record"),
+        refs: z.array(z.string().min(1)),
+        recordsWithMetric: z.number().int().min(0),
+        recordsMissingMetric: z.number().int().min(0),
+      })
+      .strict(),
+    // A target result is a WARNING only - the literal `false` makes it a
+    // type error for a target to ever claim to change payment-affecting evidence.
+    affectsPayment: z.literal(false),
+  })
+  .strict();
+export type EvidenceTarget = z.infer<typeof evidenceTargetSchema>;
+
+export const commercialEvidenceSchema = z
+  .object({
+    policyVersion: z.literal(COMMERCIAL_EVIDENCE_POLICY_VERSION),
+    governingAgreement: governingIdentitySchema.nullable(),
+    monthlyDeliverable: evidenceMonthlyDeliverableSchema,
+    lfcSfc: evidenceLfcSfcSchema,
+    targets: z.array(evidenceTargetSchema),
+  })
+  .strict();
+export type CommercialEvidence = z.infer<typeof commercialEvidenceSchema>;
+
 export const evidenceSnapshotSchema = z
   .object({
     schemaVersion: z.literal(1),
@@ -216,6 +341,9 @@ export const evidenceSnapshotSchema = z
         latestImportedAt: isoTimestamp.nullable(),
       })
       .strict(),
+    // Optional ONLY for versions stored before commercial evidence existed
+    // (see the comment above); every newly built snapshot carries it.
+    commercial: commercialEvidenceSchema.optional(),
     completeness: evidenceCompletenessSchema,
     sourceRefs: z.array(partnerReviewSourceRefSchema),
   })

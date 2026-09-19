@@ -3,6 +3,8 @@ import { ANALYTICS_METRIC_IDS, ANALYTICS_METRIC_REGISTRY, UNSUPPORTED_METRIC_IDS
 import type { AssignmentBrief, AssignmentDoc } from "@/server/assignments/types";
 import type { ContentDoc } from "@/server/content/types";
 
+import { buildCommercialEvidence, selectFollowerSnapshotCandidates, type ChannelSnapshotRecordSource } from "./commercial-builder";
+import { policyFingerprintFacts, policyNeedsChannelSnapshots, type GoverningCommercialPolicy } from "./commercial-policy";
 import { computeSourceFingerprint } from "./fingerprint";
 import { dateRangeOverlapsPeriod, dueInstantMs, parseLeadingUtcDate, toUtcDate, type ReviewPeriod } from "./period";
 import {
@@ -224,7 +226,16 @@ export type BuildEvidenceInput = {
   analyticsRecords: readonly AnalyticsRecordSource[];
   analyticsScanTruncated: boolean;
   analyticsRecordsScanned: number;
+  // Step 13A.1 (revised) commercial inputs - all optional so "no governing
+  // policy" is the plain default: the policy comes from the ONE seam in
+  // commercial-policy.ts, channel snapshot records are only supplied (by the
+  // collector) when the policy asks for followerGrowth.
+  commercialPolicy?: GoverningCommercialPolicy | null;
+  channelRecords?: readonly ChannelSnapshotRecordSource[];
+  channelScanTruncated?: boolean;
 };
+
+export type { ChannelSnapshotRecordSource };
 
 export type BuiltEvidence = {
   snapshot: EvidenceSnapshot;
@@ -345,6 +356,22 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
   if (analyticsSelection.excludedUnparseableReportingPeriod > 0) incompleteReasons.push("analytics_records_with_unparseable_reporting_period");
   incompleteReasons.sort();
 
+  // --- Commercial (evidence only; see commercial-builder.ts) ----------------------------
+  const policy = input.commercialPolicy ?? null;
+  const channelRecords = policyNeedsChannelSnapshots(policy) ? (input.channelRecords ?? []) : [];
+  const channelScanTruncated = policyNeedsChannelSnapshots(policy) ? (input.channelScanTruncated ?? false) : false;
+  const commercialResult = buildCommercialEvidence({
+    partnerRef: input.partnerRef,
+    period: input.period,
+    policy,
+    production,
+    records,
+    assignmentsTruncated: input.assignmentScanTruncated || assignmentSelection.truncated,
+    analyticsTruncated: input.analyticsScanTruncated || analyticsSelection.truncated,
+    channelRecords,
+    channelScanTruncated,
+  });
+
   // --- Source refs ---------------------------------------------------------------------
   const refKeys = new Map<string, PartnerReviewSourceRef>();
   const addRef = (type: PartnerReviewSourceRef["type"], ref: string) => refKeys.set(`${type} ${ref}`, { type, ref });
@@ -354,6 +381,8 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
     if (entry.thread) addRef("content", entry.thread.contentRef);
   }
   for (const record of records) addRef("analyticsSourceRecord", record.sourceRecordRef);
+  // Channel snapshot records that fed an evaluated followerGrowth target.
+  for (const ref of commercialResult.channelSourceRefs) addRef("analyticsSourceRecord", ref);
   const sourceRefs = [...refKeys.values()].sort((a, b) => (a.type === b.type ? (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) : a.type < b.type ? -1 : 1));
 
   const snapshot: EvidenceSnapshot = evidenceSnapshotSchema.parse({
@@ -372,6 +401,7 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
       unavailableMetrics: [...UNSUPPORTED_METRIC_IDS],
       latestImportedAt,
     },
+    commercial: commercialResult.commercial,
     completeness: {
       truncated: {
         assignmentScan: input.assignmentScanTruncated,
@@ -441,6 +471,26 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
       analyticsScan: input.analyticsScanTruncated,
       analyticsRecordsInPeriod: analyticsSelection.truncated,
     },
+    // Commercial inputs feed the fingerprint ONLY when they exist, so a
+    // Partner with no governing policy hashes byte-for-byte as it did before
+    // commercial evidence (an `undefined` fact is dropped by canonicalJson).
+    // Upstream facts above already cover everything else the commercial
+    // section is derived from; these add the policy identity and the channel
+    // snapshot records a followerGrowth target reads.
+    policy: policy ? policyFingerprintFacts(policy) : undefined,
+    channelSnapshots: policyNeedsChannelSnapshots(policy)
+      ? {
+          truncated: channelScanTruncated,
+          records: selectFollowerSnapshotCandidates(input.partnerRef, input.period, channelRecords).map(({ record }) => ({
+            ref: record.sourceRef,
+            correctionRevision: record.correctionRevision,
+            importedAt: record.createdAt,
+            accountRef: record.matchedPartnerAccountRef,
+            reportingPeriod: record.reportingPeriod,
+            profileFollowers: record.profileFollowers,
+          })),
+        }
+      : undefined,
   });
 
   return { snapshot, sourceRefs, sourceFingerprint };

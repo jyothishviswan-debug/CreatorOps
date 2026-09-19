@@ -1,12 +1,14 @@
 import { FieldPath } from "firebase-admin/firestore";
 
-import { analyticsContentSourceRecordsCollection } from "@/server/analytics/firestore";
-import { analyticsContentSourceRecordDocSchema } from "@/server/analytics/types";
+import { analyticsChannelSourceRecordsCollection, analyticsContentSourceRecordsCollection } from "@/server/analytics/firestore";
+import { analyticsChannelSourceRecordDocSchema, analyticsContentSourceRecordDocSchema } from "@/server/analytics/types";
 import { assignmentsCollection } from "@/server/assignments/firestore";
 import { assignmentDocSchema } from "@/server/assignments/types";
 import { contentCollection } from "@/server/content/firestore";
 import { contentDocSchema } from "@/server/content/types";
 
+import type { ChannelSnapshotRecordSource } from "./commercial-builder";
+import { getGoverningCommercialPolicy, policyNeedsChannelSnapshots } from "./commercial-policy";
 import { buildEvidence, selectInPeriodAssignments, type AnalyticsRecordSource, type AssignmentSource, type BuiltEvidence, type ContentThreadSource } from "./evidence-builder";
 import type { ReviewPeriod } from "./period";
 
@@ -25,6 +27,14 @@ import type { ReviewPeriod } from "./period";
 // timestamps, counts, public post links, numeric metrics) - never raw
 // Analytics row payloads or contact/identity data.
 //
+// Step 13A.1 (revised): the governing commercial policy for the Partner +
+// period is fetched here too, through the ONE seam in commercial-policy.ts
+// (default: none - the Agreement module is not built), so it is exactly as
+// actor-independent as the rest of the evidence and can never come from a
+// client payload. Channel snapshot records (Analytics channel_account rows)
+// are read ONLY when that policy names a followerGrowth target, so the
+// no-policy path costs nothing extra.
+//
 // Every read is bounded: paged by document id with a hard scan ceiling, an
 // explicit truncation flag when the ceiling is reached, and one chunked
 // bulk read (never one read per row) for Content threads. All queries are
@@ -35,6 +45,7 @@ export const COLLECTOR_PAGE_SIZE = 200;
 // remaining sets the matching truncation flag (and an incomplete reason).
 export const MAX_ASSIGNMENTS_SCANNED = 1000;
 export const MAX_ANALYTICS_RECORDS_SCANNED = 2000;
+export const MAX_CHANNEL_RECORDS_SCANNED = 1000;
 // Firestore's `in` operator caps at 30 values per query.
 const IN_QUERY_CHUNK = 30;
 
@@ -75,7 +86,9 @@ async function scanByEquality<T>(
 }
 
 export async function collectPartnerEvidence(partnerRef: string, period: ReviewPeriod, options: { now?: () => Date } = {}): Promise<BuiltEvidence> {
-  const [assignmentScan, analyticsScan] = await Promise.all([
+  const policy = await getGoverningCommercialPolicy(partnerRef, period.periodKey);
+
+  const [assignmentScan, analyticsScan, channelScan] = await Promise.all([
     scanByEquality<AssignmentSource>(
       assignmentsCollection(),
       "partnerRef",
@@ -96,6 +109,18 @@ export async function collectPartnerEvidence(partnerRef: string, period: ReviewP
       },
       MAX_ANALYTICS_RECORDS_SCANNED,
     ),
+    policyNeedsChannelSnapshots(policy)
+      ? scanByEquality<ChannelSnapshotRecordSource>(
+          analyticsChannelSourceRecordsCollection(),
+          "matchedPartnerRef",
+          partnerRef,
+          (data) => {
+            const parsed = analyticsChannelSourceRecordDocSchema.safeParse(data);
+            return parsed.success ? parsed.data : null;
+          },
+          MAX_CHANNEL_RECORDS_SCANNED,
+        )
+      : Promise.resolve({ items: [] as ChannelSnapshotRecordSource[], scanned: 0, truncated: false }),
   ]);
 
   // ONE bulk, chunked read of the canonical Content threads for the
@@ -128,5 +153,8 @@ export async function collectPartnerEvidence(partnerRef: string, period: ReviewP
     analyticsRecords: analyticsScan.items,
     analyticsScanTruncated: analyticsScan.truncated,
     analyticsRecordsScanned: analyticsScan.scanned,
+    commercialPolicy: policy,
+    channelRecords: channelScan.items,
+    channelScanTruncated: channelScan.truncated,
   });
 }

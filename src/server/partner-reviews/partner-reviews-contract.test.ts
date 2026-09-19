@@ -260,7 +260,9 @@ describe("no blended/composite/overall score, rating, weight or rank exists anyw
 
   it("Production, Compliance and Performance are three independent sections with no cross-section aggregate", () => {
     const { snapshot } = fixtureBuilt();
-    expect(Object.keys(snapshot).sort()).toEqual(["completeness", "compliance", "evidenceCutoff", "partnerRef", "performance", "periodEnd", "periodKey", "periodStart", "production", "schemaVersion", "sourceRefs"]);
+    // Step 13A.1 (revised) adds ONE more independent section, `commercial`
+    // (evidence only - see commercial-evidence.test.ts); nothing else changes.
+    expect(Object.keys(snapshot).sort()).toEqual(["commercial", "completeness", "compliance", "evidenceCutoff", "partnerRef", "performance", "periodEnd", "periodKey", "periodStart", "production", "schemaVersion", "sourceRefs"]);
     expect(Object.keys(snapshot.production)).toEqual(["assignments"]);
     expect(Object.keys(snapshot.compliance)).toEqual(["assignments"]);
     expect(Object.keys(snapshot.performance).sort()).toEqual(["latestImportedAt", "metricPresence", "records", "unavailableMetrics"]);
@@ -314,10 +316,31 @@ describe("DTO safety", () => {
 // ---- Finance boundary ---------------------------------------------------------------------------
 
 describe("Finance boundary", () => {
-  it("no non-test source file of the module (or its routes) names or imports anything Finance-shaped", () => {
+  // Step 13A.1 (revised): the commercial evidence legitimately names the
+  // Agreement that governs a value (agreementRef / agreementVersion /
+  // governingAgreement / "Agreement") and flags whether a value is
+  // payment-affecting. That vocabulary is permitted ONLY in these named
+  // commercial files - every other file still may not say "agreement" at all.
+  // Everywhere (these files included) the words finance / payable / invoice /
+  // payment remain forbidden, except the exact payment-affecting markers
+  // stripped below (the boolean affectsPayment, the handoff's
+  // paymentAffectingEvidence section and the phrase "payment-affecting").
+  const COMMERCIAL_FILES = [
+    "types.ts",
+    "commercial-policy.ts",
+    "commercial-neutral.ts",
+    "commercial-builder.ts",
+    "evidence-builder.ts",
+    "evidence-collector.ts",
+    "source-context-redaction.ts",
+    "finalized-review-handoff.ts",
+    "finalized-review-handoff-service.ts",
+  ];
+  const ALLOWED_PAYMENT_MARKERS = /affectsPayment|paymentAffectingEvidence|payment-affecting/gi;
+
+  function nonTestSourceFiles(): string[] {
     const moduleDir = import.meta.dirname;
     const routesDir = path.resolve(moduleDir, "../../app/api/partner-reviews");
-
     const files: string[] = [];
     const walk = (dir: string) => {
       for (const entry of readdirSync(dir, { withFileTypes: true })) {
@@ -328,11 +351,38 @@ describe("Finance boundary", () => {
     };
     walk(moduleDir);
     walk(routesDir);
+    return files;
+  }
 
+  it("no non-test source file of the module (or its routes) names or imports anything Finance-shaped; Agreement vocabulary is confined to the named commercial files", () => {
+    const files = nonTestSourceFiles();
     expect(files.length).toBeGreaterThan(10);
+
+    // The allowlist names real files (a renamed file cannot silently widen it).
+    const names = new Set(files.map((file) => path.basename(file)));
+    for (const allowed of COMMERCIAL_FILES) expect(names.has(allowed)).toBe(true);
+
     for (const file of files) {
+      const name = path.basename(file);
       const source = readFileSync(file, "utf8");
-      expect({ file: path.basename(file), hit: /finance|agreement|payable|invoice|payment/i.exec(source)?.[0] ?? null }).toEqual({ file: path.basename(file), hit: null });
+      const isCommercial = COMMERCIAL_FILES.includes(name);
+      const stripped = isCommercial ? source.replace(ALLOWED_PAYMENT_MARKERS, "") : source;
+
+      expect({ file: name, hit: /finance|payable|invoice|payment/i.exec(stripped)?.[0] ?? null }).toEqual({ file: name, hit: null });
+      if (!isCommercial) expect({ file: name, hit: /agreement/i.exec(source)?.[0] ?? null }).toEqual({ file: name, hit: null });
+    }
+  });
+
+  it("the Agreement vocabulary in the commercial files is exactly the documented identifiers (agreementRef / agreementVersion / governingAgreement / Agreement prose), nothing Finance-shaped", () => {
+    const moduleDir = import.meta.dirname;
+    for (const name of COMMERCIAL_FILES) {
+      const source = readFileSync(path.join(moduleDir, name), "utf8");
+      // every identifier that starts with "agreement" is one of the two documented fields
+      const identifiers = new Set([...source.matchAll(/\bagreement[A-Za-z]*/g)].map((match) => match[0]));
+      for (const identifier of identifiers) expect(["agreementRef", "agreementVersion", "agreement"]).toContain(identifier);
+      // every identifier that CONTAINS "Agreement" is governingAgreement (or plain prose "Agreement")
+      const containing = new Set([...source.matchAll(/\b[A-Za-z]*Agreement[A-Za-z]*\b/g)].map((match) => match[0]));
+      for (const identifier of containing) expect(["Agreement", "governingAgreement"]).toContain(identifier);
     }
   });
 
@@ -340,7 +390,16 @@ describe("Finance boundary", () => {
     const moduleDir = import.meta.dirname;
     for (const name of readdirSync(moduleDir).filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"))) {
       const imports = [...readFileSync(path.join(moduleDir, name), "utf8").matchAll(/from\s+"([^"]+)"/g)].map((m) => m[1]!);
-      expect(imports.filter((p) => /finance/i.test(p))).toEqual([]);
+      expect(imports.filter((p) => /finance|agreement|payable|invoice|payment/i.test(p))).toEqual([]);
+    }
+  });
+
+  it("the handoff and its route only READ: no write API of any kind in the handoff files or route", () => {
+    const moduleDir = import.meta.dirname;
+    const routeFile = path.resolve(moduleDir, "../../app/api/partner-reviews/[reviewRef]/handoff/route.ts");
+    for (const file of [path.join(moduleDir, "finalized-review-handoff.ts"), path.join(moduleDir, "finalized-review-handoff-service.ts"), routeFile]) {
+      const code = readFileSync(file, "utf8").replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+      expect({ file: path.basename(file), write: /\.(set|create|update|delete|add)\(|runTransaction|batch\(|POST|PUT|PATCH|DELETE/.test(code) }).toEqual({ file: path.basename(file), write: false });
     }
   });
 });
