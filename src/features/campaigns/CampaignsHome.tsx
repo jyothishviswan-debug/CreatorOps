@@ -2,11 +2,12 @@
 
 import { useEffect, useState } from "react";
 
-import { ContextBanner, OverviewKpiRow, OverviewPanels } from "@/ui/Overview";
+import { ActionGrid, Checks, ContextBanner, Events, OverviewKpiRow, OverviewPanel, OverviewPanels, OverviewRow } from "@/ui/Overview";
 import type { OverviewPanelData } from "@/features/shared/types";
 import type { CampaignDto } from "@/server/campaigns/client-dto";
 import type { CampaignListCursor } from "@/server/campaigns/firestore";
 import { CampaignsWorkspace } from "./CampaignsWorkspace";
+import { ExecutionExceptionsPanel } from "./ExecutionExceptionsPanel";
 
 type ViewKey = "overview" | "workspace";
 
@@ -21,6 +22,7 @@ export function CampaignsHome({
   kpis,
   topPanels,
   bottomPanels,
+  executionExceptionLinks,
   summary,
   chips,
   initialCampaigns,
@@ -29,6 +31,11 @@ export function CampaignsHome({
   kpis: { icon: "brief" | "check" | "link" | "flag" | "alert" | "users"; label: string; value: string; hint: string }[];
   topPanels: OverviewPanelData[];
   bottomPanels: OverviewPanelData[];
+  // Step 12C: the "Execution Exceptions" attention panel's real deep-link
+  // targets, keyed by its own row title - see this panel's own comment on
+  // ExecutionExceptionsPanel.tsx (mirrors Analytics' own
+  // ingestionExceptionLinks/IngestionExceptionsPanel.tsx idiom exactly).
+  executionExceptionLinks: Record<string, string>;
   summary: string;
   chips: string[];
   initialCampaigns: CampaignDto[];
@@ -62,7 +69,45 @@ export function CampaignsHome({
           <ContextBanner icon="flag" title="Campaign execution cockpit" description={summary} chips={chips} />
           <OverviewKpiRow items={kpis} />
           <OverviewPanels panels={topPanels} />
-          <OverviewPanels panels={bottomPanels} secondary />
+
+          {/* Bottom row is composed manually (not via the shared
+              OverviewPanels dispatcher) so the "Execution Exceptions"
+              panel can render real navigable rows - see
+              ExecutionExceptionsPanel.tsx's own comment. The other three
+              panels reuse the exact same exported building blocks
+              OverviewPanels itself dispatches to (Checks/Events/
+              ActionGrid), so their chrome/behavior is unchanged. Mirrors
+              src/app/analytics/page.tsx's own identical composition for
+              its "Ingestion Exceptions" panel. */}
+          <OverviewRow secondary>
+            {bottomPanels.map((panel, i) => {
+              if (panel.kind === "checks") {
+                return (
+                  <OverviewPanel key={panel.title} span={panel.span} icon={panel.icon} tone={i} title={panel.title} note={panel.note} foot={panel.foot} link>
+                    <Checks rows={panel.rows} />
+                  </OverviewPanel>
+                );
+              }
+              if (panel.kind === "attention") {
+                return <ExecutionExceptionsPanel key={panel.title} span={panel.span} tone={i} note={panel.note} foot={panel.foot} rows={panel.rows} links={executionExceptionLinks} />;
+              }
+              if (panel.kind === "activity") {
+                return (
+                  <OverviewPanel key={panel.title} span={panel.span} icon={panel.icon} tone={i} title={panel.title} note={panel.note} foot={panel.foot} link>
+                    <Events items={panel.rows.map((r) => ({ icon: "clock", title: r.title, detail: r.detail, href: r.href }))} />
+                  </OverviewPanel>
+                );
+              }
+              if (panel.kind === "actions") {
+                return (
+                  <OverviewPanel key={panel.title} span={panel.span} icon={panel.icon} tone={i} title={panel.title} note={panel.note} foot={panel.foot} link>
+                    <ActionGrid actions={panel.rows} />
+                  </OverviewPanel>
+                );
+              }
+              return null;
+            })}
+          </OverviewRow>
         </>
       ) : (
         <CampaignsWorkspace initialCampaigns={initialCampaigns} initialNextCursor={initialNextCursor} />

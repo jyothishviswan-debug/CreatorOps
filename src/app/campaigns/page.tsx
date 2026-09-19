@@ -9,6 +9,7 @@ import type { CampaignDto } from "@/server/campaigns/client-dto";
 import { resolveRequestActor } from "@/server/campaigns/http";
 import { listCampaigns } from "@/server/campaigns/campaign-service";
 import type { CampaignListCursor } from "@/server/campaigns/firestore";
+import { buildExecutionExceptionCategories, getCampaignExecutionOverview, type CampaignExecutionOverview } from "@/server/campaigns/execution-integration-service";
 
 async function loadAllCampaigns(actor: Awaited<ReturnType<typeof resolveRequestActor>>): Promise<CampaignDto[] | null> {
   const campaigns: CampaignDto[] = [];
@@ -50,49 +51,83 @@ export default async function CampaignsOverviewPage() {
 
   const statusLabels: Record<string, string> = { DRAFT: "Draft", PLANNED: "Planned", ACTIVE: "Active", PAUSED: "Paused", COMPLETED: "Completed", CANCELLED: "Cancelled", ARCHIVED: "Archived" };
 
+  // Step 12C: the execution-integration read model behind every
+  // previously-placeholder slot below (Assigned Partners/Content
+  // completed/Overdue content KPIs; Campaign Execution/Delivery State/
+  // Tracking Readiness/Execution Exceptions panels) - see
+  // src/server/campaigns/execution-integration-service.ts's own header
+  // comment for the full composition. A denied/failed result here can
+  // only happen if requireCampaignsFeatureAccess itself would also have
+  // failed loadAllCampaigns above (same gate) - `execution` is therefore
+  // effectively always populated whenever this page renders past the
+  // access-denied branch, but the fallback below stays honest (a neutral
+  // "not yet available" render, never a fabricated number) rather than
+  // assuming that can never happen.
+  const executionResult = await getCampaignExecutionOverview(actor);
+  const execution: CampaignExecutionOverview | null = executionResult.ok ? executionResult.data : null;
+
   // Panel slots, kinds, spans and titles below are the approved layout,
   // kept exactly as supplied (docs/reference/CreatorOps_UI_Golden_Master.html's
   // OV_DATA.campaigns: top = campaignboard/donut/donut span 6+3+3; bottom =
   // checks/attention/activity/actions span 3 each; 4 KPIs). Step 9B.1's
   // explicit rule: a slot is filled with real data only where the
-  // APPROVED SLOT'S OWN meaning genuinely is Campaign-owned - not merely
-  // because a same-category Campaign-only signal could be invented for
-  // it. Every approved slot here (Assigned Partners, Content completed,
-  // Overdue content, Campaign Execution, Delivery State, Staffing
-  // Readiness, Tracking Readiness, Execution Exceptions) is defined by
-  // Content/Assignment/Staffing/Analytics-tracking specifics that don't
-  // exist yet, so each keeps its exact slot/title/kind/span and renders a
-  // truthful neutral "not yet available" state instead. Only "Active
-  // campaigns" (Campaign lifecycle/status), "Recent Activity" (recent
-  // Campaign history/activity) and "Quick Actions" (navigation, not a
-  // data signal) are genuinely Campaign-owned as approved.
+  // APPROVED SLOT'S OWN meaning genuinely is Campaign-owned. Step 12C
+  // wires the Content/Assignment/Analytics-owned slots (Assigned
+  // Partners, Content completed, Overdue content, Campaign Execution,
+  // Delivery State, Tracking Readiness, Execution Exceptions) to real
+  // composed execution data now that those domains exist - see
+  // execution-integration-service.ts. Staffing Readiness has no canonical
+  // staffing-target concept anywhere in this codebase and stays
+  // permanently, honestly unavailable (same precedent as Analytics'
+  // unsupported Reach/Shares metrics) - only "Active campaigns", "Recent
+  // Activity" and "Quick Actions" were already genuinely Campaign-owned.
+  const deliveryStateTotal = execution ? execution.deliveryState.completed + execution.deliveryState.inProgress + execution.deliveryState.notStarted : 0;
+
+  const executionExceptionCategories = execution ? buildExecutionExceptionCategories(execution.executionExceptions) : [];
+  const executionExceptionsTotal = executionExceptionCategories.reduce((sum, c) => sum + c.count, 0);
+
   const topPanels: OverviewPanelData[] = [
     {
       kind: "campaignboard",
       icon: "clock",
       title: "Campaign Execution",
-      note: "Not yet available — tracking depends on the Content module, which is not built yet.",
-      foot: "This panel will populate once Content is built.",
+      note:
+        execution && execution.perCampaignExecution.length > 0
+          ? `${execution.perCampaignExecution.length} active Campaign${execution.perCampaignExecution.length === 1 ? "" : "s"} with assigned obligations`
+          : "No active Campaign has any assigned obligations yet.",
+      foot: "Approved / assigned obligations",
       span: 6,
-      rows: [],
+      rows: execution ? execution.perCampaignExecution.map((c) => ({ name: c.campaignName, completed: c.approvedCount, required: c.totalCount })) : [],
     },
     {
       kind: "donut",
       icon: "clock",
       title: "Delivery State",
-      note: "Not yet available - depends on Content, which is not built yet.",
-      foot: "This panel will populate once Content is built.",
+      note: deliveryStateTotal > 0 ? `${deliveryStateTotal} obligation${deliveryStateTotal === 1 ? "" : "s"} across active Campaigns` : "No execution obligations yet across active Campaigns.",
+      foot: "Overdue is a separate date condition, not a lifecycle state.",
       span: 3,
-      total: 1,
-      totalLabel: "Not available",
-      segments: [{ label: "Not yet available", value: 0 }],
+      total: deliveryStateTotal > 0 ? deliveryStateTotal : 1,
+      totalLabel: deliveryStateTotal > 0 ? "Obligations" : "Not available",
+      segments:
+        deliveryStateTotal > 0
+          ? [
+              { label: "Completed", value: execution!.deliveryState.completed },
+              { label: "In progress", value: execution!.deliveryState.inProgress },
+              { label: "Not started", value: execution!.deliveryState.notStarted },
+            ]
+          : [{ label: "Not yet available", value: 0 }],
     },
     {
       kind: "donut",
       icon: "clock",
       title: "Staffing Readiness",
-      note: "Not yet available - depends on Assignments, which is not built yet.",
-      foot: "This panel will populate once Assignments is built.",
+      // Permanently unavailable by design, not a gap - no canonical
+      // staffing target exists anywhere in this codebase's schema for
+      // Campaigns to compare against (never a requiredPartnerCount field
+      // invented for this). Same honest-unavailable precedent as
+      // Analytics' own unsupported Reach/Shares metrics.
+      note: "No canonical staffing target is configured for Campaigns.",
+      foot: "No canonical staffing target is configured for Campaigns.",
       span: 3,
       total: 1,
       totalLabel: "Not available",
@@ -105,19 +140,21 @@ export default async function CampaignsOverviewPage() {
       kind: "checks",
       icon: "clock",
       title: "Tracking Readiness",
-      note: "Not yet available - tracking/source-link/reporting coverage depends on Content and Analytics, which are not built yet.",
-      foot: "This panel will populate once Content and Analytics are built.",
+      note: "Aggregated across every active Campaign in scope.",
+      foot: "Reporting eligibility is not defined by the Analytics readiness data available today.",
       span: 3,
-      rows: [{ label: "Not yet available", detail: "—", badge: "Not built" }],
+      rows: execution
+        ? [execution.trackingReadiness.trackingConfiguredRow, execution.trackingReadiness.sourceLinksCompleteRow, execution.trackingReadiness.reportingEligibleRow, execution.trackingReadiness.campaignsUnstaffedRow]
+        : [{ label: "Not yet available", detail: "—", badge: "Not built" }],
     },
     {
       kind: "attention",
-      icon: "clock",
+      icon: "alert",
       title: "Execution Exceptions",
-      note: "Not yet available - depends on Content and Assignments, which are not built yet.",
-      foot: "This panel will populate once Content and Assignments are built.",
+      note: executionExceptionCategories.length > 0 ? `${executionExceptionsTotal} exception${executionExceptionsTotal === 1 ? "" : "s"} across ${executionExceptionCategories.length} categor${executionExceptionCategories.length === 1 ? "y" : "ies"}` : "No execution exceptions right now",
+      foot: "Unavailable values must not appear as zero.",
       span: 3,
-      rows: [{ title: "Not yet available", detail: "Depends on Content and Assignments", count: "—" }],
+      rows: executionExceptionCategories.map((c) => ({ title: c.title, detail: c.detail, count: String(c.count) })),
     },
     {
       kind: "activity",
@@ -148,6 +185,8 @@ export default async function CampaignsOverviewPage() {
     },
   ];
 
+  const executionExceptionLinks = Object.fromEntries(executionExceptionCategories.map((c) => [c.title, c.href]));
+
   const initial = await listCampaigns(actor, { limit: 10 });
   const initialCampaigns = initial.ok ? initial.data.campaigns : [];
   const initialNextCursor = initial.ok ? initial.data.nextCursor : null;
@@ -171,12 +210,18 @@ export default async function CampaignsOverviewPage() {
         <CampaignsHome
           kpis={[
             { icon: "check", label: "Active campaigns", value: String(active), hint: "current period" },
-            { icon: "users", label: "Assigned Partners", value: "—", hint: "Not yet available" },
-            { icon: "brief", label: "Content completed", value: "—", hint: "Not yet available" },
-            { icon: "alert", label: "Overdue content", value: "—", hint: "Not yet available" },
+            { icon: "users", label: "Assigned Partners", value: execution ? String(execution.distinctAssignedPartnerCount) : "—", hint: execution ? "distinct Partners" : "Not yet available" },
+            {
+              icon: "brief",
+              label: "Content completed",
+              value: execution ? `${execution.approvedObligations} of ${execution.totalObligations}` : "—",
+              hint: execution ? "assigned obligations approved" : "Not yet available",
+            },
+            { icon: "alert", label: "Overdue content", value: execution ? String(execution.overdueObligations) : "—", hint: execution ? "needs attention" : "Not yet available" },
           ]}
           topPanels={topPanels}
           bottomPanels={bottomPanels}
+          executionExceptionLinks={executionExceptionLinks}
           summary="What is happening, what needs attention, and where to act next."
           chips={["Real scoped emulator data", `${total} Campaign${total === 1 ? "" : "s"} in scope`]}
           initialCampaigns={initialCampaigns}

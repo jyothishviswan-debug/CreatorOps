@@ -365,7 +365,7 @@ export function CampaignBoard({ rows }: { rows: { name: string; completed: numbe
               <strong>
                 {row.completed} <small>/ {row.required}</small>
               </strong>
-              <small>deliverables completed</small>
+              <small>obligations approved</small>
             </div>
           </div>
         );

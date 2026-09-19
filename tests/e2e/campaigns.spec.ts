@@ -66,11 +66,19 @@ test.describe("Overview", () => {
     const panelTitles = await page.locator(".ov-panel h2").allTextContents();
     expect(panelTitles).toEqual(["Campaign Execution", "Delivery State", "Staffing Readiness", "Tracking Readiness", "Execution Exceptions", "Recent Activity", "Quick Actions"]);
 
-    // Downstream-domain slots (Content/Assignments/Analytics don't exist
-    // yet) show a truthful placeholder, never a fabricated number.
-    await expect(page.getByText("Not yet available").first()).toBeVisible();
-    await expect(page.getByText(/tracking depends on the Content module/)).toBeVisible();
-    await expect(page.getByText(/depends on Assignments/)).toBeVisible();
+    // Downstream-domain slots (Content/Assignments/Analytics now exist)
+    // show real composed execution data - Tracking Readiness's real check
+    // rows, and Staffing Readiness's still-correct, permanent "no
+    // canonical staffing target" placeholder (the one slot that
+    // genuinely stays unavailable by design, never a fabricated number).
+    await expect(page.getByText("No canonical staffing target is configured for Campaigns.").first()).toBeVisible();
+    // Each check row renders its label and detail together in one
+    // container, so the row is matched by container text, never by a
+    // label-only text node.
+    const trackingPanel = page.locator(".ov-panel").filter({ has: page.getByRole("heading", { name: "Tracking Readiness" }) });
+    for (const row of ["Tracking configured", "Source links complete", "Reporting eligible", "Campaigns unstaffed"]) {
+      await expect(trackingPanel.locator(".ov-check").filter({ hasText: row })).toBeVisible();
+    }
 
     // Campaign-owned real signals.
     await expect(page.getByText("Real scoped emulator data")).toBeVisible();
