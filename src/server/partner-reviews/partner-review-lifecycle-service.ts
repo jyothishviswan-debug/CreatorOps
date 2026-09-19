@@ -98,7 +98,7 @@ export async function submitPartnerReviewForReview(actor: ActorContext | null, r
   if (result.kind === "stale") return partnerReviewsStaleResult();
   if (result.kind === "invalid") return partnerReviewsInvalidInputResult(`Only a Draft version can be submitted for review - this version is ${result.from}.`);
 
-  return { ok: true, data: await buildReviewDetail({ head: result.head, partner, version: result.version, includeFreshness: true }) };
+  return { ok: true, data: await buildReviewDetail({ actor: actor!, head: result.head, partner, version: result.version, includeFreshness: true }) };
 }
 
 // ---- Finalize (IN_REVIEW -> FINALIZED, superseding the prior finalized) ---------------
@@ -116,6 +116,36 @@ type FinalizeTxResult =
 // finalize requests can win: each transaction reads the version first, so
 // the losers observe the already-bumped docVersion / non-IN_REVIEW status
 // and fail safely without writing.
+//
+// Step 13A.1 - finalize never KNOWINGLY freezes stale evidence. Order of
+// checks:
+//   1. authz (feature + finalize_approve action + live Partner scope);
+//   2. cheap preconditions on the version as currently stored: it exists, the
+//      caller's expectedDocVersion matches (stale_write), it is the head's
+//      open version and IN_REVIEW (invalid_input) - all BEFORE any upstream
+//      read, so a plainly invalid request costs nothing;
+//   3. recompute the CURRENT upstream source fingerprint with the same
+//      actor-independent collector every other path uses and compare it to
+//      the version's stored sourceFingerprint. A mismatch means upstream
+//      changed after the reviewed snapshot: reject with the module's typed
+//      not-ready convention (HTTP 409 + blockers) and blocker code
+//      REFRESH_REQUIRED. Finalize NEVER auto-refreshes - the reviewer must
+//      explicitly refresh the In Review version (refresh endpoint) and then
+//      finalize. A rejected stale finalize performs NO write of any kind
+//      (no version/head change, no supersession, no event);
+//   4. only then the transaction below - the only writer - which keeps its own
+//      docVersion / open-version checks, so losers of a concurrent finalize
+//      still fail safely.
+// Missing or incomplete evidence alone does NOT block: a current snapshot
+// that records its incompleteness (approved content without Analytics,
+// rows without a reporting period, ...) freezes with those reasons intact.
+// Only an unincorporated upstream CHANGE blocks.
+//
+// Residual window: upstream can still change between step 3 and the commit
+// (the transaction deliberately does not read upstream - it would need
+// unbounded cross-collection reads). Such a change is never silent: the
+// finalized version simply reports freshness `revision_available`
+// afterwards, and a revision can be created.
 export async function finalizePartnerReview(actor: ActorContext | null, reviewRef: unknown, rawInput: unknown, requestId: string): Promise<PartnerReviewsServiceResult<PartnerReviewDetailDto>> {
   const loaded = await loadAuthorizedReview(actor, reviewRef, "finalize_approve");
   if (!loaded.ok) return loaded.error;
@@ -126,7 +156,22 @@ export async function finalizePartnerReview(actor: ActorContext | null, reviewRe
   const { head, partner } = loaded;
   const targetVersion = parsed.data.version ?? head.openVersion;
   if (targetVersion === null) return partnerReviewsInvalidInputResult("This review has no open In Review version to finalize.");
-  if (!(await getPartnerReviewVersionDoc(head.reviewRef, targetVersion))) return partnerReviewsNotFoundResult("Partner review version not found.");
+  const target = await getPartnerReviewVersionDoc(head.reviewRef, targetVersion);
+  if (!target) return partnerReviewsNotFoundResult("Partner review version not found.");
+
+  // Cheap preconditions first (same precedence the transaction applies).
+  if (target.docVersion !== parsed.data.expectedDocVersion) return partnerReviewsStaleResult();
+  if (head.openVersion !== target.version || !canTransitionLifecycle(target.status, "FINALIZED", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)) {
+    return partnerReviewsInvalidInputResult(`Only an In Review version can be finalized - this version is ${target.status}.`);
+  }
+
+  // Stale-evidence guard (no writes on rejection, never auto-refresh).
+  const current = await collectPartnerEvidence(head.partnerRef, { periodKey: head.periodKey, periodStart: head.periodStart, periodEnd: head.periodEnd });
+  if (current.sourceFingerprint !== target.sourceFingerprint) {
+    return partnerReviewsNotReadyResult("The evidence in this In Review version is out of date - upstream records changed after it was captured. Refresh the In Review version first, review the refreshed evidence, then finalize.", [
+      { code: "REFRESH_REQUIRED", message: "Refresh the In Review version explicitly (refresh endpoint) before finalizing; finalize never refreshes automatically." },
+    ]);
+  }
 
   const db = getAdminFirestore();
   const headRef = partnerReviewsCollection().doc(head.reviewRef);
@@ -199,7 +244,7 @@ export async function finalizePartnerReview(actor: ActorContext | null, reviewRe
   if (result.kind === "stale") return partnerReviewsStaleResult();
   if (result.kind === "invalid") return partnerReviewsInvalidInputResult(`Only an In Review version can be finalized - this version is ${result.from}.`);
 
-  return { ok: true, data: await buildReviewDetail({ head: result.head, partner, version: result.version, includeFreshness: true }) };
+  return { ok: true, data: await buildReviewDetail({ actor: actor!, head: result.head, partner, version: result.version, includeFreshness: true }) };
 }
 
 // ---- Create revision -----------------------------------------------------------------------
@@ -303,5 +348,5 @@ export async function createPartnerReviewRevision(actor: ActorContext | null, re
     ]);
   }
 
-  return { ok: true, data: await buildReviewDetail({ head: result.head, partner, version: result.version, evidence, includeFreshness: true }) };
+  return { ok: true, data: await buildReviewDetail({ actor: actor!, head: result.head, partner, version: result.version, evidence, includeFreshness: true }) };
 }

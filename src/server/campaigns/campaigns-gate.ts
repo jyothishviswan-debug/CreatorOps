@@ -1,7 +1,7 @@
 import type { ActionId } from "@/server/authz/actions";
 import { canAccessFeature, canPerformAction } from "@/server/authz/capabilities";
 import { getActorScopeGrants, hasGlobalScope, isCampaignInScope, isExplicitRecordInScope, isRegionInScope, isSelfInScope, isTeamInScope } from "@/server/authz/scope";
-import type { ActorContext } from "@/server/authz/types";
+import type { ActorContext, ScopeGrant } from "@/server/authz/types";
 import type { CampaignsDenialReason } from "./types";
 
 export type CampaignsAccessResult = { ok: true } | { ok: false; reason: CampaignsDenialReason };
@@ -40,19 +40,26 @@ export async function requireCampaignsFeatureAccess(actor: ActorContext | null):
 // targeting criteria mention a region/category I can see" check -
 // Campaign business criteria describe who the programme is intended for,
 // never authorization scope (Step 9A section 4/9's explicit rule).
+// Pure, in-memory form of the Record Scope decision below - the ONE place
+// the rule lives. requireCampaignInScope delegates to it; bulk callers that
+// already hold the actor's grants (e.g. Partner Reviews' source-context
+// redaction, which must evaluate up to ~200 Campaigns without re-reading
+// the grants once per record) call it directly. Behavior-identical.
+export function isCampaignDocInScope(grants: ScopeGrant[], actorUid: string, campaign: { uid: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] }): boolean {
+  return (
+    hasGlobalScope(grants) ||
+    isSelfInScope(grants, actorUid, campaign.ownerUid ?? undefined) ||
+    campaign.regionIds.some((region) => isRegionInScope(grants, region)) ||
+    campaign.teamIds.some((teamId) => isTeamInScope(grants, teamId)) ||
+    isCampaignInScope(grants, campaign.uid) ||
+    isExplicitRecordInScope(grants, "campaign", campaign.uid)
+  );
+}
+
 export async function requireCampaignInScope(
   actor: ActorContext,
   campaign: { uid: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] },
 ): Promise<CampaignsAccessResult> {
   const grants = await getActorScopeGrants(actor);
-
-  const inScope =
-    hasGlobalScope(grants) ||
-    isSelfInScope(grants, actor.uid, campaign.ownerUid ?? undefined) ||
-    campaign.regionIds.some((region) => isRegionInScope(grants, region)) ||
-    campaign.teamIds.some((teamId) => isTeamInScope(grants, teamId)) ||
-    isCampaignInScope(grants, campaign.uid) ||
-    isExplicitRecordInScope(grants, "campaign", campaign.uid);
-
-  return inScope ? { ok: true } : { ok: false, reason: "scope_denied" };
+  return isCampaignDocInScope(grants, actor.uid, campaign) ? { ok: true } : { ok: false, reason: "scope_denied" };
 }

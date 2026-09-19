@@ -1,7 +1,7 @@
 import type { ActionId } from "@/server/authz/actions";
 import { canAccessFeature, canPerformAction } from "@/server/authz/capabilities";
 import { getActorScopeGrants, hasGlobalScope, isExplicitRecordInScope, isRegionInScope, isSelfInScope, isTeamInScope } from "@/server/authz/scope";
-import type { ActorContext } from "@/server/authz/types";
+import type { ActorContext, ScopeGrant } from "@/server/authz/types";
 import type { AssignmentsDenialReason } from "./types";
 
 export type AssignmentsAccessResult = { ok: true } | { ok: false; reason: AssignmentsDenialReason };
@@ -46,18 +46,24 @@ export async function requireAssignmentsFeatureAccess(actor: ActorContext | null
 // assignment-service.ts) - but it is a create-time gate only. It never
 // appears here: Partner visibility still never broadens Assignment READ
 // access.
+// Pure, in-memory form of the Record Scope decision below - the ONE place
+// the rule lives. requireAssignmentInScope delegates to it; bulk callers
+// that already hold the actor's grants (Partner Reviews' source-context
+// redaction) call it directly instead of re-reading the grants per record.
+export function isAssignmentDocInScope(grants: ScopeGrant[], actorUid: string, assignment: { uid: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] }): boolean {
+  return (
+    hasGlobalScope(grants) ||
+    isSelfInScope(grants, actorUid, assignment.ownerUid ?? undefined) ||
+    assignment.regionIds.some((region) => isRegionInScope(grants, region)) ||
+    assignment.teamIds.some((teamId) => isTeamInScope(grants, teamId)) ||
+    isExplicitRecordInScope(grants, "assignment", assignment.uid)
+  );
+}
+
 export async function requireAssignmentInScope(
   actor: ActorContext,
   assignment: { uid: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] },
 ): Promise<AssignmentsAccessResult> {
   const grants = await getActorScopeGrants(actor);
-
-  const inScope =
-    hasGlobalScope(grants) ||
-    isSelfInScope(grants, actor.uid, assignment.ownerUid ?? undefined) ||
-    assignment.regionIds.some((region) => isRegionInScope(grants, region)) ||
-    assignment.teamIds.some((teamId) => isTeamInScope(grants, teamId)) ||
-    isExplicitRecordInScope(grants, "assignment", assignment.uid);
-
-  return inScope ? { ok: true } : { ok: false, reason: "scope_denied" };
+  return isAssignmentDocInScope(grants, actor.uid, assignment) ? { ok: true } : { ok: false, reason: "scope_denied" };
 }

@@ -370,3 +370,115 @@ describe("source fingerprint", () => {
     expect(buildEvidence(input({ analyticsRecords: [record(), record({ sourceRef: "n", reportingPeriod: null })] })).sourceFingerprint).not.toBe(fp);
   });
 });
+
+// ---- Step 13A.1: the accepted monthly inclusion policy, locked explicitly ---------------------------
+// (2026-03: periodStart 2026-03-01, periodEnd 2026-03-31, UTC calendar dates, inclusive.)
+
+describe("accepted monthly inclusion policy - Assignments (by dueAt, else createdAt)", () => {
+  const inPeriodRefs = (rows: AssignmentSource[]) => buildEvidence(input({ assignments: rows, threads: [], analyticsRecords: [] })).snapshot.production.assignments.map((a) => a.assignmentRef);
+
+  it("an Assignment belongs to the month of its dueAt, even when createdAt is in a different month", () => {
+    const rows = [
+      assignment({ assignmentRef: "due-in-created-out", brief: { dueAt: "2026-03-15" }, createdAt: "2025-11-01T00:00:00.000Z" }),
+      assignment({ assignmentRef: "due-out-created-in", brief: { dueAt: "2026-05-15" }, createdAt: "2026-03-05T00:00:00.000Z" }),
+    ];
+    expect(inPeriodRefs(rows)).toEqual(["due-in-created-out"]);
+    const built = buildEvidence(input({ assignments: rows, threads: [], analyticsRecords: [] }));
+    expect(built.snapshot.production.assignments[0]).toMatchObject({ eventDate: "2026-03-15", eventDateSource: "dueAt" });
+  });
+
+  it("a date-only dueAt counts as that UTC date (first day and last day inclusive, day before and day after excluded)", () => {
+    const rows = ["2026-02-28", "2026-03-01", "2026-03-31", "2026-04-01"].map((dueAt) => assignment({ assignmentRef: `due-${dueAt}`, brief: { dueAt } }));
+    expect(inPeriodRefs(rows)).toEqual(["due-2026-03-01", "due-2026-03-31"]);
+  });
+
+  it("a date-time dueAt is converted to its UTC date before the boundary test", () => {
+    // 2026-03-31T23:30:00-05:00 is 2026-04-01T04:30Z -> April; 2026-04-01T00:30:00+05:30 is 2026-03-31T19:00Z -> March.
+    const rows = [assignment({ assignmentRef: "late-march-local-is-april-utc", brief: { dueAt: "2026-03-31T23:30:00-05:00" } }), assignment({ assignmentRef: "early-april-local-is-march-utc", brief: { dueAt: "2026-04-01T00:30:00+05:30" } })];
+    expect(inPeriodRefs(rows)).toEqual(["early-april-local-is-march-utc"]);
+  });
+
+  it("with no dueAt the Assignment belongs to the month of its createdAt (first/last day inclusive, day before/after excluded)", () => {
+    const rows = ["2026-02-28T23:59:59.999Z", "2026-03-01T00:00:00.000Z", "2026-03-31T23:59:59.999Z", "2026-04-01T00:00:00.000Z"].map((createdAt) => assignment({ assignmentRef: `created-${createdAt}`, brief: { dueAt: null }, createdAt }));
+    expect(inPeriodRefs(rows)).toEqual(["created-2026-03-01T00:00:00.000Z", "created-2026-03-31T23:59:59.999Z"]);
+    const built = buildEvidence(input({ assignments: [rows[1]!], threads: [], analyticsRecords: [] }));
+    expect(built.snapshot.production.assignments[0]).toMatchObject({ dueAt: null, eventDate: "2026-03-01", eventDateSource: "createdAt" });
+  });
+
+  it("an unparseable dueAt is treated as missing and falls back to createdAt", () => {
+    const rows = [assignment({ assignmentRef: "bad-due-created-in", brief: { dueAt: "next week" }, createdAt: "2026-03-20T00:00:00.000Z" }), assignment({ assignmentRef: "bad-due-created-out", brief: { dueAt: "next week" }, createdAt: "2026-06-20T00:00:00.000Z" })];
+    expect(inPeriodRefs(rows)).toEqual(["bad-due-created-in"]);
+  });
+
+  it("an Assignment outside the month contributes nothing: no row, no source ref, no fingerprint change", () => {
+    const baseline = buildEvidence(input({ threads: [], analyticsRecords: [] }));
+    const withOutside = buildEvidence(input({ assignments: [assignment(), assignment({ assignmentRef: "outside", brief: { dueAt: "2026-04-01" } })], threads: [thread({ contentRef: "ct-outside", assignmentRef: "outside" })], analyticsRecords: [] }));
+    expect(withOutside.sourceFingerprint).toBe(baseline.sourceFingerprint);
+    expect(withOutside.sourceRefs).toEqual(baseline.sourceRefs);
+  });
+});
+
+describe("accepted monthly inclusion policy - Analytics (reporting-period OVERLAP with the month)", () => {
+  const includedRefs = (periods: Array<{ ref: string; period: { start: string; end: string } | null }>) =>
+    buildEvidence(input({ assignments: [], threads: [], analyticsRecords: periods.map((p) => record({ sourceRef: p.ref, reportingPeriod: p.period })) })).snapshot.performance.records.map((r) => r.sourceRecordRef);
+
+  it("includes a period fully inside, straddling either boundary, spanning the whole month, and a single boundary day", () => {
+    expect(
+      includedRefs([
+        { ref: "fully-inside", period: { start: "2026-03-10", end: "2026-03-20" } },
+        { ref: "straddles-start", period: { start: "2026-02-15", end: "2026-03-05" } },
+        { ref: "straddles-end", period: { start: "2026-03-25", end: "2026-04-10" } },
+        { ref: "spans-whole-month", period: { start: "2026-01-01", end: "2026-12-31" } },
+        { ref: "exactly-the-month", period: { start: "2026-03-01", end: "2026-03-31" } },
+        { ref: "single-day-first", period: { start: "2026-03-01", end: "2026-03-01" } },
+        { ref: "single-day-last", period: { start: "2026-03-31", end: "2026-03-31" } },
+        { ref: "ends-on-first-day", period: { start: "2026-02-01", end: "2026-03-01" } },
+        { ref: "starts-on-last-day", period: { start: "2026-03-31", end: "2026-04-30" } },
+      ]).sort(),
+    ).toEqual(["ends-on-first-day", "exactly-the-month", "fully-inside", "single-day-first", "single-day-last", "spans-whole-month", "starts-on-last-day", "straddles-end", "straddles-start"]);
+  });
+
+  it("excludes a period that only touches the month from OUTSIDE (ends the day before, starts the day after) - without a reason code", () => {
+    const built = buildEvidence(
+      input({
+        assignments: [],
+        threads: [],
+        analyticsRecords: [
+          record({ sourceRef: "ends-day-before", reportingPeriod: { start: "2026-02-01", end: "2026-02-28" } }),
+          record({ sourceRef: "starts-day-after", reportingPeriod: { start: "2026-04-01", end: "2026-04-30" } }),
+        ],
+      }),
+    );
+    expect(built.snapshot.performance.records).toEqual([]);
+    expect(built.snapshot.completeness.counts).toMatchObject({ analyticsRecordsInPeriod: 0, analyticsRecordsExcludedNoReportingPeriod: 0, analyticsRecordsExcludedUnparseableReportingPeriod: 0 });
+    expect(built.snapshot.completeness.incompleteReasons).toEqual([]);
+  });
+
+  it("a record with NO reporting period is excluded from the period evidence AND recorded as an incomplete-evidence reason (code + counter)", () => {
+    const built = buildEvidence(input({ assignments: [], threads: [], analyticsRecords: [record({ sourceRef: "in" }), record({ sourceRef: "no-period", reportingPeriod: null })] }));
+    expect(built.snapshot.performance.records.map((r) => r.sourceRecordRef)).toEqual(["in"]);
+    expect(built.snapshot.completeness.counts.analyticsRecordsExcludedNoReportingPeriod).toBe(1);
+    expect(built.snapshot.completeness.incompleteReasons).toContain("analytics_records_without_reporting_period");
+    expect(built.sourceRefs.some((ref) => ref.ref === "no-period")).toBe(false);
+    // The excluded row is part of the fingerprint (its arrival must raise freshness), yet never part of the evidence.
+    const withoutIt = buildEvidence(input({ assignments: [], threads: [], analyticsRecords: [record({ sourceRef: "in" })] }));
+    expect(built.sourceFingerprint).not.toBe(withoutIt.sourceFingerprint);
+  });
+
+  it("an unparseable or inverted reporting period is excluded and recorded with its own reason code and counter", () => {
+    const built = buildEvidence(
+      input({
+        assignments: [],
+        threads: [],
+        analyticsRecords: [
+          record({ sourceRef: "garbage", reportingPeriod: { start: "n/a", end: "n/a" } }),
+          record({ sourceRef: "inverted", reportingPeriod: { start: "2026-03-20", end: "2026-03-10" } }),
+          record({ sourceRef: "impossible-date", reportingPeriod: { start: "2026-02-30", end: "2026-03-05" } }),
+        ],
+      }),
+    );
+    expect(built.snapshot.performance.records).toEqual([]);
+    expect(built.snapshot.completeness.counts.analyticsRecordsExcludedUnparseableReportingPeriod).toBe(3);
+    expect(built.snapshot.completeness.incompleteReasons).toEqual(["analytics_records_with_unparseable_reporting_period"]);
+  });
+});

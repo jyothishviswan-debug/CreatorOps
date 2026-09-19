@@ -1,39 +1,28 @@
 import { z } from "zod";
 
-import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import type { ActionId } from "@/server/authz/actions";
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { PartnerDoc } from "@/server/partners/types";
 import {
   toPartnerReviewHeadDto,
-  toPartnerReviewHeadDtos,
   toPartnerReviewVersionDto,
   toPartnerReviewVersionSummaryDto,
   type PartnerReviewDetailDto,
   type PartnerReviewFreshnessDto,
-  type PartnerReviewHeadDto,
   type PartnerReviewVersionDto,
 } from "./client-dto";
 import { snapshotHasEvidence, type BuiltEvidence } from "./evidence-builder";
 import { collectPartnerEvidence } from "./evidence-collector";
 import { evaluateFreshness } from "./fingerprint";
-import {
-  getPartnerReviewHeadDoc,
-  getPartnerReviewVersionDoc,
-  listPartnerReviewHeadDocs,
-  listPartnerReviewVersionDocs,
-  partnerReviewsCollection,
-  partnerReviewVersionsCollection,
-  versionDocId,
-  type PartnerReviewListCursor,
-} from "./firestore";
+import { getPartnerReviewHeadDoc, getPartnerReviewVersionDoc, listPartnerReviewVersionDocs, partnerReviewsCollection, partnerReviewVersionsCollection, versionDocId } from "./firestore";
 import { appendPartnerReviewEvent } from "./partner-review-events";
 import { loadAuthorizedPartner, requirePartnerReviewsAccess, requirePartnerReviewsFeatureAccess } from "./partner-reviews-gate";
 import { derivePeriod, isFuturePeriod, isValidReviewRef, reviewRefFor } from "./period";
+import { resolveActorSourceAccess } from "./source-access";
+import { redactVersionForActor } from "./source-context-redaction";
 import {
   PARTNER_REVIEW_OPEN_STATUSES,
-  PARTNER_REVIEW_STATUSES,
   partnerReviewHeadDocSchema,
   partnerReviewsConflictResult,
   partnerReviewsInvalidInputResult,
@@ -114,7 +103,25 @@ export function defaultVersionNumber(head: PartnerReviewHeadDoc): number {
   return head.openVersion ?? head.currentFinalizedVersion ?? head.latestVersion;
 }
 
+// Builds the actor-facing version DTO: the canonical stored evidence is run
+// through the actor-scoped source-context redaction (which of the source
+// Campaigns/Assignments/Content/Analytics records THIS actor may access is
+// resolved once, in bulk). Every response that carries a snapshot or
+// sourceRefs - reads AND mutation results - is built through here, so the
+// acting user's response is redacted exactly like a plain read.
+export async function buildActorVersionDto(actor: ActorContext, version: PartnerReviewVersionDoc): Promise<PartnerReviewVersionDto> {
+  const access = await resolveActorSourceAccess(actor, version.snapshot);
+  return toPartnerReviewVersionDto(version, redactVersionForActor(version, access));
+}
+
+// PER-REVIEW detail builder. `includeFreshness` triggers a bounded
+// collectPartnerEvidence() recomputation for THIS one review (or reuses the
+// bundle the caller just collected via `evidence`). That is acceptable for
+// a single detail view but must NEVER be reached from a list/overview path:
+// heads/list DTOs come from partner-review-list-service.ts, which is kept
+// free of the collector and of freshness on purpose.
 export async function buildReviewDetail(args: {
+  actor: ActorContext;
   head: PartnerReviewHeadDoc;
   partner: PartnerDoc;
   version: PartnerReviewVersionDoc;
@@ -123,8 +130,8 @@ export async function buildReviewDetail(args: {
   evidence?: BuiltEvidence;
   includeFreshness: boolean;
 }): Promise<PartnerReviewDetailDto> {
-  const { head, partner, version } = args;
-  const versions = await listPartnerReviewVersionDocs(head.reviewRef);
+  const { actor, head, partner, version } = args;
+  const [versions, selectedVersion] = await Promise.all([listPartnerReviewVersionDocs(head.reviewRef), buildActorVersionDto(actor, version)]);
 
   let freshness: PartnerReviewFreshnessDto | null = null;
   if (args.includeFreshness) {
@@ -141,57 +148,21 @@ export async function buildReviewDetail(args: {
     head: toPartnerReviewHeadDto(head, partner.displayName),
     versions: versions.versions.map(toPartnerReviewVersionSummaryDto),
     hasMoreVersions: versions.hasMore,
-    selectedVersion: toPartnerReviewVersionDto(version),
+    selectedVersion,
     freshness,
   };
 }
 
-
 // --- List ------------------------------------------------------------------------------
-
-export type ListPartnerReviewHeadsInput = {
-  limit?: number;
-  cursor?: PartnerReviewListCursor;
-  partnerRef?: string;
-  periodKey?: string;
-  status?: string;
-};
-
-export async function listPartnerReviewHeads(actor: ActorContext | null, input: ListPartnerReviewHeadsInput): Promise<PartnerReviewsServiceResult<{ heads: PartnerReviewHeadDto[]; nextCursor: PartnerReviewListCursor | null }>> {
-  const gate = await requirePartnerReviewsFeatureAccess(actor);
-  if (!gate.ok) return partnerReviewsUnauthorizedResult(gate.reason);
-
-  if (input.periodKey !== undefined && !derivePeriod(input.periodKey)) return partnerReviewsInvalidInputResult("periodKey must be a valid YYYY-MM month.");
-  if (input.status !== undefined && !(PARTNER_REVIEW_STATUSES as readonly string[]).includes(input.status)) return partnerReviewsInvalidInputResult("Unknown status filter.");
-  if (input.limit !== undefined && (!Number.isInteger(input.limit) || input.limit < 1)) return partnerReviewsInvalidInputResult("limit must be a positive integer.");
-
-  let partnerAuthorized = false;
-  if (input.partnerRef !== undefined) {
-    if (input.partnerRef.length === 0) return partnerReviewsInvalidInputResult("partnerRef must not be empty.");
-    // Record Scope for a review is its Partner's scope: authorize the
-    // (live) Partner once, then list that Partner's reviews directly. A
-    // missing and an out-of-scope Partner are indistinguishable - both
-    // simply yield an empty page, never revealing the Partner.
-    const loaded = await loadAuthorizedPartner(actor!, input.partnerRef);
-    if (!loaded.ok) return { ok: true, data: { heads: [], nextCursor: null } };
-    partnerAuthorized = true;
-  }
-
-  const grants = await getActorScopeGrants(actor!);
-  const page = await listPartnerReviewHeadDocs({
-    limit: input.limit ?? 20,
-    cursor: input.cursor,
-    actorUid: actor!.uid,
-    grants,
-    hasGlobal: hasGlobalScope(grants),
-    partnerRef: input.partnerRef,
-    partnerAuthorized,
-    periodKey: input.periodKey,
-    status: input.status,
-  });
-
-  return { ok: true, data: { heads: await toPartnerReviewHeadDtos(page.heads), nextCursor: page.nextCursor } };
-}
+// The scoped head list lives in partner-review-list-service.ts, DELIBERATELY
+// a separate module that never imports the evidence collector or the
+// freshness evaluator: a list / overview page may show many reviews and must
+// never trigger a full upstream freshness recomputation per row. Freshness is
+// exposed ONLY through the single-review services below (getPartnerReview,
+// getPartnerReviewVersion, inspectPartnerReviewFreshness). A test enforces
+// that boundary (partner-reviews-boundary.test.ts). Re-exported here so
+// existing importers keep working.
+export { listPartnerReviewHeads, type ListPartnerReviewHeadsInput } from "./partner-review-list-service";
 
 // --- Read ------------------------------------------------------------------------------
 
@@ -214,7 +185,7 @@ export async function getPartnerReview(actor: ActorContext | null, reviewRef: un
   const version = await getPartnerReviewVersionDoc(loaded.head.reviewRef, versionNumber);
   if (!version) return partnerReviewsNotFoundResult("Partner review version not found.");
 
-  return { ok: true, data: await buildReviewDetail({ head: loaded.head, partner: loaded.partner, version, includeFreshness: true }) };
+  return { ok: true, data: await buildReviewDetail({ actor: actor!, head: loaded.head, partner: loaded.partner, version, includeFreshness: true }) };
 }
 
 export async function getPartnerReviewVersion(
@@ -234,7 +205,7 @@ export async function getPartnerReviewVersion(
   const evaluatedAt = new Date().toISOString();
   const current = version.status === "SUPERSEDED" ? null : await collectPartnerEvidence(loaded.head.partnerRef, { periodKey: loaded.head.periodKey, periodStart: loaded.head.periodStart, periodEnd: loaded.head.periodEnd });
 
-  return { ok: true, data: { reviewRef: loaded.head.reviewRef, version: toPartnerReviewVersionDto(version), freshness: freshnessFor(loaded.head, version, current, evaluatedAt) } };
+  return { ok: true, data: { reviewRef: loaded.head.reviewRef, version: await buildActorVersionDto(actor!, version), freshness: freshnessFor(loaded.head, version, current, evaluatedAt) } };
 }
 
 // Inspects current-source freshness for one version (default: the open,
@@ -345,7 +316,7 @@ export async function generatePartnerReviewDraft(actor: ActorContext | null, raw
     const head = await getPartnerReviewHeadDoc(reviewRef);
     const version = head ? await getPartnerReviewVersionDoc(reviewRef, defaultVersionNumber(head)) : null;
     if (!head || !version) return partnerReviewsConflictResult("This review already exists but could not be resolved. Reload and try again.");
-    return { ok: true, data: { outcome: "existing", review: await buildReviewDetail({ head, partner, version, includeFreshness: true }) } };
+    return { ok: true, data: { outcome: "existing", review: await buildReviewDetail({ actor: actor!, head, partner, version, includeFreshness: true }) } };
   };
 
   // Fast path: a retry finds the head without collecting any evidence.
@@ -408,7 +379,7 @@ export async function generatePartnerReviewDraft(actor: ActorContext | null, raw
 
   if (txResult.kind === "existing") return returnExisting();
 
-  return { ok: true, data: { outcome: "created", review: await buildReviewDetail({ head: txResult.head, partner, version: txResult.version, evidence, includeFreshness: true }) } };
+  return { ok: true, data: { outcome: "created", review: await buildReviewDetail({ actor: actor!, head: txResult.head, partner, version: txResult.version, evidence, includeFreshness: true }) } };
 }
 
 // --- Refresh Draft / In Review evidence ------------------------------------------------------
@@ -496,5 +467,5 @@ export async function refreshPartnerReviewEvidence(actor: ActorContext | null, r
   if (txResult.kind === "not_open") return partnerReviewsInvalidInputResult("Only a Draft or In Review version can be refreshed.");
   if (txResult.kind === "stale") return partnerReviewsStaleResult();
 
-  return { ok: true, data: await buildReviewDetail({ head: txResult.head, partner, version: txResult.version, evidence, includeFreshness: true }) };
+  return { ok: true, data: await buildReviewDetail({ actor: actor!, head: txResult.head, partner, version: txResult.version, evidence, includeFreshness: true }) };
 }

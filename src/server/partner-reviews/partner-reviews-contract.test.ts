@@ -17,6 +17,7 @@ import {
 import { buildEvidence } from "./evidence-builder";
 import { planPartnerReviewListQuery } from "./firestore";
 import { derivePeriod, reviewRefFor } from "./period";
+import { fullSourceAccessFor, redactVersionForActor } from "./source-context-redaction";
 import {
   evidenceSnapshotSchema,
   partnerReviewHeadDocSchema,
@@ -251,7 +252,7 @@ describe("no blended/composite/overall score, rating, weight or rank exists anyw
       head: toPartnerReviewHeadDto(head, "Creator One"),
       versions: [toPartnerReviewVersionSummaryDto(version)],
       hasMoreVersions: false,
-      selectedVersion: toPartnerReviewVersionDto(version),
+      selectedVersion: toPartnerReviewVersionDto(version, redactVersionForActor(version, fullSourceAccessFor(version.snapshot))),
       freshness,
     };
     expect(dataKeys(detail).filter((key) => FORBIDDEN_KEY.test(key))).toEqual([]);
@@ -271,7 +272,7 @@ describe("no blended/composite/overall score, rating, weight or rank exists anyw
 describe("DTO safety", () => {
   it("exposes userRefs only - never a raw uid, scope snapshot, or Partner sensitive field", () => {
     const { head, version } = fixtureDocs();
-    const json = JSON.stringify({ head: toPartnerReviewHeadDto(head, "Creator One"), version: toPartnerReviewVersionDto(version) });
+    const json = JSON.stringify({ head: toPartnerReviewHeadDto(head, "Creator One"), version: toPartnerReviewVersionDto(version, redactVersionForActor(version, fullSourceAccessFor(version.snapshot))) });
     for (const forbidden of ["partner-uid-1", "owner-uid-1", "regionIds", "teamIds", "ownerUid", "partnerUid", "email", "phone", "legalName", "restricted", "pan", "iban"]) {
       expect(json).not.toContain(forbidden);
     }

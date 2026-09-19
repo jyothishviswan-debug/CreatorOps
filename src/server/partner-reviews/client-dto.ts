@@ -1,5 +1,6 @@
 import { getPartnerDocsByRefs } from "@/server/partners/firestore";
-import type { EvidenceSnapshot, PartnerReviewFreshness, PartnerReviewHeadDoc, PartnerReviewSourceRef, PartnerReviewStatus, PartnerReviewVersionDoc } from "./types";
+import type { ActorEvidenceSnapshot, ActorVersionView, WithheldSourceCounts } from "./source-context-redaction";
+import type { PartnerReviewFreshness, PartnerReviewHeadDoc, PartnerReviewSourceRef, PartnerReviewStatus, PartnerReviewVersionDoc } from "./types";
 
 // The only shapes of a review ever handed to the browser: no Firestore doc
 // ids beyond the opaque reviewRef, no raw Firebase uid anywhere (only
@@ -7,6 +8,15 @@ import type { EvidenceSnapshot, PartnerReviewFreshness, PartnerReviewHeadDoc, Pa
 // partnerUid stay server-side), and no Partner data beyond partnerRef +
 // displayName. The evidence snapshot itself is built exclusively from safe
 // structured fields (see evidence-builder.ts).
+//
+// Step 13A.1: the version DTO NEVER carries the raw canonical snapshot. It
+// carries the ACTOR-SCOPED view built by source-context-redaction.ts
+// (identifying Campaign/Assignment/Content/Analytics context is withheld
+// for the source records the acting user cannot access). The only way to
+// build a PartnerReviewVersionDto is from an ActorVersionView, and the
+// snapshot type (ActorEvidenceSnapshot) is structurally incompatible with
+// the raw EvidenceSnapshot, so returning the stored snapshot is a compile
+// error.
 
 export type PartnerReviewHeadDto = {
   reviewRef: string;
@@ -46,8 +56,11 @@ export type PartnerReviewVersionSummaryDto = {
 };
 
 export type PartnerReviewVersionDto = PartnerReviewVersionSummaryDto & {
-  snapshot: EvidenceSnapshot;
+  snapshot: ActorEvidenceSnapshot;
+  // Only the source refs the acting user may access.
   sourceRefs: PartnerReviewSourceRef[];
+  // How many canonical sources (per type) are withheld from this actor.
+  withheldSourceCounts: WithheldSourceCounts;
 };
 
 export type PartnerReviewFreshnessDto = PartnerReviewFreshness & {
@@ -114,6 +127,8 @@ export function toPartnerReviewVersionSummaryDto(doc: PartnerReviewVersionDoc): 
   };
 }
 
-export function toPartnerReviewVersionDto(doc: PartnerReviewVersionDoc): PartnerReviewVersionDto {
-  return { ...toPartnerReviewVersionSummaryDto(doc), snapshot: doc.snapshot, sourceRefs: doc.sourceRefs };
+// `view` is the actor-scoped, redacted evidence (redactVersionForActor); the
+// stored doc's own snapshot/sourceRefs are deliberately not read here.
+export function toPartnerReviewVersionDto(doc: PartnerReviewVersionDoc, view: ActorVersionView): PartnerReviewVersionDto {
+  return { ...toPartnerReviewVersionSummaryDto(doc), snapshot: view.snapshot, sourceRefs: view.sourceRefs, withheldSourceCounts: view.withheldSourceCounts };
 }
