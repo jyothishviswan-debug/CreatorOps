@@ -195,6 +195,12 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // than Analyst - does NOT have Import Center access, and nothing
       // here reintroduces a rank-based exception for Manager either).
       analytics: featureGrant(true, { explore: true, manage_analytics_data: false }),
+      // Step 13A: Manager may generate/refresh evidence and submit a
+      // review for review (create + submit_partner_review), but NOT
+      // finalize - finalize_approve is Head/Super Admin only, the same
+      // day-to-day-but-not-governance split as Finance's approve_payables
+      // and Partners'/Vendors'/Campaigns' own governance actions.
+      partner_reviews: featureGrant(true, { create: true, submit_partner_review: true }),
     },
   },
   partnership_head: {
@@ -283,6 +289,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // Import Center itself; see the Step 12A completion report for the
       // full reasoning).
       analytics: featureGrant(true, { explore: true, manage_analytics_data: true }),
+      // Step 13A: the only role (besides Super Admin) trusted to
+      // finalize a review, on top of everything Manager holds.
+      partner_reviews: featureGrant(true, { create: true, submit_partner_review: true, finalize_approve: true }),
     },
   },
   super_admin: {

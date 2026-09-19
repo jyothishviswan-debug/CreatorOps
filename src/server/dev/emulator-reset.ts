@@ -33,6 +33,7 @@ import { CONTENT_COLLECTIONS } from "@/server/content/firestore";
 import { seedContentData } from "@/server/content/seed-content-data";
 import { DISCOVERY_COLLECTIONS } from "@/server/discovery/firestore";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
+import { PARTNER_REVIEWS_COLLECTIONS } from "@/server/partner-reviews/firestore";
 import { PARTNERS_COLLECTIONS } from "@/server/partners/firestore";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
 import { RESTRICTED_FINANCIAL_IDENTITIES_COLLECTION } from "@/server/shared/restricted-financial-identity";
@@ -222,6 +223,26 @@ async function deleteAnalyticsSourceRecordsWithCorrections(collectionName: strin
   }
 }
 
+// partnerReviews/{reviewRef}/versions AND partnerReviews/{reviewRef}/events
+// are BOTH subcollections - same cascade concern as content's own two
+// subcollections above: each must be deleted explicitly before (or
+// regardless of) the head document itself.
+async function deletePartnerReviewsCollectionWithSubcollections(): Promise<void> {
+  const db = getAdminFirestore();
+  const reviewsRef = db.collection(PARTNER_REVIEWS_COLLECTIONS.partnerReviews);
+  for (;;) {
+    const snapshot = await reviewsRef.limit(200).get();
+    if (snapshot.empty) return;
+    for (const doc of snapshot.docs) {
+      await deleteCollection(doc.ref.collection(PARTNER_REVIEWS_COLLECTIONS.versions));
+      await deleteCollection(doc.ref.collection(PARTNER_REVIEWS_COLLECTIONS.events));
+    }
+    const batch = db.batch();
+    for (const doc of snapshot.docs) batch.delete(doc.ref);
+    await batch.commit();
+  }
+}
+
 // Wipes every Auth account and every Firestore collection this app
 // writes to, then reseeds the canonical baseline. Idempotent in effect
 // (running it twice in a row produces the same end state), but NOT a
@@ -260,6 +281,7 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await deleteCollection(db.collection(ANALYTICS_COLLECTIONS.analyticsImportBatches));
   await deleteCollection(db.collection(ANALYTICS_COLLECTIONS.analyticsImportBatchClaims));
   await deleteCollection(db.collection(ANALYTICS_COLLECTIONS.analyticsReadModelSnapshots));
+  await deletePartnerReviewsCollectionWithSubcollections();
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();

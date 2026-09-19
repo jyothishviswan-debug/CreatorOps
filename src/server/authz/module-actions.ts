@@ -91,9 +91,17 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "manage_analytics_data", label: "Import/manage analytics data" },
     { id: "export", label: "Export" },
   ],
+  // Step 13A: extends the earlier UI-skeleton-era stub (create/
+  // finalize_approve/export) with the real, granular review workflow.
+  // `create` keeps its id but now has one precise meaning: generate a
+  // Draft, refresh Draft/In Review evidence, or create a revision.
+  // Submitting for review and finalizing are each their own explicit
+  // action - never implied by `create` (a role can hold one without the
+  // other, e.g. Partnership Manager: create + submit, no finalize).
   partner_reviews: [
-    { id: "create", label: "Create/Edit" },
-    { id: "finalize_approve", label: "Finalize/Approve" },
+    { id: "create", label: "Generate/refresh evidence and create revisions" },
+    { id: "submit_partner_review", label: "Submit for review (Draft to In Review)" },
+    { id: "finalize_approve", label: "Finalize review (In Review to Finalized)" },
     { id: "export", label: "Export" },
   ],
   finance: [

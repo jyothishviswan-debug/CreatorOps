@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import type { ScopeGrant } from "@/server/authz/types";
 import { planCampaignListQuery } from "@/server/campaigns/firestore";
 import { planPartnerListQuery } from "@/server/partners/firestore";
+import { planPartnerReviewListQuery } from "@/server/partner-reviews/firestore";
 import { planVendorListQuery } from "@/server/vendors/firestore";
 import type { FirestoreFieldFilter, FirestoreListBranchPlan } from "./scoped-list";
 
@@ -281,5 +282,49 @@ describe("firestore.indexes.json - planner-to-index mapping", () => {
   it("Campaigns: a team branch with both region and platform selected needs only its own teamIds+createdAt index - both business filters are postFilters, never leading index fields", () => {
     const { plan } = planCampaignListQuery({ actorUid: "actor-uid", grants: [team("t1")], hasGlobal: false, region: "Tamil Nadu", platform: "x" });
     expect(hasIndexForBranch("campaigns", firestoreBranch(plan, "team"))).toBe(true);
+  });
+});
+
+// Step 13A: the Partner Reviews head list's scope branches (SELF via
+// ownerUid, REGION/TEAM via array-contains-any, PARTNER/EXPLICIT partner
+// grants via `partnerUid in [...]`) and its single-Partner path, each
+// ordered by periodKey desc. Derived from the REAL planner output.
+describe("firestore.indexes.json - Partner Reviews", () => {
+  const periodKeyDesc: IndexField = { fieldPath: "periodKey", order: "DESCENDING" };
+
+  it("Partner Reviews: self/region/team scope branches (also with a periodKey filter) each map to a certified index", () => {
+    const grants: ScopeGrant[] = [self(), region("Kerala"), team("t1")];
+    for (const periodKey of [undefined, "2026-03"]) {
+      const { plan } = planPartnerReviewListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, periodKey });
+      expect(hasIndexForBranch("partnerReviews", firestoreBranch(plan, "self"))).toBe(true);
+      expect(hasIndexForBranch("partnerReviews", firestoreBranch(plan, "region"))).toBe(true);
+      expect(hasIndexForBranch("partnerReviews", firestoreBranch(plan, "team"))).toBe(true);
+    }
+  });
+
+  it("Partner Reviews: the PARTNER/EXPLICIT partner-grant branch (partnerUid in [...]) maps to the partnerUid + periodKey-desc index", () => {
+    const partnerGrant: ScopeGrant = { type: "PARTNER", partnerId: "p-1", ...AUDIT };
+    const { plan } = planPartnerReviewListQuery({ actorUid: "actor-uid", grants: [partnerGrant], hasGlobal: false });
+    const branch = firestoreBranch(plan, "partnerGrant");
+    expect(branch.pushedFilters.some((f) => f.field === "partnerUid" && f.op === "in")).toBe(true);
+    expect(hasIndex("partnerReviews", [{ fieldPath: "partnerUid", order: "ASCENDING" }, periodKeyDesc])).toBe(true);
+  });
+
+  it("Partner Reviews: the single authorized-Partner path maps to the partnerRef + periodKey-desc index", () => {
+    const { plan } = planPartnerReviewListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: false, partnerRef: "partner-1", partnerAuthorized: true, periodKey: "2026-03" });
+    expect(hasIndexForBranch("partnerReviews", firestoreBranch(plan, "partner"))).toBe(true);
+  });
+
+  it("Partner Reviews: the GLOBAL branch pushes nothing but the periodKey range on its own order field (no composite index needed)", () => {
+    const { plan } = planPartnerReviewListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: true, periodKey: "2026-03" });
+    const branch = firestoreBranch(plan, "main");
+    expect(branch.pushedFilters.every((f) => f.field === "periodKey")).toBe(true);
+    expect(branch.orderField).toBe("periodKey");
+  });
+
+  it("Partner Reviews: every partnerReviews index in the file is one the planner can actually produce (no speculative extras)", () => {
+    const mine = indexesFile.indexes.filter((index) => index.collectionGroup === "partnerReviews");
+    expect(mine).toHaveLength(5);
+    for (const index of mine) expect(index.fields[index.fields.length - 1]).toEqual(periodKeyDesc);
   });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canTransitionLifecycle, CONTENT_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS } from "./lifecycle";
+import { canTransitionLifecycle, CONTENT_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS, PARTNER_REVIEW_LIFECYCLE_TRANSITIONS } from "./lifecycle";
 
 describe("canTransitionLifecycle", () => {
   it("allows a transition from a listed predecessor state", () => {
@@ -113,5 +113,26 @@ describe("LEAD_LIFECYCLE_TRANSITIONS", () => {
     for (const state of Object.keys(LEAD_LIFECYCLE_TRANSITIONS)) {
       expect(canTransitionLifecycle(state, "NEW", LEAD_LIFECYCLE_TRANSITIONS)).toBe(false);
     }
+  });
+});
+
+// Step 13A: Partner Reviews' version lifecycle. NEEDS_REVIEW is derived,
+// never a persisted state, so it has no entry at all.
+describe("PARTNER_REVIEW_LIFECYCLE_TRANSITIONS", () => {
+  it("is the strict chain DRAFT -> IN_REVIEW -> FINALIZED -> SUPERSEDED", () => {
+    expect(canTransitionLifecycle("DRAFT", "IN_REVIEW", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("IN_REVIEW", "FINALIZED", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(true);
+    expect(canTransitionLifecycle("FINALIZED", "SUPERSEDED", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(true);
+  });
+
+  it("has no shortcut, no reverse edge, and DRAFT is only ever an initial state", () => {
+    expect(canTransitionLifecycle("DRAFT", "FINALIZED", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
+    expect(canTransitionLifecycle("IN_REVIEW", "SUPERSEDED", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
+    expect(canTransitionLifecycle("IN_REVIEW", "DRAFT", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
+    expect(canTransitionLifecycle("FINALIZED", "IN_REVIEW", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
+    for (const state of Object.keys(PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)) {
+      expect(canTransitionLifecycle(state, "DRAFT", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
+    }
+    expect(canTransitionLifecycle("FINALIZED", "NEEDS_REVIEW", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
   });
 });

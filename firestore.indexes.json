@@ -421,6 +421,46 @@
         { "fieldPath": "platforms", "arrayConfig": "CONTAINS" },
         { "fieldPath": "nameLower", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "partnerReviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "ownerUid", "order": "ASCENDING" },
+        { "fieldPath": "periodKey", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "partnerReviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "regionIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "periodKey", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "partnerReviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "teamIds", "arrayConfig": "CONTAINS" },
+        { "fieldPath": "periodKey", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "partnerReviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "partnerUid", "order": "ASCENDING" },
+        { "fieldPath": "periodKey", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "partnerReviews",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "partnerRef", "order": "ASCENDING" },
+        { "fieldPath": "periodKey", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

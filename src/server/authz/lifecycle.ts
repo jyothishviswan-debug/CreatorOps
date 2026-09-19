@@ -107,6 +107,21 @@ export const ASSIGNMENT_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
   CANCELLED: ["DRAFT", "ASSIGNED", "ACCEPTED", "IN_PROGRESS"],
 };
 
+// Step 13A: the canonical Partner Reviews version lifecycle. Keyed by
+// target state -> allowed predecessor states, same convention as every
+// map above. NEEDS_REVIEW is deliberately absent - it is DERIVED (see
+// src/server/partner-reviews/), never a persisted state. SUPERSEDED is
+// reachable only from FINALIZED, and only ever set by the finalize
+// transaction of the REPLACEMENT version (never directly). There is no
+// reverse edge (IN_REVIEW -> DRAFT): a reviewer who needs changes
+// refreshes the same In Review version instead.
+export const PARTNER_REVIEW_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  DRAFT: [],
+  IN_REVIEW: ["DRAFT"],
+  FINALIZED: ["IN_REVIEW"],
+  SUPERSEDED: ["FINALIZED"],
+};
+
 export function canTransitionLifecycle(currentState: string, nextState: string, transitions: LifecycleTransitionMap): boolean {
   const allowedFrom = transitions[nextState];
   if (!allowedFrom) return false;

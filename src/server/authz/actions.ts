@@ -96,7 +96,10 @@ export const ACTIONS = [
   // Analytics
   "explore",
   "manage_analytics_data",
-  // Partner Reviews
+  // Partner Reviews - "create" (shared, generic) gates generate Draft /
+  // refresh evidence / create revision; the two ids below are the review
+  // workflow's own distinct steps (see module-actions.ts).
+  "submit_partner_review",
   "finalize_approve",
   // Finance
   "manage_agreements",
