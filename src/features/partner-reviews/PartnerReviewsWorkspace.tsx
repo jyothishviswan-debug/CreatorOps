@@ -102,7 +102,7 @@ export function PartnerReviewsWorkspace({ initial, state }: { initial: PartnerRe
       <Toolbar>
         <ReviewPartnerFilter selected={initial.partnerFilter} onSelect={(partnerRef) => go({ partnerRef })} />
         <div role="group" aria-label="Region filter" style={{ minWidth: 160, maxWidth: 220, flex: "1 1 160px" }}>
-          <RegionMultiSelect value={state.region} onChange={(region) => go({ region })} />
+          <RegionMultiSelect compact value={state.region} onChange={(region) => go({ region })} />
         </div>
         <ReviewMonthSelect
           options={month.options.map((option) => ({ ...option, href: workspaceHref({ filter: state.filter ?? undefined, signal: state.signal, month: option.month, partnerRef: state.partnerRef, region: state.region }) }))}

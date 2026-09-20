@@ -20,7 +20,9 @@ export type MultiSelectGroup = { label: string; options: string[] };
 // top of the panel that ticks - or, when everything is ticked, clears - every
 // option currently listed (so with a search typed it means "all matching"), and
 // makes the closed control a single truncated line that reads `allLabel` when
-// every option is selected (and "A, B +N" for longer selections). Forms that pick real values leave it off and are
+// every option is selected (and "A, B +N" for longer selections). `compact`
+// gives just that single-line closed control without the Select all row, for
+// filters whose server cannot take "every option" (e.g. capped filter lists). Forms that pick real values leave it off and are
 // unchanged.
 export function MultiSelectDropdown({
   value,
@@ -31,6 +33,7 @@ export function MultiSelectDropdown({
   allowCustom = false,
   customPlaceholder = "Other…",
   selectAll = false,
+  compact = false,
   allLabel = "All",
 }: {
   value: string[];
@@ -41,8 +44,10 @@ export function MultiSelectDropdown({
   allowCustom?: boolean;
   customPlaceholder?: string;
   selectAll?: boolean;
+  compact?: boolean;
   allLabel?: string;
 }) {
+  const compactTrigger = compact || selectAll;
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
   const [customInput, setCustomInput] = useState("");
@@ -132,8 +137,8 @@ export function MultiSelectDropdown({
           fontSize: 12,
         }}
       >
-        <span style={selectAll ? { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : undefined}>
-          {selectAll && everyOptionSelected ? allLabel : value.length > 0 ? (selectAll && value.length > 2 ? `${value.slice(0, 2).join(", ")} +${value.length - 2}` : value.join(", ")) : placeholder}
+        <span style={compactTrigger ? { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : undefined}>
+          {compactTrigger && everyOptionSelected ? allLabel : value.length > 0 ? (compactTrigger && value.length > 2 ? `${value.slice(0, 2).join(", ")} +${value.length - 2}` : value.join(", ")) : placeholder}
         </span>
         <Icon name="chevronDown" className="muted" style={{ width: 14, height: 14, flexShrink: 0 }} />
       </button>

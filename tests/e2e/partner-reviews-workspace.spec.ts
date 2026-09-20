@@ -272,3 +272,16 @@ for (const width of VIEWPORTS) {
     expect(clientWidth).toBeLessThanOrEqual(innerWidth);
   });
 }
+
+test("the Region filter stays one compact line however many regions are selected (no wall of names)", async ({ page }) => {
+  await page.goto(`/partner-reviews/workspace?month=${MONTH}&region=Rajasthan&region=Madhya%20Pradesh&region=Gujarat&region=Goa&region=Maharashtra`);
+  const trigger = page.getByRole("group", { name: "Region filter" }).getByRole("button");
+  await expect(trigger).toHaveText("Rajasthan, Madhya Pradesh +3");
+  expect((await trigger.boundingBox())!.height).toBeLessThan(45); // one line, like the other filter controls
+  // The dropdown still lists every state (nothing is hidden), and there is no Select all on this page.
+  await trigger.click();
+  await expect(page.getByRole("group", { name: "Region filter" }).getByLabel("Goa", { exact: true })).toBeChecked();
+  await expect(page.getByRole("group", { name: "Region filter" }).getByLabel("Select all", { exact: true })).toHaveCount(0);
+  const overflow = await noDocumentOverflow(page);
+  expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
+});

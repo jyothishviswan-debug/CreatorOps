@@ -10,7 +10,7 @@ const REGION_GROUPS = REGION_ZONE_NAMES.map((zone) => ({ label: zone, options: [
 // shared by every region-selection UI (Discovery/Partners/Vendors/
 // Campaigns). `regionIds` itself stays free text server-side on every
 // domain schema - a state typed via "Other" here is still accepted.
-export function RegionMultiSelect({ value, onChange, selectAll = false }: { value: string[]; onChange: (next: string[]) => void; selectAll?: boolean }) {
+export function RegionMultiSelect({ value, onChange, selectAll = false, compact = false }: { value: string[]; onChange: (next: string[]) => void; selectAll?: boolean; compact?: boolean }) {
   return (
     <MultiSelectDropdown
       value={value}
@@ -21,6 +21,7 @@ export function RegionMultiSelect({ value, onChange, selectAll = false }: { valu
       allowCustom
       customPlaceholder="Other region…"
       selectAll={selectAll}
+      compact={compact}
       allLabel="All regions"
     />
   );
