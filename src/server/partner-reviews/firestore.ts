@@ -99,6 +99,10 @@ export type PartnerReviewListQueryOptions = {
   partnerRef?: string;
   partnerAuthorized?: boolean;
   periodKey?: string;
+  // Step 13B: an upper bound on the period (`periodKey <= periodKeyMax`), pushed as a
+  // range on the order field itself - the same index-free shape as the exact
+  // periodKey filter. Ignored when an exact periodKey is given.
+  periodKeyMax?: string;
   // Filter on the status of the newest version (latestStatus). Applied in
   // memory - it needs no index, at the cost of at most an extra page turn
   // (same trade-off every domain's own post-filters already accept).
@@ -124,6 +128,8 @@ export function planPartnerReviewListQuery(options: PartnerReviewListQueryOption
   if (options.periodKey) {
     sharedFilters.push({ field: "periodKey", op: ">=", value: options.periodKey });
     sharedFilters.push({ field: "periodKey", op: "<=", value: options.periodKey });
+  } else if (options.periodKeyMax) {
+    sharedFilters.push({ field: "periodKey", op: "<=", value: options.periodKeyMax });
   }
   const statusPostFilters: FirestoreFieldFilter[] = options.status ? [{ field: "latestStatus", op: "==", value: options.status }] : [];
 

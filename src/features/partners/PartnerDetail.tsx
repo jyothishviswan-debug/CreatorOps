@@ -27,7 +27,10 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "context", label: "Context" },
 ];
 
-export function PartnerDetail({ initialPartner }: { initialPartner: PartnerDto }) {
+// `canOpenPartnerReviews` is computed by the server page from the actor's own `partner_reviews` feature grant
+// (it only decides whether the contextual link is RENDERED; the destination independently re-authorizes the
+// actor and this Partner's live scope). Without it the Context tab is exactly as before.
+export function PartnerDetail({ initialPartner, canOpenPartnerReviews = false }: { initialPartner: PartnerDto; canOpenPartnerReviews?: boolean }) {
   const [partner, setPartner] = useState(initialPartner);
   const [selectedTab, setSelectedTab] = useState<TabKey>("overview");
   // Bumped on every successful mutation - partnerRef alone never changes
@@ -202,14 +205,28 @@ export function PartnerDetail({ initialPartner }: { initialPartner: PartnerDto }
 
       {selectedTab === "context" && (
         <PanelGrid>
-          {(["Campaigns", "Assignments", "Content", "Analytics", "Partner Reviews", "Finance"] as const).map((label) => (
-            <Panel span={4} key={label}>
-              <PanelHead title={label} />
-              <PanelBody>
-                <EmptyState title="Not yet available" description={`${label} has no real trusted source wired to Partners yet.`} icon="clock" />
-              </PanelBody>
-            </Panel>
-          ))}
+          {(["Campaigns", "Assignments", "Content", "Analytics", "Partner Reviews", "Finance"] as const).map((label) =>
+            label === "Partner Reviews" && canOpenPartnerReviews ? (
+              <Panel span={4} key={label}>
+                <PanelHead title={label} description="Monthly productivity history" />
+                <PanelBody>
+                  <p className="detailcopy">Month-by-month production, compliance and performance reviews for this Partner.</p>
+                  <div style={{ marginTop: 12 }}>
+                    <Link href={`/partner-reviews/partner/${encodeURIComponent(partner.partnerRef)}`} className="btn">
+                      Open Partner Reviews
+                    </Link>
+                  </div>
+                </PanelBody>
+              </Panel>
+            ) : (
+              <Panel span={4} key={label}>
+                <PanelHead title={label} />
+                <PanelBody>
+                  <EmptyState title="Not yet available" description={`${label} has no real trusted source wired to Partners yet.`} icon="clock" />
+                </PanelBody>
+              </Panel>
+            ),
+          )}
         </PanelGrid>
       )}
     </>

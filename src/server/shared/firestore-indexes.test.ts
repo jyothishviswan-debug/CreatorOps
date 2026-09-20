@@ -315,6 +315,25 @@ describe("firestore.indexes.json - Partner Reviews", () => {
     expect(hasIndexForBranch("partnerReviews", firestoreBranch(plan, "partner"))).toBe(true);
   });
 
+  // Step 13B: the Partner-wise history reads "a Partner's reviews up to a month" - an upper bound on the order field itself.
+  it("Partner Reviews: a periodKeyMax upper bound is a range on the order field only - the existing indexes still certify every branch shape (no new index)", () => {
+    const grants: ScopeGrant[] = [self(), region("Kerala"), team("t1")];
+    const scoped = planPartnerReviewListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, periodKeyMax: "2026-03" }).plan;
+    for (const name of ["self", "region", "team"]) {
+      const branch = firestoreBranch(scoped, name);
+      expect(branch.pushedFilters.filter((f) => f.field === "periodKey")).toEqual([{ field: "periodKey", op: "<=", value: "2026-03" }]);
+      expect(hasIndexForBranch("partnerReviews", branch)).toBe(true);
+    }
+    const partner = planPartnerReviewListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: false, partnerRef: "partner-1", partnerAuthorized: true, periodKeyMax: "2026-03" }).plan;
+    expect(hasIndexForBranch("partnerReviews", firestoreBranch(partner, "partner"))).toBe(true);
+    // An exact periodKey wins over an upper bound.
+    const exact = planPartnerReviewListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: true, periodKey: "2026-02", periodKeyMax: "2026-03" }).plan;
+    expect(firestoreBranch(exact, "main").pushedFilters).toEqual([
+      { field: "periodKey", op: ">=", value: "2026-02" },
+      { field: "periodKey", op: "<=", value: "2026-02" },
+    ]);
+  });
+
   it("Partner Reviews: the GLOBAL branch pushes nothing but the periodKey range on its own order field (no composite index needed)", () => {
     const { plan } = planPartnerReviewListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: true, periodKey: "2026-03" });
     const branch = firestoreBranch(plan, "main");

@@ -8,6 +8,7 @@ import { collectPartnerEvidence } from "./evidence-collector";
 import { getPartnerReviewVersionDoc, partnerReviewsCollection, partnerReviewVersionsCollection, versionDocId } from "./firestore";
 import { appendPartnerReviewEvent } from "./partner-review-events";
 import { buildReviewDetail, loadAuthorizedReview, scopeSnapshotOf } from "./partner-review-service";
+import { buildHeadDisplay, carriedFinalized, computeReviewListSummary } from "./review-list-summary";
 import {
   MAX_PARTNER_REVIEW_VERSIONS,
   partnerReviewHeadDocSchema,
@@ -86,6 +87,8 @@ export async function submitPartnerReviewForReview(actor: ActorContext | null, r
       docVersion: docs.head.docVersion + 1,
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
+      display: buildHeadDisplay({ version, latestVersion: docs.head.latestVersion, event: { kind: "submitted", at: now }, finalized: carriedFinalized(docs.head) }),
+      freshnessHint: null,
     };
 
     tx.set(versionRef, version);
@@ -208,6 +211,14 @@ export async function finalizePartnerReview(actor: ActorContext | null, reviewRe
       docVersion: docs.head.docVersion + 1,
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
+      display: buildHeadDisplay({
+        version: finalized,
+        latestVersion: docs.head.latestVersion,
+        event: { kind: "finalized", at: now },
+        finalized: { version: finalized.version, at: now },
+        supersededVersion: prior?.success ? prior.data.version : null,
+      }),
+      freshnessHint: null,
     };
 
     tx.set(versionRef, finalized);
@@ -281,6 +292,7 @@ export async function createPartnerReviewRevision(actor: ActorContext | null, re
   if (head.latestVersion >= MAX_PARTNER_REVIEW_VERSIONS) return partnerReviewsInvalidInputResult("This review has reached its maximum number of versions.");
 
   const evidence = await collectPartnerEvidence(head.partnerRef, { periodKey: head.periodKey, periodStart: head.periodStart, periodEnd: head.periodEnd });
+  const summary = computeReviewListSummary(evidence.snapshot);
 
   const db = getAdminFirestore();
   const headRef = partnerReviewsCollection().doc(head.reviewRef);
@@ -311,6 +323,7 @@ export async function createPartnerReviewRevision(actor: ActorContext | null, re
       generatedByUserRef: actor!.userRef,
       createdAt: now,
       createdByUserRef: actor!.userRef,
+      summary,
     });
     const nextHead: PartnerReviewHeadDoc = {
       ...docs.head,
@@ -321,6 +334,10 @@ export async function createPartnerReviewRevision(actor: ActorContext | null, re
       docVersion: docs.head.docVersion + 1,
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
+      // The finalized version (still current) keeps its recorded finalization time; a legacy head without a
+      // display block falls back to the finalized version document this transaction already read.
+      display: buildHeadDisplay({ version: created, latestVersion: nextNumber, event: { kind: "revision_created", at: now }, finalized: carriedFinalized(docs.head, docs.version.finalizedAt) }),
+      freshnessHint: null,
     };
 
     // tx.create fails loudly if version N+1 somehow already exists.

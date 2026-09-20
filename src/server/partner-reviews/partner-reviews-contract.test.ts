@@ -335,6 +335,9 @@ describe("Finance boundary", () => {
     "source-context-redaction.ts",
     "finalized-review-handoff.ts",
     "finalized-review-handoff-service.ts",
+    // Step 13B: the list projection carries the payment-affecting markers (affectsPayment) and the governing
+    // identity (agreementRef / agreementVersion) VERBATIM from the snapshot - it derives nothing else.
+    "review-list-summary.ts",
   ];
   const ALLOWED_PAYMENT_MARKERS = /affectsPayment|paymentAffectingEvidence|payment-affecting/gi;
 

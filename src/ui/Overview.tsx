@@ -465,8 +465,8 @@ export function Funnel({ rows }: { rows: { label: string; value: number }[] }) {
   );
 }
 
-export function ColumnChart({ rows, unit = "count" }: { rows: { label: string; value: number }[]; unit?: string }) {
-  const max = Math.max(...rows.map((r) => r.value), 1);
+export function ColumnChart({ rows, unit = "count" }: { rows: { label: string; value: number; unavailable?: boolean }[]; unit?: string }) {
+  const max = Math.max(...rows.filter((r) => !r.unavailable).map((r) => r.value), 1);
   return (
     <div className="ov-column-chart" style={{ "--ov-columns": rows.length } as CSSProperties}>
       <div className="ov-column-unit">
@@ -476,11 +476,17 @@ export function ColumnChart({ rows, unit = "count" }: { rows: { label: string; v
       <div className="ov-columns">
         {rows.map((row, i) => (
           <div className="ov-col" key={row.label}>
-            <b>{row.value.toLocaleString()}</b>
-            <div
-              className="ov-column"
-              style={{ height: `${(row.value / max) * 78}%`, background: TONES[i % TONES.length].tone }}
-            />
+            {row.unavailable ? (
+              <b>Unavailable</b>
+            ) : (
+              <>
+                <b>{row.value.toLocaleString()}</b>
+                <div
+                  className="ov-column"
+                  style={{ height: `${(row.value / max) * 78}%`, background: TONES[i % TONES.length].tone }}
+                />
+              </>
+            )}
           </div>
         ))}
       </div>

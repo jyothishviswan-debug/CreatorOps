@@ -378,6 +378,17 @@ async function rawDoc(ref: FirebaseFirestore.DocumentReference): Promise<string>
   return JSON.stringify(snap.data() ?? null);
 }
 
+// Step 13B: the head's best-effort `freshnessHint` (a single-field list projection, written when the trusted
+// backend has ALREADY computed freshness - see freshness-hint.ts) is the one field a READ may add or change on
+// the head. Everything else on the head - docVersion, updatedAt, pointers, display, scope snapshot - must stay
+// byte-identical across reads, which is what the head comparisons below still assert.
+async function rawHeadDoc(ref: FirebaseFirestore.DocumentReference): Promise<string> {
+  const snap = await ref.get();
+  const { freshnessHint, ...rest } = (snap.data() ?? {}) as Record<string, unknown>;
+  void freshnessHint;
+  return JSON.stringify(snap.exists ? rest : null);
+}
+
 function versionRef(reviewRef: string, version: number) {
   return partnerReviewVersionsCollection(reviewRef).doc(String(version));
 }
@@ -866,7 +877,7 @@ describe("freshness, revision and supersession", () => {
     expect(finalized.freshness?.state).toBe("current");
 
     const before = await rawDoc(versionRef(reviewRef, 1));
-    const beforeHead = await rawDoc(partnerReviewsCollection().doc(reviewRef));
+    const beforeHead = await rawHeadDoc(partnerReviewsCollection().doc(reviewRef));
 
     // The accepted correction path: clear the record's match (it leaves this Partner's evidence).
     const corrected = await resolveAnalyticsSourceRecordMatch(head, { recordKind: "content", sourceRef: record.sourceRef, targetRef: null, expectedRevision: 1, reason: "test correction" }, "req-correction");
@@ -884,7 +895,7 @@ describe("freshness, revision and supersession", () => {
 
     // The finalized version and head are byte-identical: staleness is a derived signal only.
     expect(await rawDoc(versionRef(reviewRef, 1))).toBe(before);
-    expect(await rawDoc(partnerReviewsCollection().doc(reviewRef))).toBe(beforeHead);
+    expect(await rawHeadDoc(partnerReviewsCollection().doc(reviewRef))).toBe(beforeHead);
     expect(JSON.parse(before).status).toBe("FINALIZED");
   });
 
@@ -1180,7 +1191,7 @@ async function generateAndSubmit(partnerRef: string, periodKey = "2019-03") {
 }
 
 async function reviewState(reviewRef: string) {
-  return { versions: await Promise.all([1, 2, 3].map((n) => rawDoc(versionRef(reviewRef, n)))), head: await rawDoc(partnerReviewsCollection().doc(reviewRef)), eventCount: (await events(reviewRef)).length };
+  return { versions: await Promise.all([1, 2, 3].map((n) => rawDoc(versionRef(reviewRef, n)))), head: await rawHeadDoc(partnerReviewsCollection().doc(reviewRef)), eventCount: (await events(reviewRef)).length };
 }
 
 // Everything identifying the "out of scope" half of the scope fixture.

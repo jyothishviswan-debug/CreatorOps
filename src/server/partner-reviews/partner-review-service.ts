@@ -16,9 +16,11 @@ import { snapshotHasEvidence, type BuiltEvidence } from "./evidence-builder";
 import { collectPartnerEvidence } from "./evidence-collector";
 import { evaluateFreshness } from "./fingerprint";
 import { getPartnerReviewHeadDoc, getPartnerReviewVersionDoc, listPartnerReviewVersionDocs, partnerReviewsCollection, partnerReviewVersionsCollection, versionDocId } from "./firestore";
+import { recordFreshnessHint } from "./freshness-hint";
 import { appendPartnerReviewEvent } from "./partner-review-events";
 import { loadAuthorizedPartner, requirePartnerReviewsAccess, requirePartnerReviewsFeatureAccess } from "./partner-reviews-gate";
 import { derivePeriod, isFuturePeriod, isValidReviewRef, reviewRefFor } from "./period";
+import { buildHeadDisplay, carriedFinalized, computeReviewListSummary } from "./review-list-summary";
 import { resolveActorSourceAccess } from "./source-access";
 import { redactVersionForActor } from "./source-context-redaction";
 import {
@@ -142,6 +144,9 @@ export async function buildReviewDetail(args: {
       const evidence = args.evidence ?? (await collectPartnerEvidence(head.partnerRef, { periodKey: head.periodKey, periodStart: head.periodStart, periodEnd: head.periodEnd }));
       freshness = freshnessFor(head, version, evidence, evaluatedAt);
     }
+    // Step 13B: this call ALREADY computed the freshness - remember it for the
+    // list views (best-effort, "as of last check").
+    if (freshness) await recordFreshnessHint(head, version, freshness);
   }
 
   return {
@@ -205,7 +210,9 @@ export async function getPartnerReviewVersion(
   const evaluatedAt = new Date().toISOString();
   const current = version.status === "SUPERSEDED" ? null : await collectPartnerEvidence(loaded.head.partnerRef, { periodKey: loaded.head.periodKey, periodStart: loaded.head.periodStart, periodEnd: loaded.head.periodEnd });
 
-  return { ok: true, data: { reviewRef: loaded.head.reviewRef, version: await buildActorVersionDto(actor!, version), freshness: freshnessFor(loaded.head, version, current, evaluatedAt) } };
+  const freshness = freshnessFor(loaded.head, version, current, evaluatedAt);
+  await recordFreshnessHint(loaded.head, version, freshness);
+  return { ok: true, data: { reviewRef: loaded.head.reviewRef, version: await buildActorVersionDto(actor!, version), freshness } };
 }
 
 // Inspects current-source freshness for one version (default: the open,
@@ -232,7 +239,9 @@ export async function inspectPartnerReviewFreshness(
   const evaluatedAt = new Date().toISOString();
   const current = version.status === "SUPERSEDED" ? null : await collectPartnerEvidence(loaded.head.partnerRef, { periodKey: loaded.head.periodKey, periodStart: loaded.head.periodStart, periodEnd: loaded.head.periodEnd });
 
-  return { ok: true, data: { reviewRef: loaded.head.reviewRef, periodKey: loaded.head.periodKey, freshness: freshnessFor(loaded.head, version, current, evaluatedAt) } };
+  const freshness = freshnessFor(loaded.head, version, current, evaluatedAt);
+  await recordFreshnessHint(loaded.head, version, freshness);
+  return { ok: true, data: { reviewRef: loaded.head.reviewRef, periodKey: loaded.head.periodKey, freshness } };
 }
 
 // --- Needs Review (derived, never persisted) -------------------------------------------
@@ -323,6 +332,7 @@ export async function generatePartnerReviewDraft(actor: ActorContext | null, raw
   if (await getPartnerReviewHeadDoc(reviewRef)) return returnExisting();
 
   const evidence = await collectPartnerEvidence(partner.partnerRef, period);
+  const summary = computeReviewListSummary(evidence.snapshot);
   const db = getAdminFirestore();
   const headRef = partnerReviewsCollection().doc(reviewRef);
 
@@ -361,7 +371,10 @@ export async function generatePartnerReviewDraft(actor: ActorContext | null, raw
       generatedByUserRef: actor!.userRef,
       createdAt: now,
       createdByUserRef: actor!.userRef,
+      summary,
     });
+    head.display = buildHeadDisplay({ version, latestVersion: 1, event: { kind: "generated", at: now }, finalized: null });
+    head.freshnessHint = null;
 
     tx.create(headRef, head);
     tx.create(partnerReviewVersionsCollection(reviewRef).doc(versionDocId(1)), version);
@@ -420,6 +433,7 @@ export async function refreshPartnerReviewEvidence(actor: ActorContext | null, r
   if (!isOpenStatus(target.status)) return partnerReviewsInvalidInputResult(`Only a Draft or In Review version can be refreshed - version ${target.version} is ${target.status}.`);
 
   const evidence = await collectPartnerEvidence(head.partnerRef, { periodKey: head.periodKey, periodStart: head.periodStart, periodEnd: head.periodEnd });
+  const summary = computeReviewListSummary(evidence.snapshot);
 
   const db = getAdminFirestore();
   const headRef = partnerReviewsCollection().doc(head.reviewRef);
@@ -446,8 +460,17 @@ export async function refreshPartnerReviewEvidence(actor: ActorContext | null, r
       lastRefreshedAt: now,
       lastRefreshedByUserRef: actor!.userRef,
       docVersion: freshVersion.docVersion + 1,
+      summary,
     };
-    const updatedHead: PartnerReviewHeadDoc = { ...freshHead, ...scopeSnapshotOf(partner), docVersion: freshHead.docVersion + 1, updatedAt: now, updatedByUserRef: actor!.userRef };
+    const updatedHead: PartnerReviewHeadDoc = {
+      ...freshHead,
+      ...scopeSnapshotOf(partner),
+      docVersion: freshHead.docVersion + 1,
+      updatedAt: now,
+      updatedByUserRef: actor!.userRef,
+      display: buildHeadDisplay({ version: updatedVersion, latestVersion: freshHead.latestVersion, event: { kind: "refreshed", at: now }, finalized: carriedFinalized(freshHead) }),
+      freshnessHint: null,
+    };
 
     tx.set(versionRef, updatedVersion);
     tx.set(headRef, updatedHead);

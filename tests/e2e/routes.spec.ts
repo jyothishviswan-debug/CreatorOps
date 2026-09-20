@@ -23,6 +23,7 @@ const STATIC_ROUTES = [
   "/analytics/explorer",
   "/analytics/import-history",
   "/partner-reviews",
+  "/partner-reviews/workspace",
   "/finance",
   "/finance/agreements",
   "/finance/payables",
@@ -62,5 +63,27 @@ test("unknown dynamic id renders a not-found state, not a crash", async ({ page 
 
   const response = await page.goto("/partners/does-not-exist");
   expect(response?.status()).toBe(404);
+  expect(pageErrors).toHaveLength(0);
+});
+
+// Step 13B: the Partner Reviews detail route takes a deterministic reviewRef (`pr_...`), not a fixture id. An
+// unknown or malformed reviewRef is a not-found state; the Partner-wise history route (canonical partnerRef)
+// renders the neutral access-denied state for an unknown Partner - identical to an out-of-scope one.
+test("unknown Partner Review reference renders a not-found state, not a crash", async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on("pageerror", (err) => pageErrors.push(err));
+
+  const response = await page.goto("/partner-reviews/pr_00000000000000000000");
+  expect(response?.status()).toBe(404);
+  expect(pageErrors).toHaveLength(0);
+});
+
+test("unknown Partner in Partner history renders the neutral access-denied state, not a crash", async ({ page }) => {
+  const pageErrors: Error[] = [];
+  page.on("pageerror", (err) => pageErrors.push(err));
+
+  const response = await page.goto("/partner-reviews/partner/does-not-exist");
+  expect(response?.ok()).toBeTruthy();
+  await expect(page.getByRole("heading", { name: "Access denied" })).toBeVisible();
   expect(pageErrors).toHaveLength(0);
 });

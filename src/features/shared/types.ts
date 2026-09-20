@@ -18,7 +18,10 @@ export type DonutSegment = { label: string; value: number };
 
 export type FunnelRow = { label: string; value: number };
 
-export type ColumnRow = { label: string; value: number };
+// `unavailable` (optional, additive): the slot's meaning depends on data that does not exist (for
+// example a monthly requirement no Agreement policy supplies). The column keeps its exact place, draws
+// no bar and reads "Unavailable" - never a zero. `value` is then ignored.
+export type ColumnRow = { label: string; value: number; unavailable?: boolean };
 
 export type ListRow = { title: string; detail: string; count: string };
 

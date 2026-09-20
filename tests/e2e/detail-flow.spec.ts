@@ -33,13 +33,11 @@ for (const { workspace, back } of WORKSPACE_TO_DETAIL) {
 // links directly to real detail records, so the detail pattern is
 // exercised via those known hrefs instead of a workspace table.
 // Partners moved out of this list in Step 7B, Vendors in Step 8B,
-// Campaigns in Step 9B, and Assignments in Step 10B - each now has a real
-// dedicated Workspace and Detail page, covered by tests/e2e/partners.spec.ts,
-// vendors.spec.ts, campaigns.spec.ts, and assignments.spec.ts respectively.
-const OVERVIEW_DETAIL_LINKS: { detail: string; back: string }[] = [
-  { detail: "/partner-reviews/ananya-rao", back: "/partner-reviews" },
-  { detail: "/reports/monthly-partner-review", back: "/reports" },
-];
+// Campaigns in Step 9B, Assignments in Step 10B, and Partner Reviews in Step
+// 13B - each now has a real dedicated Workspace and Detail page, covered by
+// tests/e2e/partners.spec.ts, vendors.spec.ts, campaigns.spec.ts,
+// assignments.spec.ts and the partner-reviews-*.spec.ts files respectively.
+const OVERVIEW_DETAIL_LINKS: { detail: string; back: string }[] = [{ detail: "/reports/monthly-partner-review", back: "/reports" }];
 
 for (const { detail, back } of OVERVIEW_DETAIL_LINKS) {
   test(`detail screen renders and returns to workspace: ${detail}`, async ({ page }) => {

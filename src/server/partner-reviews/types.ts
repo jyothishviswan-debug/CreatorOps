@@ -350,6 +350,128 @@ export const evidenceSnapshotSchema = z
   .strict();
 export type EvidenceSnapshot = z.infer<typeof evidenceSnapshotSchema>;
 
+export const PARTNER_REVIEW_EVENT_KINDS = ["generated", "refreshed", "submitted", "finalized", "revision_created", "superseded"] as const;
+export const partnerReviewEventKindSchema = z.enum(PARTNER_REVIEW_EVENT_KINDS);
+export type PartnerReviewEventKind = z.infer<typeof partnerReviewEventKindSchema>;
+
+// Freshness states (see the fuller description at the freshness section below).
+export const PARTNER_REVIEW_FRESHNESS_STATES = ["current", "refresh_available", "revision_available", "revision_in_progress", "evidence_incomplete", "superseded"] as const;
+export type PartnerReviewFreshnessState = (typeof PARTNER_REVIEW_FRESHNESS_STATES)[number];
+
+// --- Step 13B: stored list projections ------------------------------------------
+// COMPACT, derived-at-write-time projections of a version's canonical snapshot
+// so a list / overview / Partner-history read never opens a version document
+// (and never runs the evidence collector). Both are PROJECTIONS FOR LISTS ONLY:
+// the canonical snapshot stays the evidence of record, and neither is ever an
+// authorization input (authorization is always the LIVE Partner's Record Scope).
+// Old stored docs have neither field: both are optional and every reader falls
+// back to computing the summary from the stored snapshot (see
+// review-list-summary.ts). No score, rating, rank or money anywhere in them.
+
+const countValue = z.number().int().min(0);
+const nullableCount = countValue.nullable();
+const nullableMetric = z.number().finite().nullable();
+
+export const listSummaryPlatformMetricsSchema = z
+  .object({
+    views: nullableMetric,
+    engagement: nullableMetric,
+    likes: nullableMetric,
+    comments: nullableMetric,
+  })
+  .strict();
+
+export const reviewListSummarySchema = z
+  .object({
+    production: z
+      .object({
+        assignmentsIncluded: countValue,
+        completedAssignments: countValue,
+        underReviewContent: countValue,
+        approvedContent: countValue,
+        cancelledFlagged: countValue,
+      })
+      .strict(),
+    commercial: z
+      .object({
+        // The governing identity (ref/version) copied verbatim from the snapshot; null when none governs.
+        governing: z.object({ ref: z.string().min(1), version: z.number().int().min(1) }).strict().nullable(),
+        deliverable: z
+          .object({
+            required: nullableCount,
+            actual: nullableCount,
+            variance: z.number().int().nullable(),
+            evaluation: z.enum(DELIVERABLE_EVALUATIONS),
+            affectsPayment: z.boolean(),
+          })
+          .strict(),
+        lfcSfc: z
+          .object({
+            status: z.enum(["unavailable", "evaluated"]),
+            lfc: nullableCount,
+            sfc: nullableCount,
+            unclassified: nullableCount,
+            affectsPayment: z.boolean(),
+          })
+          .strict(),
+        // Warning-only targets: counts by evaluation. Never payment-affecting.
+        targets: z.object({ total: countValue, met: countValue, notMet: countValue, unavailable: countValue, affectsPayment: z.literal(false) }).strict(),
+      })
+      .strict(),
+    compliance: z
+      .object({
+        onTime: countValue,
+        late: countValue,
+        // A submission whose due instant is unknown: never counted as late.
+        unknownTiming: countValue,
+        revisionRequests: countValue,
+        missingOrIncompleteWork: countValue,
+      })
+      .strict(),
+    performance: z
+      .object({
+        state: z.enum(["available", "missing"]),
+        recordCount: countValue,
+        // Per platform, native metric sums (a metric no record reported stays null - never zero).
+        perPlatform: z.record(z.string().min(1), listSummaryPlatformMetricsSchema),
+        // Profile-follower snapshots: COUNTS only - never a total across accounts.
+        followerSnapshotRecords: countValue,
+        followerSnapshotAccounts: countValue,
+      })
+      .strict(),
+    completeness: z.object({ incompleteReasonCount: countValue, truncated: z.boolean() }).strict(),
+  })
+  .strict();
+export type ReviewListSummary = z.infer<typeof reviewListSummarySchema>;
+
+// The freshness of the head's default version as of the last time the trusted
+// backend ALREADY computed it (a single-review read or a mutation). Best-effort
+// and never live: lists label it "as of last check".
+export const reviewFreshnessHintSchema = z.object({ state: z.enum(PARTNER_REVIEW_FRESHNESS_STATES), checkedAt: isoTimestamp }).strict();
+export type ReviewFreshnessHint = z.infer<typeof reviewFreshnessHintSchema>;
+
+// The head-level list projection: everything a list / overview / Partner-history
+// row needs, kept in step with the head inside the SAME transaction that changes it.
+export const headDisplaySchema = z
+  .object({
+    // The head's default version (open, else current finalized, else newest) and its status.
+    version: z.number().int().min(1),
+    status: partnerReviewStatusSchema,
+    summary: reviewListSummarySchema,
+    evidenceCutoff: isoTimestamp,
+    lastEventKind: z.enum(PARTNER_REVIEW_EVENT_KINDS),
+    lastEventAt: isoTimestamp,
+    // latestVersion - 1: how many times the review has been revised.
+    revisionCount: countValue,
+    // Set only when the last event finalized a version that superseded an older one.
+    supersededVersion: z.number().int().min(1).nullable(),
+    // The current finalized version's number and finalization time (null when none is finalized).
+    finalizedVersion: z.number().int().min(1).nullable(),
+    finalizedAt: isoTimestamp.nullable(),
+  })
+  .strict();
+export type HeadDisplay = z.infer<typeof headDisplaySchema>;
+
 // --- Head document (partnerReviews/{reviewRef}) -----------------------------
 // The head's own scope fields (ownerUid/regionIds/teamIds/partnerUid) are a
 // point-in-time copy of the Partner's scope, refreshed on every mutation.
@@ -381,6 +503,11 @@ export const partnerReviewHeadDocSchema = z.object({
   createdByUserRef: z.string().min(1),
   updatedAt: isoTimestamp,
   updatedByUserRef: z.string().min(1),
+
+  // Step 13B: list projections (optional - a head written before this step has neither).
+  display: headDisplaySchema.optional(),
+  // Best-effort "as of last check" freshness of the default version; null once a mutation invalidates it.
+  freshnessHint: reviewFreshnessHintSchema.nullable().optional(),
 });
 export type PartnerReviewHeadDoc = z.infer<typeof partnerReviewHeadDocSchema>;
 
@@ -410,13 +537,14 @@ export const partnerReviewVersionDocSchema = z.object({
 
   createdAt: isoTimestamp,
   createdByUserRef: z.string().min(1),
+
+  // Step 13B: the list projection of this version's snapshot (optional - old versions have none).
+  summary: reviewListSummarySchema.optional(),
 });
 export type PartnerReviewVersionDoc = z.infer<typeof partnerReviewVersionDocSchema>;
 
 // --- Append-only event history (partnerReviews/{reviewRef}/events/{id}) ----
-export const PARTNER_REVIEW_EVENT_KINDS = ["generated", "refreshed", "submitted", "finalized", "revision_created", "superseded"] as const;
-export const partnerReviewEventKindSchema = z.enum(PARTNER_REVIEW_EVENT_KINDS);
-export type PartnerReviewEventKind = z.infer<typeof partnerReviewEventKindSchema>;
+// (PARTNER_REVIEW_EVENT_KINDS and the freshness states are declared above, before the head list projection that uses them.)
 
 export const partnerReviewEventSchema = z.object({
   kind: partnerReviewEventKindSchema,
@@ -439,8 +567,6 @@ export type PartnerReviewEvent = z.infer<typeof partnerReviewEventSchema>;
 //  evidence_incomplete   the snapshot matches upstream but a bounded read or
 //                        a missing source made the evidence incomplete
 //  superseded            a historical version - never compared
-export const PARTNER_REVIEW_FRESHNESS_STATES = ["current", "refresh_available", "revision_available", "revision_in_progress", "evidence_incomplete", "superseded"] as const;
-export type PartnerReviewFreshnessState = (typeof PARTNER_REVIEW_FRESHNESS_STATES)[number];
 
 export type PartnerReviewFreshness = { state: PartnerReviewFreshnessState; incompleteReasons: string[] };
 
