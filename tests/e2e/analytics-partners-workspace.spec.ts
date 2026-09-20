@@ -1,6 +1,7 @@
 import { test, expect, type Page } from "@playwright/test";
 
 import { EMULATOR_TEST_USERS } from "@/server/auth/seed-users";
+import { DISCOVERY_REGIONS } from "@/server/discovery/types";
 import { analyticsChannelSourceRecordsCollection, analyticsContentSourceRecordsCollection, analyticsImportBatchesCollection } from "@/server/analytics/firestore";
 import { analyticsChannelSourceRecordDocSchema, analyticsContentSourceRecordDocSchema, analyticsImportBatchDocSchema } from "@/server/analytics/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
@@ -43,6 +44,12 @@ const NAME: Record<string, string> = {
   [P_HIDDEN]: "12F E2E Hidden Region",
   [P_KERALA]: "12F E2E Kerala Scoped",
 };
+
+// Twelve extra Partners under their own name prefix ("12F CAP"), only for the 10-Partner selection-limit test.
+const CAP_REFS = Array.from({ length: 12 }, (_, i) => `${tag}-cap-${String(i + 1).padStart(2, "0")}`);
+CAP_REFS.forEach((ref, i) => {
+  NAME[ref] = `12F CAP ${String(i + 1).padStart(2, "0")}`;
+});
 
 // Fixture months (2016): the latest month with data for Aurora is APRIL 2016.
 const FEB = { start: "2016-02-01", end: "2016-02-29" };
@@ -245,6 +252,7 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
     await put(partnersCollection(), partner(P_DELTA, REGION, []));
     await put(partnersCollection(), partner(P_HIDDEN, REGION_HIDDEN, ["India 1"]));
     await put(partnersCollection(), partner(P_KERALA, "Kerala", ["India 1"]));
+    for (const ref of CAP_REFS) await put(partnersCollection(), partner(ref, REGION, ["India 1"]));
 
     const contents = [
       // Aurora: Instagram March + April, YouTube March, one record with NO period (never in a month)
@@ -283,7 +291,7 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
 
   const workspaceUrl = (query = "") => `/analytics/partners${query}`;
   const panel = (page: Page, title: string) => page.locator(".ov-panel", { has: page.getByRole("heading", { name: title, exact: true }) });
-  const searchBox = (page: Page) => page.getByRole("combobox", { name: "Search Partners by name" });
+  const searchBox = (page: Page) => page.getByRole("combobox", { name: "Search and select Partners" });
   // The month-scoped evidence: KPI row + Published Content + Top Content. (The monthly TREND cards legitimately mention the other
   // months' values - they are the bounded trend across months, not the selected month's evidence.)
   const evidenceText = async (page: Page) => [await page.locator(".ov-kpis").innerText(), await panel(page, "Published Content").innerText(), await panel(page, "Top Content").innerText()].join("\n");
@@ -522,7 +530,7 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
     await page.goto(workspaceUrl());
     await expect(page.locator("h1")).toHaveText("Partners Analytics");
     await expect(page.getByRole("heading", { name: "Choose Partners", exact: true })).toBeVisible();
-    await expect(page.getByText("No Partner selected yet.")).toBeVisible();
+    await expect(page.getByRole("list", { name: "Selected Partners" })).toHaveCount(0);
     await expect(page.getByText("Select Partners to see Analytics")).toBeVisible();
     await expect(page.getByRole("link", { name: /Import data/ })).toHaveCount(0);
     await expect(page.getByLabel("Reporting month")).toBeVisible();
@@ -740,8 +748,11 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
     await page.getByRole("button", { name: `Remove ${NAME[P_BOREAL]}` }).click();
     await expect(chips).toHaveCount(2);
     await expect(page).toHaveURL(new RegExp(`partners=${P_AURORA}%2C${P_CASCADE}`));
+    // Clear all lives INSIDE the control's dropdown, not in a standalone row.
+    await expect(page.getByRole("button", { name: "Clear all" })).toHaveCount(0);
+    await searchBox(page).click();
     await page.getByRole("button", { name: "Clear all" }).click();
-    await expect(page.getByText("No Partner selected yet.")).toBeVisible();
+    await expect(page.getByRole("list", { name: "Selected Partners" })).toHaveCount(0);
     await expect(page).not.toHaveURL(/partners=/);
   });
 
@@ -785,11 +796,11 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
     await page.goto(workspaceUrl());
     const audience = page.getByRole("group", { name: "Target Audience filter" });
     await audience.getByRole("button").click();
-    expect(await audience.getByRole("checkbox").count()).toBe(5); // exactly the five canonical values
+    expect(await audience.getByRole("checkbox").count()).toBe(6); // "Select all" + exactly the five canonical values
     await audience.getByLabel("India 3", { exact: true }).check();
     await expect(page).toHaveURL(/targetAudience=India\+3/);
     // The filter never selected anything.
-    await expect(page.getByText("No Partner selected yet.")).toBeVisible();
+    await expect(page.getByRole("list", { name: "Selected Partners" })).toHaveCount(0);
     await searchBox(page).fill("12F E2E");
     const list = page.getByRole("listbox", { name: "Partner search results" });
     await expect(list.getByRole("option", { name: /12F E2E Cascade Media/ })).toBeVisible();
@@ -804,6 +815,300 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
     const names = (await options.locator("b").allInnerTexts()).map((n) => n.trim());
     expect(names).toEqual([NAME[P_AURORA], NAME[P_BOREAL], NAME[P_CASCADE], NAME[P_HIDDEN], NAME[P_KERALA]]);
     expect(names).not.toContain(NAME[P_DELTA]!);
+  });
+
+  // ==== Select all in the three selector fields + the anchored Partner dropdown =============================
+
+  const paramValues = (page: Page, name: string) => new URL(page.url()).searchParams.getAll(name);
+
+  test("Target Audience 'Select all': ticks all five, reads 'All Target Audiences', is no narrowing (a Partner with no audience stays searchable), and unticking clears it", async ({ page }) => {
+    await page.goto(workspaceUrl());
+    const audience = page.getByRole("group", { name: "Target Audience filter" });
+    const trigger = audience.getByRole("button");
+    await trigger.click();
+    const selectAll = audience.getByLabel("Select all", { exact: true });
+    await expect(selectAll).not.toBeChecked();
+
+    // Partly ticked: the Select all box is indeterminate, not checked.
+    await audience.getByLabel("India 3", { exact: true }).check();
+    await expect(page).toHaveURL(/targetAudience=India\+3/);
+    await expect(selectAll).not.toBeChecked();
+    expect(await selectAll.evaluate((el) => (el as HTMLInputElement).indeterminate)).toBe(true);
+
+    await selectAll.check();
+    await expect.poll(() => [...paramValues(page, "targetAudience")].sort()).toEqual(["India 1", "India 2", "India 3", "India 4", "India Alpha"]);
+    await expect(trigger).toHaveText("All Target Audiences");
+    await expect(selectAll).toBeChecked();
+    for (const value of ["India Alpha", "India 1", "India 2", "India 3", "India 4"]) await expect(audience.getByLabel(value, { exact: true })).toBeChecked();
+    await expect(page.getByRole("list", { name: "Selected Partners" })).toHaveCount(0); // a filter never selects Partners
+
+    // Everything selected narrows nothing: Delta records NO Target Audience and is still found (the 6 fixture Partners).
+    await searchBox(page).fill("12F E2E");
+    const options = page.getByRole("listbox", { name: "Partner search results" }).getByRole("option");
+    await expect(options).toHaveCount(6);
+    expect((await options.locator("b").allInnerTexts()).map((n) => n.trim())).toContain(NAME[P_DELTA]!);
+
+    // Unticking Select all clears the whole filter.
+    if (!(await selectAll.isVisible())) await trigger.click(); // (typing in the search box does not close it)
+    await selectAll.uncheck();
+    await expect.poll(() => paramValues(page, "targetAudience")).toEqual([]);
+    await expect(trigger).toHaveText("Select Target Audience…");
+  });
+
+  test("Region 'Select all': every state/UT ticked, reads 'All regions', is no narrowing (Partners in any region stay searchable); 'Select all matching' follows the search; unticking clears", async ({ page }) => {
+    await page.goto(workspaceUrl());
+    const region = page.getByRole("group", { name: "Region filter" });
+    const trigger = region.getByRole("button").first();
+    await trigger.click();
+    const selectAll = region.getByLabel("Select all", { exact: true });
+
+    await selectAll.check();
+    await expect.poll(() => paramValues(page, "region").length).toBe(DISCOVERY_REGIONS.length);
+    expect(new Set(paramValues(page, "region"))).toEqual(new Set(DISCOVERY_REGIONS));
+    await expect(trigger).toHaveText("All regions");
+    await expect(selectAll).toBeChecked();
+    await noOverflow(page, "all regions selected");
+
+    // No narrowing: Partners in private, non-canonical test regions are still found, and there is no error.
+    await searchBox(page).fill("12F E2E");
+    const list = page.getByRole("listbox", { name: "Partner search results" });
+    await expect(list.getByRole("option")).toHaveCount(6);
+    await expect(page.getByRole("status").filter({ hasText: "Couldn’t search" })).toHaveCount(0);
+
+    // Untick all, then "Select all matching" only ticks what the search lists.
+    if (!(await selectAll.isVisible())) await trigger.click();
+    await selectAll.uncheck();
+    await expect.poll(() => paramValues(page, "region")).toEqual([]);
+    await expect(trigger).toHaveText("Select regions…");
+    await region.getByPlaceholder("Search states…").fill("Kerala");
+    await expect(region.getByLabel("Select all matching", { exact: true })).toBeVisible();
+    await region.getByLabel("Select all matching", { exact: true }).check();
+    await expect.poll(() => paramValues(page, "region")).toEqual(["Kerala"]);
+    await expect(trigger).toHaveText("Kerala");
+  });
+
+  test("Partner search is ONE multi-select dropdown under the search field: an overlay (no layout shift) with checkbox rows that stays open while ticking; 'Select all shown' ticks and clears every listed Partner", async ({ page }) => {
+    await page.goto(workspaceUrl());
+    const empty = page.getByLabel("Reporting month");
+    const restingTop = (await empty.boundingBox())!.y;
+    const input = searchBox(page);
+    await input.fill("12F E2E");
+    const list = page.getByRole("listbox", { name: "Partner search results" });
+    const options = list.getByRole("option");
+    await expect(options).toHaveCount(6);
+
+    // Anchored to the search field and overlaying the page: nothing below moved.
+    expect((await empty.boundingBox())!.y).toBe(restingTop);
+    const inputBox = (await input.boundingBox())!;
+    const listBox = (await list.boundingBox())!;
+    expect(listBox.y).toBeGreaterThanOrEqual(inputBox.y + inputBox.height);
+    expect(Math.abs(listBox.x - inputBox.x)).toBeLessThan(40);
+    expect(await list.evaluate((el) => getComputedStyle(el.parentElement!).position)).toBe("absolute");
+
+    // Select all shown: every listed Partner becomes selected, the dropdown stays open.
+    const selectAll = page.getByRole("checkbox", { name: "Select all shown Partners" });
+    await expect(selectAll).toHaveAttribute("aria-checked", "false");
+    await selectAll.click();
+    await expect.poll(() => (paramValues(page, "partners")[0] ?? "").split(",").length).toBe(6);
+    await expect(page.getByRole("list", { name: "Selected Partners" }).getByRole("listitem")).toHaveCount(6);
+    await expect(list).toBeVisible();
+    for (let i = 0; i < 6; i++) await expect(options.nth(i)).toHaveAttribute("aria-selected", "true");
+    await expect(selectAll).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("heading", { name: "Partner comparison", exact: true })).toBeVisible();
+
+    // Clicking it again clears exactly those Partners.
+    await selectAll.click();
+    await expect(page).not.toHaveURL(/partners=/);
+    await expect(selectAll).toHaveAttribute("aria-checked", "false");
+
+    // One row is a partial selection ("mixed"); the rows are multi-select (a second one adds to it).
+    await options.nth(0).click();
+    await expect(selectAll).toHaveAttribute("aria-checked", "mixed");
+    await options.nth(1).click();
+    await expect.poll(() => (paramValues(page, "partners")[0] ?? "").split(",").length).toBe(2);
+    await expect(list).toBeVisible();
+
+    // An outside click closes it; opening another filter dropdown closes it too.
+    await page.getByRole("heading", { name: "Choose Partners", exact: true }).click();
+    await expect(list).toHaveCount(0);
+    await input.click();
+    await expect(list).toBeVisible();
+    await page.getByRole("group", { name: "Region filter" }).getByRole("button").first().click();
+    await expect(list).toHaveCount(0);
+  });
+
+  // ==== Step 12F.2: one compact multi-select control (chips INSIDE it, no duplicated UI) ========================
+
+  const selectedList = (page: Page) => page.getByRole("list", { name: "Selected Partners" });
+  const resultList = (page: Page) => page.getByRole("listbox", { name: "Partner search results" });
+
+  test("compact control: the dropdown is closed by default, opens on focus/click, and NOTHING about the selection is rendered outside the one control", async ({ page }) => {
+    await page.goto(workspaceUrl());
+    const input = searchBox(page);
+    await expect(input).toHaveAttribute("placeholder", "Search and select Partners...");
+    await expect(resultList(page)).toHaveCount(0);
+    for (const removed of [/Selected Partners\s*·/, /of 10 max/, "No Partner selected yet."]) await expect(page.locator("#main").getByText(removed)).toHaveCount(0);
+    await expect(page.getByRole("button", { name: "Clear all" })).toHaveCount(0);
+
+    // Focus opens it; the authorized results and "N Partners found" live INSIDE the dropdown.
+    await input.focus();
+    await expect(resultList(page)).toBeVisible();
+    await expect(page.getByRole("status").filter({ hasText: /Partners? found|Showing the first/ })).toBeVisible();
+    await input.press("Escape");
+    await expect(resultList(page)).toHaveCount(0);
+    await input.click(); // still focused: a click opens it again
+    await expect(resultList(page)).toBeVisible();
+
+    // One Partner selected: its chip is INSIDE the same control as the search input - the only place it appears.
+    await input.fill("12F E2E Aurora");
+    await resultList(page).getByRole("option", { name: /12F E2E Aurora Studio/ }).click();
+    await expect(selectedList(page)).toHaveCount(1);
+    expect(await selectedList(page).locator("xpath=..").getByRole("combobox").count()).toBe(1);
+    await expect(page.locator("#main").getByText(NAME[P_AURORA]!, { exact: true })).toHaveCount(await page.locator("#main").getByText(NAME[P_AURORA]!, { exact: true }).count()); // (name also appears in the analytics below)
+    await expect(page.getByText(/Selected Partners\s*·/)).toHaveCount(0);
+
+    // Closed again: no permanent result list, the chip stays.
+    await input.press("Escape");
+    await expect(resultList(page)).toHaveCount(0);
+    await expect(selectedList(page).getByRole("listitem")).toHaveCount(1);
+    await expect(page.getByText("0 / 10")).toHaveCount(0);
+    await expect(page.locator("small", { hasText: "1 / 10" })).toBeVisible();
+  });
+
+  test("many selections stay compact: a few chips + '+N selected' while closed, every chip (removable) while open; phones collapse harder", async ({ page }) => {
+    const five = [P_AURORA, P_BOREAL, P_CASCADE, P_DELTA, P_KERALA];
+    await page.goto(workspaceUrl(`?partners=${five.join(",")}`));
+    const items = selectedList(page).getByRole("listitem");
+    await expect(items).toHaveCount(3); // 2 chips + "+3 selected"
+    await expect(page.getByRole("button", { name: /3 more selected Partners/ })).toHaveText("+3 selected");
+    const controlHeight = (await selectedList(page).locator("xpath=..").boundingBox())!.height;
+    expect(controlHeight).toBeLessThan(50); // compact: one line of chips, not a tall block
+
+    // "+3 selected" opens the dropdown, which shows EVERY chip so any Partner can be removed.
+    await page.getByRole("button", { name: /3 more selected Partners/ }).click();
+    await expect(resultList(page)).toBeVisible();
+    await expect(items).toHaveCount(5);
+    await selectedList(page).getByRole("button", { name: `Remove ${NAME[P_KERALA]}` }).click();
+    await expect(items).toHaveCount(4);
+    await expect.poll(() => paramValues(page, "partners")[0]).toBe([P_AURORA, P_BOREAL, P_CASCADE, P_DELTA].join(","));
+    // Focus returns to the search input and the dropdown is not re-opened by the removal itself.
+    await expect(searchBox(page)).toBeFocused();
+
+    // Phone: one chip + "+N selected".
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(workspaceUrl(`?partners=${five.join(",")}`));
+    await expect(items).toHaveCount(2);
+    await expect(page.getByRole("button", { name: /4 more selected Partners/ })).toHaveText("+4 selected");
+    await noOverflow(page, "390 collapsed chips");
+  });
+
+  test("Target Audience / Region only narrow the search: changing them never removes or adds a selected Partner (its chip stays even when it no longer matches)", async ({ page }) => {
+    await page.goto(workspaceUrl(`?partners=${P_AURORA}`));
+    await expect(selectedList(page).getByText(NAME[P_AURORA]!)).toBeVisible();
+    const audience = page.getByRole("group", { name: "Target Audience filter" });
+    await audience.getByRole("button").click();
+    await audience.getByLabel("India 3", { exact: true }).check(); // Aurora is India 1 + India 2: it no longer matches
+    await expect(page).toHaveURL(/targetAudience=India\+3/);
+    await expect(page).toHaveURL(new RegExp(`partners=${P_AURORA}`));
+    await searchBox(page).fill("12F E2E");
+    await expect(resultList(page).getByRole("option")).toHaveCount(1); // only Cascade (India 3) - Aurora is omitted from the filtered list...
+    await expect(resultList(page).getByRole("option", { name: /Aurora/ })).toHaveCount(0);
+    await expect(selectedList(page).getByText(NAME[P_AURORA]!)).toBeVisible(); // ...but stays selected, chip visible
+    await expect(selectedList(page).getByRole("listitem")).toHaveCount(1);
+  });
+
+  test("maximum 10: selected Partners stay removable, unselected ones are disabled with 'Maximum 10 Partners' feedback", async ({ page }) => {
+    await page.goto(workspaceUrl(`?partners=${CAP_REFS.slice(2).join(",")}`)); // CAP 03..12 = 10 selected
+    const input = searchBox(page);
+    await input.click();
+    await input.fill("12F CAP");
+    const list = resultList(page);
+    await expect(list.getByRole("option")).toHaveCount(10); // 01..10
+    const blocked = list.getByRole("option", { name: /12F CAP 01/ });
+    await expect(blocked).toHaveAttribute("aria-disabled", "true");
+    await expect(blocked).toHaveAttribute("title", "Maximum 10 Partners");
+    await expect(page.getByRole("status").filter({ hasText: "Maximum 10 Partners selected" })).toBeVisible();
+    const before = page.url();
+    await blocked.click({ force: true }); // refused: nothing changes (aria-disabled)
+    await expect(page).toHaveURL(before);
+    // A selected one is still removable from the dropdown, freeing a slot.
+    await list.getByRole("option", { name: /12F CAP 03/ }).click();
+    await expect.poll(() => (paramValues(page, "partners")[0] ?? "").split(",").length).toBe(9);
+    await expect(list.getByRole("option", { name: /12F CAP 01/ })).not.toHaveAttribute("aria-disabled", "true");
+    await list.getByRole("option", { name: /12F CAP 01/ }).click();
+    await expect.poll(() => (paramValues(page, "partners")[0] ?? "").split(",").length).toBe(10);
+  });
+
+  test("keyboard: Space toggles the highlighted result while nothing is typed, Backspace on an empty field removes the last chip, Clear all sits inside the dropdown and returns focus to the field", async ({ page }) => {
+    await page.goto(workspaceUrl());
+    const input = searchBox(page);
+    await input.click();
+    await expect(resultList(page).getByRole("option").first()).toBeVisible();
+    await input.press("ArrowDown");
+    await input.press("Space");
+    await expect.poll(() => paramValues(page, "partners").length).toBe(1);
+    await input.press("ArrowDown");
+    await input.press("Enter");
+    await expect.poll(() => (paramValues(page, "partners")[0] ?? "").split(",").length).toBe(2);
+    // Typed text keeps its spaces (Space is a character once something is typed).
+    await input.fill("12F E2E");
+    expect(await input.inputValue()).toBe("12F E2E");
+    await input.fill("");
+    await input.press("Backspace");
+    await expect.poll(() => (paramValues(page, "partners")[0] ?? "").split(",").length).toBe(1);
+    // Clear all: inside the dropdown; afterwards focus is in the field.
+    await page.getByRole("button", { name: "Clear all" }).click();
+    await expect(page).not.toHaveURL(/partners=/);
+    await expect(input).toBeFocused();
+  });
+
+  for (const width of [390, 375]) {
+    test(`compact control at ${width}: the dropdown stays inside the viewport and scrolls internally, chips never widen the page`, async ({ page }) => {
+      await page.setViewportSize({ width, height: 800 });
+      await page.goto(workspaceUrl(`?partners=${[P_AURORA, P_BOREAL, P_CASCADE, P_DELTA, P_KERALA].join(",")}`));
+      const input = searchBox(page);
+      await input.click();
+      await input.fill("12F CAP");
+      const list = resultList(page);
+      await expect(list.getByRole("option")).toHaveCount(10);
+      const box = (await list.boundingBox())!;
+      expect(box.x).toBeGreaterThanOrEqual(0);
+      expect(box.x + box.width).toBeLessThanOrEqual(width);
+      expect(box.height).toBeLessThanOrEqual(250);
+      expect(await list.evaluate((el) => el.scrollHeight > el.clientHeight || getComputedStyle(el).overflowY === "auto")).toBe(true);
+      await noOverflow(page, `${width} open dropdown with chips`);
+      const control = (await selectedList(page).locator("xpath=..").boundingBox())!;
+      expect(control.x + control.width).toBeLessThanOrEqual(width);
+    });
+  }
+
+  test("'Select all shown' never goes past the 10-Partner limit: it adds only what fits and says so", async ({ page }) => {
+    // Two Partners outside the listed ten are already selected (11 and 12), so only 8 of the 10 listed fit.
+    await page.goto(workspaceUrl(`?partners=${CAP_REFS[10]},${CAP_REFS[11]}`));
+    await searchBox(page).fill("12F CAP");
+    const list = page.getByRole("listbox", { name: "Partner search results" });
+    await expect(list.getByRole("option")).toHaveCount(10); // the bounded first page: 01..10
+    await expect(page.getByRole("status").filter({ hasText: "Select all shown adds 8 more (limit 10)" })).toBeVisible();
+    await page.getByRole("checkbox", { name: "Select all shown Partners" }).click();
+    await expect.poll(() => (paramValues(page, "partners")[0] ?? "").split(",").length).toBe(10);
+    expect(paramValues(page, "partners")[0]!.split(",")).toEqual([CAP_REFS[10], CAP_REFS[11], ...CAP_REFS.slice(0, 8)]);
+    await expect(page.getByRole("status").filter({ hasText: "Maximum 10 Partners selected" })).toBeVisible();
+    await expect(page.getByRole("checkbox", { name: "Select all shown Partners" })).toBeDisabled();
+    await expect(list.getByRole("option", { name: /12F CAP 08/ })).toHaveAttribute("aria-selected", "true");
+    await expect(list.getByRole("option", { name: /12F CAP 09/ })).toHaveAttribute("aria-selected", "false");
+    await expect(list.getByRole("option", { name: /12F CAP 10/ })).toHaveAttribute("aria-selected", "false");
+  });
+
+  test("phone width: the Partner dropdown and 'All regions' fit without horizontal overflow", async ({ page }) => {
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto(workspaceUrl("?" + DISCOVERY_REGIONS.map((r) => `region=${encodeURIComponent(r)}`).join("&")));
+    await expect(page.getByRole("group", { name: "Region filter" }).getByRole("button").first()).toHaveText("All regions");
+    await noOverflow(page, "390 all regions");
+    await searchBox(page).fill("12F E2E");
+    await expect(page.getByRole("listbox", { name: "Partner search results" }).getByRole("option")).toHaveCount(6);
+    await noOverflow(page, "390 partner dropdown open");
+    const listBox = (await page.getByRole("listbox", { name: "Partner search results" }).boundingBox())!;
+    expect(listBox.x + listBox.width).toBeLessThanOrEqual(390);
   });
 
   test("search is authorized only: the scoped Analyst finds exactly the in-scope Partner, an injected out-of-scope ref is dropped with ONE neutral notice and never yields data", async ({ page }) => {
@@ -825,7 +1130,7 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
     for (const leak of [NAME[P_AURORA]!, NAME[P_HIDDEN]!, "6,161,101", "2,424,242", P_AURORA, P_HIDDEN]) expect(main, leak).not.toContain(leak);
     // The unavailable notice for an out-of-scope ref is IDENTICAL to the one for an unknown ref.
     await page.goto(workspaceUrl(`?partners=${P_AURORA}`));
-    const neutral = async () => ({ banner: await page.locator(".banner").allInnerTexts(), selected: await page.getByRole("list", { name: "Selected Partners" }).count(), empty: await page.getByText("No Partner selected yet.").count() });
+    const neutral = async () => ({ banner: await page.locator(".banner").allInnerTexts(), selected: await page.getByRole("list", { name: "Selected Partners" }).count(), listboxes: await page.getByRole("listbox").count() });
     const outOfScope = await neutral();
     await page.goto(workspaceUrl(`?partners=${tag}-unknown`));
     expect(await neutral()).toEqual(outOfScope);
@@ -948,8 +1253,8 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
       expect(info.left).toBeGreaterThanOrEqual(0);
       expect(info.right).toBeLessThanOrEqual(viewport.width);
       await noOverflow(page, `open search at ${viewport.name}`);
-      // Selected chips live inside their own bounded container.
-      const chips = page.getByRole("list", { name: "Selected Partners" });
+      // Selected chips live inside the one bounded control (the list itself has no box of its own).
+      const chips = page.getByRole("list", { name: "Selected Partners" }).locator("xpath=..");
       const chipInfo = await chips.evaluate((el) => ({ overflowY: getComputedStyle(el).overflowY, right: el.getBoundingClientRect().right, scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }));
       expect(chipInfo.right).toBeLessThanOrEqual(viewport.width);
       expect(chipInfo.scrollWidth).toBeLessThanOrEqual(chipInfo.clientWidth + 1);
@@ -957,7 +1262,8 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
       await input.focus();
       await page.keyboard.press("Tab");
       await page.keyboard.press("Shift+Tab");
-      const focusOutline = await input.evaluate((el) => ({ style: getComputedStyle(el).outlineStyle, boxShadow: getComputedStyle(el).boxShadow }));
+      // The input sits inside the one compact control, whose border/ring is the visible focus state.
+      const focusOutline = await input.evaluate((el) => ({ style: getComputedStyle(el).outlineStyle, boxShadow: getComputedStyle(el.parentElement!).boxShadow }));
       expect(focusOutline.style !== "none" || focusOutline.boxShadow !== "none").toBe(true);
       // Escape closes and returns focus to the search box.
       await input.press("Escape");

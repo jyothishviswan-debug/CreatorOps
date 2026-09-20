@@ -14,6 +14,7 @@
 // so they see precisely their own fixtures no matter what other files have
 // seeded; whole-collection sizes are never asserted, and numbers are matched as
 // JSON NUMBER values (labels embed Date.now() digits).
+import { DISCOVERY_REGIONS } from "@/server/discovery/types";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
@@ -428,6 +429,21 @@ describe("Partner search - scoped before retrieval, bounded, safe identity only"
     expect(names((await search(actorA, { q: NAME_PREFIX, region: [REGION_A] })).partners)).toEqual([NAME[PA1], NAME[PA2], NAME[PA3], NAME[PA4]]);
     expect((await search(actorA, { q: NAME_PREFIX, region: [REGION_B] })).partners).toEqual([]);
     expect(names((await search(actorA, { q: NAME_PREFIX, region: [REGION_A], targetAudience: ["India 3"] })).partners)).toEqual([NAME[PA3]]);
+  });
+
+  it("'Select all' is no narrowing: every Target Audience / every region returns what no filter returns (Delta has no audience and a non-canonical region), still inside scope", async () => {
+    const actorA = await syntheticActor("a", REGION_A);
+    const everyAudience = ["India Alpha", "India 1", "India 2", "India 3", "India 4"];
+    const everyRegion = [...DISCOVERY_REGIONS];
+    const unfiltered = names((await search(actorA, { q: NAME_PREFIX })).partners);
+    expect(unfiltered).toEqual([NAME[PA1], NAME[PA2], NAME[PA3], NAME[PA4]]); // includes Delta: no Target Audience, region A is not a canonical state
+    expect(names((await search(actorA, { q: NAME_PREFIX, targetAudience: everyAudience })).partners)).toEqual(unfiltered);
+    expect(names((await search(actorA, { q: NAME_PREFIX, region: everyRegion })).partners)).toEqual(unfiltered);
+    expect(names((await search(actorA, { q: NAME_PREFIX, targetAudience: everyAudience, region: everyRegion })).partners)).toEqual(unfiltered);
+    // One audience short of everything is a real narrowing again (Delta, with no audience, drops out).
+    expect(names((await search(actorA, { q: NAME_PREFIX, targetAudience: everyAudience.slice(1) })).partners)).not.toContain(NAME[PA4]);
+    // Never a way around scope: the out-of-scope Partner stays hidden under Select all.
+    expect(names((await search(actorA, { q: NAME_PREFIX, targetAudience: everyAudience, region: everyRegion })).partners)).not.toContain(NAME[PB1]);
   });
 
   it("is bounded: the limit is honored, clamped to 20, and `hasMore` says more exist", async () => {

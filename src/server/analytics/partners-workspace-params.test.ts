@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { DISCOVERY_REGIONS, TARGET_AUDIENCES } from "@/server/discovery/types";
+
 import {
   DEFAULT_TREND_METRIC,
   MAX_PARTNER_REF_LENGTH,
@@ -7,6 +9,8 @@ import {
   PARTNER_SEARCH_DEFAULT_LIMIT,
   PARTNER_SEARCH_MAX_LIMIT,
   PARTNER_SELECTION_LIMIT,
+  narrowingRegions,
+  narrowingTargetAudiences,
   parsePartnerRefs,
   parsePartnerSearchInput,
   parseRegionValues,
@@ -14,6 +18,7 @@ import {
   parseTrendMetric,
   parseWorkspaceParams,
   partnersWorkspacePath,
+  selectsEveryRegion,
 } from "./partners-workspace-params";
 
 describe("selection cap and dedupe (?partners=)", () => {
@@ -65,8 +70,30 @@ describe("region filter", () => {
   it("trims, drops blanks / over-long values, dedupes case-insensitively and bounds the count", () => {
     expect(parseRegionValues(["Kerala", " kerala ", "", "  ", "Tamil Nadu"])).toEqual(["Kerala", "Tamil Nadu"]);
     expect(parseRegionValues("x".repeat(61))).toEqual([]);
-    expect(parseRegionValues(Array.from({ length: 20 }, (_, i) => `R${i}`))).toHaveLength(MAX_REGION_FILTERS);
+    expect(parseRegionValues(Array.from({ length: 40 }, (_, i) => `R${i}`))).toHaveLength(MAX_REGION_FILTERS);
     expect(parseRegionValues(undefined)).toEqual([]);
+  });
+
+  it("Select all: every canonical region is kept whole (with custom ones), yet is no narrowing at all", () => {
+    const everyRegion = [...DISCOVERY_REGIONS];
+    expect(everyRegion.length).toBeGreaterThan(MAX_REGION_FILTERS);
+    expect(parseRegionValues(everyRegion)).toEqual(everyRegion);
+    expect(parseRegionValues([...everyRegion, "Custom Land"])).toEqual([...everyRegion, "Custom Land"]);
+    expect(parseRegionValues(everyRegion.map((region) => region.toUpperCase()))).toHaveLength(everyRegion.length);
+    expect(selectsEveryRegion(everyRegion)).toBe(true);
+    expect(narrowingRegions(everyRegion)).toEqual([]);
+    // One region short of everything is a real narrowing, bounded to what Firestore can filter on.
+    const almost = everyRegion.slice(1);
+    expect(selectsEveryRegion(almost)).toBe(false);
+    expect(parseRegionValues(almost)).toHaveLength(MAX_REGION_FILTERS);
+    expect(narrowingRegions(["Kerala", "Goa"])).toEqual(["Kerala", "Goa"]);
+    expect(narrowingRegions([])).toEqual([]);
+  });
+
+  it("Select all Target Audiences is no narrowing; any subset is", () => {
+    expect(narrowingTargetAudiences([...TARGET_AUDIENCES])).toEqual([]);
+    expect(narrowingTargetAudiences(["India 1", "India 3"])).toEqual(["India 1", "India 3"]);
+    expect(narrowingTargetAudiences([])).toEqual([]);
   });
 });
 

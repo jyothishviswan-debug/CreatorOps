@@ -50,7 +50,7 @@ import { assemblePartnerAnalyticsView, fetchBoundedPartnerRecords, MAX_PARTNER_V
 import { platformsForSelection } from "./partner-view-metrics";
 import { buildPartnersWorkspaceDto, type PartnerSearchResultDto, type PartnersWorkspaceDto } from "./partners-workspace-dto";
 import { availableMonthsOf, restrictWindowToSelection, type PartnerRecordWindow } from "./partners-workspace-metrics";
-import { parsePartnerSearchInput, parseWorkspaceParams, type WorkspaceParamsInput } from "./partners-workspace-params";
+import { narrowingRegions, narrowingTargetAudiences, parsePartnerSearchInput, parseWorkspaceParams, type WorkspaceParamsInput } from "./partners-workspace-params";
 import type { PlatformViewId } from "./platform-view-metrics";
 import { resolveMonth } from "./reporting-month";
 import { analyticsInvalidInputResult, analyticsUnauthorizedResult, type AnalyticsChannelSourceRecordDoc, type AnalyticsContentSourceRecordDoc, type AnalyticsServiceResult } from "./types";
@@ -220,7 +220,10 @@ export async function searchWorkspacePartners(actor: ActorContext | null, rawInp
 
   const parsed = parsePartnerSearchInput(rawInput && typeof rawInput === "object" ? (rawInput as Record<string, unknown>) : {});
   if (!parsed.ok) return analyticsInvalidInputResult(parsed.message);
-  const { prefix, targetAudience, regions, limit } = parsed.input;
+  const { prefix, limit } = parsed.input;
+  // Choosing every Target Audience / every region ("Select all") is no narrowing.
+  const targetAudience = narrowingTargetAudiences(parsed.input.targetAudience);
+  const regions = narrowingRegions(parsed.input.regions);
 
   const result = await listPartners(actor, {
     displayNamePrefix: prefix.length > 0 ? prefix : undefined,

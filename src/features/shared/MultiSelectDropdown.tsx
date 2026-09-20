@@ -15,6 +15,13 @@ export type MultiSelectGroup = { label: string; options: string[] };
 // `allowCustom` is set, so a caller-supplied group list is never a fixed
 // whitelist. Shared base for CampaignForm's PlatformMultiSelect and
 // RegionMultiSelect.
+//
+// `selectAll` (opt-in, used by filter fields) adds a "Select all" checkbox at the
+// top of the panel that ticks - or, when everything is ticked, clears - every
+// option currently listed (so with a search typed it means "all matching"), and
+// makes the closed control a single truncated line that reads `allLabel` when
+// every option is selected (and "A, B +N" for longer selections). Forms that pick real values leave it off and are
+// unchanged.
 export function MultiSelectDropdown({
   value,
   onChange,
@@ -23,6 +30,8 @@ export function MultiSelectDropdown({
   searchPlaceholder = "Search…",
   allowCustom = false,
   customPlaceholder = "Other…",
+  selectAll = false,
+  allLabel = "All",
 }: {
   value: string[];
   onChange: (next: string[]) => void;
@@ -31,6 +40,8 @@ export function MultiSelectDropdown({
   searchPlaceholder?: string;
   allowCustom?: boolean;
   customPlaceholder?: string;
+  selectAll?: boolean;
+  allLabel?: string;
 }) {
   const [open, setOpen] = useState(false);
   const [search, setSearch] = useState("");
@@ -74,6 +85,24 @@ export function MultiSelectDropdown({
     }
   }
 
+  // "Select all" acts on what is listed right now: every option when nothing is
+  // typed, only the matches when a search is active. Selections outside the
+  // listed options are never touched.
+  const listedOptions = visibleGroups.flatMap((g) => g.options);
+  const listedSelected = listedOptions.filter((o) => selectedLower.has(o.toLowerCase())).length;
+  const allListedSelected = listedOptions.length > 0 && listedSelected === listedOptions.length;
+  const everyOptionSelected = allKnown.size > 0 && [...allKnown].every((o) => selectedLower.has(o));
+
+  function toggleAllListed() {
+    if (listedOptions.length === 0) return;
+    if (allListedSelected) {
+      const listedLower = new Set(listedOptions.map((o) => o.toLowerCase()));
+      onChange(value.filter((v) => !listedLower.has(v.toLowerCase())));
+    } else {
+      onChange([...value, ...listedOptions.filter((o) => !selectedLower.has(o.toLowerCase()))]);
+    }
+  }
+
   function addCustom() {
     const trimmed = customInput.trim();
     if (!trimmed || selectedLower.has(trimmed.toLowerCase())) return;
@@ -103,7 +132,9 @@ export function MultiSelectDropdown({
           fontSize: 12,
         }}
       >
-        <span>{value.length > 0 ? value.join(", ") : placeholder}</span>
+        <span style={selectAll ? { minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" } : undefined}>
+          {selectAll && everyOptionSelected ? allLabel : value.length > 0 ? (selectAll && value.length > 2 ? `${value.slice(0, 2).join(", ")} +${value.length - 2}` : value.join(", ")) : placeholder}
+        </span>
         <Icon name="chevronDown" className="muted" style={{ width: 14, height: 14, flexShrink: 0 }} />
       </button>
       {open && (
@@ -111,6 +142,19 @@ export function MultiSelectDropdown({
           {groups.length > 1 || groups[0]?.options.length > 8 ? (
             <input type="text" value={search} onChange={(e) => setSearch(e.target.value)} placeholder={searchPlaceholder} style={{ width: "100%", marginBottom: 8 }} />
           ) : null}
+          {selectAll && listedOptions.length > 0 && (
+            <label style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 4px", marginBottom: 6, borderBottom: "1px solid var(--line)", cursor: "pointer", fontWeight: 600 }}>
+              <input
+                type="checkbox"
+                checked={allListedSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = listedSelected > 0 && !allListedSelected;
+                }}
+                onChange={toggleAllListed}
+              />
+              {query ? "Select all matching" : "Select all"}
+            </label>
+          )}
           {visibleGroups.length === 0 && <p className="foundationnote">No matches.</p>}
           {visibleGroups.map((group) => {
             const groupLower = group.options.map((o) => o.toLowerCase());

@@ -13,10 +13,10 @@
 //   ?metric=views|engagement|likes|comments   which single metric the multi-Partner trend matrix shows
 //
 // Target Audience and region are Partner-DISCOVERY aids for the selector only:
-// they narrow the search list. They never select Partners, never filter the
+// they narrow the search list (choosing every option of one is no narrowing). They never select Partners, never filter the
 // already-selected Partners, never rewrite Analytics data and never broaden
 // scope. No Tier parameter exists anywhere in this file.
-import { TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
+import { DISCOVERY_REGIONS, TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
 
 import { parsePartnerViewSelection, type PartnerViewSelection } from "./partner-view-metrics";
 import { PLATFORM_VIEW_METRICS, type PlatformViewMetricId } from "./platform-view-metrics";
@@ -32,7 +32,13 @@ export const MAX_PARTNER_REF_LENGTH = 200;
 // A hostile URL must not make the server tokenize an unbounded string list.
 const MAX_RAW_PARTNER_TOKENS = 100;
 
-export const MAX_REGION_FILTERS = 5;
+// Firestore's array-contains-any accepts at most 30 values, so 30 is the most
+// regions that can genuinely narrow a search. Choosing EVERY region ("Select
+// all") never reaches Firestore: it means "no region narrowing" (see
+// narrowingRegions), so the URL/selector state may hold the whole canonical list
+// (plus custom "Other" regions) up to MAX_REGION_SELECTION.
+export const MAX_REGION_FILTERS = 30;
+export const MAX_REGION_SELECTION = 60;
 export const MAX_REGION_LENGTH = 60;
 
 export const PARTNER_SEARCH_MAX_QUERY_LENGTH = 100;
@@ -69,9 +75,27 @@ export function parseRegionValues(input: unknown): string[] {
     const trimmed = value.trim();
     if (trimmed.length === 0 || trimmed.length > MAX_REGION_LENGTH) continue;
     if (!out.some((existing) => existing.toLowerCase() === trimmed.toLowerCase())) out.push(trimmed);
-    if (out.length >= MAX_REGION_FILTERS) break;
+    if (out.length >= MAX_REGION_SELECTION) break;
   }
-  return out;
+  // Every canonical region chosen = "Select all": kept whole. Anything else is a
+  // real narrowing and stays within what Firestore can filter on.
+  return selectsEveryRegion(out) ? out : out.slice(0, MAX_REGION_FILTERS);
+}
+
+// "Select all" in a filter is the SAME as no filter: a Partner with no region /
+// Target Audience recorded stays searchable. These two functions are the only
+// place a selector value becomes a real search narrowing.
+export function selectsEveryRegion(regions: readonly string[]): boolean {
+  const chosen = new Set(regions.map((region) => region.toLowerCase()));
+  return DISCOVERY_REGIONS.every((region) => chosen.has(region.toLowerCase()));
+}
+
+export function narrowingRegions(regions: readonly string[]): string[] {
+  return selectsEveryRegion(regions) ? [] : [...regions];
+}
+
+export function narrowingTargetAudiences(values: readonly TargetAudience[]): TargetAudience[] {
+  return TARGET_AUDIENCES.every((value) => values.includes(value)) ? [] : [...values];
 }
 
 export function parseTrendMetric(input: unknown): PlatformViewMetricId {

@@ -14,6 +14,15 @@ const TARGET_AUDIENCE_GROUPS = [{ label: "Target Audience", options: [...TARGET_
 // over plain strings - every option offered here is already a member of
 // TARGET_AUDIENCES, so the cast at this one boundary is safe and keeps
 // every call site strongly typed without repeating it.
-export function TargetAudienceMultiSelect({ value, onChange }: { value: TargetAudience[]; onChange: (next: TargetAudience[]) => void }) {
-  return <MultiSelectDropdown value={value} onChange={(next) => onChange(next as TargetAudience[])} groups={TARGET_AUDIENCE_GROUPS} placeholder="Select Target Audience…" />;
+export function TargetAudienceMultiSelect({ value, onChange, selectAll = false }: { value: TargetAudience[]; onChange: (next: TargetAudience[]) => void; selectAll?: boolean }) {
+  return (
+    <MultiSelectDropdown
+      value={value}
+      onChange={(next) => onChange(next as TargetAudience[])}
+      groups={TARGET_AUDIENCE_GROUPS}
+      placeholder="Select Target Audience…"
+      selectAll={selectAll}
+      allLabel="All Target Audiences"
+    />
+  );
 }
