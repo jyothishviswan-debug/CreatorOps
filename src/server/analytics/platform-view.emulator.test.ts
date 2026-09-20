@@ -490,7 +490,11 @@ describe("Published Content rows - safe context, newest first", () => {
       source: `${BATCH_FILENAME} · sheet Posts · row 2`,
     });
 
-    const json = JSON.stringify(result.data);
+    // Step 12E: the in-scope Partner's row carries exactly ONE new key, an opaque same-origin Partner Analytics href
+    // (the only place the canonical partnerRef may appear); every other string stays ref-free.
+    expect(older).toMatchObject({ partnerAnalyticsHref: `/analytics/partner/${PARTNER_REF}?platform=instagram` });
+    expect(newest).toMatchObject({ partnerAnalyticsHref: null }); // unmatched row: no Partner, no link
+    const json = JSON.stringify(result.data).replaceAll(`/analytics/partner/${PARTNER_REF}?platform=instagram`, "<partner-analytics-href>");
     for (const secret of [`${tag}-c-`, `${tag}-ch-`, PARTNER_REF, ACCOUNT_IG, CAMPAIGN_A_REF, BATCH_REF, "RAW CAPTION", "rawuser_", "rawchannel_"]) expect(json, `DTO leaks ${secret}`).not.toContain(secret);
   });
 

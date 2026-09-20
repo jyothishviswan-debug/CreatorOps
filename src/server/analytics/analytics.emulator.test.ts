@@ -416,15 +416,32 @@ describe("Data Explorer - scope-constrained listing", () => {
 // ---- Read-model rebuild (Section 14/22) ------------------------------------
 describe("rebuildAnalyticsReadModels - deterministic, never mutates source records", () => {
   it("is deterministic - the same inputs produce the same aggregates on two consecutive runs", async () => {
-    const first = await rebuildAnalyticsReadModels(null);
-    const second = await rebuildAnalyticsReadModels(null);
-    expect(first.ok).toBe(true);
-    expect(second.ok).toBe(true);
-    if (first.ok && second.ok) {
-      const firstRest = { ...first.data, computedAt: "IGNORED" };
-      const secondRest = { ...second.data, computedAt: "IGNORED" };
-      expect(firstRest).toEqual(secondRest);
+    // Hermeticity (Step 12E): the rebuild scans the WHOLE source-record collections, and other emulator files write and
+    // delete their own private fixtures in those same collections concurrently. "Same inputs -> same aggregates" is only
+    // decidable for a pair of rebuilds over UNCHANGED inputs, so a pair is compared only when the collections' sizes were
+    // identical before and after it (otherwise the inputs demonstrably changed mid-pair and the pair is retried). The
+    // assertion itself is unchanged: a stable pair must be exactly equal.
+    const sourceRecordCounts = async () => {
+      const [content, channel] = await Promise.all([analyticsContentSourceRecordsCollection().count().get(), analyticsChannelSourceRecordsCollection().count().get()]);
+      return `${content.data().count}:${channel.data().count}`;
+    };
+    let compared = false;
+    for (let attempt = 0; attempt < 8 && !compared; attempt++) {
+      const before = await sourceRecordCounts();
+      const first = await rebuildAnalyticsReadModels(null);
+      const second = await rebuildAnalyticsReadModels(null);
+      const after = await sourceRecordCounts();
+      expect(first.ok).toBe(true);
+      expect(second.ok).toBe(true);
+      if (before !== after) continue; // inputs changed mid-pair (a concurrent file's fixtures) - not comparable, retry
+      if (first.ok && second.ok) {
+        const firstRest = { ...first.data, computedAt: "IGNORED" };
+        const secondRest = { ...second.data, computedAt: "IGNORED" };
+        expect(firstRest).toEqual(secondRest);
+        compared = true;
+      }
     }
+    expect(compared, "no stable pair of rebuilds could be taken - the source collections kept changing").toBe(true);
   });
 
   it("never mutates a source record", async () => {

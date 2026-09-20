@@ -97,6 +97,8 @@ describe("buildPublishedContentRowDtos - actor-safe rows", () => {
         publishedAt: "2026-08-12T10:00:00.000Z",
         reportingPeriod: null,
         partnerLabel: "Creator House",
+        // Step 12E: no Partner is in the openable set here -> plain text, no link.
+        partnerAnalyticsHref: null,
         accountLabel: "creatorhouse",
         campaignLabel: "Monsoon Launch",
         matchState: "MATCHED",
@@ -111,6 +113,23 @@ describe("buildPublishedContentRowDtos - actor-safe rows", () => {
     for (const secret of ["SRC-INTERNAL-REF", "content-ref-secret", "assignment-ref-secret", "campaign-ref-1", "partner-ref-1", "account-ref-1", "owner-uid-secret", "RAW CAPTION", "raw_user", "batch-1"]) {
       expect(json, `DTO leaks ${secret}`).not.toContain(secret);
     }
+  });
+  it("Step 12E: partnerAnalyticsHref is the ONE new key - set only for an openable Partner, carrying the row's platform; nothing else leaks", () => {
+    const openable = inputs({ openablePartnerRefs: new Set(["partner-ref-1"]) });
+    const [row] = buildPublishedContentRowDtos([contentRecord({ platform: "youtube" })], openable);
+    expect(row!.partnerAnalyticsHref).toBe("/analytics/partner/partner-ref-1?platform=youtube");
+    // The href is the only place the canonical ref may appear.
+    const { partnerAnalyticsHref: _href, ...rest } = row!;
+    void _href;
+    const json = JSON.stringify(rest);
+    for (const secret of ["SRC-INTERNAL-REF", "content-ref-secret", "assignment-ref-secret", "campaign-ref-1", "partner-ref-1", "account-ref-1", "owner-uid-secret", "RAW CAPTION", "raw_user", "batch-1"]) {
+      expect(json, `DTO leaks ${secret}`).not.toContain(secret);
+    }
+    // A Partner outside the openable set (or no set at all) never gets a link.
+    expect(buildPublishedContentRowDtos([contentRecord({})], inputs({ openablePartnerRefs: new Set(["someone-else"]) }))[0]!.partnerAnalyticsHref).toBeNull();
+    expect(buildPublishedContentRowDtos([contentRecord({ matchedPartnerRef: null })], openable)[0]!.partnerAnalyticsHref).toBeNull();
+    // A platform other than instagram|youtube opens the bare (All) path, never an arbitrary ?platform=.
+    expect(buildPublishedContentRowDtos([contentRecord({ platform: "tiktok" })], openable)[0]!.partnerAnalyticsHref).toBe("/analytics/partner/partner-ref-1");
   });
   it("missing metrics stay null (rendered Unavailable), never 0", () => {
     const [row] = buildPublishedContentRowDtos([contentRecord({ views: null, likes: null, comments: null, engagement: null })], inputs());
@@ -172,6 +191,13 @@ describe("buildPartnerAccountRowDtos - one row per account, snapshot semantics",
     for (const secret of ["CHANNEL-INTERNAL-REF", "account-ref-1", "partner-ref-1", "owner-uid-secret", "raw_channel_user"]) expect(json).not.toContain(secret);
     // 12000 (= 5000 + 7000) appears nowhere.
     expect(json).not.toContain("12000");
+  });
+  it("Step 12E: an account row links to Partner Analytics only for an openable Partner", () => {
+    const selections = selectLatestAccountSnapshots([channelRecord({})], "youtube");
+    const [open] = buildPartnerAccountRowDtos(selections, inputs({ openablePartnerRefs: new Set(["partner-ref-1"]) }));
+    expect(open!.partnerAnalyticsHref).toBe("/analytics/partner/partner-ref-1?platform=youtube");
+    const [closed] = buildPartnerAccountRowDtos(selections, inputs());
+    expect(closed!.partnerAnalyticsHref).toBeNull();
   });
   it("an account whose snapshot has no verified value is Unavailable (null), and unresolved labels are null", () => {
     const selections = selectLatestAccountSnapshots([channelRecord({ profileFollowers: null })], "youtube");

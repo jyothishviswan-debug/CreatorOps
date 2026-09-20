@@ -3,7 +3,7 @@ import { ModuleTabs } from "@/ui/ModuleTabs";
 import { EmptyState } from "@/ui/States";
 import { AnalyticsExplorerWorkspace } from "@/features/analytics/AnalyticsExplorerWorkspace";
 import { ANALYTICS_TABS } from "@/features/analytics/analytics-tabs";
-import { collectChannelLabelRefs, collectContentLabelRefs, parseExplorerPlatformParam } from "@/features/analytics/explorer-helpers";
+import { collectChannelLabelRefs, collectContentLabelRefs, parseExplorerPlatformParam, parseExplorerRefParam } from "@/features/analytics/explorer-helpers";
 import { canPerformAction } from "@/server/authz/capabilities";
 import { requireAnalyticsExploreAccess } from "@/server/analytics/analytics-gate";
 import { listAnalyticsSourceRecords } from "@/server/analytics/explorer-service";
@@ -16,7 +16,9 @@ const MATCH_STATES: AnalyticsMatchState[] = ["MATCHED", "UNMATCHED", "AMBIGUOUS"
 
 // `platform` may be repeated (?platform=a&platform=b) - Next then hands over a
 // string[]; parseExplorerPlatformParam neutralizes anything that is not one string.
-type SearchParams = { recordKind?: string; matchState?: string; platform?: string | string[]; batchRef?: string };
+// Step 12E: `partnerRef` / `partnerAccountRef` (Partner Analytics deep links) -
+// parsed strictly by parseExplorerRefParam and passed to the server filter.
+type SearchParams = { recordKind?: string; matchState?: string; platform?: string | string[]; batchRef?: string; partnerRef?: string | string[]; partnerAccountRef?: string | string[] };
 
 export default async function AnalyticsExplorerPage({ searchParams }: { searchParams: Promise<SearchParams> }) {
   const actor = await resolveRequestActor();
@@ -49,8 +51,10 @@ export default async function AnalyticsExplorerPage({ searchParams }: { searchPa
   // the "Filter platform" select renders it selected on first render.
   const platform = parseExplorerPlatformParam(sp.platform);
   const batchRef = sp.batchRef || undefined;
+  const matchedPartnerRef = parseExplorerRefParam(sp.partnerRef);
+  const matchedPartnerAccountRef = parseExplorerRefParam(sp.partnerAccountRef);
 
-  const listResult = await listAnalyticsSourceRecords(actor, { recordKind, limit: 20, matchState, platform, batchRef });
+  const listResult = await listAnalyticsSourceRecords(actor, { recordKind, limit: 20, matchState, platform, batchRef, matchedPartnerRef, matchedPartnerAccountRef });
 
   const actorCanResolve = actor ? await canPerformAction(actor, "analytics", "manage_analytics_data") : false;
 
@@ -77,7 +81,7 @@ export default async function AnalyticsExplorerPage({ searchParams }: { searchPa
         initialRecordKind={recordKind}
         initialRecords={initialRecords}
         initialNextCursor={initialNextCursor}
-        initialFilters={{ matchState, platform, batchRef }}
+        initialFilters={{ matchState, platform, batchRef, matchedPartnerRef, matchedPartnerAccountRef }}
         initialLabels={initialLabels}
         actorCanResolve={actorCanResolve}
       />

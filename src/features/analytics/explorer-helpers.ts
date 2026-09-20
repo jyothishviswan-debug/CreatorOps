@@ -24,6 +24,22 @@ export function parseExplorerPlatformParam(raw: unknown): (typeof EXPLORER_PLATF
   return (EXPLORER_PLATFORM_OPTIONS as readonly string[]).includes(normalized) ? (normalized as (typeof EXPLORER_PLATFORM_OPTIONS)[number]) : undefined;
 }
 
+// Step 12E: safely parses the Explorer's ?partnerRef= / ?partnerAccountRef=
+// deep-link parameters. Each is passed straight to the server filter
+// (matchedPartnerRef / matchedPartnerAccountRef) where the accepted, scoped
+// planner enforces the actor's scope BEFORE retrieval - a ref the actor cannot
+// see simply yields no rows. Only exactly ONE non-empty, bounded, printable
+// string is accepted (repeated params, empty/whitespace, over-long or
+// control-character values are neutralized to `undefined` = no filter).
+export const MAX_EXPLORER_REF_PARAM_LENGTH = 200;
+export function parseExplorerRefParam(raw: unknown): string | undefined {
+  if (typeof raw !== "string") return undefined;
+  const value = raw.trim();
+  if (value.length === 0 || value.length > MAX_EXPLORER_REF_PARAM_LENGTH) return undefined;
+  if (/[\u0000-\u001f\u007f]/.test(value)) return undefined;
+  return value;
+}
+
 export type ExplorerContentRow = {
   platform: string;
   matchState: "MATCHED" | "UNMATCHED" | "AMBIGUOUS";
@@ -87,6 +103,14 @@ export function contentScopeLabel(record: ExplorerContentRow, labels: AnalyticsL
 export function channelScopeLabel(record: ExplorerChannelRow, labels: AnalyticsLabelMaps = EMPTY_LABELS): string {
   if (!record.matchedPartnerRef) return "—";
   return labels.partners[record.matchedPartnerRef] ?? "—";
+}
+
+// Step 12E: the Partner Analytics link for a channel row's Partner label - only
+// when the server resolved one (partners feature + Partner Record Scope); else
+// `null` and the label renders as plain text.
+export function channelPartnerAnalyticsHref(record: ExplorerChannelRow, labels: AnalyticsLabelMaps = EMPTY_LABELS): string | null {
+  if (!record.matchedPartnerRef) return null;
+  return labels.partnerAnalyticsLinks?.[record.matchedPartnerRef] ?? null;
 }
 
 export function sourceLabel(record: { batchRef: string; sheetName: string; sourceRowNumber: number }, labels: AnalyticsLabelMaps = EMPTY_LABELS): string {

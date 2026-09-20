@@ -73,11 +73,11 @@ export const PLATFORM_VIEW_METRIC_LABELS: Record<PlatformViewMetricId, string> =
   comments: "Comments",
 };
 
-function isValidMetricValue(value: number | null | undefined): value is number {
+export function isValidMetricValue(value: number | null | undefined): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function forPlatform<T extends { platform: string }>(records: T[], platform: PlatformViewId): T[] {
+export function forPlatform<T extends { platform: string }>(records: T[], platform: PlatformViewId): T[] {
   return records.filter((record) => normalizePlatformIdentifier(record.platform) === platform);
 }
 

@@ -25,6 +25,7 @@ import { getActorScopeGrants } from "@/server/authz/scope";
 import type { ActorContext } from "@/server/authz/types";
 import { getCampaignDocsByRefs } from "@/server/campaigns/firestore";
 import { getPartnerAccountDocsByRefs, getPartnerDocsByRefs } from "@/server/partners/firestore";
+import { isPartnerDocInScope } from "@/server/partners/partners-gate";
 
 import { requireAnalyticsExploreAccess } from "./analytics-gate";
 import { listAnalyticsSourceRecords } from "./explorer-service";
@@ -135,6 +136,11 @@ export async function getPlatformAnalyticsView(actor: ActorContext | null, platf
     partnerAccounts: partnerAccountDocs,
     campaigns: campaignDocs,
     batchFilenames,
+    // Step 12E: a Partner label links to Partner Analytics only when the actor
+    // may open that page - the docs above are only loaded with the partners
+    // feature, and the accepted Partner Record Scope is decided here in memory
+    // from the grants already read ONCE (no per-row read).
+    openablePartnerRefs: new Set([...partnerDocs].filter(([, partner]) => isPartnerDocInScope(grants, actor!.uid, partner)).map(([ref]) => ref)),
   };
 
   return {

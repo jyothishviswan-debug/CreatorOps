@@ -16,7 +16,8 @@ import type { ScopeGrant } from "@/server/authz/types";
 import { isCampaignDocInScope } from "@/server/campaigns/campaigns-gate";
 
 import type { AnalyticsLabelMaps } from "./label-resolution";
-import type { PartnerAccountSnapshotSelection, PlatformKpis, PlatformSourceQuality, PlatformTrend, PlatformViewId } from "./platform-view-metrics";
+import { partnerAnalyticsPath } from "./partner-view-links";
+import { parsePlatformViewId, type PartnerAccountSnapshotSelection, type PlatformKpis, type PlatformSourceQuality, type PlatformTrend, type PlatformViewId } from "./platform-view-metrics";
 import type { AnalyticsContentSourceRecordDoc, AnalyticsMatchState } from "./types";
 
 export type PlatformContentRowDto = {
@@ -24,6 +25,11 @@ export type PlatformContentRowDto = {
   publishedAt: string | null;
   reportingPeriod: { start: string; end: string } | null;
   partnerLabel: string | null;
+  // Step 12E: an opaque same-origin link to the Partner Analytics drill-down
+  // (/analytics/partner/<ref>?platform=<this page's platform>) - set ONLY when
+  // the actor may open that page (partners feature + live Partner Record
+  // Scope), else `null` and the label renders as plain text.
+  partnerAnalyticsHref: string | null;
   accountLabel: string | null;
   // Only ever set when the actor holds the campaigns feature AND the
   // Campaign passes the accepted Campaign Record Scope.
@@ -40,6 +46,8 @@ export type PlatformContentRowDto = {
 
 export type PlatformAccountRowDto = {
   partnerLabel: string | null;
+  // Same contract as PlatformContentRowDto.partnerAnalyticsHref.
+  partnerAnalyticsHref: string | null;
   accountLabel: string | null;
   accountHandle: string | null;
   // ONE account's latest verified snapshot value - a point in time, never a
@@ -76,7 +84,20 @@ export type PlatformViewLabelInputs = {
   partnerAccounts: ReadonlyMap<string, PartnerAccountLabelFields>;
   campaigns: ReadonlyMap<string, CampaignScopeFields>;
   batchFilenames: ReadonlyMap<string, string>;
+  // Step 12E: the Partners (of those loaded above) the actor may OPEN in
+  // Partner Analytics - partners feature + the accepted Partner Record Scope,
+  // decided in memory by the caller with the grants read ONCE. Absent/empty =
+  // no row gets a link.
+  openablePartnerRefs?: ReadonlySet<string>;
 };
+
+// The Partner Analytics link for a row, or `null` (plain text) unless the
+// Partner is in the actor's openable set. Carries the row's platform so the
+// destination opens with that platform preselected.
+export function partnerAnalyticsHrefFor(partnerRef: string | null, platform: string, inputs: Pick<PlatformViewLabelInputs, "openablePartnerRefs">): string | null {
+  if (!partnerRef || !inputs.openablePartnerRefs?.has(partnerRef)) return null;
+  return partnerAnalyticsPath(partnerRef, parsePlatformViewId(platform));
+}
 
 // Same label precedence the Data Explorer uses for a Partner Account.
 export function partnerAccountLabelOf(account: PartnerAccountLabelFields): string {
@@ -106,6 +127,7 @@ export function buildPublishedContentRowDtos(records: AnalyticsContentSourceReco
       publishedAt: record.postDateTimeIso,
       reportingPeriod: record.reportingPeriod,
       partnerLabel: record.matchedPartnerRef ? (inputs.partners.get(record.matchedPartnerRef)?.displayName ?? null) : null,
+      partnerAnalyticsHref: partnerAnalyticsHrefFor(record.matchedPartnerRef, record.platform, inputs),
       accountLabel: account ? partnerAccountLabelOf(account) : null,
       campaignLabel: authorizedCampaignLabel(record.matchedCampaignRef, inputs),
       matchState: record.matchState,
@@ -125,6 +147,7 @@ export function buildPartnerAccountRowDtos(selections: PartnerAccountSnapshotSel
     const label = account ? partnerAccountLabelOf(account) : null;
     return {
       partnerLabel: snapshot.matchedPartnerRef ? (inputs.partners.get(snapshot.matchedPartnerRef)?.displayName ?? null) : null,
+      partnerAnalyticsHref: partnerAnalyticsHrefFor(snapshot.matchedPartnerRef, snapshot.platform, inputs),
       accountLabel: label,
       // "@username" only when it adds information beyond the label itself.
       accountHandle: account?.handle && account.handle !== label ? account.handle : null,

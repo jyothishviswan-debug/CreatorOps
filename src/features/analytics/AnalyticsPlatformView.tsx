@@ -20,6 +20,7 @@ import { absoluteTime } from "@/features/administration/format";
 import { buildPlatformKpiData, PLATFORM_VIEW_COPY, PLATFORM_VIEW_METRIC_LABELS, type PlatformTrend } from "@/server/analytics/platform-view-metrics";
 import { computeFreshnessBadge } from "@/server/analytics/overview-metrics";
 import type { PlatformAccountRowDto, PlatformAnalyticsViewDto, PlatformContentRowDto } from "@/server/analytics/platform-view-dto";
+import type { LinkageCounts, MissingMetricEntry } from "@/server/analytics/platform-view-metrics";
 
 import { formatMetric, matchStateLabel, matchStateTone, reportingPeriodLabel } from "./format";
 import { computeTrendGeometry, describeLatestTrendChange, formatPublishedDate, platformExplorerHref } from "./platform-view-helpers";
@@ -121,7 +122,7 @@ function PlatformTrendPanel({ platform, trend }: { platform: PlatformAnalyticsVi
 // TrendGrid's exact markup and class names (ov-trend-grid / ov-trend-label /
 // ov-trend-value / ov-trend / ov-axis), fed with real period labels, a
 // per-series scale and gapped lines.
-function PlatformTrendGrid({ trend }: { trend: PlatformTrend }) {
+export function PlatformTrendGrid({ trend }: { trend: PlatformTrend }) {
   const firstPeriod = trend.periods[0]!.label;
   const lastPeriod = trend.periods[trend.periods.length - 1]!.label;
   return (
@@ -186,7 +187,7 @@ function PlatformTrendGrid({ trend }: { trend: PlatformTrend }) {
 // `.sr` visually-hidden span is deliberately NOT used inside a scrolling table: it
 // is absolutely positioned relative to the page, so it escapes the table's own
 // scroll container and would widen the page at narrow viewports.)
-function UnavailableDash() {
+export function UnavailableDash() {
   return (
     <span role="img" aria-label="Unavailable" title="Unavailable">
       —
@@ -194,12 +195,19 @@ function UnavailableDash() {
   );
 }
 
-function MetricCell({ value }: { value: number | null }) {
+export function MetricCell({ value }: { value: number | null }) {
   return <td>{value === null ? <UnavailableDash /> : formatMetric(value)}</td>;
 }
 
-function PlaceholderCell({ children }: { children: ReactNode }) {
+export function PlaceholderCell({ children }: { children: ReactNode }) {
   return <span className="muted">{children}</span>;
+}
+
+// Step 12E: the Partner label links to the Partner Analytics drill-down ONLY when
+// the server emitted a link (the actor may open that Partner); otherwise it is
+// the same plain text as before - never a link that would be denied.
+function PartnerCellLabel({ label, href }: { label: string; href: string | null }) {
+  return href ? <Link href={href}>{label}</Link> : <>{label}</>;
 }
 
 function PublishedContentTable({ platformLabel, rows }: { platformLabel: string; rows: PlatformContentRowDto[] }) {
@@ -228,7 +236,7 @@ function PublishedContentTable({ platformLabel, rows }: { platformLabel: string;
             return (
               <tr key={index}>
                 <td>{published ?? (row.reportingPeriod ? <PlaceholderCell>{reportingPeriodLabel(row.reportingPeriod)}</PlaceholderCell> : <PlaceholderCell>Date unavailable</PlaceholderCell>)}</td>
-                <td>{row.partnerLabel ?? <PlaceholderCell>{row.matchState === "MATCHED" ? "Unavailable" : "Not linked"}</PlaceholderCell>}</td>
+                <td>{row.partnerLabel ? <PartnerCellLabel label={row.partnerLabel} href={row.partnerAnalyticsHref} /> : <PlaceholderCell>{row.matchState === "MATCHED" ? "Unavailable" : "Not linked"}</PlaceholderCell>}</td>
                 <td>{row.accountLabel ?? <PlaceholderCell>—</PlaceholderCell>}</td>
                 <td>{row.campaignLabel ?? <PlaceholderCell>—</PlaceholderCell>}</td>
                 <MetricCell value={row.views} />
@@ -269,7 +277,7 @@ function PartnerAccountsTable({ platformLabel, rows }: { platformLabel: string; 
         <tbody>
           {rows.map((row, index) => (
             <tr key={index}>
-              <td>{row.partnerLabel ?? <PlaceholderCell>Unavailable</PlaceholderCell>}</td>
+              <td>{row.partnerLabel ? <PartnerCellLabel label={row.partnerLabel} href={row.partnerAnalyticsHref} /> : <PlaceholderCell>Unavailable</PlaceholderCell>}</td>
               <td>
                 {row.accountLabel ?? <PlaceholderCell>Unavailable</PlaceholderCell>}
                 {row.accountHandle && <small> @{row.accountHandle.replace(/^@/, "")}</small>}
@@ -291,7 +299,7 @@ function PartnerAccountsTable({ platformLabel, rows }: { platformLabel: string; 
 
 // ---- Source Quality ------------------------------------------------------------------------
 
-function linkageRow(label: string, counts: PlatformAnalyticsViewDto["sourceQuality"]["content"]): { label: string; detail: string; badge: string } {
+export function linkageRow(label: string, counts: LinkageCounts): { label: string; detail: string; badge: string } {
   if (counts.total === 0) return { label, detail: "No source data yet", badge: "No data" };
   const unresolved = counts.unlinked + counts.ambiguous;
   return {
@@ -301,11 +309,11 @@ function linkageRow(label: string, counts: PlatformAnalyticsViewDto["sourceQuali
   };
 }
 
-function buildSourceQualityRows(view: PlatformAnalyticsViewDto): { label: string; detail: string; badge: string }[] {
-  const { sourceQuality } = view;
-  const rows = [linkageRow("Content linkage", sourceQuality.content), linkageRow("Channel linkage", sourceQuality.channel)];
-
-  for (const entry of sourceQuality.missingMetrics) {
+// Per-metric "reported on all / missing on some / missing on all" coverage rows
+// (shared by the platform views and the Partner Analytics drill-down).
+export function metricCoverageRows(missingMetrics: MissingMetricEntry[]): { label: string; detail: string; badge: string }[] {
+  const rows: { label: string; detail: string; badge: string }[] = [];
+  for (const entry of missingMetrics) {
     const kindLabel = entry.kind === "content" ? "content" : "channel";
     if (entry.total === 0) {
       rows.push({ label: `${entry.label} coverage`, detail: `No source ${kindLabel} records yet`, badge: "No data" });
@@ -316,6 +324,12 @@ function buildSourceQualityRows(view: PlatformAnalyticsViewDto): { label: string
     else if (entry.missing === entry.total) rows.push({ label: `${entry.label} coverage`, detail: `${entry.label} missing on all ${entry.total} ${records}`, badge: "Review" });
     else rows.push({ label: `${entry.label} coverage`, detail: `${entry.label} missing on ${entry.missing} of ${entry.total} ${records}`, badge: "Partial" });
   }
+  return rows;
+}
+
+function buildSourceQualityRows(view: PlatformAnalyticsViewDto): { label: string; detail: string; badge: string }[] {
+  const { sourceQuality } = view;
+  const rows = [linkageRow("Content linkage", sourceQuality.content), linkageRow("Channel linkage", sourceQuality.channel), ...metricCoverageRows(sourceQuality.missingMetrics)];
 
   const { latestContentAt, latestChannelAt } = sourceQuality.freshness;
   rows.push({ label: "Content freshness", detail: latestContentAt ? `Latest record ${absoluteTime(latestContentAt)}` : "No source data yet", badge: computeFreshnessBadge(latestContentAt) });

@@ -2,7 +2,7 @@ import type { ActionId } from "@/server/authz/actions";
 import { canAccessFeature, canPerformAction } from "@/server/authz/capabilities";
 import { canAccessSensitive } from "@/server/authz/sensitive";
 import { getActorScopeGrants, hasGlobalScope, isPartnerInScope, isRegionInScope, isSelfInScope, isTeamInScope, isExplicitRecordInScope } from "@/server/authz/scope";
-import type { ActorContext } from "@/server/authz/types";
+import type { ActorContext, ScopeGrant } from "@/server/authz/types";
 import type { PartnersDenialReason } from "./types";
 
 export type PartnersAccessResult = { ok: true } | { ok: false; reason: PartnersDenialReason };
@@ -44,21 +44,29 @@ export async function requirePartnersFeatureAccess(actor: ActorContext | null): 
 // EXPLICIT_RECORD grant (resourceType "partner" + this Partner's own uid)
 // are honored, giving Administration two equivalent ways to grant access
 // to one specific Partner.
+// Pure, in-memory form of the Record Scope decision below - the ONE place the
+// rule lives. requirePartnerInScope delegates to it; bulk callers that already
+// hold the actor's grants (e.g. Analytics' contextual Partner links, which must
+// evaluate a page of Partners without re-reading the grants once per Partner)
+// call it directly. Same refactor pattern as isCampaignDocInScope /
+// isAssignmentDocInScope / isContentDocInScope. Behavior-identical.
+export function isPartnerDocInScope(grants: ScopeGrant[], actorUid: string, partner: { uid: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] }): boolean {
+  return (
+    hasGlobalScope(grants) ||
+    isSelfInScope(grants, actorUid, partner.ownerUid ?? undefined) ||
+    partner.regionIds.some((region) => isRegionInScope(grants, region)) ||
+    partner.teamIds.some((teamId) => isTeamInScope(grants, teamId)) ||
+    isPartnerInScope(grants, partner.uid) ||
+    isExplicitRecordInScope(grants, "partner", partner.uid)
+  );
+}
+
 export async function requirePartnerInScope(
   actor: ActorContext,
   partner: { uid: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] },
 ): Promise<PartnersAccessResult> {
   const grants = await getActorScopeGrants(actor);
-
-  const inScope =
-    hasGlobalScope(grants) ||
-    isSelfInScope(grants, actor.uid, partner.ownerUid ?? undefined) ||
-    partner.regionIds.some((region) => isRegionInScope(grants, region)) ||
-    partner.teamIds.some((teamId) => isTeamInScope(grants, teamId)) ||
-    isPartnerInScope(grants, partner.uid) ||
-    isExplicitRecordInScope(grants, "partner", partner.uid);
-
-  return inScope ? { ok: true } : { ok: false, reason: "scope_denied" };
+  return isPartnerDocInScope(grants, actor.uid, partner) ? { ok: true } : { ok: false, reason: "scope_denied" };
 }
 
 // Sensitive Access gate for the restricted financial identity package -

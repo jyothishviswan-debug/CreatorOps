@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useState } from "react";
 
 import { Pill } from "@/ui/Badge";
@@ -14,7 +15,7 @@ import type { AnalyticsChannelSourceRecordDoc, AnalyticsContentSourceRecordDoc, 
 import { AnalyticsRecordDialog } from "./AnalyticsRecordDialog";
 import { AnalyticsResolveMatchDialog } from "./AnalyticsResolveMatchDialog";
 import { listAnalyticsRecords, resolveAnalyticsLabels } from "./api-client";
-import { channelRecordLabel, channelScopeLabel, collectChannelLabelRefs, collectContentLabelRefs, contentRecordLabel, contentScopeLabel, EXPLORER_PLATFORM_OPTIONS, sourceLabel } from "./explorer-helpers";
+import { channelPartnerAnalyticsHref, channelRecordLabel, channelScopeLabel, collectChannelLabelRefs, collectContentLabelRefs, contentRecordLabel, contentScopeLabel, EXPLORER_PLATFORM_OPTIONS, sourceLabel } from "./explorer-helpers";
 import { matchStateLabel, matchStateTone, platformLabel } from "./format";
 
 const PAGE_SIZE = 20;
@@ -30,6 +31,7 @@ function mergeLabels(a: AnalyticsLabelMaps, b: AnalyticsLabelMaps): AnalyticsLab
     partners: { ...a.partners, ...b.partners },
     partnerAccounts: { ...a.partnerAccounts, ...b.partnerAccounts },
     batches: { ...a.batches, ...b.batches },
+    partnerAnalyticsLinks: { ...a.partnerAnalyticsLinks, ...b.partnerAnalyticsLinks },
   };
 }
 
@@ -55,7 +57,9 @@ export function AnalyticsExplorerWorkspace({
   const [labels, setLabels] = useState<AnalyticsLabelMaps>(initialLabels);
 
   const [filters, setFilters] = useState<Filters>(initialFilters);
-  const [showSecondary, setShowSecondary] = useState(false);
+  // Step 12E: a Partner / Partner Account deep link opens the advanced filters so the
+  // active ref filter is visible (and editable/clearable) in the existing inputs.
+  const [showSecondary, setShowSecondary] = useState(Boolean(initialFilters.matchedPartnerRef || initialFilters.matchedPartnerAccountRef));
   const [searchInput, setSearchInput] = useState("");
   const [density, setDensity] = useState(false);
   const [layout, setLayout] = useState<"table" | "cards">("table");
@@ -342,6 +346,7 @@ function RecordTable({
             const isContent = recordKind === "content";
             const label = isContent ? contentRecordLabel(r as AnalyticsContentSourceRecordDoc, labels) : channelRecordLabel(r as AnalyticsChannelSourceRecordDoc, labels);
             const scope = isContent ? contentScopeLabel(r as AnalyticsContentSourceRecordDoc, labels) : channelScopeLabel(r as AnalyticsChannelSourceRecordDoc, labels);
+            const partnerHref = isContent ? null : channelPartnerAnalyticsHref(r as AnalyticsChannelSourceRecordDoc, labels);
             return (
               <tr key={r.sourceRef}>
                 <td>
@@ -357,7 +362,7 @@ function RecordTable({
                 <td>
                   {platformLabel(r.platform)} · {isContent ? "Content" : "Channel"} · {r.reportingPeriod ? `${r.reportingPeriod.start} – ${r.reportingPeriod.end}` : "Unknown period"}
                 </td>
-                <td>{scope}</td>
+                <td>{partnerHref ? <Link href={partnerHref}>{scope}</Link> : scope}</td>
                 <td>{sourceLabel(r, labels)}</td>
                 <td>
                   <button className="iconbutton" aria-label={`Inspect ${label}`} type="button" onClick={() => onOpen(r)}>

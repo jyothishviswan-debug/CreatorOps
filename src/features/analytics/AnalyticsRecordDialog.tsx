@@ -1,12 +1,14 @@
 "use client";
 
+import Link from "next/link";
+
 import { DialogShell } from "@/ui/Dialog";
 import { Pill } from "@/ui/Badge";
 import type { AnalyticsLabelMaps } from "@/server/analytics/label-resolution";
 import type { AnalyticsChannelSourceRecordDoc, AnalyticsContentSourceRecordDoc } from "@/server/analytics/types";
 
 import type { ExplorerRecord } from "./AnalyticsExplorerWorkspace";
-import { contentRecordLabel, channelRecordLabel, contentScopeLabel, channelScopeLabel, sourceLabel } from "./explorer-helpers";
+import { channelPartnerAnalyticsHref, contentRecordLabel, channelRecordLabel, contentScopeLabel, channelScopeLabel, sourceLabel } from "./explorer-helpers";
 import { formatMetric, matchStateLabel, matchStateTone, platformLabel, reportingPeriodLabel } from "./format";
 
 // Read-only source-record inspection - Section 19's own safe evidence
@@ -35,6 +37,8 @@ export function AnalyticsRecordDialog({
   const isContent = recordKind === "content";
   const label = isContent ? contentRecordLabel(record as AnalyticsContentSourceRecordDoc, labels) : channelRecordLabel(record as AnalyticsChannelSourceRecordDoc, labels);
   const scope = isContent ? contentScopeLabel(record as AnalyticsContentSourceRecordDoc, labels) : channelScopeLabel(record as AnalyticsChannelSourceRecordDoc, labels);
+  // Step 12E: a channel row's Partner label links to Partner Analytics only when the server resolved a link for it.
+  const partnerHref = isContent ? null : channelPartnerAnalyticsHref(record as AnalyticsChannelSourceRecordDoc, labels);
 
   return (
     <DialogShell
@@ -70,7 +74,7 @@ export function AnalyticsRecordDialog({
         </div>
         <div>
           <span>Matched scope</span>
-          <b>{scope}</b>
+          <b>{partnerHref ? <Link href={partnerHref}>{scope}</Link> : scope}</b>
         </div>
         <div>
           <span>Source</span>

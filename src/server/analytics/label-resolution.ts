@@ -10,13 +10,17 @@
 // once per fetched page, with that page's own already-authorized refs).
 import { z } from "zod";
 
+import { canAccessFeature } from "@/server/authz/capabilities";
+import { getActorScopeGrants } from "@/server/authz/scope";
 import { getCampaignDocsByRefs } from "@/server/campaigns/firestore";
 import { getContentDocsByRefs } from "@/server/content/firestore";
 import { getPartnerAccountDocsByRefs, getPartnerDocsByRefs } from "@/server/partners/firestore";
+import { isPartnerDocInScope } from "@/server/partners/partners-gate";
 import type { ActorContext } from "@/server/authz/types";
 
 import { requireAnalyticsExploreAccess } from "./analytics-gate";
 import { getAnalyticsImportBatchByRef } from "./firestore";
+import { partnerAnalyticsPath } from "./partner-view-links";
 import { analyticsInvalidInputResult, analyticsUnauthorizedResult, type AnalyticsServiceResult } from "./types";
 
 const MAX_REFS = 50; // one bounded Explorer page is at most 100 rows; refs are deduped and never exceed that.
@@ -39,6 +43,13 @@ export type AnalyticsLabelMaps = {
   // sheet/row are already known to the caller per-record, so this map
   // only needs to carry the batch's own real filename.
   batches: Record<string, string>;
+  // Step 12E (additive): partnerRef -> same-origin Partner Analytics path, ONLY
+  // for the Partners of this request the actor may OPEN (partners feature + the
+  // accepted Partner Record Scope, decided in memory with the grants read ONCE).
+  // A Partner absent from this map renders as plain text - never a link that
+  // would inevitably be denied. Optional so every existing constructor of this
+  // shape stays valid.
+  partnerAnalyticsLinks?: Record<string, string>;
 };
 
 function safeContentLabel(doc: { currentLinks: { platform: string }[]; currentRevisionNumber: number }): string {
@@ -75,8 +86,14 @@ export async function resolveAnalyticsLabels(actor: ActorContext | null, rawInpu
   for (const [ref, doc] of partnerDocs) partners[ref] = doc.displayName;
   const partnerAccounts: Record<string, string> = {};
   for (const [ref, doc] of partnerAccountDocs) partnerAccounts[ref] = safeAccountLabel(doc);
+
+  const partnerAnalyticsLinks: Record<string, string> = {};
+  if (partnerDocs.size > 0 && (await canAccessFeature(actor!, "partners"))) {
+    const grants = await getActorScopeGrants(actor!);
+    for (const [ref, doc] of partnerDocs) if (isPartnerDocInScope(grants, actor!.uid, doc)) partnerAnalyticsLinks[ref] = partnerAnalyticsPath(ref);
+  }
   const batches: Record<string, string> = {};
   for (const [ref, doc] of batchDocs) if (doc) batches[ref] = doc.sourceFilename;
 
-  return { ok: true, data: { content, campaigns, partners, partnerAccounts, batches } };
+  return { ok: true, data: { content, campaigns, partners, partnerAccounts, batches, partnerAnalyticsLinks } };
 }

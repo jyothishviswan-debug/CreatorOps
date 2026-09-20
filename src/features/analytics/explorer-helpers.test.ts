@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { channelRecordLabel, channelScopeLabel, collectChannelLabelRefs, collectContentLabelRefs, contentRecordLabel, contentScopeLabel, EXPLORER_PLATFORM_OPTIONS, parseExplorerPlatformParam, sourceLabel } from "./explorer-helpers";
+import { channelPartnerAnalyticsHref, channelRecordLabel, channelScopeLabel, collectChannelLabelRefs, collectContentLabelRefs, contentRecordLabel, contentScopeLabel, EXPLORER_PLATFORM_OPTIONS, MAX_EXPLORER_REF_PARAM_LENGTH, parseExplorerPlatformParam, parseExplorerRefParam, sourceLabel } from "./explorer-helpers";
 import type { AnalyticsLabelMaps } from "@/server/analytics/label-resolution";
 
 const labels: AnalyticsLabelMaps = {
@@ -97,5 +97,30 @@ describe("parseExplorerPlatformParam - the ?platform= deep link is safely parsed
   });
   it("can only ever select a platform the Explorer's select actually offers", () => {
     for (const raw of ["instagram", "YOUTUBE", " tiktok"]) expect(EXPLORER_PLATFORM_OPTIONS as readonly string[]).toContain(parseExplorerPlatformParam(raw));
+  });
+});
+
+describe("parseExplorerRefParam - Step 12E ?partnerRef= / ?partnerAccountRef= deep links", () => {
+  it("accepts exactly one non-empty bounded printable string (trimmed)", () => {
+    expect(parseExplorerRefParam("creator-house")).toBe("creator-house");
+    expect(parseExplorerRefParam("  PRT-2026-0001  ")).toBe("PRT-2026-0001");
+    expect(parseExplorerRefParam("x".repeat(MAX_EXPLORER_REF_PARAM_LENGTH))).toHaveLength(MAX_EXPLORER_REF_PARAM_LENGTH);
+  });
+  it("neutralizes empty, whitespace, over-long, control-character, repeated and non-string values to no filter", () => {
+    for (const raw of ["", "   ", "x".repeat(MAX_EXPLORER_REF_PARAM_LENGTH + 1), "a\u0000b", "a\nb", ["a", "b"], ["a"], undefined, null, 42, {}]) {
+      expect(parseExplorerRefParam(raw), String(raw)).toBeUndefined();
+    }
+  });
+});
+
+describe("channelPartnerAnalyticsHref - a Partner label is a link only when the server resolved one", () => {
+  const row = { platform: "instagram", matchState: "MATCHED" as const, reportingPeriod: null, matchedPartnerRef: "partner-1", matchedPartnerAccountRef: "account-1", rawUsername: null, batchRef: "b", sheetName: "s", sourceRowNumber: 1 };
+  it("returns the resolved same-origin path", () => {
+    expect(channelPartnerAnalyticsHref(row, { ...labels, partnerAnalyticsLinks: { "partner-1": "/analytics/partner/partner-1" } })).toBe("/analytics/partner/partner-1");
+  });
+  it("is null (plain text) when the Partner is not in the openable map, the map is absent, or the row has no Partner", () => {
+    expect(channelPartnerAnalyticsHref(row, { ...labels, partnerAnalyticsLinks: { "someone-else": "/analytics/partner/someone-else" } })).toBeNull();
+    expect(channelPartnerAnalyticsHref(row, labels)).toBeNull();
+    expect(channelPartnerAnalyticsHref({ ...row, matchedPartnerRef: null }, { ...labels, partnerAnalyticsLinks: { "partner-1": "/analytics/partner/partner-1" } })).toBeNull();
   });
 });
