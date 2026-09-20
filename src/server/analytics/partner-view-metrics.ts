@@ -218,6 +218,10 @@ export type PartnerPlatformCard = {
   hasData: boolean;
   recordCount: number;
   trend: PlatformTrend;
+  // Step 12F (additive): "month" = the trend axis is REPORTING MONTHS (only records
+  // with a usable single-month period), not the 12D per-period buckets. Absent on
+  // every 12E card (unchanged).
+  trendBasis?: "month";
 };
 
 // One card per INCLUDED platform, always (a platform with no data is still a

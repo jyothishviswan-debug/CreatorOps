@@ -11,11 +11,18 @@ import type { PlatformViewId } from "./platform-view-metrics";
 
 export const PARTNER_ANALYTICS_BASE_PATH = "/analytics/partner";
 
-// /analytics/partner/<partnerRef>[?platform=instagram|youtube]. The bare path
-// is the `All` view; a platform is only ever carried when one is selected.
-export function partnerAnalyticsPath(partnerRef: string, platform?: PlatformViewId | "all" | null): string {
+// /analytics/partner/<partnerRef>[?platform=instagram|youtube][&month=YYYY-MM].
+// The bare path is the `All`, all-imported-periods view; a platform is only ever
+// carried when one is selected and (Step 12F) a month only when the caller
+// passes an already-validated `YYYY-MM` - the parameter order is unchanged, so
+// every pre-existing link is byte-identical.
+export function partnerAnalyticsPath(partnerRef: string, platform?: PlatformViewId | "all" | null, month?: string | null): string {
   const base = `${PARTNER_ANALYTICS_BASE_PATH}/${encodeURIComponent(partnerRef)}`;
-  return platform && platform !== "all" ? `${base}?platform=${platform}` : base;
+  const params = new URLSearchParams();
+  if (platform && platform !== "all") params.set("platform", platform);
+  if (month) params.set("month", month);
+  const query = params.toString();
+  return query ? `${base}?${query}` : base;
 }
 
 // The canonical Partner profile route (unchanged, never replaced).

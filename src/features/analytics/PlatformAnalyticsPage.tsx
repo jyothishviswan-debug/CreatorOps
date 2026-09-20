@@ -12,15 +12,12 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { AppShell } from "@/ui/AppShell";
-import { ModuleTabs } from "@/ui/ModuleTabs";
-import { EmptyState } from "@/ui/States";
 import { resolveRequestActor } from "@/server/analytics/http";
 import { getPlatformAnalyticsView } from "@/server/analytics/platform-view-service";
 import { PLATFORM_VIEW_COPY, type PlatformViewId } from "@/server/analytics/platform-view-metrics";
 
 import { AnalyticsPlatformView } from "./AnalyticsPlatformView";
-import { ANALYTICS_TABS } from "./analytics-tabs";
+import { AnalyticsAccessDenied, AnalyticsPageShell } from "./AnalyticsPageShell";
 import { platformExplorerHref } from "./platform-view-helpers";
 
 export async function PlatformAnalyticsPage({ platform }: { platform: PlatformViewId }) {
@@ -34,47 +31,25 @@ export async function PlatformAnalyticsPage({ platform }: { platform: PlatformVi
     // rendered arbitrary platform.
     if (result.code === "not_found" || result.code === "invalid_input") notFound();
 
-    return (
-      <AppShell>
-        <div className="head">
-          <div>
-            <div className="eyebrow">MEASURE &amp; REVIEW</div>
-            <h1>{copy.title}</h1>
-          </div>
-        </div>
-        <ModuleTabs tabs={ANALYTICS_TABS} />
-        <section className="panel" style={{ marginTop: 18 }}>
-          <div className="panelbody">
-            <EmptyState title="Access denied" description="You don't have permission to view Analytics data." icon="lock" />
-          </div>
-        </section>
-      </AppShell>
-    );
+    return <AnalyticsAccessDenied title={copy.title} />;
   }
 
   return (
-    <AppShell>
-      <div className="ov-page">
-        <div className="head">
-          <div>
-            <div className="eyebrow">MEASURE &amp; REVIEW</div>
-            <h1>{copy.title}</h1>
-            <p>{copy.description}</p>
-          </div>
-          <div className="actions">
-            <Link href={platformExplorerHref(platform, "content")} className="btn">
-              Open in Data Explorer
-            </Link>
-            <Link href="/analytics/import-history" className="btn">
-              Import History
-            </Link>
-          </div>
+    <AnalyticsPageShell
+      title={copy.title}
+      description={copy.description}
+      actions={
+        <div className="actions">
+          <Link href={platformExplorerHref(platform, "content")} className="btn">
+            Open in Data Explorer
+          </Link>
+          <Link href="/analytics/import-history" className="btn">
+            Import History
+          </Link>
         </div>
-
-        <ModuleTabs tabs={ANALYTICS_TABS} />
-
-        <AnalyticsPlatformView view={result.data} />
-      </div>
-    </AppShell>
+      }
+    >
+      <AnalyticsPlatformView view={result.data} />
+    </AnalyticsPageShell>
   );
 }

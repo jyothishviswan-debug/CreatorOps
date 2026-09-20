@@ -307,15 +307,16 @@ test.describe("Partner Analytics drill-down", () => {
 
   // ---- Navigation / IA -----------------------------------------------------------------------------
 
-  test("header, back links and the UNCHANGED tab bar (no new tab, none marked current)", async ({ page }) => {
+  test("header, back links and the shared six-tab bar with Partners as the parent / current tab (Step 12F)", async ({ page }) => {
     await page.goto(url(P_MAIN));
     await expect(page.locator("h1")).toHaveText(`${NAME[P_MAIN]} · Analytics`);
     const tabs = page.locator(".tabs .tab");
-    await expect(tabs).toHaveText(["Overview", "Instagram", "YouTube", "Data Explorer", "Import History"]);
-    await expect(tabs).toHaveCount(5);
-    for (const [index, href] of ["/analytics", "/analytics/instagram", "/analytics/youtube", "/analytics/explorer", "/analytics/import-history"].entries()) await expect(tabs.nth(index)).toHaveAttribute("href", href);
-    await expect(page.locator(".tabs .tab.active")).toHaveCount(0);
-    await expect(page.locator(".tabs .tab[aria-current]")).toHaveCount(0);
+    await expect(tabs).toHaveText(["Overview", "Instagram", "YouTube", "Partners", "Data Explorer", "Import History"]);
+    await expect(tabs).toHaveCount(6);
+    for (const [index, href] of ["/analytics", "/analytics/instagram", "/analytics/youtube", "/analytics/partners", "/analytics/explorer", "/analytics/import-history"].entries()) await expect(tabs.nth(index)).toHaveAttribute("href", href);
+    // The drill-down is not a tab of its own: Partners is its parent / current tab.
+    await expect(page.locator(".tabs .tab.active")).toHaveText("Partners");
+    await expect(page.locator(".tabs .tab[aria-current='page']")).toHaveText("Partners");
     // Not a sidebar item either.
     await expect(page.locator("nav[aria-label='Global navigation'] a[href^='/analytics']")).toHaveCount(1);
 
@@ -580,7 +581,7 @@ test.describe("Partner Analytics drill-down", () => {
     await expect(page.getByText("Access denied")).toBeVisible();
     await expect(page.getByText("This Partner doesn't exist, or you don't have permission to view its analytics.")).toBeVisible();
     await expect(page.locator(".ov-kpi")).toHaveCount(0);
-    await expect(page.locator(".tabs .tab")).toHaveCount(5);
+    await expect(page.locator(".tabs .tab")).toHaveCount(6);
     await expect(page.locator("h1")).toHaveText("Partner Analytics");
   });
 
@@ -604,7 +605,7 @@ test.describe("Partner Analytics drill-down", () => {
     await expect(page.getByText("Access denied")).toBeVisible();
     await expect(page.getByText("You don't have permission to view Analytics data.")).toBeVisible();
     await expect(page.locator(".ov-kpi")).toHaveCount(0);
-    await expect(page.locator(".tabs .tab")).toHaveCount(5);
+    await expect(page.locator(".tabs .tab")).toHaveCount(6);
   });
 
   test("Manager and Head are scoped too: neither can open a Partner outside its scope, and neither gets an error", async ({ page }) => {
@@ -703,12 +704,12 @@ test.describe("Partner Analytics drill-down", () => {
     }
   }
 
-  test("at mobile width the switch works by touch-sized link and the 5-tab bar stays reachable", async ({ page }) => {
+  test("at mobile width the switch works by touch-sized link and the 6-tab bar stays reachable", async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 812 });
     await page.goto(url(P_MAIN));
     await page.getByRole("group", { name: "Platform view" }).getByRole("link", { name: "YouTube" }).click();
     await expect(page).toHaveURL(/\?platform=youtube$/);
-    await expect(page.locator(".tabs .tab")).toHaveCount(5);
+    await expect(page.locator(".tabs .tab")).toHaveCount(6);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);
     expect(overflow).toBeLessThanOrEqual(0);
   });

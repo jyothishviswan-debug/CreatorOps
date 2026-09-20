@@ -20,6 +20,7 @@ import { computeFreshnessBadge } from "@/server/analytics/overview-metrics";
 import { buildPartnerKpiData, selectionLabel, TOP_CONTENT_LIMIT, type PartnerPlatformCard } from "@/server/analytics/partner-view-metrics";
 import type { PartnerAccountRowDto, PartnerAnalyticsViewDto, PartnerContentRowDto, PartnerTopContentRowDto } from "@/server/analytics/partner-view-dto";
 import { PLATFORM_VIEW_COPY, PLATFORM_VIEW_METRIC_LABELS, type PlatformViewId } from "@/server/analytics/platform-view-metrics";
+import { describeExclusions } from "@/server/analytics/reporting-month";
 
 import { linkageRow, metricCoverageRows, MetricCell, PlaceholderCell, PlatformTrendGrid, UnavailableDash } from "./AnalyticsPlatformView";
 import { matchStateLabel, matchStateTone, reportingPeriodLabel } from "./format";
@@ -30,20 +31,46 @@ const TRUNCATION_NOTE = "Showing a bounded window of the most recent scoped sour
 // Two platforms stay visually distinguishable: each gets its own pill tone.
 const PLATFORM_PILL_TONE: Record<PlatformViewId, "purple" | "blue"> = { instagram: "purple", youtube: "blue" };
 
-export function AnalyticsPartnerView({ view }: { view: PartnerAnalyticsViewDto }) {
+// Step 12F: `embedded` = rendered INSIDE the Partners workspace, which owns its own
+// platform switch and month selector (so this component omits its platform switch
+// and the "all periods" link). A view carrying `month` is restricted to that one
+// reporting month and says so; every other view is exactly the 12E page.
+export function AnalyticsPartnerView({ view, embedded = false }: { view: PartnerAnalyticsViewDto; embedded?: boolean }) {
   const chips = ["Authorized scope preview"];
   if (view.coverage.contentTruncated || view.coverage.channelTruncated) chips.push(TRUNCATION_NOTE);
+  // Month-view disclosures are plain wrapping notes (a long nowrap chip could overflow a phone). Embedded in the workspace, the
+  // workspace already shows the exclusion disclosure once, so it is not repeated here.
+  const notes = [view.monthNotice ?? null, view.month && !embedded ? describeExclusions(view.month.excluded) : null].filter((note): note is string => Boolean(note));
 
   return (
     <>
-      <PlatformSwitch items={view.links.platformSwitch} />
+      {!embedded && <PlatformSwitch items={view.links.platformSwitch} />}
+      {!embedded && view.month && view.links.allPeriodsHref && (
+        <div className="actions" style={{ marginBottom: 10 }}>
+          <span className="foundationnote">
+            Reporting month <b>{view.month.label}</b>
+          </span>
+          <Link href={view.links.allPeriodsHref} className="btn ghost">
+            Show all imported periods
+          </Link>
+        </div>
+      )}
 
       <ContextBanner
         icon="chart"
-        title={`Partner performance · ${selectionLabel(view.selection)}`}
-        description={`Reporting period: ${view.period.label}. Not a filter - every imported period within your authorized scope is included. Nothing here is estimated, derived or blended across platforms.`}
+        title={`Partner performance · ${selectionLabel(view.selection)}${view.month ? ` · ${view.month.label}` : ""}`}
+        description={
+          view.month
+            ? `Reporting month: ${view.month.label}. Only source records whose reporting period lies entirely within this month are included (the monthly trend shows the latest months). Nothing here is estimated, derived or blended across platforms.`
+            : `Reporting period: ${view.period.label}. Not a filter - every imported period within your authorized scope is included. Nothing here is estimated, derived or blended across platforms.`
+        }
         chips={chips}
       />
+      {notes.map((note) => (
+        <p key={note} className="foundationnote" style={{ margin: "0 0 8px" }}>
+          {note}
+        </p>
+      ))}
 
       <OverviewKpiRow items={buildPartnerKpiData(view.kpis)} />
 
@@ -101,7 +128,7 @@ export function AnalyticsPartnerView({ view }: { view: PartnerAnalyticsViewDto }
       </OverviewRow>
 
       <OverviewRow secondary>
-        <OverviewPanel span={12} icon="check" tone={3} title="Data Quality & Freshness" note="This Partner's records in your authorized scope, for the selected platform view" foot="Missing values stay unavailable; nothing is estimated to fill a gap. Freshness shows the latest import - no staleness threshold is applied.">
+        <OverviewPanel span={12} icon="check" tone={3} title="Data Quality & Freshness" note={view.month ? `This Partner's records for ${view.month.label} in your authorized scope, for the selected platform view` : "This Partner's records in your authorized scope, for the selected platform view"} foot="Missing values stay unavailable; nothing is estimated to fill a gap. Freshness shows the latest import - no staleness threshold is applied.">
           <Checks rows={buildQualityRows(view)} />
         </OverviewPanel>
       </OverviewRow>
@@ -130,9 +157,16 @@ function PlatformSwitch({ items }: { items: PartnerAnalyticsViewDto["links"]["pl
 
 function PlatformPerformancePanel({ card, span, tone }: { card: PartnerPlatformCard; span: number; tone: number }) {
   const copy = PLATFORM_VIEW_COPY[card.platform];
+  const monthly = card.trendBasis === "month";
   const omitted = card.trend.omittedMetrics.map((metric) => PLATFORM_VIEW_METRIC_LABELS[metric]);
-  const foot = omitted.length > 0 ? `${copy.footnote} Not plotted (source-reported in fewer than two periods): ${omitted.join(", ")}.` : copy.footnote;
-  const note = !card.hasData ? "Unavailable — no source data" : card.trend.series.length > 0 ? "Source-reported metrics by reporting period (import month where the source gave none) - a gap means nothing was reported" : "No trend available yet from source-reported data";
+  const foot = omitted.length > 0 ? `${copy.footnote} Not plotted (source-reported in fewer than two ${monthly ? "months" : "periods"}): ${omitted.join(", ")}.` : copy.footnote;
+  const note = !card.hasData
+    ? "Unavailable — no source data"
+    : card.trend.series.length > 0
+      ? monthly
+        ? "Source-reported metrics by reporting month (latest 12 calendar months) - a gap means nothing was reported that month"
+        : "Source-reported metrics by reporting period (import month where the source gave none) - a gap means nothing was reported"
+      : "No trend available yet from source-reported data";
   return (
     <OverviewPanel span={span} icon="chart" tone={tone} title={`${card.label} performance`} note={note} foot={foot}>
       {!card.hasData ? (
@@ -142,7 +176,7 @@ function PlatformPerformancePanel({ card, span, tone }: { card: PartnerPlatformC
       ) : card.trend.series.length > 0 ? (
         <PlatformTrendGrid trend={card.trend} />
       ) : (
-        <p className="foundationnote">A trend needs a source-reported value in at least two reporting periods. Nothing is estimated in the meantime.</p>
+        <p className="foundationnote">A trend needs a source-reported value in at least two reporting {monthly ? "months" : "periods"}. Nothing is estimated in the meantime.</p>
       )}
     </OverviewPanel>
   );

@@ -4,6 +4,7 @@
 // exactly. Every call independently re-verifies the actor server-side.
 import type { AnalyticsLabelMaps } from "@/server/analytics/label-resolution";
 import type { AnalyticsPartnerAccountCandidateDto } from "@/server/analytics/partner-account-candidates";
+import type { PartnerSearchResultDto } from "@/server/analytics/partners-workspace-dto";
 import type { ResolveAnalyticsSourceRecordMatchInput, ResolveAnalyticsSourceRecordMatchResult } from "@/server/analytics/correction-service";
 import type { AnalyticsImportBatchDetailDto, AnalyticsImportBatchListCursor, AnalyticsImportBatchListItemDto } from "@/server/analytics/import-history-service";
 import type { AnalyticsSourceRecordListCursor } from "@/server/analytics/firestore";
@@ -85,6 +86,18 @@ export function resolveAnalyticsSourceRecordMatch(input: ResolveAnalyticsSourceR
 export function searchAnalyticsPartnerAccountCandidates(input: { query?: string; platform?: string; limit?: number }): Promise<AnalyticsApiResult<AnalyticsPartnerAccountCandidateDto[]>> {
   const qs = query({ query: input.query, platform: input.platform, limit: input.limit !== undefined ? String(input.limit) : undefined });
   return call(`/api/analytics/partner-accounts/search${qs}`);
+}
+
+// Step 12F: the Partners Analytics selector's bounded, scope-first Partner search.
+// `signal` lets the caller abort a stale keystroke's request.
+export function searchAnalyticsWorkspacePartners(input: { q?: string; targetAudience?: string[]; region?: string[]; limit?: number; signal?: AbortSignal }): Promise<AnalyticsApiResult<{ partners: PartnerSearchResultDto[]; hasMore: boolean }>> {
+  const search = new URLSearchParams();
+  if (input.q) search.set("q", input.q);
+  for (const value of input.targetAudience ?? []) search.append("targetAudience", value);
+  for (const value of input.region ?? []) search.append("region", value);
+  if (input.limit !== undefined) search.set("limit", String(input.limit));
+  const qs = search.toString();
+  return call(`/api/analytics/partners/search${qs ? `?${qs}` : ""}`, { signal: input.signal });
 }
 
 // ---- Import History -------------------------------------------------------

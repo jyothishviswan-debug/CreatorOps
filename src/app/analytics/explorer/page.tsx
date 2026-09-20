@@ -1,8 +1,5 @@
-import { AppShell } from "@/ui/AppShell";
-import { ModuleTabs } from "@/ui/ModuleTabs";
-import { EmptyState } from "@/ui/States";
 import { AnalyticsExplorerWorkspace } from "@/features/analytics/AnalyticsExplorerWorkspace";
-import { ANALYTICS_TABS } from "@/features/analytics/analytics-tabs";
+import { AnalyticsAccessDenied, AnalyticsPageShell } from "@/features/analytics/AnalyticsPageShell";
 import { collectChannelLabelRefs, collectContentLabelRefs, parseExplorerPlatformParam, parseExplorerRefParam } from "@/features/analytics/explorer-helpers";
 import { canPerformAction } from "@/server/authz/capabilities";
 import { requireAnalyticsExploreAccess } from "@/server/analytics/analytics-gate";
@@ -24,24 +21,7 @@ export default async function AnalyticsExplorerPage({ searchParams }: { searchPa
   const actor = await resolveRequestActor();
   const gate = await requireAnalyticsExploreAccess(actor);
 
-  if (!gate.ok) {
-    return (
-      <AppShell>
-        <div className="head">
-          <div>
-            <div className="eyebrow">MEASURE &amp; REVIEW</div>
-            <h1>Metric explorer</h1>
-          </div>
-        </div>
-        <ModuleTabs tabs={ANALYTICS_TABS} />
-        <section className="panel" style={{ marginTop: 18 }}>
-          <div className="panelbody">
-            <EmptyState title="Access denied" description="You don't have permission to view Analytics data." icon="lock" />
-          </div>
-        </section>
-      </AppShell>
-    );
-  }
+  if (!gate.ok) return <AnalyticsAccessDenied title="Metric explorer" />;
 
   const sp = await searchParams;
   const recordKind: "content" | "channel" = sp.recordKind === "channel" ? "channel" : "content";
@@ -66,17 +46,7 @@ export default async function AnalyticsExplorerPage({ searchParams }: { searchPa
   const initialLabels = labelsResult.ok ? labelsResult.data : EMPTY_LABELS;
 
   return (
-    <AppShell>
-      <div className="head">
-        <div>
-          <div className="eyebrow">MEASURE &amp; REVIEW</div>
-          <h1>Metric explorer</h1>
-          <p>Filter and inspect source-backed performance records across partners, platforms and periods.</p>
-        </div>
-      </div>
-
-      <ModuleTabs tabs={ANALYTICS_TABS} />
-
+    <AnalyticsPageShell title="Metric explorer" description="Filter and inspect source-backed performance records across partners, platforms and periods.">
       <AnalyticsExplorerWorkspace
         initialRecordKind={recordKind}
         initialRecords={initialRecords}
@@ -85,6 +55,6 @@ export default async function AnalyticsExplorerPage({ searchParams }: { searchPa
         initialLabels={initialLabels}
         actorCanResolve={actorCanResolve}
       />
-    </AppShell>
+    </AnalyticsPageShell>
   );
 }

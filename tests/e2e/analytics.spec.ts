@@ -212,14 +212,14 @@ test.describe("Import History", () => {
 });
 
 test.describe("Sibling navigation", () => {
-  // Step 12D: the shared Analytics tab bar is now Overview | Instagram | YouTube |
-  // Data Explorer | Import History (the Explorer tab's canonical label became
-  // "Data Explorer"); the full 5-tab / all-five-pages proof lives in
-  // analytics-platform-views.spec.ts.
-  test("ModuleTabs links Overview/Instagram/YouTube/Data Explorer/Import History with correct active state", async ({ page }) => {
+  // Step 12F: the shared Analytics tab bar is now the six equal tabs Overview |
+  // Instagram | YouTube | Partners | Data Explorer | Import History (Partners was
+  // added between YouTube and Data Explorer); the full six-tab / all-routes proof
+  // lives in analytics-platform-views.spec.ts and analytics-partners-workspace.spec.ts.
+  test("ModuleTabs links Overview/Instagram/YouTube/Partners/Data Explorer/Import History with correct active state", async ({ page }) => {
     await signInAs(page, "admin");
     await page.goto("/analytics");
-    await expect(page.locator(".tabs .tab")).toHaveText(["Overview", "Instagram", "YouTube", "Data Explorer", "Import History"]);
+    await expect(page.locator(".tabs .tab")).toHaveText(["Overview", "Instagram", "YouTube", "Partners", "Data Explorer", "Import History"]);
     await expect(page.locator(".tabs .tab.active")).toHaveText("Overview");
     await page.locator(".tabs").getByRole("link", { name: "Instagram", exact: true }).click();
     await expect(page).toHaveURL(/\/analytics\/instagram$/);
@@ -227,6 +227,9 @@ test.describe("Sibling navigation", () => {
     await page.locator(".tabs").getByRole("link", { name: "YouTube", exact: true }).click();
     await expect(page).toHaveURL(/\/analytics\/youtube$/);
     await expect(page.locator(".tabs .tab.active")).toHaveText("YouTube");
+    await page.locator(".tabs").getByRole("link", { name: "Partners", exact: true }).click();
+    await expect(page).toHaveURL(/\/analytics\/partners$/);
+    await expect(page.locator(".tabs .tab.active")).toHaveText("Partners");
     await page.locator(".tabs").getByRole("link", { name: "Data Explorer", exact: true }).click();
     await expect(page).toHaveURL(/\/analytics\/explorer$/);
     await expect(page.locator(".tabs .tab.active")).toHaveText("Data Explorer");

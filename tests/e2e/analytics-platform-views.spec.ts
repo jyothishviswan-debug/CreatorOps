@@ -120,11 +120,12 @@ test.describe("Instagram and YouTube Analytics views", () => {
 
   // ---- Navigation --------------------------------------------------------------------------------
 
-  test("the shared 5-item Analytics tab bar appears on all five pages with the current tab marked", async ({ page }) => {
+  test("the shared 6-item Analytics tab bar appears on all six pages with the current tab marked", async ({ page }) => {
     const pages = [
       { href: "/analytics", label: "Overview" },
       { href: "/analytics/instagram", label: "Instagram" },
       { href: "/analytics/youtube", label: "YouTube" },
+      { href: "/analytics/partners", label: "Partners" },
       { href: "/analytics/explorer", label: "Data Explorer" },
       { href: "/analytics/import-history", label: "Import History" },
     ];
@@ -132,7 +133,7 @@ test.describe("Instagram and YouTube Analytics views", () => {
       await page.goto(current.href);
       const tabs = page.locator(".tabs .tab");
       await expect(tabs).toHaveText(pages.map((p) => p.label));
-      await expect(tabs).toHaveCount(5);
+      await expect(tabs).toHaveCount(6);
       for (const [index, p] of pages.entries()) {
         await expect(tabs.nth(index)).toHaveAttribute("href", p.href);
         if (p.href === current.href) await expect(tabs.nth(index)).toHaveAttribute("aria-current", "page");
@@ -340,7 +341,7 @@ test.describe("Instagram and YouTube Analytics views", () => {
       await page.goto(path);
       await expect(page.getByText("Access denied")).toBeVisible();
       await expect(page.locator(".ov-kpi")).toHaveCount(0);
-      await expect(page.locator(".tabs .tab")).toHaveCount(5);
+      await expect(page.locator(".tabs .tab")).toHaveCount(6);
     }
   });
 
@@ -387,21 +388,21 @@ test.describe("Instagram and YouTube Analytics views", () => {
   }
 
   for (const width of [390, 375]) {
-    test(`the five-tab bar stays usable at ${width}px: every tab focusable and reachable, the active tab visible`, async ({ page }) => {
+    test(`the six-tab bar stays usable at ${width}px: every tab focusable and reachable, the active tab visible`, async ({ page }) => {
       await page.setViewportSize({ width, height: 812 });
-      const hrefs = ["/analytics", "/analytics/instagram", "/analytics/youtube", "/analytics/explorer", "/analytics/import-history"];
+      const hrefs = ["/analytics", "/analytics/instagram", "/analytics/youtube", "/analytics/partners", "/analytics/explorer", "/analytics/import-history"];
       for (const current of hrefs) {
         await page.goto(current);
         const tabs = page.locator(".tabs .tab");
-        await expect(tabs).toHaveCount(5);
+        await expect(tabs).toHaveCount(6);
         // The tab bar scrolls inside its own container - the page itself never overflows. (Explorer / Import
         // History are pre-existing accepted pages whose own tables' visually-hidden header text widens
         // documentElement - not this step's scope - so for those two the existing body-width convention
         // from analytics.spec.ts is used instead.)
-        const platformOrOverview = ["/analytics", "/analytics/instagram", "/analytics/youtube"].includes(current);
+        const platformOrOverview = ["/analytics", "/analytics/instagram", "/analytics/youtube", "/analytics/partners"].includes(current);
         const pageOverflow = await page.evaluate((useDocument) => (useDocument ? document.documentElement.scrollWidth : document.body.scrollWidth) - window.innerWidth, platformOrOverview);
         expect(pageOverflow, `${current} at ${width}`).toBeLessThanOrEqual(0);
-        for (let i = 0; i < 5; i++) {
+        for (let i = 0; i < 6; i++) {
           const tab = tabs.nth(i);
           await tab.scrollIntoViewIfNeeded();
           await tab.focus();

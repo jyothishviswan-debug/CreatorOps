@@ -40,6 +40,7 @@ import {
   type TopContentBasis,
 } from "./partner-view-metrics";
 import { comparePublishedContentNewestFirst, forPlatform, parsePlatformViewId, PLATFORM_VIEW_COPY, type PlatformViewId } from "./platform-view-metrics";
+import type { MonthExclusions } from "./reporting-month";
 import type { AnalyticsChannelSourceRecordDoc, AnalyticsContentSourceRecordDoc } from "./types";
 
 export const PARTNER_PUBLISHED_CONTENT_ROW_LIMIT = 10;
@@ -70,6 +71,16 @@ export type PartnerAccountRowDto = {
   explorerHref: string;
 };
 
+export type PartnerViewMonthDto = {
+  month: string;
+  label: string;
+  // Records (of this Partner's bounded, platform-filtered window) that can never be
+  // placed in a single month: never forced into one, disclosed by reason.
+  excluded: MonthExclusions;
+  // The bounded month-independent window's records, so the UI can say what the month is drawn from.
+  windowRecords: number;
+};
+
 export type PartnerPlatformSwitchItem = { selection: PartnerViewSelection; label: string; href: string; active: boolean };
 
 export type PartnerTopContentGroupDto = { platform: PlatformViewId; label: string; rows: PartnerTopContentRowDto[] };
@@ -87,8 +98,17 @@ export type PartnerAnalyticsViewDto = {
     // Data Explorer carrying this Partner filter (+ platform only when selected).
     explorerContentHref: string;
     explorerChannelHref: string;
+    // Step 12F (additive): only in a month view - the same Partner and platform with every
+    // imported period (no month).
+    allPeriodsHref?: string;
   };
   coverage: { contentTruncated: boolean; channelTruncated: boolean };
+  // Step 12F (additive): present ONLY when the view is restricted to one reporting
+  // month (`?month=` on the drill-down, or the Partners workspace's inline view).
+  // Absent = the unchanged 12E "all imported periods" view.
+  month?: PartnerViewMonthDto;
+  // Step 12F (additive): set only when `?month=` was supplied but is not `YYYY-MM`.
+  monthNotice?: string;
   period: PartnerReportingPeriod;
   kpis: PartnerKpis;
   platformPerformance: PartnerPlatformCard[];
@@ -153,11 +173,11 @@ export function buildPartnerAccountRowDtos(selections: PartnerAccountSelection[]
   });
 }
 
-export function buildPartnerPlatformSwitch(partnerRef: string, selection: PartnerViewSelection): PartnerPlatformSwitchItem[] {
+export function buildPartnerPlatformSwitch(partnerRef: string, selection: PartnerViewSelection, month?: string | null): PartnerPlatformSwitchItem[] {
   return PARTNER_VIEW_SELECTIONS.map((item) => ({
     selection: item,
     label: item === "all" ? "All" : PLATFORM_VIEW_COPY[item].label,
-    href: partnerAnalyticsPath(partnerRef, item),
+    href: partnerAnalyticsPath(partnerRef, item, month),
     active: item === selection,
   }));
 }
@@ -211,23 +231,32 @@ export function buildPartnerAnalyticsView(params: {
   selected: PartnerViewSelectedRecords;
   coverage: { contentTruncated: boolean; channelTruncated: boolean };
   inputs: PlatformViewLabelInputs;
+  // Step 12F (all optional; when none is passed the DTO is byte-identical to 12E):
+  // `month` marks a single-reporting-month view (and carries its disclosure);
+  // `platformPerformance` replaces the per-period cards with the monthly trend cards.
+  month?: PartnerViewMonthDto;
+  platformPerformance?: PartnerPlatformCard[];
 }): PartnerAnalyticsViewDto {
   const { partnerRef, partnerDisplayName, selected, coverage, inputs } = params;
   const { selection } = selected;
+  const period = derivePartnerReportingPeriod([...selected.content, ...selected.channel]);
 
   return {
     partner: { displayName: partnerDisplayName },
     selection,
     links: {
       profileHref: partnerProfilePath(partnerRef),
-      platformSwitch: buildPartnerPlatformSwitch(partnerRef, selection),
+      platformSwitch: buildPartnerPlatformSwitch(partnerRef, selection, params.month?.month),
       explorerContentHref: partnerExplorerPath({ partnerRef, platform: selection, recordKind: "content" }),
       explorerChannelHref: partnerExplorerPath({ partnerRef, platform: selection, recordKind: "channel" }),
+      ...(params.month ? { allPeriodsHref: partnerAnalyticsPath(partnerRef, selection) } : {}),
     },
     coverage,
-    period: derivePartnerReportingPeriod([...selected.content, ...selected.channel]),
+    ...(params.month ? { month: params.month } : {}),
+    // In a month view the period IS the month (never "all available imported periods").
+    period: params.month ? { ...period, label: params.month.label } : period,
     kpis: aggregatePartnerKpis(selected.content, selection),
-    platformPerformance: buildPartnerPlatformCards(selected.content, selection),
+    platformPerformance: params.platformPerformance ?? buildPartnerPlatformCards(selected.content, selection),
     partnerAccounts: { rows: buildPartnerAccountRowDtos(selected.displayedAccounts, inputs), totalAccounts: selected.allAccounts.length },
     publishedContent: { rows: buildPartnerContentRowDtos(selected.publishedRows, inputs), total: selected.content.length },
     topContent: { basis: selected.top.basis, note: topContentNote(selected.top.basis, selection), groups: buildPartnerTopContentGroupDtos(selected.top.groups, inputs) },
