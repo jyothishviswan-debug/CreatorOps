@@ -163,11 +163,22 @@ describe("intake URLs", () => {
     expect(intakeHref({ agreementRef: "agr_1", version: 1, counterpartyType: "VENDOR", ref: "v" })).toBe("/finance/agreements/new?agreementRef=agr_1&version=1");
   });
   it("parses only well-formed params", () => {
-    expect(parseIntakeSearchParams({ counterpartyType: "PARTNER", ref: "prt_1" })).toEqual({ counterpartyType: "PARTNER", ref: "prt_1", agreementRef: null, version: null });
-    expect(parseIntakeSearchParams({ agreementRef: "agr_0123", version: "3" })).toEqual({ counterpartyType: null, ref: null, agreementRef: "agr_0123", version: 3 });
-    expect(parseIntakeSearchParams({ counterpartyType: "ADMIN", ref: "a b", agreementRef: "../etc", version: "0" })).toEqual({ counterpartyType: null, ref: null, agreementRef: null, version: null });
+    expect(parseIntakeSearchParams({ counterpartyType: "PARTNER", ref: "prt_1" })).toEqual({ counterpartyType: "PARTNER", ref: "prt_1", agreementRef: null, version: null, mode: null });
+    expect(parseIntakeSearchParams({ agreementRef: "agr_0123", version: "3" })).toEqual({ counterpartyType: null, ref: null, agreementRef: "agr_0123", version: 3, mode: null });
+    expect(parseIntakeSearchParams({ counterpartyType: "ADMIN", ref: "a b", agreementRef: "../etc", version: "0" })).toEqual({ counterpartyType: null, ref: null, agreementRef: null, version: null, mode: null });
     expect(parseIntakeSearchParams({ version: "1.5" }).version).toBeNull();
     expect(parseIntakeSearchParams({ ref: ["prt_1", "prt_2"] }).ref).toBe("prt_1");
+  });
+  it("understands the create-new deep link only with a counterparty type", () => {
+    expect(parseIntakeSearchParams({ counterpartyType: "PARTNER", mode: "new" })).toMatchObject({ counterpartyType: "PARTNER", mode: "new" });
+    expect(parseIntakeSearchParams({ counterpartyType: "VENDOR", mode: ["new"] }).mode).toBe("new");
+    expect(parseIntakeSearchParams({ mode: "new" }).mode).toBeNull();
+    expect(parseIntakeSearchParams({ counterpartyType: "PARTNER", mode: "existing" }).mode).toBeNull();
+    expect(intakeHref({ counterpartyType: "VENDOR", mode: "new" })).toBe("/finance/agreements/new?counterpartyType=VENDOR&mode=new");
+    // a resume link still wins over the create-new link
+    expect(intakeHref({ agreementRef: "agr_1", counterpartyType: "VENDOR", mode: "new" })).toBe("/finance/agreements/new?agreementRef=agr_1");
+    expect(intakeRouteKey(parseIntakeSearchParams({ counterpartyType: "VENDOR", mode: "new" }))).toBe("new:VENDOR:-:new");
+    expect(intakeRouteKey(parseIntakeSearchParams({ counterpartyType: "VENDOR", ref: "v1", mode: "new" }))).toBe("new:VENDOR:-:new");
   });
   it("keys the client tree by route identity", () => {
     expect(intakeRouteKey(parseIntakeSearchParams({}))).toBe("new:-:-");

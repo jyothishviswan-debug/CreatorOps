@@ -21,10 +21,13 @@ import { addPartnerRestrictedIdentityLinkEvidence, uploadPartnerRestrictedIdenti
 import { addVendorRestrictedIdentityLinkEvidence, uploadVendorRestrictedIdentityEvidence, type VendorsApiResult } from "@/features/vendors/api-client";
 import type { AddPartnerRestrictedIdentityLinkEvidenceInput } from "@/server/partners/restricted-identity-service";
 import type { RestrictedFinancialIdentityEvidence } from "@/server/shared/restricted-financial-identity";
+import type { AgreementDocumentStatusResultDto, StoreAgreementDocumentOutcome } from "@/server/finance-agreements/agreement-document-service";
 import type { AttachExtractionOutcome } from "@/server/finance-agreements/agreement-service";
-import type { AgreementDetailDto, AgreementEventDto, AgreementHeadDto, AgreementVersionSummaryDto, ContractArtifactDto, ExtractionResultDto } from "@/server/finance-agreements/client-dto";
+import type { AgreementDetailDto, AgreementEventDto, AgreementHeadDto, AgreementVersionSummaryDto, ContractArtifactDto, CounterpartyAgreementDocumentsDto, ExtractionResultDto } from "@/server/finance-agreements/client-dto";
 import type { CounterpartySearchResponse } from "@/server/finance-agreements/counterparty-picker-service";
 import type { AgreementFieldKey } from "@/server/finance-agreements/fields";
+import type { OnboardingDuplicatesDto, OnboardingDuplicatesRequest, OnboardingOutcomeDto, OnboardingPreviewDto, OnboardingStatusRequest } from "@/server/finance-agreements/onboarding-dto";
+import type { OnboardingRequest } from "@/server/finance-agreements/onboarding-input";
 import type { ApplyExtractedKycOutcome, KycComponent, MasterDataMode, UpdateCounterpartyContactOutcome } from "@/server/finance-agreements/master-data-commands";
 import type { AgreementKycStatusDto } from "@/server/finance-agreements/kyc-status-service";
 import type { AgreementReconciliationDto } from "@/server/finance-agreements/reconciliation-service";
@@ -199,6 +202,22 @@ export function confirmAgreementVersion(agreementRef: string, input: { version: 
   return postJson(agreementPath(agreementRef, "/confirm"), input, options);
 }
 
+// --- Original signed Agreement document (Step 14B.1) ------------------------------------------------------------------------------------------
+// Stores (or retries) the ORIGINAL signed PDF of a CONFIRMED version in Drive. Idempotent; needs manage_agreements. A Drive failure is a
+// SUCCESSFUL call with data.outcome "failed" (retriable) - check `outcome`, never assume 200 means stored. data.agreement is the
+// refreshed AgreementDetailDto (replace client state with it). The Drive link is on data.document only for finance_contracts holders.
+export function storeAgreementDocument(agreementRef: string, input: { version: number; expectedDocVersion?: number }, options?: FinanceRequestOptions): Promise<FinanceApiResult<StoreAgreementDocumentOutcome>> {
+  return postJson(agreementPath(agreementRef, "/document"), input, options);
+}
+// The document status of one version (default: open / governing) plus whether Drive storage is configured at all.
+export function getAgreementDocumentStatus(agreementRef: string, input: { version?: number } = {}, options?: FinanceRequestOptions): Promise<FinanceApiResult<AgreementDocumentStatusResultDto>> {
+  return getJson(agreementPath(agreementRef, `/document${queryString({ version: input.version })}`), options);
+}
+// The signed Agreement documents of ONE Partner / Vendor (same stored reference as Finance; link only for finance_contracts holders).
+export function listCounterpartyAgreementDocuments(input: { counterpartyType: CounterpartyType; ref: string }, options?: FinanceRequestOptions): Promise<FinanceApiResult<CounterpartyAgreementDocumentsDto>> {
+  return getJson(`/api/finance/counterparties/documents${queryString({ counterpartyType: input.counterpartyType, ref: input.ref })}`, options);
+}
+
 // --- Agreements: lifecycle (activate_agreements; expectedDocVersion = the HEAD's) ------------------------------------------------------------
 export function activateAgreementVersion(agreementRef: string, input: { version: number; expectedDocVersion: number }, options?: FinanceRequestOptions): Promise<FinanceApiResult<AgreementDetailDto>> {
   return postJson(agreementPath(agreementRef, "/activate"), input, options);
@@ -325,6 +344,36 @@ export function getCounterpartyPreview(input: { counterpartyType: CounterpartyTy
 // The signed-in actor's own Finance capabilities (booleans from real grants). Pass the counterparty type to get its identity / KYC flags.
 export function getFinancePermissions(input: { counterpartyType?: CounterpartyType } = {}, options?: FinanceRequestOptions): Promise<FinanceApiResult<FinanceAgreementPermissionsDto>> {
   return getJson(`/api/finance/permissions${queryString({ counterpartyType: input.counterpartyType })}`, options);
+}
+
+// --- Agreement-led counterparty onboarding (Step 14B.1) ----------------------------------------------------------------------------------------------
+// A NEW Partner / Vendor started from a signed Agreement. Four calls, in this order:
+//   1. previewOnboardingFromContract  multipart { file, counterpartyType } -> proposed profile + presence flags. Persists NOTHING.
+//   2. checkOnboardingDuplicates      JSON -> possible existing records, filtered by the caller's live scope (`strongMatchOutsideYourAccess` blocks creating new)
+//   3. createCounterpartyFromOnboarding  JSON -> the resumable step ledger. 200 = an outcome (COMPLETED | FAILED at a step, retry the SAME body | IN_PROGRESS);
+//      a refusal before anything was written is a failure result: kind "not_ready" carries `blockers[].code` (counterparty_create_not_permitted,
+//      account_management_not_permitted, strong_match_outside_access, duplicate_acknowledgement_required, duplicate_reason_required,
+//      account_identity_collision, use_existing_not_a_candidate); kind "invalid" is a field problem (region outside your access, missing vendor type ...).
+//   4. getOnboardingStatus            GET -> the same outcome for a clientRequestId the caller started (never resumes anything)
+// After COMPLETED the SAME File is sent through the normal uploadContractArtifact -> extractContract -> attachExtractionProposals for the new
+// counterparty (idempotent by content); restricted KYC values never pass through the browser.
+export function previewOnboardingFromContract(input: { file: File; counterpartyType: CounterpartyType }, options?: FinanceRequestOptions): Promise<FinanceApiResult<OnboardingPreviewDto>> {
+  const form = new FormData();
+  form.set("counterpartyType", input.counterpartyType);
+  form.set("file", input.file, input.file.name);
+  return send("/api/finance/onboarding/preview", { method: "POST", form, signal: options?.signal });
+}
+
+export function checkOnboardingDuplicates(input: OnboardingDuplicatesRequest, options?: FinanceRequestOptions): Promise<FinanceApiResult<OnboardingDuplicatesDto>> {
+  return postJson("/api/finance/onboarding/duplicates", input, options);
+}
+
+export function createCounterpartyFromOnboarding(input: OnboardingRequest, options?: FinanceRequestOptions): Promise<FinanceApiResult<OnboardingOutcomeDto>> {
+  return postJson("/api/finance/onboarding", input, options);
+}
+
+export function getOnboardingStatus(input: OnboardingStatusRequest, options?: FinanceRequestOptions): Promise<FinanceApiResult<OnboardingOutcomeDto>> {
+  return getJson(`/api/finance/onboarding${queryString({ onboardingRef: input.onboardingRef, clientRequestId: input.clientRequestId })}`, options);
 }
 
 // --- KYC evidence through the OWNING module (Partner / Vendor restricted-identity evidence routes) --------------------------------------------------

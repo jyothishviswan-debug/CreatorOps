@@ -8,13 +8,14 @@ import { useEffect, useState } from "react";
 
 import { Icon } from "@/ui/icons";
 
-import { DISABLED_BUTTON_STYLE } from "../format";
+import { DISABLED_BUTTON_STYLE, EXTRACTION_NOTE } from "../format";
 import { AgreementForSection } from "./AgreementForSection";
 import { ContractSourceSection } from "./ContractSourceSection";
 import { ExistingDetailsSection } from "./ExistingDetailsSection";
 import { ExtractedSection } from "./ExtractedSection";
 import { consumeDraftJustStarted, INTAKE_BUSY, useIntake } from "./intake-context";
-import { computeIntakeProgress, intakeSectionAnchor, PROGRESS_STATE_LABELS, progressSummary } from "./intake-progress";
+import { computeIntakeProgress, intakeSectionAnchor, PROGRESS_STATE_LABELS, progressSummary, type ProgressState } from "./intake-progress";
+import { OnboardingWizard } from "./onboarding/OnboardingWizard";
 
 // ==== BEGIN sections 5-10 (owned by the other intake agent; they must exist at these paths as named exports with NO props) ====
 // A typecheck error on one of these lines means that file has not been created yet - nothing else in this file is affected.
@@ -25,6 +26,9 @@ import { KycSection } from "./KycSection";
 import { AdditionalDetailsSection } from "./AdditionalDetailsSection";
 import { ReviewConfirmSection } from "./ReviewConfirmSection";
 // ==== END sections 5-10 ====
+
+// One line of the right-hand checklist (the ten standard sections, or the new-counterparty wizard's steps).
+type ChecklistItem = { key: string; number: number; title: string; state: ProgressState; anchorId: string; stateLabel: string };
 
 export function IntakeForm() {
   const intake = useIntake();
@@ -40,14 +44,20 @@ export function IntakeForm() {
   const saving = isBusy(INTAKE_BUSY.save);
   const anyBusy = isBusy();
 
-  const progress = computeIntakeProgress({ agreement: intake.agreement, preview: intake.preview, extraction: intake.extraction, extractionAttached: intake.extractionAttached, kyc: intake.kyc, fields: intake.fields });
+  const { onboarding, onboardingHandoff } = intake;
+  // A NEW Partner / Vendor being set up from the Agreement (no draft yet): the wizard replaces sections 2-5 and the checklist follows its steps.
+  const onboardingActive = !hasDraft && onboarding.active;
+  const standardProgress = computeIntakeProgress({ agreement: intake.agreement, preview: intake.preview, extraction: intake.extraction, extractionAttached: intake.extractionAttached, kyc: intake.kyc, fields: intake.fields });
+  const progress: ChecklistItem[] = onboardingActive
+    ? onboarding.progress.map((item) => ({ key: item.key, number: item.number, title: item.title, state: item.state, anchorId: item.anchorId, stateLabel: item.stateLabel }))
+    : standardProgress.map((item) => ({ key: item.key, number: item.number, title: item.title, state: item.state, anchorId: item.anchorId, stateLabel: PROGRESS_STATE_LABELS[item.state] }));
   const summary = progressSummary(progress);
 
   const errors = notices.filter((notice) => notice.tone === "error");
   const status = notices.filter((notice) => notice.tone !== "error");
   const saveDisabled = saving || anyBusy;
 
-  const footText = !hasDraft ? "Start a draft to save your work." : hasUnsavedEdits ? `${unsavedCount} unsaved ${unsavedCount === 1 ? "change" : "changes"}` : "All changes saved";
+  const footText = onboardingActive ? "Nothing is created until you confirm the last step." : !hasDraft ? "Start a draft to save your work." : hasUnsavedEdits ? `${unsavedCount} unsaved ${unsavedCount === 1 ? "change" : "changes"}` : "All changes saved";
 
   return (
     <div className="formlayout" data-testid="agreement-intake">
@@ -87,6 +97,14 @@ export function IntakeForm() {
               </div>
             )}
           </div>
+          {hasDraft && onboardingHandoff.status === "failed" && onboardingHandoff.canRetry && (
+            <div className="banner" style={{ margin: "14px 0 0" }} data-testid="onboarding-handoff-retry">
+              <span style={{ flex: 1 }}>The signed Agreement is not on the draft yet.</span>
+              <button type="button" className="btn" onClick={onboardingHandoff.retry} disabled={anyBusy} style={anyBusy ? DISABLED_BUTTON_STYLE : undefined}>
+                Add the Agreement again
+              </button>
+            </div>
+          )}
           {hasDraft && flags.readOnlyReason && (
             <div className="banner" role="status" style={{ margin: "14px 0 0" }}>
               <span>{flags.readOnlyReason}</span>
@@ -96,7 +114,8 @@ export function IntakeForm() {
 
         <AgreementForSection />
 
-        {!hasDraft && <ExistingDetailsSection />}
+        {onboardingActive && <OnboardingWizard />}
+        {!hasDraft && !onboardingActive && <ExistingDetailsSection />}
         {hasDraft && (
           <>
             <ContractSourceSection />
@@ -113,7 +132,7 @@ export function IntakeForm() {
         {!hasDraft && (
           <section className="formsection" aria-label="Next sections">
             <p className="foundationnote" style={{ margin: 0 }}>
-              Contract source, Cross-verification, Commercial terms, Performance targets, KYC and Review open once the draft is started.
+              {onboardingActive ? "The Agreement draft starts when the new record is created. Cross-verification, Commercial terms, Performance targets, KYC and Review follow on that draft." : "Contract source, Cross-verification, Commercial terms, Performance targets, KYC and Review open once the draft is started."}
             </p>
           </section>
         )}
@@ -148,7 +167,7 @@ export function IntakeForm() {
                   <span style={{ display: "block", overflowWrap: "anywhere" }}>
                     {item.number}. {item.title}
                   </span>
-                  <small style={{ display: "block", fontSize: 10 }}>{PROGRESS_STATE_LABELS[item.state]}</small>
+                  <small style={{ display: "block", fontSize: 10 }}>{item.stateLabel}</small>
                 </>
               );
               return (
@@ -165,7 +184,7 @@ export function IntakeForm() {
               );
             })}
           </ul>
-          <div className="scopebox">Extraction suggests values only. Nothing is accepted, confirmed or written to Partner or Vendor records until you decide it.</div>
+          <div className="scopebox">{onboardingActive ? `${EXTRACTION_NOTE} Nothing is created until you confirm the last step.` : "Extraction suggests values only. Nothing is accepted, confirmed or written to Partner or Vendor records until you decide it."}</div>
         </div>
       </aside>
     </div>

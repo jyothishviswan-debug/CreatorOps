@@ -3,15 +3,16 @@ import type { VendorDuplicateMatch } from "./types";
 
 const MATCH_QUERY_LIMIT = 5;
 
-function normalizeEmail(value: string): string {
+// Step 14B.1: exported (pure, unchanged) so the Finance Agreement onboarding duplicate wrapper normalizes exactly as this check does.
+export function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function normalizePhone(value: string): string {
+export function normalizePhone(value: string): string {
   return value.replace(/[^\d+]/g, "");
 }
 
-function normalizeDisplayName(value: string): string {
+export function normalizeDisplayName(value: string): string {
   return value.trim().toLowerCase();
 }
 

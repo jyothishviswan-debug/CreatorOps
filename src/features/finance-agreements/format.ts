@@ -5,6 +5,7 @@ import { platformLabel } from "@/features/content/format";
 import { AGREEMENT_FIELD_BY_KEY, AGREEMENT_FIELD_KEYS, type AgreementFieldGroup, type AgreementFieldKey } from "@/server/finance-agreements/fields";
 import { AGREEMENT_TYPES, PAYMENT_CYCLES, type AgreementType, type PaymentCycle } from "@/server/finance-agreements/terms";
 import type { AgreementEntryDecision, AgreementEventKind, AgreementFieldOrigin, AgreementHeadStatus, AgreementSourceMode, AgreementVersionStatus, CounterpartyType, ExtractionConfidence, ExtractionRunStatus } from "@/server/finance-agreements/types";
+import type { AgreementDocumentStatusDto } from "@/server/finance-agreements/client-dto";
 import type { ReconciliationReason, ReconciliationState } from "@/server/finance-agreements/reconciliation-compare";
 import type { AgreementKycComponentStatus, AgreementKycState } from "@/server/finance-agreements/kyc-status-service";
 import type { AgreementWorkspacePrimaryActionKind } from "@/server/finance-agreements/workspace-dto";
@@ -92,6 +93,8 @@ export const EVENT_KIND_LABELS: Record<AgreementEventKind, string> = {
   ended: "Agreement ended",
   master_data_updated: "Master data updated",
   kyc_updated_from_agreement: "KYC updated from Agreement",
+  document_stored: "Agreement document stored",
+  document_store_failed: "Agreement document not stored",
 };
 export const eventKindLabel = (kind: AgreementEventKind): string => EVENT_KIND_LABELS[kind] ?? "Activity";
 
@@ -165,6 +168,7 @@ export const kycStateChip = (state: AgreementKycState): ChipSpec => KYC_STATE_CH
 export const KYC_COMPONENT_CHIPS: Record<AgreementKycComponentStatus, ChipSpec> = {
   PRESENT: { label: "Available", tone: "default" },
   MISSING: { label: "Missing", tone: "orange" },
+  INCOMPLETE: { label: "Incomplete", tone: "orange" },
   NOT_APPLICABLE: { label: "Not applicable", tone: "gray" },
   RESTRICTED: { label: "Restricted", tone: "purple" },
 };
@@ -173,6 +177,23 @@ export const kycComponentChip = (status: AgreementKycComponentStatus): ChipSpec 
 export type KycComponentKey = "pan" | "aadhaar" | "gst" | "bank";
 export const KYC_COMPONENT_LABELS: Record<KycComponentKey, string> = { pan: "PAN", aadhaar: "Aadhaar", gst: "GST certificate", bank: "Bank details" };
 export const kycComponentLabel = (component: KycComponentKey): string => KYC_COMPONENT_LABELS[component];
+
+// --- Agreement document (the ORIGINAL signed PDF, kept in Drive after confirmation) ---------------------------------------------------------------------
+// The text always carries the meaning. "Stored" is the ONLY green state; nothing here ever claims a document is stored unless the server said STORED.
+export const DOCUMENT_STATUS_CHIPS: Record<AgreementDocumentStatusDto, ChipSpec> = {
+  STORED: { label: "Stored", tone: "default" },
+  PENDING: { label: "Not stored yet", tone: "orange" },
+  FAILED: { label: "Storage failed", tone: "red" },
+  NOT_CONFIGURED: { label: "Drive storage not configured", tone: "orange" },
+  NOT_APPLICABLE: { label: "No new signed document", tone: "gray" },
+};
+export const documentStatusChip = (status: AgreementDocumentStatusDto): ChipSpec => DOCUMENT_STATUS_CHIPS[status];
+export const AGREEMENT_DOCUMENT_LABEL = "Agreement document";
+export const OPEN_AGREEMENT_DOCUMENT_LABEL = "Open Agreement document";
+export const STORE_AGREEMENT_DOCUMENT_LABEL = "Store Agreement document";
+export const AGREEMENT_DOCUMENT_ON_FILE = "Agreement document on file";
+export const DRIVE_NOT_CONFIGURED_TEXT = "Drive storage not configured";
+export const NO_NEW_SIGNED_DOCUMENT_TEXT = "No new signed document for this version";
 
 // --- Registry-driven field labels ----------------------------------------------------------------------------------------------------------------
 // The registry's own labels are the source; only these are re-worded to the canonical Step 14B terminology.

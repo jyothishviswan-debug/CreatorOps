@@ -123,6 +123,51 @@ describe("redactAgreementEventMetadata (explicit ALLOWLIST)", () => {
   });
 });
 
+describe("original signed document events (Step 14B.1)", () => {
+  it("keeps the status word, a failure CODE, the attempt count and a safe original file name - and nothing that names a link or a Drive id", () => {
+    expect(redactAgreementEventMetadata({ version: 2, documentStatus: "STORED", fileName: "Acme Media Agreement 2026-01-15.pdf", artifactRef: "ca_0123456789abcdef0123", attemptCount: 3 })).toEqual({
+      version: 2, documentStatus: "STORED", fileName: "Acme Media Agreement 2026-01-15.pdf", artifactRef: "ca_0123456789abcdef0123", attemptCount: 3,
+    });
+    expect(redactAgreementEventMetadata({ documentStatus: "FAILED", failureCode: "drive_unavailable" })).toEqual({ documentStatus: "FAILED", failureCode: "drive_unavailable" });
+    // link / id / locator-shaped keys are simply not on the list
+    expect(redactAgreementEventMetadata({ driveLink: "https://drive.google.com/x", driveFileId: "abc", webViewLink: "https://x", fileId: "abc", storageLocator: "finance-contracts/x.pdf", folderId: "abc" })).toBeNull();
+  });
+
+  it("refuses an unknown status, an unknown failure code and a file name that looks like an identity value, an e-mail or a path", () => {
+    expect(redactAgreementEventMetadata({ documentStatus: "PENDING", failureCode: "Bearer secret-token" })).toBeNull();
+    for (const fileName of ["ABCPE1234F agreement.pdf", "29ABCPE1234F1Z5.pdf", "HDFC0001234.pdf", "2341 2341 2346.pdf", "asha@example.com.pdf", "../../etc/passwd.pdf", "a\\b.pdf", "line\nbreak.pdf", "", "x".repeat(256)]) {
+      expect(redactAgreementEventMetadata({ fileName }), JSON.stringify(fileName)).toBeNull();
+    }
+    expect(redactAgreementEventMetadata({ fileName: "Agreement 20260115093000.pdf" })).toEqual({ fileName: "Agreement 20260115093000.pdf" });
+  });
+
+  it("both document event kinds build with the redacted metadata", () => {
+    const base = { agreementRef: "agr_0123456789abcdef0123", version: 1, actorUserRef: "user-ref", requestId: "req-1", createdAt: "2026-01-01T00:00:00.000Z" };
+    for (const kind of ["document_stored", "document_store_failed"] as const) {
+      expect(buildAgreementEvent({ ...base, kind, metadata: { documentStatus: "STORED", driveLink: "https://x", fileName: "a.pdf" } }).metadata).toEqual({ documentStatus: "STORED", fileName: "a.pdf" });
+    }
+  });
+});
+
+describe("onboarding provenance on the created event (Step 14B.1)", () => {
+  it("keeps the provenance marker, the mode word and the opaque ledger ref - and refuses any other value", () => {
+    const ref = `onb_${"a".repeat(64)}`;
+    expect(redactAgreementEventMetadata({ counterpartyType: "PARTNER", createdVia: "FINANCE_AGREEMENT_ONBOARDING", onboardingMode: "NEW_COUNTERPARTY", onboardingRef: ref })).toEqual({ counterpartyType: "PARTNER", createdVia: "FINANCE_AGREEMENT_ONBOARDING", onboardingMode: "NEW_COUNTERPARTY", onboardingRef: ref });
+    expect(redactAgreementEventMetadata({ onboardingMode: "EXISTING_COUNTERPARTY" })).toEqual({ onboardingMode: "EXISTING_COUNTERPARTY" });
+    expect(redactAgreementEventMetadata({ createdVia: "SOMETHING_ELSE", onboardingMode: "ELSEWHERE", onboardingRef: "has spaces and /slashes" })).toBeNull();
+  });
+
+  it("records the deliberate duplicate decision as a flag plus the reviewer's own reason - and drops a reason that looks like an identity value or an e-mail", () => {
+    expect(redactAgreementEventMetadata({ createdVia: "FINANCE_AGREEMENT_ONBOARDING", duplicatesAcknowledged: true, reason: "A different person who shares the studio inbox" })).toEqual({ createdVia: "FINANCE_AGREEMENT_ONBOARDING", duplicatesAcknowledged: true, reason: "A different person who shares the studio inbox" });
+    expect(redactAgreementEventMetadata({ reason: "same as asha@example.com" })).toBeNull();
+    expect(redactAgreementEventMetadata({ duplicatesAcknowledged: "yes" })).toBeNull();
+  });
+
+  it("carries no counterparty ref, name, email, phone, account handle or link key", () => {
+    expect(redactAgreementEventMetadata({ partnerRef: "p", vendorRef: "v", displayName: "Asha", email: "a@b.co", phone: "9876543210", handle: "asha", profileUrl: "https://x", partnerAccountRef: "acc" })).toBeNull();
+  });
+});
+
 describe("buildAgreementEvent", () => {
   const base = { agreementRef: "agr_0123456789abcdef0123", version: 1, actorUserRef: "user-ref", requestId: "req-1", createdAt: "2026-01-01T00:00:00.000Z" };
 

@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ActorContext } from "@/server/authz/types";
+import { createdViaSchema } from "@/server/shared/onboarding-provenance";
 import { toPartnerAccountDto, type PartnerAccountDto } from "./client-dto";
 import {
   getPartnerAccountDocByRef,
@@ -62,6 +63,8 @@ const createPartnerAccountInputSchema = z.object({
   platformAccountId: z.string().min(1).max(200).optional(),
   primary: z.boolean().optional(),
   followerCount: z.number().int().min(0).optional(),
+  // Step 14B.1: optional provenance marker recorded on the `account_created` event only (never a second identity source, never a grant).
+  createdVia: createdViaSchema.optional(),
 }).strict();
 export type CreatePartnerAccountInput = z.input<typeof createPartnerAccountInputSchema>;
 
@@ -159,7 +162,7 @@ export async function createPartnerAccount(actor: ActorContext | null, partnerRe
   if (result.kind === "collision") return { ok: false, code: "conflict", message: "This account identity is already claimed by another Partner Account." };
   if (result.kind === "partner_not_found") return { ok: false, code: "not_found", message: "Partner not found." };
 
-  await writePartnerEvent({ partnerUid: partner.uid, kind: "account_created", actorUserRef: actor!.userRef, metadata: { platform: input.platform, primary: Boolean(input.primary) }, requestId });
+  await writePartnerEvent({ partnerUid: partner.uid, kind: "account_created", actorUserRef: actor!.userRef, metadata: { platform: input.platform, primary: Boolean(input.primary), ...(input.createdVia ? { createdVia: input.createdVia } : {}) }, requestId });
   return { ok: true, data: toPartnerAccountDto(result.doc) };
 }
 

@@ -27,6 +27,7 @@ import {
   versionStatusChip,
   type KycComponentKey,
 } from "../format";
+import { AgreementDocumentPanel, type AgreementDocumentPanelProps } from "./AgreementDocumentPanel";
 import { intakeHref } from "./detail-model";
 import type { TabContext } from "./detail-types";
 import { RevisionChangesPanel } from "./RevisionChangesPanel";
@@ -36,7 +37,7 @@ import { reconciliationAttentionCount, reconciliationSummaryChips } from "./veri
 
 const COMPONENT_ORDER: KycComponentKey[] = ["pan", "aadhaar", "gst", "bank"];
 
-export function OverviewTab({ ctx, lifecycle, onOpenTab }: { ctx: TabContext; lifecycle: ReactNode; onOpenTab: (tab: "verification" | "kyc" | "terms") => void }) {
+export function OverviewTab({ ctx, lifecycle, onOpenTab, documentPanel }: { ctx: TabContext; lifecycle: ReactNode; onOpenTab: (tab: "verification" | "kyc" | "terms") => void; documentPanel?: AgreementDocumentPanelProps }) {
   const { head, viewed, viewedDoc, openDoc, openRevision, permissions } = ctx;
   const terms = viewedDoc?.terms ?? null;
   const confirmed = viewed?.confirmed === true && terms !== null;
@@ -74,6 +75,12 @@ export function OverviewTab({ ctx, lifecycle, onOpenTab }: { ctx: TabContext; li
           </PanelBody>
         </Panel>
       </PanelGrid>
+
+      {documentPanel && documentPanel.rows.length > 0 && (
+        <PanelGrid>
+          <AgreementDocumentPanel {...documentPanel} />
+        </PanelGrid>
+      )}
 
       {openRevision && head.openVersion !== null && (
         <PanelGrid>

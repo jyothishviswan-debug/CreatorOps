@@ -16,12 +16,19 @@ import type { FinanceAgreementPermissionsDto } from "./workspace-dto";
 //   canViewContractDetail     canView + finance_contracts
 //   canViewIdentity(type)     canView + the counterparty's identity category (payment_details | vendor_payment_details)
 //   canManageCounterpartyKyc  canView + the OWNING module's feature + its manage_*_restricted_identity action + the identity category
+//   canCreatePartner          canView + the OWNING module's feature + its create action (partners:create; Step 14B.1 onboarding)
+//   canCreateVendor           canView + vendors feature + vendors:create
+//   canManagePartnerAccounts  canView + partners feature + partners:manage_partner_accounts
+// (the owning create services themselves need the owning feature AND the action, so the booleans mirror that exactly)
 
 export type PermissionInputs = {
   financeView: boolean;
   manageAgreements: boolean;
   activateAgreements: boolean;
   financeContracts: boolean;
+  partnersCreate: boolean;
+  vendorsCreate: boolean;
+  partnerAccountsManage: boolean;
   identity: Record<CounterpartyType, { category: boolean; owningView: boolean; owningKycAction: boolean }>;
 };
 
@@ -43,20 +50,23 @@ export function deriveFinanceAgreementPermissions(inputs: PermissionInputs, coun
     canViewContractDetail: view && inputs.financeContracts,
     canViewIdentity: selected.canViewIdentity,
     canManageCounterpartyKyc: selected.canManageCounterpartyKyc,
+    canCreatePartner: view && inputs.partnersCreate,
+    canCreateVendor: view && inputs.vendorsCreate,
+    canManagePartnerAccounts: view && inputs.partnerAccountsManage,
     counterpartyType,
     byCounterpartyType,
   };
 }
 
 export const NO_FINANCE_AGREEMENT_PERMISSIONS: FinanceAgreementPermissionsDto = deriveFinanceAgreementPermissions(
-  { financeView: false, manageAgreements: false, activateAgreements: false, financeContracts: false, identity: { PARTNER: { category: false, owningView: false, owningKycAction: false }, VENDOR: { category: false, owningView: false, owningKycAction: false } } },
+  { financeView: false, manageAgreements: false, activateAgreements: false, financeContracts: false, partnersCreate: false, vendorsCreate: false, partnerAccountsManage: false, identity: { PARTNER: { category: false, owningView: false, owningKycAction: false }, VENDOR: { category: false, owningView: false, owningKycAction: false } } },
   null,
 );
 
 // Reads the grants (a handful of small documents) and derives the DTO. An absent actor (not signed in) gets the all-false DTO.
 export async function computeFinanceAgreementPermissions(actor: ActorContext | null, counterpartyType: CounterpartyType | null = null): Promise<FinanceAgreementPermissionsDto> {
   if (!actor) return { ...NO_FINANCE_AGREEMENT_PERMISSIONS, counterpartyType };
-  const [financeView, manageAgreements, activateAgreements, financeContracts, partnersView, vendorsView, partnerKycAction, vendorKycAction, partnerCategory, vendorCategory] = await Promise.all([
+  const [financeView, manageAgreements, activateAgreements, financeContracts, partnersView, vendorsView, partnerKycAction, vendorKycAction, partnerCategory, vendorCategory, partnerCreateAction, vendorCreateAction, partnerAccountsAction] = await Promise.all([
     canAccessFeature(actor, "finance"),
     canPerformAction(actor, "finance", "manage_agreements"),
     canPerformAction(actor, "finance", "activate_agreements"),
@@ -67,6 +77,9 @@ export async function computeFinanceAgreementPermissions(actor: ActorContext | n
     canPerformAction(actor, "vendors", "manage_vendor_restricted_identity"),
     canAccessSensitive(actor, IDENTITY_CATEGORY_BY_COUNTERPARTY.PARTNER),
     canAccessSensitive(actor, IDENTITY_CATEGORY_BY_COUNTERPARTY.VENDOR),
+    canPerformAction(actor, "partners", "create"),
+    canPerformAction(actor, "vendors", "create"),
+    canPerformAction(actor, "partners", "manage_partner_accounts"),
   ]);
   return deriveFinanceAgreementPermissions(
     {
@@ -74,6 +87,9 @@ export async function computeFinanceAgreementPermissions(actor: ActorContext | n
       manageAgreements,
       activateAgreements,
       financeContracts,
+      partnersCreate: partnersView && partnerCreateAction,
+      vendorsCreate: vendorsView && vendorCreateAction,
+      partnerAccountsManage: partnersView && partnerAccountsAction,
       identity: {
         PARTNER: { category: partnerCategory, owningView: partnersView, owningKycAction: partnerKycAction },
         VENDOR: { category: vendorCategory, owningView: vendorsView, owningKycAction: vendorKycAction },

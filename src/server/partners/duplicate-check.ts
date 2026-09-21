@@ -4,12 +4,19 @@ import type { PartnerDuplicateMatch } from "./types";
 
 const MATCH_QUERY_LIMIT = 5;
 
-function normalizeEmail(value: string): string {
+// Step 14B.1: exported (pure, unchanged) so the Finance Agreement onboarding duplicate wrapper normalizes exactly as this check does.
+export function normalizeEmail(value: string): string {
   return value.trim().toLowerCase();
 }
 
-function normalizePhone(value: string): string {
+export function normalizePhone(value: string): string {
   return value.replace(/[^\d+]/g, "");
+}
+
+// Step 14B.1: the Partner module stores displayNameLower (the lower-cased name); this is the exact-equality form of it for the Finance
+// onboarding wrapper's SUPPORTING name signal (the Partner check itself has no name signal). Same rule as the Vendor module's.
+export function normalizeDisplayName(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 export type PartnerDuplicateCheckInput = {

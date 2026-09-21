@@ -93,6 +93,15 @@ export type FinanceAgreementPermissionsDto = {
   canViewIdentity: boolean;
   // The owning module's manage_*_restricted_identity action AND the identity category, for the requested type.
   canManageCounterpartyKyc: boolean;
+  // Step 14B.1 (agreement-led onboarding): the OWNING modules' own grants, each combined with the finance feature view (like every boolean
+  // here). Creating a counterparty from an Agreement needs canManage AND the matching create right AND (Partner accounts) canManagePartnerAccounts;
+  // the server re-checks all of them - these only decide which onboarding choices are offered.
+  //   canCreatePartner          the partners feature + partners:create
+  //   canCreateVendor           the vendors feature + vendors:create
+  //   canManagePartnerAccounts  the partners feature + partners:manage_partner_accounts
+  canCreatePartner: boolean;
+  canCreateVendor: boolean;
+  canManagePartnerAccounts: boolean;
   counterpartyType: CounterpartyType | null;
   byCounterpartyType: Record<CounterpartyType, { canViewIdentity: boolean; canManageCounterpartyKyc: boolean }>;
 };
@@ -161,6 +170,6 @@ export type CounterpartyPreviewDto = {
   kyc: { state: AgreementKycState; components: AgreementKycComponents; valuesVisible: boolean };
   // The canonical GSTIN as STATUS only (never the number). Named `gstinStatus` (not `gstin`) on purpose: the boundary guards
   // forbid any property called gstin outside the field registry. RESTRICTED without the counterparty's identity category.
-  gstinStatus: "PRESENT" | "MISSING" | "NOT_APPLICABLE" | "RESTRICTED";
+  gstinStatus: "PRESENT" | "MISSING" | "INCOMPLETE" | "NOT_APPLICABLE" | "RESTRICTED";
   unavailableFields: CounterpartyUnavailableFieldDto[];
 };

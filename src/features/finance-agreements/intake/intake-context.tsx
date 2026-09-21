@@ -52,6 +52,10 @@ import {
   type LocalFieldEdit,
 } from "./intake-logic";
 import { createInitialIntakeData, failureToNotice, intakeReducer, type IntakeInitialData, type IntakeNotice, type IntakeNoticeTone } from "./intake-state";
+import { reuploadAgreement, type ReuploadResult } from "./onboarding/handoff";
+import { initialOnboardingSelection } from "./onboarding/onboarding-mode";
+import { ONBOARDING_BUSY, useOnboarding, type IntakeOnboarding } from "./onboarding/use-onboarding";
+import { useOnboardingHandoff, type HandoffStatus } from "./onboarding/use-onboarding-handoff";
 import { scrollToAnchor as scrollToAnchorImpl } from "./scroll-to-anchor";
 
 // --- Public types (STABLE - other sections depend on these names) ---------------------------------------------------------------------------------
@@ -80,6 +84,10 @@ export const INTAKE_BUSY = {
   master: "master-data",
   applyKyc: "apply-kyc",
   detail: "detail",
+  // Step 14B.1 (agreement-led onboarding of a NEW Partner / Vendor): the wizard's three writes share the same one-at-a-time lock.
+  onboardPreview: ONBOARDING_BUSY.preview,
+  onboardDuplicates: ONBOARDING_BUSY.duplicates,
+  onboardCreate: ONBOARDING_BUSY.create,
   // `field:<fieldKey>` is the key while ONE field decision is written (see fieldBusyKey).
 } as const;
 export const fieldBusyKey = (fieldKey: AgreementFieldKey): string => `field:${fieldKey}`;
@@ -209,6 +217,14 @@ export type IntakeContextValue = {
   // Activates the confirmed open version (only offered when flags.canActivate). Uses the HEAD's docVersion.
   activateAgreement: () => Promise<FinanceApiResult<AgreementDetailDto>>;
 
+  // ---- Step 14B.1: new Partner / Vendor from the Agreement (ADDED; nothing above changed) ----
+  // Section 1's mode choice, the wizard's state machine and its actions (see onboarding/use-onboarding.ts). `onboarding.active` = the wizard shows.
+  onboarding: IntakeOnboarding;
+  // Uploads the given File, extracts it and attaches its proposals to the (just created) draft, in that order (onboarding/handoff.ts). Resolves null when refused.
+  extractAndAttachFromFile: (file: File) => Promise<ReuploadResult | null>;
+  // The automatic re-upload of the File the person selected in the wizard, after the record was created (idle when the form was not opened by an onboarding).
+  onboardingHandoff: HandoffStatus & { canRetry: boolean; retry: () => void };
+
   // ---- navigation helpers ----
   // Scrolls to and focuses an anchor (`fieldAnchorId(key)` / `sectionAnchorId(section)`, from confirm-blockers via view-models).
   scrollToAnchor: (anchorId: string) => boolean;
@@ -240,6 +256,8 @@ export type IntakeProviderProps = {
     // The prior CONFIRMED terms a revision is compared against (the page fetches that version) and its number.
     revisionBase?: ConfirmedTermSet | null;
     revisionBaseVersion?: number | null;
+    // Deep link ?counterpartyType=&mode=new: open with "Create new ... from Agreement" already chosen.
+    onboarding?: { mode: "new"; counterpartyType: CounterpartyType } | null;
   };
   children: ReactNode;
 };
@@ -580,6 +598,68 @@ export function IntakeProvider({ permissions, initial, children }: IntakeProvide
     [notify, refreshReconciliation, reportFailure, runExclusive, setAgreement],
   );
 
+  // Step 14B.1: the automatic re-upload after an onboarding: upload -> extract -> attach as ONE guarded write. The attach uses the run the
+  // extract just returned (never a re-read of state, which has not re-rendered yet) and the docVersion of the newest response.
+  const extractAndAttachFromFile = useCallback(
+    (file: File) =>
+      runExclusive<ReuploadResult | null>(
+        INTAKE_BUSY.upload,
+        async (setKey) => {
+          const current = agreementRef.current;
+          const selected = current?.selectedVersion ?? null;
+          if (!current || !selected) return null;
+          const target = current.head.counterparty;
+          const ref = current.head.agreementRef;
+          return reuploadAgreement(file, {
+            upload: async (picked) => {
+              const uploaded = await api.uploadContractArtifact({ file: picked, counterpartyType: target.type, counterpartyRef: target.ref });
+              if (uploaded.ok) dispatch({ type: "artifact", artifact: uploaded.data });
+              return uploaded;
+            },
+            extract: async (artifactRef) => {
+              setKey(INTAKE_BUSY.extract);
+              const extracted = await api.extractContract({ agreementRef: ref, version: selected.version, artifactRef });
+              if (extracted.ok) dispatch({ type: "extraction", extraction: extracted.data });
+              return extracted;
+            },
+            attach: async (extractionRunRef) => {
+              setKey(INTAKE_BUSY.attach);
+              const latest = agreementRef.current?.selectedVersion ?? selected;
+              const attached = await api.attachExtractionProposals(ref, { version: latest.version, expectedDocVersion: latest.docVersion, extractionRunRef });
+              if (attached.ok) {
+                setAgreement(attached.data.agreement);
+                if (dataRef.current.reconciliation !== null) void refreshReconciliation();
+              }
+              return attached;
+            },
+          });
+        },
+        null,
+      ),
+    [refreshReconciliation, runExclusive, setAgreement],
+  );
+
+  // Step 14B.1: the platform(s) chosen for a Partner started from an EXISTING record (Partner-level, no Account named) are RECORDED through the `platforms` field, as
+  // `Start draft` does for a Partner-level Agreement. One guarded write; resolves false when it could not be written.
+  const recordPlatformsOnDraft = useCallback(
+    (platforms: string[]) =>
+      runExclusive<boolean>(
+        INTAKE_BUSY.save,
+        async () => {
+          const current = agreementRef.current;
+          const selected = current?.selectedVersion ?? null;
+          if (!current || !selected || platforms.length === 0) return false;
+          const decision = resolveEditDecision(selected.draft.platforms, platforms, "platforms");
+          const recorded = await writeDecision({ fieldKey: "platforms", decision, value: platforms });
+          if (!recorded.ok) return false;
+          setAgreement(recorded.data, ["platforms"]);
+          return true;
+        },
+        false,
+      ),
+    [runExclusive, setAgreement, writeDecision],
+  );
+
   const updateCounterpartyContact = useCallback(
     (input: Omit<UpdateMasterDataInput, "version" | "expectedDocVersion">) =>
       runExclusive<FinanceApiResult<UpdateCounterpartyContactOutcome>>(
@@ -679,6 +759,12 @@ export function IntakeProvider({ permissions, initial, children }: IntakeProvide
   const goToBlocker = useCallback((blocker: Pick<ConfirmBlockerView, "anchorId">) => void scrollToAnchorImpl(blocker.anchorId), []);
   const isBusy = useCallback((key?: string) => (key === undefined ? busyKey !== null : busyKey === key), [busyKey]);
 
+  // Step 14B.1: the new-counterparty wizard (state machine + actions) and the receiving end of its hand-off.
+  const navigateTo = useCallback((href: string) => router.replace(href), [router]);
+  const onboarding = useOnboarding({ permissions, hasDraft: agreement !== null, initialSelection: initialOnboardingSelection(initial?.onboarding), runExclusive, notify, navigate: navigateTo });
+  const handoffControl = useOnboardingHandoff({ agreementRef: agreement?.head.agreementRef ?? null, extractAndAttach: extractAndAttachFromFile, notify, focusAnchor: scrollToAnchorImpl, recordPlatforms: recordPlatformsOnDraft });
+  const onboardingHandoff = { ...handoffControl.handoff, canRetry: handoffControl.canRetry, retry: handoffControl.retry };
+
   const value: IntakeContextValue = {
     permissions,
     flags,
@@ -733,6 +819,9 @@ export function IntakeProvider({ permissions, initial, children }: IntakeProvide
     applyExtractedKyc,
     confirmAgreement,
     activateAgreement,
+    onboarding,
+    extractAndAttachFromFile,
+    onboardingHandoff,
     scrollToAnchor,
     goToBlocker,
   };

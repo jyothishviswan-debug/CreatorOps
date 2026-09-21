@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 
 import { FieldValue } from "firebase-admin/firestore";
 import { getStorage } from "firebase-admin/storage";
@@ -19,6 +19,7 @@ import {
   decideField,
   endAgreement,
   extractContract,
+  storeAgreementDocument,
   suspendAgreement,
   uploadContractArtifact,
   type AgreementDetailDto,
@@ -36,7 +37,7 @@ import { READY_DECISIONS, type FieldDecisionSeed } from "@/server/finance-agreem
 import { makeBlankPdf, makeGarbagePdf, makeTextPdf } from "@/server/finance-agreements/testing/pdf-fixtures";
 import { SAMPLE_CONTRACT_PAGES } from "@/server/finance-agreements/testing/sample-contract";
 import type { AgreementCounterpartyInput } from "@/server/finance-agreements/types";
-import { partnerAccountsCollection, partnersCollection } from "@/server/partners/firestore";
+import { partnerAccountIdentityClaimsCollection, partnerAccountsCollection, partnersCollection } from "@/server/partners/firestore";
 import { partnerAccountDocSchema, partnerDocSchema, type PartnerAccountDoc, type PartnerDoc } from "@/server/partners/types";
 import { restrictedFinancialIdentitiesCollection, restrictedFinancialIdentityDocSchema, restrictedIdentityDocId } from "@/server/shared/restricted-financial-identity";
 import { vendorsCollection } from "@/server/vendors/firestore";
@@ -94,6 +95,37 @@ export const PDFS = {
 
 export const SAMPLE_PDF_NAME = "signed-collaboration-agreement.pdf";
 
+// ---- Deterministic contract variants (Step 14B.1 onboarding) ----------------------------------------------------------------------
+// The synthetic sample Agreement with ITS identity lines replaced, so the wizard's extraction is deterministic per test (name / email / phone / state /
+// page link / page name) and no two tests share a duplicate signal. Extracted values come back normalized: phone -> E.164 (+91XXXXXXXXXX), the page link
+// -> https://instagram.com/<handle> (no www, no query).
+export type ContractVariant = { name: string; email: string; phone: string; state?: string; pageLink?: string; pageName?: string };
+export type UniqueIdentity = { email: string; phone: string; phoneNormalized: string; handle: string; ytHandle: string };
+
+// A fresh (email, phone, handle) triple: valid Indian mobile shape, never reused, so a test controls exactly which duplicate signals exist.
+export function uniqueIdentity(prefix = "e2e"): UniqueIdentity {
+  const digits = (count: number) => Array.from({ length: count }, () => randomInt(0, 10)).join("");
+  const a = digits(4);
+  const b = digits(5);
+  const token = randomUUID().replace(/-/g, "").slice(0, 8);
+  return { email: `${prefix}.${token}@example.test`.toLowerCase(), phone: `+91 9${a} ${b}`, phoneNormalized: `+919${a}${b}`, handle: `${prefix.toLowerCase()}_${token}`, ytHandle: `${prefix.toLowerCase()}_${token}_yt` };
+}
+
+export function makeContractPdf(variant: ContractVariant): Buffer {
+  const pages = SAMPLE_CONTRACT_PAGES.map((lines) =>
+    lines.map((line) => {
+      if (line.startsWith("Collaborator Name:")) return `Collaborator Name: ${variant.name}`;
+      if (line.startsWith("Mobile:")) return `Mobile: ${variant.phone}`;
+      if (line.startsWith("Email:")) return `Email: ${variant.email}`;
+      if (line.startsWith("State:")) return `State: ${variant.state ?? "Karnataka"}`;
+      if (line.startsWith("Instagram Page Link:")) return variant.pageLink === undefined ? line : variant.pageLink === "" ? "" : `Instagram Page Link: ${variant.pageLink}`;
+      if (line.startsWith("Page Name:")) return `Page Name: ${variant.pageName ?? `${variant.name} Official`}`;
+      return line;
+    }),
+  );
+  return makeTextPdf(pages);
+}
+
 const OLD = "2010-01-01T00:00:00.000Z";
 
 // A complete, confirmable set of decisions whose qualifying unit is one of the two SUPPORTED units (the UI requires that; the backend fixture
@@ -105,7 +137,9 @@ let reqCounter = 0;
 const requestId = () => `e2e-req-${Date.now()}-${(reqCounter += 1)}`;
 
 export type PartnerOver = { displayName?: string; legalName?: string | null; email?: string | null; phone?: string | null; regionIds?: string[]; status?: "ACTIVE" | "INACTIVE" };
-export type KycShape = { pan?: boolean; aadhaar?: boolean; bank?: boolean; gst?: "number" | "not_applicable" };
+// `evidence`: the document TYPES with an evidence entry on file (default: one PAN link, as before). An evidence document of a type whose canonical value
+// is absent makes that component INCOMPLETE (Step 14B.1); pass [] for a component that is plainly MISSING.
+export type KycShape = { pan?: boolean; aadhaar?: boolean; bank?: boolean; gst?: "number" | "not_applicable"; evidence?: Array<"pan" | "aadhaar" | "gst" | "bank"> };
 
 export function createFinanceFixtures(tag: string) {
   const region = `${tag}-region`;
@@ -247,7 +281,7 @@ export function createFinanceFixtures(tag: string) {
       aadhaar: parts.aadhaar ? { number: SECRETS.aadhaar } : null,
       gst: parts.gst === "number" ? { applicable: true, number: SECRETS.gst } : parts.gst === "not_applicable" ? { applicable: false } : null,
       bank: parts.bank ? { accountHolderName: SECRETS.holder, accountNumber: SECRETS.account, ifsc: SECRETS.ifsc, bankName: SECRETS.bankName, branchName: "Test Branch" } : null,
-      evidence: [{ docType: "pan", kind: "link", url: SECRETS.evidenceUrl, fileName: null, addedAt: stamp, addedByUserRef: "e2e" }],
+      evidence: (parts.evidence ?? ["pan"]).map((docType) => ({ docType, kind: "link" as const, url: SECRETS.evidenceUrl, fileName: null, addedAt: stamp, addedByUserRef: "e2e" })),
       updatedAt: stamp,
       updatedByUserRef: "e2e",
     });
@@ -307,12 +341,19 @@ export function createFinanceFixtures(tag: string) {
     return must(await activateAgreementVersion(await actorOf(as), { agreementRef: detail.head.agreementRef, version: detail.selectedVersion!.version, expectedDocVersion: detail.head.docVersion }, requestId()), "activate");
   }
 
+  // Stores the CONFIRMED version's original signed PDF through the trusted service (the FAKE adapter: FINANCE_AGREEMENT_DRIVE_MODE=fake - the
+  // resolver never reaches real Drive in that mode). The Drive reference recorded on the version is what every projection shows.
+  async function storeDocument(detail: AgreementDetailDto, as: RoleName = "admin", version?: number): Promise<AgreementDetailDto> {
+    const outcome = must(await storeAgreementDocument(await actorOf(as), { agreementRef: detail.head.agreementRef, version: version ?? detail.selectedVersion!.version }, requestId()), "store document");
+    return outcome.agreement;
+  }
+
   // Uploads + extracts + attaches a PDF to the open draft through the trusted services (the same steps the browser flow performs).
-  async function attachContract(detail: AgreementDetailDto, bytes: Buffer = PDFS.sample(), as: RoleName = "admin"): Promise<AgreementDetailDto> {
+  async function attachContract(detail: AgreementDetailDto, bytes: Buffer = PDFS.sample(), as: RoleName = "admin", fileName: string = SAMPLE_PDF_NAME): Promise<AgreementDetailDto> {
     const actor = await actorOf(as);
     const version = detail.selectedVersion!;
     const counterparty = detail.head.counterparty;
-    const uploaded = must(await uploadContractArtifact(actor, { fileName: SAMPLE_PDF_NAME, bytes, counterparty: { type: counterparty.type, ref: counterparty.ref } }, requestId()), "upload");
+    const uploaded = must(await uploadContractArtifact(actor, { fileName, bytes, counterparty: { type: counterparty.type, ref: counterparty.ref } }, requestId()), "upload");
     const extraction = must(await extractContract(actor, { agreementRef: detail.head.agreementRef, version: version.version, artifactRef: uploaded.artifact.artifactRef }, requestId()), "extract");
     const attached = must(await attachExtractionProposals(actor, { agreementRef: detail.head.agreementRef, version: version.version, expectedDocVersion: version.docVersion, extractionRunRef: extraction.run.runRef }, requestId()), "attach");
     return attached.agreement;
@@ -353,14 +394,15 @@ export function createFinanceFixtures(tag: string) {
   // A per-user access override that removes the OWNING module's `edit` action (Partners / Vendors) from a seeded identity, so a test can
   // prove the owning module denies a master-data update the Finance action alone would have allowed. Always undone by restoreOverrides().
   const overriddenUids = new Set<string>();
-  async function denyOwningEdit(name: "manager" | "head", feature: "partners" | "vendors" = "partners") {
+  async function denyOwningAction(name: "manager" | "head", action: string, feature: "partners" | "vendors" = "partners") {
     const user = await getAdminAuth().getUserByEmail(emailFor(name));
     await getAdminFirestore()
       .collection(COLLECTIONS.userAccessOverrides)
       .doc(user.uid)
-      .set({ uid: user.uid, version: 1, features: { [feature]: { actions: { edit: false } } } }, { merge: true });
+      .set({ uid: user.uid, version: 1, features: { [feature]: { actions: { [action]: false } } } }, { merge: true });
     overriddenUids.add(`${user.uid}|${feature}`);
   }
+  const denyOwningEdit = (name: "manager" | "head", feature: "partners" | "vendors" = "partners") => denyOwningAction(name, "edit", feature);
   async function restoreOverrides() {
     for (const key of overriddenUids) {
       const [uid, feature] = key.split("|");
@@ -370,8 +412,39 @@ export function createFinanceFixtures(tag: string) {
   }
 
   // ---- Cleanup: EVERYTHING created for the fixture counterparties (also what the browser flows created) -------------------------
+  // Partners / Vendors the BROWSER created through the onboarding flow (their names all start with the fixture tag): registered so the rest of the
+  // cleanup (agreements, artifacts, restricted docs ...) reaches them exactly like seeded ones. Also their Accounts + identity claims + the onb_ ledgers.
+  const startedAt = new Date().toISOString();
+  const createdAccounts = new Map<string, string>(); // account doc id (uid) -> its opaque partnerAccountRef (they differ for accounts the owning service created)
+  async function adoptCreated() {
+    const range = (col: FirebaseFirestore.CollectionReference) => col.where("displayName", ">=", tag).where("displayName", "<", `${tag}\uf8ff`).get();
+    for (const doc of (await range(partnersCollection())).docs) {
+      if (partners.some((p) => p.uid === doc.id)) continue;
+      const parsed = partnerDocSchema.safeParse(doc.data());
+      if (parsed.success) {
+        partners.push(parsed.data);
+        cleanup.push(doc.ref);
+      }
+    }
+    for (const doc of (await range(vendorsCollection())).docs) {
+      if (vendors.some((v) => v.uid === doc.id)) continue;
+      const parsed = vendorDocSchema.safeParse(doc.data());
+      if (parsed.success) {
+        vendors.push(parsed.data);
+        cleanup.push(doc.ref);
+      }
+    }
+    for (const partner of partners) {
+      for (const account of (await partnerAccountsCollection().where("partnerRef", "==", partner.partnerRef).get()).docs) createdAccounts.set(account.id, String(account.data().partnerAccountRef ?? account.id));
+    }
+    // restricted KYC docs of every registered counterparty (a browser flow may have written them)
+    for (const partner of partners) cleanup.push(restrictedFinancialIdentitiesCollection().doc(restrictedIdentityDocId("PARTNER", partner.uid)));
+    for (const vendor of vendors) cleanup.push(restrictedFinancialIdentitiesCollection().doc(restrictedIdentityDocId("VENDOR", vendor.uid)));
+  }
+
   async function cleanupAll() {
     await restoreOverrides();
+    await adoptCreated();
     const db = getAdminFirestore();
     const partnerUids = partners.map((p) => p.uid);
     const partnerRefs = partners.map((p) => p.partnerRef);
@@ -416,6 +489,19 @@ export function createFinanceFixtures(tag: string) {
       }
     }
 
+    // 3a. onboarding step ledgers (financeAgreementClaims/onb_*) started during this fixture's life, Partner Accounts (+ their identity claims) created
+    // by the browser flows, and the owning event subcollections of every registered Partner / Vendor.
+    const ledgers = await financeAgreementClaimsCollection().where("kind", "==", "ONBOARDING").get();
+    await Promise.all(ledgers.docs.filter((doc) => String((doc.data() as { startedAt?: string }).startedAt ?? "") >= startedAt).map((doc) => doc.ref.delete()));
+    for (const [accountUid, accountRef] of createdAccounts) {
+      const claims = await partnerAccountIdentityClaimsCollection().where("partnerAccountRef", "==", accountRef).get();
+      await Promise.all(claims.docs.map((claim) => claim.ref.delete()));
+      await partnerAccountsCollection().doc(accountUid).delete();
+    }
+    createdAccounts.clear();
+    for (const partner of partners) await db.recursiveDelete(partnersCollection().doc(partner.uid));
+    for (const vendor of vendors) await db.recursiveDelete(vendorsCollection().doc(vendor.uid));
+
     // 3. master data + restricted identity + grants
     await Promise.all(cleanup.splice(0).map((ref) => ref.delete()));
     await Promise.all(grantIds.splice(0).map((id) => db.collection(COLLECTIONS.scopeAssignments).doc(id).delete()));
@@ -451,7 +537,10 @@ export function createFinanceFixtures(tag: string) {
     seedEnded,
     seedActiveWithRevision,
     denyOwningEdit,
+    denyOwningAction,
     restoreOverrides,
+    storeDocument,
+    adoptCreated,
     cleanupAll,
   };
 }

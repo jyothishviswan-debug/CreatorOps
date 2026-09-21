@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import type { VendorDto } from "@/server/vendors/client-dto";
+import type { CounterpartyAgreementDocumentsDto } from "@/server/finance-agreements/client-dto";
 import { absoluteTime, STATUS_LABELS, statusTone, VENDOR_TYPE_LABELS } from "./format";
 import { VendorHistoryPanel } from "./VendorHistoryPanel";
 import { VendorLifecyclePanel } from "./VendorLifecyclePanel";
@@ -27,7 +28,8 @@ const TABS: { key: TabKey; label: string }[] = [
 
 // `canOpenFinance` is computed by the server page from the actor's own `finance` feature grant; it only decides whether
 // the contextual Agreements link (Payee / Commercial Context tab) is RENDERED - the destination re-authorizes.
-export function VendorDetail({ initialVendor, canOpenFinance = false }: { initialVendor: VendorDto; canOpenFinance?: boolean }) {
+// `agreementDocuments` (Step 14B.1) is the server projection of this Vendor's signed Agreement documents, passed only to an actor with the Finance feature.
+export function VendorDetail({ initialVendor, canOpenFinance = false, agreementDocuments = null }: { initialVendor: VendorDto; canOpenFinance?: boolean; agreementDocuments?: CounterpartyAgreementDocumentsDto | null }) {
   const [vendor, setVendor] = useState(initialVendor);
   const [selectedTab, setSelectedTab] = useState<TabKey>("overview");
   // Bumped on every successful mutation - vendorRef alone never changes
@@ -134,7 +136,7 @@ export function VendorDetail({ initialVendor, canOpenFinance = false }: { initia
         </PanelGrid>
       )}
 
-      {selectedTab === "payee" && <VendorPayeeContextPanel vendorRef={vendor.vendorRef} canOpenFinance={canOpenFinance} />}
+      {selectedTab === "payee" && <VendorPayeeContextPanel vendorRef={vendor.vendorRef} canOpenFinance={canOpenFinance} agreementDocuments={agreementDocuments} />}
 
       {selectedTab === "restricted" && (
         <PanelGrid>

@@ -65,6 +65,8 @@ describe("the grouped summary", () => {
     const groups = buildReviewGroups(input({ kyc: { state: "INCOMPLETE", components: { pan: "PRESENT", aadhaar: "MISSING", gst: "NOT_APPLICABLE", bank: "PRESENT" } } }));
     expect(group(groups, "kyc").rows.map((row) => `${row.label}: ${row.text}`)).toEqual(["Status: Incomplete", "PAN: Available", "Aadhaar: Missing", "Bank details: Available", "GST certificate: Not applicable"]);
     expect(group(buildReviewGroups(input()), "kyc").rows[0]!.text).toBe("Not loaded yet");
+    const incomplete = buildReviewGroups(input({ kyc: { state: "INCOMPLETE", components: { pan: "PRESENT", aadhaar: "MISSING", gst: "INCOMPLETE", bank: "INCOMPLETE" } } }));
+    expect(group(incomplete, "kyc").rows.map((row) => `${row.label}: ${row.text}`)).toEqual(["Status: Incomplete", "PAN: Available", "Aadhaar: Missing", "Bank details: Incomplete", "GST certificate: Incomplete"]);
   });
 
   it("lists every payment-affecting term with what it currently resolves to", () => {

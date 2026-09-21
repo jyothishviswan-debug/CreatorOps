@@ -567,14 +567,17 @@ export function validateContactSnapshot(value: unknown): { ok: true; value: Cont
 // RULE for the identity STATE from component presence (status only, no values):
 //   required components: pan + bank, gst when it applies (a NOT_APPLICABLE gst is not required);
 //   aadhaar is tracked (Partner only) but never required for AVAILABLE.
-//   all required PRESENT -> AVAILABLE; none PRESENT -> MISSING; otherwise INCOMPLETE.
+//   all required PRESENT -> AVAILABLE; none PRESENT and none INCOMPLETE -> MISSING; otherwise INCOMPLETE.
+// A component-level INCOMPLETE (document on file, details not entered) never counts as PRESENT: it blocks AVAILABLE, and it makes the
+// state INCOMPLETE even when nothing else is present (something is on file, so the record is not simply missing).
 // (UNAVAILABLE - the store could not be read - and RESTRICTED - the viewer lacks the
 // identity category - are set by callers, never derived here.)
 export function deriveIdentityStatusState(components: IdentityComponents): Exclude<IdentityStatusState, "UNAVAILABLE"> {
   const required = [components.pan, components.bank, ...(components.gst === "NOT_APPLICABLE" ? [] : [components.gst])];
   const present = required.filter((status) => status === "PRESENT").length;
   if (present === required.length) return "AVAILABLE";
-  return present === 0 ? "MISSING" : "INCOMPLETE";
+  const partial = required.some((status) => status === "INCOMPLETE");
+  return present === 0 && !partial ? "MISSING" : "INCOMPLETE";
 }
 
 // Shape + consistency check of an identity STATUS snapshot: a Vendor has no Aadhaar

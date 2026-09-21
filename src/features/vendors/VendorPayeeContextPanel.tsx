@@ -7,6 +7,8 @@ import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import { EmptyState, Skeleton } from "@/ui/States";
 import type { VendorPartnerLinkWithPartnerDto } from "@/server/vendors/client-dto";
+import type { CounterpartyAgreementDocumentsDto } from "@/server/finance-agreements/client-dto";
+import { AgreementDocumentList } from "@/features/finance-agreements/components/AgreementDocumentList";
 import { listVendorPartnerLinks } from "./api-client";
 import { effectiveDateLabel, LINK_STATUS_LABELS, linkStatusTone, RELATIONSHIP_TYPE_LABELS } from "./format";
 
@@ -28,7 +30,12 @@ import { effectiveDateLabel, LINK_STATUS_LABELS, linkStatusTone, RELATIONSHIP_TY
 // here. Payables/Invoices/Payments still don't exist, so those stay an
 // honest "not yet built" state rather than a fabricated number, count,
 // or amount.
-export function VendorPayeeContextPanel({ vendorRef, canOpenFinance = false }: { vendorRef: string; canOpenFinance?: boolean }) {
+// Step 14B.1: when the server page also passes `agreementDocuments` (only to
+// an actor who holds the Finance feature) the Agreements panel lists the
+// signed Agreement documents of this Vendor - the same stored file the
+// Finance detail shows, with the link only when the projection carries it.
+// Without it the panel is exactly as before.
+export function VendorPayeeContextPanel({ vendorRef, canOpenFinance = false, agreementDocuments = null }: { vendorRef: string; canOpenFinance?: boolean; agreementDocuments?: CounterpartyAgreementDocumentsDto | null }) {
   const [links, setLinks] = useState<VendorPartnerLinkWithPartnerDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -99,6 +106,7 @@ export function VendorPayeeContextPanel({ vendorRef, canOpenFinance = false }: {
               <PanelHead title={label} />
               <PanelBody>
                 <p className="detailcopy">Review this Vendor&apos;s Agreements or start a new one from the Finance module.</p>
+                {agreementDocuments && <AgreementDocumentList documents={agreementDocuments} />}
                 <div className="actions" style={{ marginTop: 12 }}>
                   <Link href="/finance/agreements?counterpartyType=VENDOR" className="btn">
                     Open Finance Agreements

@@ -49,7 +49,16 @@ function detailFor(event: AgreementEventDto, metadata: Metadata): string | null 
       const source = str(metadata, "sourceMode");
       const parts = [type === "PARTNER" || type === "VENDOR" ? `${counterpartyTypeLabel(type as CounterpartyType)} Agreement` : null, source ? `source: ${sourceModeLabel(source as "MANUAL" | "EXTRACTED" | "MIXED")}` : null];
       const text = parts.filter((part): part is string => part !== null).join(" · ");
-      return text.length > 0 ? `Draft version ${event.version} opened (${text}).` : `Draft version ${event.version} opened.`;
+      const opened = text.length > 0 ? `Draft version ${event.version} opened (${text}).` : `Draft version ${event.version} opened.`;
+      // Step 14B.1 provenance: the Agreement was started from Agreement-led onboarding.
+      if (str(metadata, "createdVia") === "FINANCE_AGREEMENT_ONBOARDING") {
+        const record = type === "PARTNER" || type === "VENDOR" ? counterpartyTypeLabel(type as CounterpartyType) : "record";
+        const provenance = `${opened} ${str(metadata, "onboardingMode") === "NEW_COUNTERPARTY" ? `Created from Finance Agreement onboarding: the ${record} record was created from this Agreement.` : `Started from Finance Agreement onboarding using an existing ${record}.`}`;
+        // The wizard promises the deliberate `create a new one anyway` reason is recorded in the Agreement activity: show it here.
+        const reason = str(metadata, "reason");
+        return metadata.duplicatesAcknowledged === true && reason ? `${provenance} A possible existing ${record} was reviewed and a new one was created deliberately. Reason: ${reason}` : provenance;
+      }
+      return opened;
     }
     case "field_decided": {
       const label = knownFieldLabel(metadata);
@@ -104,6 +113,14 @@ function detailFor(event: AgreementEventDto, metadata: Metadata): string | null 
       const components = componentList(metadata);
       return components ? `KYC updated in the owning record: ${components}.` : "KYC updated in the owning record.";
     }
+    case "document_stored": {
+      const file = str(metadata, "fileName");
+      return file ? `The original signed document (${file}) was stored.` : "The original signed document was stored.";
+    }
+    case "document_store_failed": {
+      const attempts = num(metadata, "attemptCount");
+      return `The original signed document could not be stored${attempts && attempts > 1 ? ` (attempt ${attempts})` : ""}. It can be retried.`;
+    }
     default:
       return null;
   }
@@ -116,6 +133,7 @@ const TONES: Partial<Record<AgreementEventDto["kind"], PillTone>> = {
   suspended: "orange",
   ended: "gray",
   superseded: "gray",
+  document_store_failed: "orange",
 };
 
 export function describeAgreementEvent(event: AgreementEventDto): EventView {

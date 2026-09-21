@@ -2,13 +2,13 @@ import type { ReactNode } from "react";
 
 import { StatusChip } from "../components/StatusChip";
 import type { ChipSpec } from "../format";
-import { INTAKE_SECTIONS, intakeSectionAnchor, type IntakeSectionKey } from "./intake-progress";
+import { intakeSectionAnchor, SECTION_META, type IntakeSectionKey } from "./intake-progress";
 
 // Step 14B intake: the ONE section wrapper - the accepted `section.formsection` (h2 + helper) with a stable anchor id, so every intake
 // section (mine and the other agent's) is a jump target for blockers and the progress checklist. `chip` is an optional status text.
 // Rendered inside `form.panel` by IntakeForm; it adds no styling of its own.
 export function SectionCard({ sectionKey, title, description, chip, children }: { sectionKey: IntakeSectionKey; title?: string; description?: string; chip?: ChipSpec; children: ReactNode }) {
-  const meta = INTAKE_SECTIONS.find((section) => section.key === sectionKey)!;
+  const meta = SECTION_META.find((section) => section.key === sectionKey)!;
   const id = intakeSectionAnchor(sectionKey);
   const titleId = `${id}-title`;
   return (

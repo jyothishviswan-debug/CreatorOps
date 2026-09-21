@@ -54,11 +54,14 @@ import * as reviseRoute from "@/app/api/finance/agreements/[agreementRef]/revise
 import * as suspendRoute from "@/app/api/finance/agreements/[agreementRef]/suspend/route";
 import * as resumeRoute from "@/app/api/finance/agreements/[agreementRef]/resume/route";
 import * as endRoute from "@/app/api/finance/agreements/[agreementRef]/end/route";
+import * as documentRoute from "@/app/api/finance/agreements/[agreementRef]/document/route";
+import * as counterpartyDocumentsRoute from "@/app/api/finance/counterparties/documents/route";
 import * as uploadRoute from "@/app/api/finance/contracts/upload/route";
 import * as extractRoute from "@/app/api/finance/contracts/extract/route";
 
 import { createInMemoryArtifactStore, setContractArtifactStoreForTests } from "./contract-artifacts/store";
 import { contractArtifactClaimId } from "./contract-service";
+import { installFakeAgreementDocumentStorage } from "./testing/agreement-document-fixtures";
 import { MAX_CONTRACT_PDF_BYTES, sha256Hex } from "./contract-artifacts/validation";
 import { FINANCE_AGREEMENT_COLLECTIONS, agreementClaimId, financeAgreementClaimsCollection, financeAgreementRestrictedExtractionsCollection, financeAgreementsCollection, financeContractArtifactsCollection } from "./firestore";
 import { READY_DECISIONS } from "./testing/agreement-service-fixtures";
@@ -84,6 +87,8 @@ const restrictedRunRefs: string[] = [];
 const grantDocIds: string[] = [];
 let counter = 0;
 let store = createInMemoryArtifactStore();
+// Step 14B.1: the original signed document goes to the FAKE Drive adapter (no Google call); real bytes are in the in-memory artifact store.
+let drive = installFakeAgreementDocumentStorage();
 
 beforeAll(async () => {
   const password = process.env.EMULATOR_TEST_USER_PASSWORD;
@@ -95,11 +100,13 @@ beforeAll(async () => {
 beforeEach(() => {
   store = createInMemoryArtifactStore();
   setContractArtifactStoreForTests(store);
+  drive = installFakeAgreementDocumentStorage();
   httpActor = null;
 });
 
 afterEach(() => {
   setContractArtifactStoreForTests(null);
+  drive.restore();
   httpActor = null;
 });
 
@@ -855,6 +862,20 @@ describe("the full journey through the routes", () => {
       expect(confirmed.selectedVersion).toMatchObject({ confirmed: true, status: "DRAFT", sourceMode: "MIXED" });
       expect(confirmed.selectedVersion.terms.commercial).toMatchObject({ currency: "INR" });
 
+      // 6b. Step 14B.1: an artifact-backed version cannot be activated until its ORIGINAL signed document is stored (Drive; the fake here).
+      const blocked = await activate(head, confirmed);
+      expect(blocked).toMatchObject({ status: 409, body: { blockers: [{ code: "agreement_document_not_stored" }] } });
+      expect(await post(documentRoute.POST, null, `/agreements/${ref}/document`, { version: 1 }, ref)).toMatchObject({ status: 401 });
+      const stored = ok(await post(documentRoute.POST, manager, `/agreements/${ref}/document`, { version: 1 }, ref), "store document");
+      expect(stored).toMatchObject({ outcome: "stored", retriable: false, document: { status: "STORED", fileName: "collab-agreement.pdf", hasLink: true } });
+      // the Manager holds no finance_contracts: it learns THAT a link exists, never the link
+      expect(stored.document.link).toBeUndefined();
+      expect(JSON.stringify(stored)).not.toMatch(/drive\.invalid|driveLink|driveFileId/);
+      expect(drive.storage.files).toHaveLength(1);
+      expect(drive.storage.files[0]!.receivedSha256).toBe(sha256Hex(bytes));
+      expect(ok(await post(documentRoute.POST, manager, `/agreements/${ref}/document`, { version: 1 }, ref), "store again")).toMatchObject({ outcome: "already_stored" });
+      expect(drive.storage.files).toHaveLength(1);
+
       // 7. the Manager cannot activate; the Head can
       expect((await activate(manager, confirmed)).status).toBe(403);
       const activated = ok(await activate(head, confirmed), "activate");
@@ -864,6 +885,19 @@ describe("the full journey through the routes", () => {
       // 8. once confirmed, the version is immutable through the routes too
       const late = await post(fieldsRoute.POST, manager, `/agreements/${ref}/fields`, { version: 1, expectedDocVersion: activated.selectedVersion.docVersion, fieldKey: "counterpartyName", decision: "CORRECTED", value: "Late Edit" }, ref);
       expect(late.status).toBe(409);
+
+      // 9. the Head (finance_contracts) is given the SAME Drive reference on the status route, the detail and the Partner projection
+      const status = ok(await get(documentRoute.GET, head, `/agreements/${ref}/document?version=1`, ref), "document status");
+      expect(status).toMatchObject({ agreementRef: ref, version: 1, storageConfigured: true, document: { status: "STORED", hasLink: true, link: drive.storage.files[0]!.webViewLink } });
+      expect((await fresh(head, ref)).selectedVersion.document.link).toBe(drive.storage.files[0]!.webViewLink);
+      const projection = ok(await get(counterpartyDocumentsRoute.GET, head, `/counterparties/documents?counterpartyType=PARTNER&ref=${partner.partnerRef}`), "projection");
+      expect(projection).toMatchObject({ linksVisible: true, documents: [{ agreementRef: ref, version: 1, lifecycle: "ACTIVE", document: { status: "STORED", link: drive.storage.files[0]!.webViewLink } }] });
+      const managerProjection = ok(await get(counterpartyDocumentsRoute.GET, manager, `/counterparties/documents?counterpartyType=PARTNER&ref=${partner.partnerRef}`), "manager projection");
+      expect(managerProjection).toMatchObject({ linksVisible: false, documents: [{ document: { status: "STORED", hasLink: true } }] });
+      expect(JSON.stringify(managerProjection)).not.toMatch(/drive\.invalid|"link"/);
+      expect(await get(documentRoute.GET, manager, `/agreements/${FORGED_REF}/document`, FORGED_REF)).toMatchObject({ status: 404, body: NOT_FOUND });
+      expect(await get(counterpartyDocumentsRoute.GET, manager, `/counterparties/documents?counterpartyType=PARTNER&ref=nope`)).toMatchObject({ status: 404, body: NOT_FOUND });
+      expect(await get(counterpartyDocumentsRoute.GET, manager, `/counterparties/documents?counterpartyType=NOPE&ref=${partner.partnerRef}`)).toMatchObject({ status: 400 });
 
       // the Head reads the extraction with the restricted categories; the Manager's whole transcript held no identity value
       const headView = ok(await get(extractionRoute.GET, head, `/agreements/${ref}/extraction`, ref), "head extraction");

@@ -3,7 +3,7 @@
 import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 
 import { StatusChip } from "../components";
-import { DISABLED_BUTTON_STYLE } from "../format";
+import { DISABLED_BUTTON_STYLE, OPEN_AGREEMENT_DOCUMENT_LABEL } from "../format";
 import type { TabContext } from "./detail-types";
 import { ActorNote } from "./TermRows";
 import { buildVersionRows } from "./versions-view";
@@ -30,6 +30,7 @@ export function VersionsTab({ ctx, busy, onView }: { ctx: TabContext; busy: bool
                   <th scope="col">Confirmed</th>
                   <th scope="col">Activated</th>
                   <th scope="col">Source</th>
+                  <th scope="col">Document</th>
                   <th scope="col">State</th>
                   <th scope="col">
                     <span className="sr">Action</span>
@@ -55,6 +56,18 @@ export function VersionsTab({ ctx, busy, onView }: { ctx: TabContext; busy: bool
                       <ActorNote actorRef={row.activatedBy} />
                     </td>
                     <td>{row.sourceMode}</td>
+                    <td data-testid={`version-document-${row.version}`} style={{ minWidth: 150, overflowWrap: "anywhere" }}>
+                      <StatusChip chip={row.document.chip} />
+                      {row.document.fileName && <small style={{ display: "block", marginTop: 4 }}>{row.document.fileName}</small>}
+                      {row.document.note && <small style={{ display: "block", marginTop: 4 }}>{row.document.note}</small>}
+                      {row.document.link && (
+                        <small style={{ display: "block", marginTop: 4 }}>
+                          <a className="textlink" href={row.document.link} target="_blank" rel="noopener noreferrer" aria-label={`${OPEN_AGREEMENT_DOCUMENT_LABEL}, version ${row.version} (opens in a new tab)`}>
+                            {OPEN_AGREEMENT_DOCUMENT_LABEL}
+                          </a>
+                        </small>
+                      )}
+                    </td>
                     <td>{row.roleText}</td>
                     <td>
                       {row.isViewing ? (

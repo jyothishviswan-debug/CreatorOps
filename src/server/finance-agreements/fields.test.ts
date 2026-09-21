@@ -285,11 +285,25 @@ describe("snapshot validators", () => {
     expect(deriveIdentityStatusState(c("PRESENT", "PRESENT", "PRESENT", "MISSING"))).toBe("AVAILABLE");
   });
 
+  it("deriveIdentityStatusState: a component-level INCOMPLETE is never present (blocks AVAILABLE) and makes the state INCOMPLETE", () => {
+    const c = (pan: string, bank: string, gst: string, aadhaar = "MISSING") => ({ pan, bank, gst, aadhaar }) as never;
+    expect(deriveIdentityStatusState(c("PRESENT", "INCOMPLETE", "NOT_APPLICABLE"))).toBe("INCOMPLETE");
+    expect(deriveIdentityStatusState(c("PRESENT", "PRESENT", "INCOMPLETE"))).toBe("INCOMPLETE");
+    expect(deriveIdentityStatusState(c("INCOMPLETE", "MISSING", "NOT_APPLICABLE"))).toBe("INCOMPLETE");
+    expect(deriveIdentityStatusState(c("MISSING", "MISSING", "NOT_APPLICABLE"))).toBe("MISSING");
+    // aadhaar is tracked, never required: an INCOMPLETE aadhaar alone does not block AVAILABLE
+    expect(deriveIdentityStatusState(c("PRESENT", "PRESENT", "NOT_APPLICABLE", "INCOMPLETE"))).toBe("AVAILABLE");
+  });
+
   it("validateIdentityStatusShape: a vendor has no Aadhaar; a stored state must agree with the components", () => {
     const components = { pan: "PRESENT", bank: "PRESENT", gst: "NOT_APPLICABLE", aadhaar: "NOT_APPLICABLE" } as const;
     expect(validateIdentityStatusShape("VENDOR", { state: "AVAILABLE", components })).toEqual([]);
     expect(validateIdentityStatusShape("VENDOR", { state: "AVAILABLE", components: { ...components, aadhaar: "PRESENT" } })).toHaveLength(1);
     expect(validateIdentityStatusShape("PARTNER", { state: "MISSING", components })).toHaveLength(1);
     expect(validateIdentityStatusShape("PARTNER", { state: "UNAVAILABLE", components })).toEqual([]);
+    // an INCOMPLETE component is a legal component value and must agree with the stored state
+    const incomplete = { pan: "PRESENT", bank: "INCOMPLETE", gst: "NOT_APPLICABLE", aadhaar: "MISSING" } as const;
+    expect(validateIdentityStatusShape("PARTNER", { state: "INCOMPLETE", components: incomplete })).toEqual([]);
+    expect(validateIdentityStatusShape("PARTNER", { state: "AVAILABLE", components: incomplete })).toHaveLength(1);
   });
 });

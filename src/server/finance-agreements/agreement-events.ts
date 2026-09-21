@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { AGREEMENT_DOCUMENT_FAILURE_CODES } from "./document-storage/types";
 import { AGREEMENT_FIELD_KEYS } from "./fields";
 import { financeAgreementEventsCollection } from "./firestore";
 import {
@@ -11,6 +12,7 @@ import {
   AGREEMENT_ENTRY_DECISIONS,
   COUNTERPARTY_TYPES,
   agreementEventSchema,
+  AGREEMENT_DOCUMENT_STATUSES,
   type AgreementEvent,
   type AgreementEventKind,
 } from "./types";
@@ -59,6 +61,12 @@ const IDENTITY_COMPONENT_NAMES = ["pan", "aadhaar", "gst", "bank"] as const;
 const isComponentList: ValueCheck = (value) =>
   Array.isArray(value) && value.length >= 1 && value.length <= IDENTITY_COMPONENT_NAMES.length && new Set(value).size === value.length && value.every((item) => typeof item === "string" && (IDENTITY_COMPONENT_NAMES as readonly string[]).includes(item));
 
+// An original file name (already sanitized at upload). Refused when it LOOKS like an identity value or an email
+// (a PAN / IFSC / GSTIN / Aadhaar shape or an e-mail address) - the same defense-in-depth backstop as the free-text keys;
+// a long digit run is fine here (file names carry dates and reference numbers).
+const FILE_NAME_IDENTITY_SHAPED: RegExp[] = [IDENTITY_SHAPED[0]!, IDENTITY_SHAPED[1]!, IDENTITY_SHAPED[2]!, IDENTITY_SHAPED[3]!, IDENTITY_SHAPED[5]!];
+const isSafeFileName: ValueCheck = (value) => typeof value === "string" && value.trim().length > 0 && value.length <= 255 && !/[\u0000-\u001f/\\]/.test(value) && !FILE_NAME_IDENTITY_SHAPED.some((pattern) => pattern.test(value));
+
 const isFieldKeyList: ValueCheck = (value) => Array.isArray(value) && value.length <= AGREEMENT_FIELD_KEYS.length && value.every((item) => typeof item === "string" && (AGREEMENT_FIELD_KEYS as readonly string[]).includes(item));
 
 export const AGREEMENT_EVENT_METADATA_ALLOWLIST: Readonly<Record<string, ValueCheck>> = {
@@ -78,11 +86,22 @@ export const AGREEMENT_EVENT_METADATA_ALLOWLIST: Readonly<Record<string, ValueCh
   origin: oneOf(AGREEMENT_FIELD_ORIGINS),
   decision: oneOf(AGREEMENT_ENTRY_DECISIONS),
   mode: oneOf(["FILL_MISSING", "OVERWRITE_MISMATCH"]),
+  // Step 14B.1: provenance of an Agreement started from Agreement-led onboarding (a marker, a mode word and the opaque ledger ref)
+  createdVia: oneOf(["FINANCE_AGREEMENT_ONBOARDING"]),
+  onboardingMode: oneOf(["NEW_COUNTERPARTY", "EXISTING_COUNTERPARTY"]),
+  onboardingRef: isOpaqueRef,
+  duplicatesAcknowledged: isBoolean,
   // which field / which identity component (a NAME, never a value)
   fieldKey: oneOf(AGREEMENT_FIELD_KEYS),
   fieldKeys: isFieldKeyList,
   component: oneOf(IDENTITY_COMPONENT_NAMES),
   components: isComponentList,
+  // Step 14B.1: the original signed document (a status word, a failure CODE, an attempt count and the ORIGINAL file name -
+  // never a Drive link or file id: those stay on the version's document record behind finance_contracts)
+  documentStatus: oneOf(AGREEMENT_DOCUMENT_STATUSES),
+  failureCode: oneOf(AGREEMENT_DOCUMENT_FAILURE_CODES),
+  fileName: isSafeFileName,
+  attemptCount: isCount,
   // counts
   fieldCount: isCount,
   decidedCount: isCount,

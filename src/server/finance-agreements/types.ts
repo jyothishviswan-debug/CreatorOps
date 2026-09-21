@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { agreementFieldKeySchema, AGREEMENT_FIELD_BY_KEY, AGREEMENT_FIELD_DECISIONS, checkFieldDecisionValue, type AgreementFieldKey } from "./fields";
-import { agreementTypeSchema, confirmedAgreementTermsSchema, contactSnapshotSchema, identityStatusSnapshotSchema, utcDateSchema } from "./terms";
+import { AGREEMENT_DOCUMENT_FAILURE_CODES, agreementTypeSchema, confirmedAgreementTermsSchema, contactSnapshotSchema, identityStatusSnapshotSchema, utcDateSchema } from "./terms";
 
 // Step 14A: the canonical Finance Agreements domain. One logical Agreement
 // ("head") = one Partner OR Vendor counterparty. Each head owns an append-only
@@ -160,6 +160,57 @@ export type AgreementEffective = z.infer<typeof agreementEffectiveSchema>;
 export const agreementConfirmationSchema = z.object({ confirmedByUserRef: nonEmpty, confirmedAt: isoTimestamp }).strict();
 export const agreementActivationSchema = z.object({ activatedByUserRef: nonEmpty, activatedAt: isoTimestamp, supersededVersion: z.number().int().min(1).nullable().default(null) }).strict();
 
+// --- Original Agreement document (Step 14B.1) --------------------------------------------------------------------------------
+// The ORIGINAL signed PDF the user uploaded (never a generated replacement) is written to Google Drive AFTER the
+// version is confirmed. This is the ONE controlled post-confirm write to a confirmed version: terms, contact,
+// identity status, provenance, source and dates stay immutable; `document` is written in its own transaction
+// (version docVersion + 1) by storeAgreementDocument only.
+//   STORED  - the file is in Drive; driveFileId / driveLink / storedAt / storedByUserRef are set. Never regresses.
+//   FAILED  - the last attempt failed (or storage is not configured); nothing is claimed, the source artifact is
+//             intact and the attempt can be retried. lastFailureCode says why (safe codes only).
+// A version with no `document` is "pending" (artifact-backed) or "not applicable" (no signed file of its own).
+export const AGREEMENT_DOCUMENT_STATUSES = ["STORED", "FAILED"] as const;
+export const agreementDocumentStatusSchema = z.enum(AGREEMENT_DOCUMENT_STATUSES);
+export type AgreementDocumentStatus = z.infer<typeof agreementDocumentStatusSchema>;
+
+export const agreementDocumentFailureCodeSchema = z.enum(AGREEMENT_DOCUMENT_FAILURE_CODES);
+
+export const agreementDocumentSchema = z
+  .object({
+    status: agreementDocumentStatusSchema,
+    driveFileId: z.string().min(1).max(200).nullable().default(null),
+    // The canonical Drive link. SERVER-side only until an actor with finance_contracts asks (see client-dto.ts).
+    driveLink: z
+      .string()
+      .min(1)
+      .max(2048)
+      .regex(/^https:\/\//, "Drive link must be https.")
+      .nullable()
+      .default(null),
+    // The ORIGINAL (sanitized) name of the uploaded file.
+    fileName: z.string().min(1).max(255),
+    storedAt: isoTimestamp.nullable().default(null),
+    storedByUserRef: nonEmpty.nullable().default(null),
+    // The source artifact this document is (byte for byte) - identity + checksum, never a locator.
+    artifactRef: refString,
+    artifactSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    attemptCount: z.number().int().min(1).max(10_000),
+    lastFailureCode: agreementDocumentFailureCodeSchema.nullable().default(null),
+    lastAttemptAt: isoTimestamp,
+  })
+  .strict()
+  .superRefine((doc, ctx) => {
+    const issue = (path: string, message: string) => ctx.addIssue({ code: "custom", path: [path], message });
+    if (doc.status === "STORED") {
+      if (!doc.driveFileId || !doc.driveLink || !doc.storedAt || !doc.storedByUserRef) issue("status", "A STORED document records its Drive file, link, time and actor.");
+      if (doc.lastFailureCode !== null) issue("lastFailureCode", "A STORED document carries no failure.");
+    } else {
+      if (doc.driveFileId !== null || doc.driveLink !== null || doc.storedAt !== null || doc.storedByUserRef !== null) issue("status", "A FAILED document claims no Drive file.");
+      if (doc.lastFailureCode === null) issue("lastFailureCode", "A FAILED document records why.");
+    }
+  });
+export type AgreementDocument = z.infer<typeof agreementDocumentSchema>;
+
 export const agreementVersionDocSchema = z
   .object({
     agreementRef: nonEmpty,
@@ -172,6 +223,8 @@ export const agreementVersionDocSchema = z
     counterparty: agreementCounterpartySchema,
     sourceMode: agreementSourceModeSchema,
     source: agreementVersionSourceSchema,
+    // Step 14B.1: the durable Drive copy of the original signed Agreement (additive; null until a store attempt).
+    document: agreementDocumentSchema.nullable().default(null),
 
     // WORKING COPY while unconfirmed; cleared ({}) on confirm.
     draft: agreementDraftSchema,
@@ -213,6 +266,7 @@ export const agreementVersionDocSchema = z
       const { dates } = doc.terms;
       if (dates.signedDate !== doc.effective.signedDate || dates.effectiveFrom !== doc.effective.effectiveFrom || dates.effectiveTo !== doc.effective.effectiveTo) issue("effective", "effective must equal the confirmed terms' agreement dates.");
     }
+    if (doc.document && (!confirmed || doc.document.artifactRef !== doc.source.contractArtifactRef)) issue("document", "A document is recorded only for a confirmed version, for its own source artifact.");
     if (doc.status !== "DRAFT" && !confirmed) issue("status", "Only a confirmed version can leave DRAFT.");
     if (doc.status === "DRAFT" && (doc.activation || doc.suspendedAt || doc.endedAt || doc.supersededByVersion)) issue("status", "A DRAFT version carries no lifecycle fields.");
     if (["ACTIVE", "SUSPENDED", "ENDED", "SUPERSEDED"].includes(doc.status) && !doc.activation) issue("activation", "An activated version records its activation.");
@@ -315,6 +369,9 @@ export const AGREEMENT_EVENT_KINDS = [
   "ended",
   "master_data_updated",
   "kyc_updated_from_agreement",
+  // Step 14B.1: the original signed document was stored in Drive / a store attempt failed.
+  "document_stored",
+  "document_store_failed",
 ] as const;
 export const agreementEventKindSchema = z.enum(AGREEMENT_EVENT_KINDS);
 export type AgreementEventKind = z.infer<typeof agreementEventKindSchema>;
@@ -528,6 +585,11 @@ export type AttachExtractionInput = z.infer<typeof attachExtractionInputSchema>;
 
 export const confirmAgreementVersionInputSchema = z.object({ agreementRef: agreementRefSchema, version: versionNumberSchema, expectedDocVersion: expectedDocVersionSchema }).strict();
 export type ConfirmAgreementVersionInput = z.infer<typeof confirmAgreementVersionInputSchema>;
+
+// version + agreementRef name the version; expectedDocVersion (optional) is the VERSION doc's docVersion. Storing is idempotent,
+// so it is optional: a stale value only matters to a caller that wants to be told the version moved.
+export const storeAgreementDocumentInputSchema = z.object({ agreementRef: agreementRefSchema, version: versionNumberSchema, expectedDocVersion: expectedDocVersionSchema.optional() }).strict();
+export type StoreAgreementDocumentInput = z.infer<typeof storeAgreementDocumentInputSchema>;
 
 export const activateAgreementVersionInputSchema = z.object({ agreementRef: agreementRefSchema, version: versionNumberSchema, expectedDocVersion: expectedDocVersionSchema }).strict();
 export type ActivateAgreementVersionInput = z.infer<typeof activateAgreementVersionInputSchema>;

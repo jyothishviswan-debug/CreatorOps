@@ -2,6 +2,8 @@ import type { FinanceApiBlocker, FinanceApiFailure } from "../api-client";
 import type { AgreementHeadDto, AgreementVersionSummaryDto } from "@/server/finance-agreements/client-dto";
 import { MAX_AGREEMENT_VERSIONS, type AgreementHeadStatus } from "@/server/finance-agreements/types";
 
+import { activationDocumentGate } from "../document-view";
+
 // Step 14B: WHICH lifecycle actions the detail page renders (pure). Two inputs only:
 //   - the SERVER-computed permission booleans (computeFinanceAgreementPermissions): canManage = prepare / confirm,
 //     canActivate = activate / revise / suspend / resume / end;
@@ -11,7 +13,8 @@ import { MAX_AGREEMENT_VERSIONS, type AgreementHeadStatus } from "@/server/finan
 export type ActionPermissions = { canManage: boolean; canActivate: boolean };
 
 export type ActionHead = Pick<AgreementHeadDto, "status" | "openVersion" | "activeVersion" | "lastEndedVersion" | "latestVersion">;
-export type ActionVersion = Pick<AgreementVersionSummaryDto, "version" | "status" | "confirmed">;
+// `document` (Step 14B.1) is optional so a caller without it is treated as "nothing blocks": the server enforces the same rule regardless.
+export type ActionVersion = Pick<AgreementVersionSummaryDto, "version" | "status" | "confirmed"> & { document?: Pick<AgreementVersionSummaryDto["document"], "status" | "message"> };
 
 export type AgreementActionState = {
   // The open (editable / awaiting-activation) version, if any.
@@ -26,6 +29,9 @@ export type AgreementActionState = {
   // Lifecycle panel actions.
   canConfirm: boolean;
   canActivate: boolean;
+  // Step 14B.1: Activate exists but is DISABLED with this plain reason while the version's own signed Agreement document is not stored (the same rule
+  // the activate service enforces as `agreement_document_not_stored`). null = nothing blocks.
+  activateBlockedReason: string | null;
   canSuspend: boolean;
   canResume: boolean;
   canEnd: boolean;
@@ -59,6 +65,7 @@ export function computeAgreementActionState(input: { permissions: ActionPermissi
     canCreateRevision,
     canConfirm,
     canActivate,
+    activateBlockedReason: canActivate ? activationDocumentGate(open?.document).reason : null,
     canSuspend,
     canResume,
     canEnd,

@@ -1,23 +1,25 @@
 "use client";
 
-// Step 14B intake, section 8 `KYC & restricted details`: per component (PAN, Aadhaar for Partners, Bank details, GST certificate) a
-// status chip - Available / Missing / Restricted / Unavailable, with the overall Incomplete state above. KYC that already exists in the
-// Partner / Vendor record is shown as such (no duplicate upload). A missing component offers `Upload / Update KYC` ONLY to a person
-// who is authorized for the owning record. Without sensitive access this section shows safe status text and no action.
-// Values are never read or shown here.
+// Step 14B intake, section 8 `KYC & restricted details` (Step 14B.1: per-COMPONENT actions, for existing AND new counterparties).
+// Per component (PAN, Aadhaar for Partners, Bank details, GST certificate) a status chip - Available / Missing / Incomplete / Restricted /
+// Unavailable / Not applicable. KYC that already exists in the Partner / Vendor record is shown as such and offers NO action. Only a MISSING or
+// INCOMPLETE component offers `Upload / Update` (bank: `Complete bank details` when a document is on file), and only to a person who holds the
+// identity category AND the owning KYC action; it opens a dialog scoped to THAT component. When every component is available there is no KYC
+// upload action anywhere and the section reads `KYC available in Partner/Vendor record`. Without sensitive access this section shows safe status
+// text and no action. Values are never read or shown here, and the owning restricted-identity record is never read just to show presence.
 import { useEffect, useMemo, useRef, useState } from "react";
 
 import { StatusChip } from "../components/StatusChip";
 import { DISABLED_BUTTON_STYLE, kycStateChip, type KycComponentKey } from "../format";
 import { useIntake } from "./intake-context";
 import { KycDialog } from "./KycDialog";
-import { buildKycRows, kycHeadline } from "./kyc-ui";
+import { buildKycRows, isKycActionKind, kycAttentionSummary, kycSectionHeadline, type KycDialogKind } from "./kyc-ui";
 import { SectionCard } from "./SectionCard";
 
 export function KycSection() {
   const intake = useIntake();
   const { kyc, preview, counterparty, flags, hasDraft, agreementRef, refreshKyc } = intake;
-  const [dialog, setDialog] = useState<KycComponentKey | null>(null);
+  const [dialog, setDialog] = useState<{ component: KycComponentKey; kind: KycDialogKind } | null>(null);
   const [load, setLoad] = useState<{ status: "idle" | "loading" | "error"; message?: string }>({ status: "idle" });
   const requestedFor = useRef<string | null>(null);
 
@@ -46,6 +48,7 @@ export function KycSection() {
 
   if (!counterpartyType) return null;
   const busy = intake.isBusy();
+  const attention = kycAttentionSummary(rows);
 
   return (
     <SectionCard
@@ -54,7 +57,7 @@ export function KycSection() {
       chip={status ? kycStateChip(status.state) : undefined}
     >
       <div role="status" aria-live="polite" data-testid="kyc-headline" style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-        <span style={{ fontSize: 12, minWidth: 0, overflowWrap: "anywhere" }}>{load.status === "loading" && !status ? "Checking KYC status…" : kycHeadline(status)}</span>
+        <span style={{ fontSize: 12, minWidth: 0, overflowWrap: "anywhere" }}>{load.status === "loading" && !status ? "Checking KYC status…" : kycSectionHeadline(status, rows)}</span>
         <button type="button" className="btn ghost" onClick={refresh} disabled={busy || load.status === "loading"} style={busy || load.status === "loading" ? DISABLED_BUTTON_STYLE : undefined}>
           Refresh status
         </button>
@@ -68,6 +71,12 @@ export function KycSection() {
         </div>
       )}
 
+      {attention && (
+        <p className="foundationnote" data-testid="kyc-attention" style={{ margin: "0 0 6px" }}>
+          {attention}
+        </p>
+      )}
+
       {!flags.canViewIdentity && <p className="foundationnote">You can see the overall KYC status only. Component detail and uploads need KYC access.</p>}
 
       <ul style={{ listStyle: "none", margin: 0, padding: 0 }} aria-label="KYC components">
@@ -76,16 +85,16 @@ export function KycSection() {
             <b style={{ fontSize: 12, minWidth: 110 }}>{row.label}</b>
             <StatusChip chip={row.chip} status={row.kind} />
             <span style={{ flex: "1 1 200px", fontSize: 11, color: "var(--muted)", minWidth: 0, overflowWrap: "anywhere" }}>{row.message}</span>
-            {row.canUpload && (
-              <button type="button" className="btn" aria-label={`Upload / Update KYC for ${row.label}`} onClick={() => setDialog(row.component)} disabled={busy} style={busy ? DISABLED_BUTTON_STYLE : undefined}>
-                Upload / Update KYC
+            {row.canUpload && isKycActionKind(row.kind) && (
+              <button type="button" className="btn" aria-label={row.actionAriaLabel ?? undefined} onClick={() => setDialog({ component: row.component, kind: row.kind as KycDialogKind })} disabled={busy} style={busy ? DISABLED_BUTTON_STYLE : undefined}>
+                {row.actionLabel}
               </button>
             )}
           </li>
         ))}
       </ul>
 
-      {dialog && <KycDialog key={dialog} component={dialog} onClose={() => setDialog(null)} />}
+      {dialog && <KycDialog key={dialog.component} component={dialog.component} kind={dialog.kind} onClose={() => setDialog(null)} />}
     </SectionCard>
   );
 }

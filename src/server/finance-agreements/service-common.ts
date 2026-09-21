@@ -4,7 +4,7 @@ import type { ActorContext } from "@/server/authz/types";
 
 import { toAgreementHeadDto, toAgreementVersionDto, toAgreementVersionSummaryDto, type AgreementDetailDto } from "./client-dto";
 import { listAgreementVersionDocs } from "./firestore";
-import { loadAuthorizedAgreement, requireFinanceAgreementsAccess, requireIdentitySensitiveAccess, type AuthorizedAgreement, type FinanceAgreementAction } from "./finance-agreements-gate";
+import { loadAuthorizedAgreement, requireContractSensitiveAccess, requireFinanceAgreementsAccess, requireIdentitySensitiveAccess, type AuthorizedAgreement, type FinanceAgreementAction } from "./finance-agreements-gate";
 import {
   financeAgreementsInvalidInputResult,
   financeAgreementsUnauthorizedResult,
@@ -57,14 +57,17 @@ export async function authorizeAgreementCommand<T extends { agreementRef: string
 
 // Head + bounded version summaries + one version's full detail. Every response - reads AND
 // mutation results - is built through here. Identity appears as status only; the per-component
-// detail needs the owning identity category (checked here, not in the DTO).
+// detail needs the owning identity category (checked here, not in the DTO). The Drive link of a
+// version's original signed document needs finance_contracts (also checked here): without it the
+// DTOs carry `hasLink` and no URL.
 export async function buildAgreementDetailDto(actor: ActorContext, head: AgreementHeadDoc, displayName: string | null, selected: AgreementVersionDoc | null): Promise<AgreementDetailDto> {
-  const [versions, identity] = await Promise.all([listAgreementVersionDocs(head.agreementRef), requireIdentitySensitiveAccess(actor, head.counterparty.type)]);
+  const [versions, identity, contract] = await Promise.all([listAgreementVersionDocs(head.agreementRef), requireIdentitySensitiveAccess(actor, head.counterparty.type), requireContractSensitiveAccess(actor)]);
+  const contractDetailVisible = contract.ok;
   return {
     head: toAgreementHeadDto(head, displayName),
-    versions: versions.versions.map(toAgreementVersionSummaryDto),
+    versions: versions.versions.map((doc) => toAgreementVersionSummaryDto(doc, { contractDetailVisible })),
     hasMoreVersions: versions.hasMore,
-    selectedVersion: selected ? toAgreementVersionDto(selected, { identityDetailVisible: identity.ok }) : null,
+    selectedVersion: selected ? toAgreementVersionDto(selected, { identityDetailVisible: identity.ok, contractDetailVisible }) : null,
   };
 }
 
@@ -88,6 +91,7 @@ export function newDraftVersionDoc(input: NewDraftVersionInput): AgreementVersio
     counterparty: input.counterparty,
     sourceMode: input.sourceMode,
     source: { contractArtifactRef: null, extractionRunRef: null, parserVersion: null },
+    document: null,
     draft: input.draft,
     terms: null,
     contactSnapshot: null,

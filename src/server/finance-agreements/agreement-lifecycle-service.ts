@@ -5,6 +5,7 @@ import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
 
 import { draftFromConfirmedVersion } from "./agreement-draft";
+import { describeDocumentNotStored } from "./agreement-document-service";
 import { appendAgreementEvent } from "./agreement-events";
 import { txResolveDisplayVersions, withHeadDisplay } from "./agreement-head-display";
 import type { AgreementDetailDto } from "./client-dto";
@@ -16,6 +17,7 @@ import {
   endAgreementInputSchema,
   financeAgreementsConflictResult,
   financeAgreementsNotFoundResult,
+  financeAgreementsNotReadyResult,
   financeAgreementsStaleResult,
   MAX_AGREEMENT_VERSIONS,
   resumeAgreementInputSchema,
@@ -41,23 +43,28 @@ import {
 //     effective dates are NEVER written here - only lifecycle fields change;
 //   - history is preserved: nothing is deleted, ended and superseded versions stay readable.
 
-type Failure = { kind: "not_found" } | { kind: "stale" } | { kind: "conflict"; message: string };
+type Failure = { kind: "not_found" } | { kind: "stale" } | { kind: "conflict"; message: string } | { kind: "not_ready"; message: string };
 
 function failureResult(failure: Failure): FinanceAgreementsErrorResult {
   if (failure.kind === "not_found") return financeAgreementsNotFoundResult();
   if (failure.kind === "stale") return financeAgreementsStaleResult();
+  if (failure.kind === "not_ready") return financeAgreementsNotReadyResult(failure.message, [{ code: AGREEMENT_DOCUMENT_NOT_STORED, message: failure.message }]);
   return financeAgreementsConflictResult(failure.message);
 }
 
 const conflict = (message: string): Failure => ({ kind: "conflict", message });
+
+// Step 14B.1 activation readiness: the reason code the client can key on.
+export const AGREEMENT_DOCUMENT_NOT_STORED = "agreement_document_not_stored";
 const transitions = FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS;
 
 type OkResult = { kind: "ok"; head: AgreementHeadDoc; version: AgreementVersionDoc };
 
 // --- Activate ---------------------------------------------------------------------------------------------------------------------
 // Makes a CONFIRMED draft version operational. Requires the version to be the head's open version, to
-// carry its confirmation and effective dates, and the caller's expectedDocVersion to match the head. In
-// ONE transaction: the version becomes ACTIVE, the previously ACTIVE/SUSPENDED version (if any) becomes
+// carry its confirmation and effective dates, and the caller's expectedDocVersion to match the head. A version with its OWN source
+// contract artifact must also have its original signed document STORED in Drive first (not_ready / agreement_document_not_stored; a
+// manual-only version or a revision without a new signed file is never blocked). In ONE transaction: the version becomes ACTIVE, the previously ACTIVE/SUSPENDED version (if any) becomes
 // SUPERSEDED with supersededByVersion, and the head points at the new governing version.
 export async function activateAgreementVersion(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<FinanceAgreementsServiceResult<AgreementDetailDto>> {
   const command = await authorizeAgreementCommand(actor, "activate_agreements", activateAgreementVersionInputSchema, rawInput);
@@ -75,6 +82,9 @@ export async function activateAgreementVersion(actor: ActorContext | null, rawIn
     if (head.docVersion !== input.expectedDocVersion) return { kind: "stale" };
     if (target.confirmation === null || target.terms === null || target.effective === null || !target.effective.effectiveFrom) return conflict("Only a confirmed version with an effective date can be activated. Confirm it first.");
     if (head.openVersion !== target.version || target.status !== "DRAFT" || !canTransitionLifecycle(target.status, "ACTIVE", transitions)) return conflict(`Version ${target.version} is not the open confirmed version and cannot be activated.`);
+    // Step 14B.1: a version that has its OWN signed Agreement file needs that original stored in Drive first. A manual-only
+    // version, and a revision without a new signed file, have no document of their own and are not blocked.
+    if (target.source.contractArtifactRef !== null && target.document?.status !== "STORED") return { kind: "not_ready", message: describeDocumentNotStored(target.document) };
     if (priorNumber !== null && (!prior || !canTransitionLifecycle(prior.status, "SUPERSEDED", transitions))) return conflict("The governing version of this agreement is not in a state that can be superseded.");
 
     const now = new Date().toISOString();

@@ -18,10 +18,12 @@ import {
   getAgreementDetail,
   getAgreementReconciliation,
   resumeAgreement,
+  storeAgreementDocument,
   suspendAgreement,
   type FinanceApiFailure,
   type FinanceApiResult,
 } from "../api-client";
+import { describeStoreOutcome, documentPanelRows, type DocumentNotice } from "../document-view";
 import { DISABLED_BUTTON_STYLE, counterpartyTypeLabel, formatEffectivePeriod, formatPlatformList, lifecycleChip } from "../format";
 import { ActivityTab } from "./ActivityTab";
 import { AGREEMENTS_WORKSPACE_HREF, DETAIL_TABS, DETAIL_TAB_LABELS, TAB_PANEL_ID, intakeHref, tabElementId, tabKeyTarget, type DetailTab } from "./detail-model";
@@ -37,7 +39,7 @@ import { VerificationTab } from "./VerificationTab";
 import { VersionsTab } from "./VersionsTab";
 import { currentVersionNumber, priorVersionNumber } from "./versions-view";
 
-type Busy = LifecycleDialogKey | "view" | null;
+type Busy = LifecycleDialogKey | "view" | "document" | null;
 
 // "Reload latest" refreshes the server render, and the page REMOUNTS on the fresh data (its key carries the head's version), which would drop
 // a message set before the refresh. The flag survives the remount (module scope) and is consumed by the next mount's initial state.
@@ -89,6 +91,9 @@ export function AgreementDetail(props: AgreementDetailProps) {
   const [failure, setFailure] = useState<ActionFailureView | null>(null);
   const [notice, setNotice] = useState<string | null>(consumeReloadNotice);
   const [reloading, startReload] = useTransition();
+  // The signed Agreement document: which version's store call is running and what the last one said (announced politely in the panel).
+  const [documentBusyVersion, setDocumentBusyVersion] = useState<number | null>(null);
+  const [documentNotice, setDocumentNotice] = useState<(DocumentNotice & { version: number }) | null>(null);
 
   const aliveRef = useRef(true);
   const requestedDocs = useRef(new Set<number>());
@@ -277,6 +282,34 @@ export function AgreementDetail(props: AgreementDetailProps) {
     }
   }
 
+  // Store (or retry) the ORIGINAL signed Agreement of one CONFIRMED version in Drive. Idempotent on the server; a Drive failure is a successful call
+  // whose outcome is "failed" (retriable). Every response REPLACES local state; the version's own docVersion is the concurrency counter.
+  async function storeDocument(version: number) {
+    if (busyRef.current) return;
+    const target = versions.find((entry) => entry.version === version);
+    if (!target) return;
+    busyRef.current = "document";
+    setBusy("document");
+    setDocumentBusyVersion(version);
+    setDocumentNotice(null);
+    setFailure(null);
+    setNotice(null);
+    const result = await storeAgreementDocument(agreementRef, { version, expectedDocVersion: target.docVersion });
+    busyRef.current = null;
+    if (!aliveRef.current) return;
+    setBusy(null);
+    setDocumentBusyVersion(null);
+    if (result.ok) {
+      applyDetail(result.data.agreement);
+      setDocumentNotice({ version, ...describeStoreOutcome(result.data) });
+      focusPanelIfFocusLost();
+      return;
+    }
+    const view = classifyActionFailure(result);
+    if (isPageLevelFailure(view)) setFailure(view);
+    else setDocumentNotice({ version, tone: "error", text: `The Agreement document was not stored. ${view.message}` });
+  }
+
   // View one version read-only (Terms + Verification follow it).
   async function viewVersion(target: number) {
     if (busyRef.current) return;
@@ -436,6 +469,14 @@ export function AgreementDetail(props: AgreementDetailProps) {
           <OverviewTab
             ctx={ctx}
             onOpenTab={selectTab}
+            documentPanel={{
+              rows: documentPanelRows({ versions, head, viewNumber }),
+              canManage: permissions.canManage,
+              busyVersion: documentBusyVersion,
+              anyBusy: busyForButtons,
+              notice: documentNotice,
+              onStore: (version) => void storeDocument(version),
+            }}
             lifecycle={<LifecycleActionsPanel state={actions} busy={busyForButtons} onOpen={openDialog} headerActionsExist={headerActionsExist} />}
           />
         )}
@@ -448,7 +489,7 @@ export function AgreementDetail(props: AgreementDetailProps) {
 
       <LifecycleDialog
         dialog={dialog}
-        busy={busy !== null && busy !== "view" ? busy : null}
+        busy={busy !== null && busy !== "view" && busy !== "document" ? busy : null}
         error={dialogError}
         blockers={dialogBlockers}
         reason={reason}

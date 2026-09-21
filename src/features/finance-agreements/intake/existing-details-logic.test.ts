@@ -73,6 +73,7 @@ describe("KYC status chips", () => {
     expect(gstinStatusChip("PRESENT").label).toBe("On record");
     expect(gstinStatusChip("MISSING").label).toBe("Not on record");
     expect(gstinStatusChip("NOT_APPLICABLE").label).toBe("Not applicable");
+    expect(gstinStatusChip("INCOMPLETE").label).toBe("Incomplete");
   });
 });
 

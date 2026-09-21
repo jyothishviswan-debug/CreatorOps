@@ -10,7 +10,8 @@ import { KYC_AVAILABLE_NOTE, KYC_COMPONENT_LABELS, counterpartyTypeLabel, kycCom
 // KYC lives ONLY in the Partner / Vendor record. This screen shows its STATUS, and - for a person who is authorized - offers the owning
 // module's own ways to add to it. Nothing here ever holds or shows a value.
 
-export type KycRowKind = "available" | "missing" | "restricted" | "unavailable" | "not_applicable";
+// `incomplete`: a document is on file in the record but its details are not entered yet - like `missing`, it may be completed by a person with KYC access.
+export type KycRowKind = "available" | "missing" | "incomplete" | "restricted" | "unavailable" | "not_applicable";
 
 export type KycRowView = {
   component: KycComponentKey;
@@ -18,9 +19,24 @@ export type KycRowView = {
   chip: ChipSpec;
   kind: KycRowKind;
   message: string;
-  // Offer `Upload / Update KYC` for this component.
+  // Offer `Upload / Update` for this component. TRUE ONLY for a MISSING or INCOMPLETE component AND an actor who holds the identity category AND the
+  // owning KYC action; a present / not applicable / restricted / unavailable component never has an action, whoever the actor is.
   canUpload: boolean;
+  // The button's visible text and accessible name (null exactly when canUpload is false).
+  actionLabel: string | null;
+  actionAriaLabel: string | null;
 };
+
+export const KYC_UPLOAD_LABEL = "Upload / Update";
+export const COMPLETE_BANK_LABEL = "Complete bank details";
+
+// One place decides the wording of the per-component action. An INCOMPLETE bank record is completed (a document is already on file), so it reads
+// `Complete bank details`; the accessible name still names the `Upload / Update KYC` action and the component.
+function actionTextFor(component: KycComponentKey, kind: KycRowKind, label: string): { actionLabel: string; actionAriaLabel: string } {
+  if (component === "bank" && kind === "incomplete") return { actionLabel: COMPLETE_BANK_LABEL, actionAriaLabel: `${COMPLETE_BANK_LABEL}. ${KYC_UPLOAD_LABEL} KYC for ${label}` };
+  return { actionLabel: KYC_UPLOAD_LABEL, actionAriaLabel: `${KYC_UPLOAD_LABEL} KYC for ${label}` };
+}
+const noAction = { actionLabel: null, actionAriaLabel: null } as const;
 
 export const KYC_UNAVAILABLE_CHIP: ChipSpec = { label: "Unavailable", tone: "gray" };
 
@@ -44,10 +60,21 @@ export function buildKycRows(input: BuildKycRowsInput): KycRowView[] {
   return applicableKycComponents(input.counterpartyType).map((component) => {
     const label = KYC_COMPONENT_LABELS[component];
     const status: AgreementKycComponentStatus | null = !input.kyc || input.kyc.state === "UNAVAILABLE" ? null : input.kyc.components[component];
-    if (status === null) return { component, label, chip: KYC_UNAVAILABLE_CHIP, kind: "unavailable", message: "The KYC status could not be read right now.", canUpload: false } satisfies KycRowView;
-    if (status === "PRESENT") return { component, label, chip: kycComponentChip(status), kind: "available", message: KYC_AVAILABLE_NOTE, canUpload: false } satisfies KycRowView;
-    if (status === "NOT_APPLICABLE") return { component, label, chip: kycComponentChip(status), kind: "not_applicable", message: `Not required for this ${noun}.`, canUpload: false } satisfies KycRowView;
-    if (status === "RESTRICTED") return { component, label, chip: kycComponentChip(status), kind: "restricted", message: "Restricted. Only the overall status is visible to you.", canUpload: false } satisfies KycRowView;
+    if (status === null) return { component, label, chip: KYC_UNAVAILABLE_CHIP, kind: "unavailable", message: "The KYC status could not be read right now.", canUpload: false, ...noAction } satisfies KycRowView;
+    if (status === "PRESENT") return { component, label, chip: kycComponentChip(status), kind: "available", message: KYC_AVAILABLE_NOTE, canUpload: false, ...noAction } satisfies KycRowView;
+    if (status === "NOT_APPLICABLE") return { component, label, chip: kycComponentChip(status), kind: "not_applicable", message: `Not required for this ${noun}.`, canUpload: false, ...noAction } satisfies KycRowView;
+    if (status === "RESTRICTED") return { component, label, chip: kycComponentChip(status), kind: "restricted", message: "Restricted. Only the overall status is visible to you.", canUpload: false, ...noAction } satisfies KycRowView;
+    if (status === "INCOMPLETE") {
+      return {
+        component,
+        label,
+        chip: kycComponentChip(status),
+        kind: "incomplete",
+        message: mayAdd ? `A document is on file in the ${noun} record, but its details are not entered yet.` : `A document is on file in the ${noun} record, but its details are not entered yet. Someone with KYC access can complete it.`,
+        canUpload: mayAdd,
+        ...(mayAdd ? actionTextFor(component, "incomplete", label) : noAction),
+      } satisfies KycRowView;
+    }
     return {
       component,
       label,
@@ -55,8 +82,50 @@ export function buildKycRows(input: BuildKycRowsInput): KycRowView[] {
       kind: "missing",
       message: mayAdd ? `Not in the ${noun} record yet.` : `Not in the ${noun} record yet. Someone with KYC access can add it.`,
       canUpload: mayAdd,
+      ...(mayAdd ? actionTextFor(component, "missing", label) : noAction),
     } satisfies KycRowView;
   });
+}
+
+// --- What the section says about the rows as a whole --------------------------------------------------------------------------------------------
+// The components that have an action (in row order); empty = there is no KYC upload action anywhere in the section.
+export const kycActionComponents = (rows: readonly KycRowView[]): KycComponentKey[] => rows.filter((row) => row.canUpload).map((row) => row.component);
+
+// Every component that applies is in the record (a component that does not apply is ignored) - and at least one applies.
+export function kycAllComponentsAvailable(rows: readonly KycRowView[]): boolean {
+  const applicable = rows.filter((row) => row.kind !== "not_applicable");
+  return applicable.length > 0 && applicable.every((row) => row.kind === "available");
+}
+
+// The line above the rows: when every component is available it is exactly `KYC available in Partner/Vendor record` (and no row offers an action);
+// otherwise the overall state in words.
+export function kycSectionHeadline(kyc: Pick<AgreementKycStatusDto, "state"> | null, rows: readonly KycRowView[]): string {
+  return kycAllComponentsAvailable(rows) ? KYC_AVAILABLE_NOTE : kycHeadline(kyc);
+}
+
+// "PAN and Bank details need attention." (only components the person may act on); null when there are none.
+export function kycAttentionSummary(rows: readonly KycRowView[]): string | null {
+  const names = rows.filter((row) => row.canUpload).map((row) => row.label);
+  if (names.length === 0) return null;
+  const list = names.length === 1 ? names[0]! : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
+  return `${list} ${names.length === 1 ? "needs" : "need"} attention.`;
+}
+
+// The component-scoped dialog: which components it can be opened for, and its heading.
+export type KycDialogKind = "missing" | "incomplete";
+export const isKycActionKind = (kind: KycRowKind): kind is KycDialogKind => kind === "missing" || kind === "incomplete";
+
+export function kycDialogTitle(component: KycComponentKey, kind: KycDialogKind): string {
+  if (kind === "incomplete" && component === "bank") return COMPLETE_BANK_LABEL;
+  return `${KYC_UPLOAD_LABEL} KYC: ${KYC_COMPONENT_LABELS[component]}`;
+}
+
+// The paragraph under the heading. An INCOMPLETE component already has a document on file: the details (not another file) are what is missing.
+export function kycDialogIntro(component: KycComponentKey, kind: KycDialogKind, type: CounterpartyType): string {
+  const noun = counterpartyTypeLabel(type);
+  const label = KYC_COMPONENT_LABELS[component];
+  const kept = `KYC is kept once, in the ${noun} record. Choose one of these ways to add the ${label}. Nothing is copied into this Agreement.`;
+  return kind === "incomplete" ? `A document for the ${label} is already on file, but its details are not entered yet. ${kept}` : kept;
 }
 
 // --- The dialog ---------------------------------------------------------------------------------------------------------------------------------

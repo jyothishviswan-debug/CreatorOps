@@ -113,6 +113,18 @@ export async function getVendorPartnerLinkDocByRef(vendorPartnerLinkRef: string)
   return result.success ? result.data : null;
 }
 
+// Step 14B.1: records THIS user created with exactly this normalized name (the Finance onboarding crash-recovery "adopt" lookup).
+// Bounded, equality-only (no composite index needed).
+export const MAX_VENDOR_EXACT_LOOKUP = 10;
+
+export async function findVendorDocsCreatedByUser(createdByUserRef: string, displayNameLower: string, limit: number = MAX_VENDOR_EXACT_LOOKUP): Promise<VendorDoc[]> {
+  const snapshot = await vendorsCollection().where("createdByUserRef", "==", createdByUserRef).where("displayNameLower", "==", displayNameLower).limit(Math.max(1, Math.min(limit, MAX_VENDOR_EXACT_LOOKUP))).get();
+  return snapshot.docs.flatMap((doc) => {
+    const parsed = vendorDocSchema.safeParse(doc.data());
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
 export type VendorMutationResult = { kind: "ok"; doc: VendorDoc } | { kind: "stale" } | { kind: "not_found" };
 
 // Shared transactional "read current, verify optimistic version, apply a

@@ -7,14 +7,16 @@ import { DialogShell } from "@/ui/Dialog";
 import { addKycLinkEvidence, uploadKycEvidenceFile } from "../api-client";
 import { DISABLED_BUTTON_STYLE, KYC_COMPONENT_LABELS, counterpartyTypeLabel, type KycComponentKey } from "../format";
 import { useIntake } from "./intake-context";
-import { BANK_NOT_FROM_CONTRACT, KYC_APPLY_FIELD, KYC_DOC_TYPES, evaluateApplyOption, extractionHasIdentityValue, owningRecordHref, validateEvidenceFile, validateEvidenceLink } from "./kyc-ui";
+import { BANK_NOT_FROM_CONTRACT, KYC_APPLY_FIELD, KYC_DOC_TYPES, evaluateApplyOption, extractionHasIdentityValue, kycDialogIntro, kycDialogTitle, owningRecordHref, validateEvidenceFile, validateEvidenceLink, type KycDialogKind } from "./kyc-ui";
 import { readIdentityRecordVersion } from "./owning-versions";
 
-// Step 14B intake: `Upload / Update KYC` for ONE missing component. It offers ONLY the canonical owning-module paths - Finance keeps no
-// KYC copy of its own:
-//   (a) apply the KYC values found in the Agreement (the Step 14A command, through the owning module);
-//   (b) add an evidence link or upload a document through the Partner / Vendor evidence endpoints;
+// Step 14B intake (14B.1: component-scoped): `Upload / Update` for ONE component that is MISSING or INCOMPLETE. It is opened for that component only,
+// and offers ONLY the canonical owning-module paths - Finance keeps no KYC copy of its own:
+//   (a) apply the value found in the Agreement for THAT component (the Step 14A command with components:[that one], through the owning module;
+//       bank details can never be applied from a contract and the dialog says so);
+//   (b) add an evidence link or upload a document of THAT component's type through the Partner / Vendor evidence endpoints;
 //   (c) open the Partner / Vendor record to enter the details by hand.
+// After any success the KYC status (and the cross-verification, which compares the identity status) is read again through the intake context.
 const NO_RECORD_MESSAGE = "There is no KYC record for this Partner or Vendor yet, so evidence cannot be added. Enter the details on the Partner / Vendor record first (option 3).";
 
 function Option({ number, title, children }: { number: number; title: string; children: ReactNode }) {
@@ -26,7 +28,7 @@ function Option({ number, title, children }: { number: number; title: string; ch
   );
 }
 
-export function KycDialog({ component, onClose }: { component: KycComponentKey; onClose: () => void }) {
+export function KycDialog({ component, kind, onClose }: { component: KycComponentKey; kind: KycDialogKind; onClose: () => void }) {
   const intake = useIntake();
   const { counterparty, flags, permissions, extraction, extractionAttached, getField } = intake;
   const base = useId();
@@ -51,7 +53,7 @@ export function KycDialog({ component, onClose }: { component: KycComponentKey; 
     canViewContractDetail: permissions.canViewContractDetail,
     canManageKyc: flags.canManageCounterpartyKyc,
     canViewIdentity: flags.canViewIdentity,
-    // The dialog is only opened for a missing component.
+    // The dialog is only opened for a MISSING or INCOMPLETE component: the canonical value is empty either way.
     componentMissing: true,
   });
 
@@ -69,6 +71,8 @@ export function KycDialog({ component, onClose }: { component: KycComponentKey; 
       const outcome = await work();
       if (outcome.ok) {
         void intake.refreshKyc();
+        // The comparison includes the identity status: refresh it only when it was already loaded (never start one from here).
+        if (intake.reconciliation !== null) void intake.refreshReconciliation();
         onClose();
       } else if (!outcome.aborted && outcome.message) setError(outcome.message);
     } finally {
@@ -127,7 +131,7 @@ export function KycDialog({ component, onClose }: { component: KycComponentKey; 
   return (
     <DialogShell
       open
-      title={`Upload / Update KYC: ${label}`}
+      title={kycDialogTitle(component, kind)}
       onClose={close}
       footer={
         <button type="button" className="btn" onClick={close} disabled={submitting !== null} style={submitting !== null ? DISABLED_BUTTON_STYLE : undefined}>
@@ -135,7 +139,7 @@ export function KycDialog({ component, onClose }: { component: KycComponentKey; 
         </button>
       }
     >
-      <p className="detailcopy">{`KYC is kept once, in the ${noun} record. Choose one of these ways to add the ${label}. Nothing is copied into this Agreement.`}</p>
+      <p className="detailcopy">{kycDialogIntro(component, kind, counterparty.type)}</p>
 
       <div style={{ display: "grid", gap: 12 }}>
         <Option number={1} title="Apply KYC values found in the Agreement">

@@ -6,7 +6,7 @@ import type { AgreementFieldKey } from "@/server/finance-agreements/fields";
 import { buildFieldViewModels, groupFieldViewModels } from "../field-view-model";
 import { sectionAnchorId } from "../confirm-blockers";
 import { agreementDto, draftEntry } from "./intake-fixtures";
-import { computeIntakeProgress, INTAKE_SECTIONS, intakeSectionAnchor, progressSummary, type ProgressInput } from "./intake-progress";
+import { computeIntakeProgress, INTAKE_SECTIONS, intakeSectionAnchor, ONBOARDING_SECTION, progressSummary, SECTION_META, type IntakeSectionKey, type ProgressInput } from "./intake-progress";
 
 function input(over: Partial<ProgressInput> & { draft?: Partial<Record<AgreementFieldKey, AgreementDraftEntryDto>> } = {}): ProgressInput {
   const agreement = over.agreement === undefined ? agreementDto({ draft: over.draft ?? {} }) : over.agreement;
@@ -40,6 +40,20 @@ describe("intake sections", () => {
     expect(intakeSectionAnchor("contract_source")).toBe("section-contract_source");
     expect(intakeSectionAnchor("existing_details")).toBe("section-existing_details");
     expect(intakeSectionAnchor("extracted")).toBe("section-extracted");
+  });
+});
+
+describe("section meta (SectionCard lookup)", () => {
+  it("covers every section key exactly once, so a SectionCard can never crash on a missing key", () => {
+    const keys: IntakeSectionKey[] = ["agreement_for", "contract_source", "existing_details", "extracted", "cross_verification", "commercial_terms", "performance_targets", "kyc", "additional_details", "review", "onboarding"];
+    expect(SECTION_META.map((section) => section.key).sort()).toEqual([...keys].sort());
+    expect(new Set(SECTION_META.map((section) => section.key)).size).toBe(SECTION_META.length);
+  });
+  it("keeps the wizard out of the ten-step checklist and gives it its own anchor", () => {
+    expect(INTAKE_SECTIONS.some((section) => section.key === "onboarding")).toBe(false);
+    expect(computeIntakeProgress(input()).some((item) => item.key === ("onboarding" as IntakeSectionKey))).toBe(false);
+    expect(ONBOARDING_SECTION.title).toBe("New Partner or Vendor from Agreement");
+    expect(intakeSectionAnchor("onboarding")).toBe("section-onboarding");
   });
 });
 

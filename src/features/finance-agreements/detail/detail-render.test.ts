@@ -22,6 +22,9 @@ const perms = (over: Partial<FinanceAgreementPermissionsDto>): FinanceAgreementP
   canViewContractDetail: false,
   canViewIdentity: false,
   canManageCounterpartyKyc: false,
+  canCreatePartner: false,
+  canCreateVendor: false,
+  canManagePartnerAccounts: false,
   counterpartyType: "PARTNER",
   byCounterpartyType: { PARTNER: { canViewIdentity: false, canManageCounterpartyKyc: false }, VENDOR: { canViewIdentity: false, canManageCounterpartyKyc: false } },
   ...over,
@@ -78,6 +81,7 @@ const summary = (over: Partial<AgreementVersionSummaryDto> & { version: number }
   createdByUserRef: "usr_a",
   updatedAt: "2026-09-02T10:00:00.000Z",
   updatedByUserRef: "usr_b",
+  document: { status: "NOT_APPLICABLE", fileName: null, storedAt: null, hasLink: false, attemptCount: 0, message: "No new signed document for this version", canStore: false },
   ...over,
 });
 
@@ -284,5 +288,137 @@ describe("Activity tab", () => {
     const html = render(ACTIVE, "activity");
     expect(html).toContain("Activity");
     expect(html).toContain("Audit trail of this Agreement");
+  });
+});
+
+// Step 14B.1: the Agreement document panel (Overview) and the Versions tab Document column. Rendered on the server (no effects): the buttons that EXIST
+// for which permissions and which document state, and the honest copy for each state.
+describe("Agreement document panel (Overview)", () => {
+  const LINK = "https://drive.invalid/fake/file_1";
+  type DocumentDto = AgreementVersionSummaryDto["document"];
+  const STORED: DocumentDto = { status: "STORED", fileName: "Asha Rao Agreement (signed).pdf", storedAt: "2026-09-03T09:30:00.000Z", hasLink: true, link: LINK, attemptCount: 1, message: null, canStore: false };
+  const STORED_NO_LINK: DocumentDto = { ...STORED, link: undefined };
+  const PENDING: DocumentDto = { status: "PENDING", fileName: null, storedAt: null, hasLink: false, attemptCount: 0, message: null, canStore: true };
+  const FAILED: DocumentDto = { status: "FAILED", fileName: "Asha Rao Agreement (signed).pdf", storedAt: null, hasLink: false, attemptCount: 2, message: "Drive is temporarily unavailable. Try again.", canStore: true };
+  const NOT_CONFIGURED: DocumentDto = { status: "NOT_CONFIGURED", fileName: "Asha Rao Agreement (signed).pdf", storedAt: null, hasLink: false, attemptCount: 1, message: "Drive storage not configured", canStore: true };
+
+  const activeWith = (document: DocumentDto, permissions: FinanceAgreementPermissionsDto = BOTH) => {
+    const version = summary({ version: 1, document });
+    return { initialHead: head({}), initialVersions: [version], initialDocs: [doc(version)], permissions };
+  };
+  // A confirmed draft waiting for activation (nothing governs yet).
+  const confirmedWith = (document: DocumentDto, permissions: FinanceAgreementPermissionsDto = BOTH) => {
+    const version = summary({ version: 1, status: "DRAFT", activatedAt: null, activatedByUserRef: null, document });
+    return { initialHead: head({ status: "DRAFT", openVersion: 1, activeVersion: null }), initialVersions: [version], initialDocs: [doc(version)], permissions };
+  };
+
+  it("STORED for a contract-detail holder: file name, stored date, `Open Agreement document` in a new tab with noopener - and no store button", () => {
+    const html = render(activeWith(STORED));
+    expect(html).toContain("Agreement document");
+    expect(html).toContain("Asha Rao Agreement (signed).pdf");
+    expect(html).toContain("The original signed Agreement is stored in Drive.");
+    expect(html).toMatch(new RegExp(`<a[^>]*href="${LINK}"[^>]*target="_blank"[^>]*rel="noopener noreferrer"|<a[^>]*target="_blank"[^>]*rel="noopener noreferrer"[^>]*href="${LINK}"`));
+    expect(html).toContain("Open Agreement document");
+    expect(html).not.toContain("Store Agreement document");
+    expect(html).not.toContain(">Retry<");
+  });
+
+  it("STORED for someone without the contract-detail category: 'Agreement document on file' and NO link at all", () => {
+    const html = render(activeWith(STORED_NO_LINK, MANAGER));
+    expect(html).toContain("Agreement document on file");
+    expect(html).not.toContain("Open Agreement document");
+    expect(html).not.toContain("drive.invalid");
+  });
+
+  it("PENDING and confirmed: a `Store Agreement document` button for a manager, none for a view-only actor", () => {
+    expect(render(confirmedWith(PENDING))).toContain("Store Agreement document");
+    expect(render(confirmedWith(PENDING, MANAGER))).toContain("Store Agreement document");
+    const viewer = render(confirmedWith(PENDING, VIEWER));
+    expect(viewer).toContain("The original signed Agreement is not stored yet.");
+    expect(viewer).not.toContain("Store Agreement document");
+  });
+
+  it("FAILED: the plain reason, nothing claimed as stored, and a Retry", () => {
+    const html = render(activeWith(FAILED));
+    expect(html).toContain("The original signed Agreement could not be stored.");
+    expect(html).toContain("Drive is temporarily unavailable. Try again.");
+    expect(html).toContain("Nothing was recorded as stored");
+    expect(html).toContain(">Retry<");
+    expect(html).not.toContain("Open Agreement document");
+    expect(html).not.toContain("is stored in Drive");
+  });
+
+  it("NOT_CONFIGURED: the honest 'Drive storage not configured', a Retry, and never a link", () => {
+    const html = render(activeWith(NOT_CONFIGURED));
+    expect(html).toContain("Drive storage not configured");
+    expect(html).toContain(">Retry<");
+    expect(html).not.toContain("Open Agreement document");
+  });
+
+  it("NOT_APPLICABLE: 'No new signed document for this version' - never a file, a link or an action", () => {
+    const html = render(ACTIVE);
+    expect(html).toContain("No new signed document for this version");
+    expect(html).not.toContain("Open Agreement document");
+    expect(html).not.toContain("Store Agreement document");
+  });
+
+  it("the store button is disabled with the busy style semantics wired to aria-disabled and an accessible name naming the version", () => {
+    const html = render(confirmedWith(PENDING));
+    expect(html).toContain('aria-label="Store Agreement document, version 1"');
+    expect(html).toContain('data-testid="document-store-1"');
+    // announced politely
+    expect(html).toMatch(/role="status"[^>]*aria-live="polite"|aria-live="polite"[^>]*role="status"/);
+  });
+
+  // The lifecycle action bar only (the confirmation dialog renders its own footer buttons, which would otherwise match).
+  const lifecyclePanel = (html: string) => {
+    const start = html.indexOf('aria-label="Lifecycle actions"');
+    return html.slice(start, html.indexOf("</section>", start));
+  };
+
+  it("Activate stays present for an activator but is DISABLED with the plain reason until the document is stored", () => {
+    const blocked = lifecyclePanel(render(confirmedWith(PENDING)));
+    expect(blocked).toMatch(/<button(?=[^>]*aria-describedby="activate-blocked-reason")(?=[^>]*\sdisabled="")[^>]*>Activate Agreement</);
+    expect(blocked).toContain("Store the signed Agreement document before activating this version.");
+    expect(lifecyclePanel(render(confirmedWith(FAILED)))).toContain("Retry storing it before activating");
+    const notConfigured = lifecyclePanel(render(confirmedWith(NOT_CONFIGURED)));
+    expect(notConfigured).toContain("Drive storage not configured");
+    expect(notConfigured).toMatch(/<button[^>]*\sdisabled=""[^>]*>Activate Agreement</);
+    // stored (or no document of its own): Activate is an ordinary enabled button with no reason
+    for (const ok of [STORED, STORED_NO_LINK]) {
+      const panel = lifecyclePanel(render(confirmedWith(ok)));
+      expect(panel).toMatch(/<button[^>]*>Activate Agreement</);
+      expect(panel).not.toMatch(/<button[^>]*\sdisabled=""[^>]*>Activate Agreement</);
+      expect(panel).not.toContain("activate-blocked-reason");
+    }
+    expect(lifecyclePanel(render(ACTIVE))).not.toContain("Activate Agreement");
+  });
+
+  it("a confirmed replacement waiting for activation gets its OWN row (with its store button) while the version in force is viewed", () => {
+    const v1 = summary({ version: 1, document: STORED });
+    const v2 = summary({ version: 2, status: "DRAFT", activatedAt: null, activatedByUserRef: null, document: PENDING });
+    const html = render({ initialHead: head({ openVersion: 2, latestVersion: 2 }), initialVersions: [v2, v1], initialDocs: [doc(v1), doc(v2)] });
+    expect(html).toContain("Version 2 · Waiting for activation");
+    expect(html).toContain("Version 1 · Current version");
+    expect(html.indexOf("Version 2 · Waiting for activation")).toBeLessThan(html.indexOf("Version 1 · Current version"));
+    expect(html).toContain('aria-label="Store Agreement document, version 2"');
+    // v1's own link is v1's; v2 shows none
+    expect(html.split("Open Agreement document").length - 1).toBe(1);
+  });
+
+  it("the Versions tab has a Document column: each version's own status, and the link only when the server sent it", () => {
+    const v1 = summary({ version: 1, status: "SUPERSEDED", supersededByVersion: 2, document: { ...STORED, fileName: "v1.pdf", link: "https://drive.invalid/fake/v1" } });
+    const v2 = summary({ version: 2, supersededVersion: 1, document: { ...STORED, fileName: "v2.pdf", link: "https://drive.invalid/fake/v2" } });
+    const html = render({ initialHead: head({ activeVersion: 2, latestVersion: 2 }), initialVersions: [v2, v1], initialDocs: [doc(v2)], initialViewNumber: 2 }, "versions");
+    expect(html).toContain('<th scope="col">Document</th>');
+    expect(html).toContain('data-testid="version-document-1"');
+    expect(html).toContain("v1.pdf");
+    expect(html).toContain("v2.pdf");
+    expect(html).toContain('href="https://drive.invalid/fake/v1"');
+    expect(html).toContain('href="https://drive.invalid/fake/v2"');
+    const noLink = render({ initialHead: head({}), initialVersions: [summary({ version: 1, document: STORED_NO_LINK })], initialDocs: [doc(summary({ version: 1, document: STORED_NO_LINK }))], permissions: MANAGER }, "versions");
+    expect(noLink).toContain("Agreement document on file");
+    expect(noLink).not.toContain("drive.invalid");
+    expect(render(ACTIVE, "versions")).toContain("No new signed document for this version");
   });
 });

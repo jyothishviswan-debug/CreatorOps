@@ -26,7 +26,7 @@ import { seedAccessControlData, TEST_IDENTITIES } from "@/server/authz/seed-acce
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminAuth } from "@/server/firebase/admin";
 import { checkForPartnerDuplicates } from "./duplicate-check";
-import { getPartnerAccountDocByRef, getPartnerAccountIdentityClaim, getPartnerDocByRef } from "./firestore";
+import { getPartnerAccountDocByRef, getPartnerAccountIdentityClaim, getPartnerDocByRef, partnerEventsCollection } from "./firestore";
 import { claimIdFor, computeNormalizedIdentity } from "./identity";
 import { archivePartner, blacklistPartner, checkPartnerDependencies, restorePartner } from "./partner-lifecycle-service";
 import { createPartnerAccount, editPartnerAccount, getPartnerAccount, listPartnerAccounts, setPartnerAccountStatus, setPrimaryPartnerAccount } from "./partner-account-service";
@@ -201,6 +201,31 @@ describe("Partners domain (real emulator)", () => {
 
       const doc = await getPartnerDocByRef(created.data.partnerRef);
       expect(partnerDocSchema.safeParse(doc).success).toBe(true);
+    });
+
+    it("Step 14B.1 provenance: createdVia is optional, recorded on the `created` event, never stored on the Partner document, and rejected for any other value", async () => {
+      const head = await actorFor("partnership_head");
+      const marked = await createPartner(head, { displayName: uniqueName("Onboarding Provenance"), regionIds: ["Kerala"], createdVia: "FINANCE_AGREEMENT_ONBOARDING" }, "req-provenance-create");
+      expect(marked.ok).toBe(true);
+      if (!marked.ok) throw new Error("unreachable");
+      const doc = await getPartnerDocByRef(marked.data.partnerRef);
+      expect(JSON.stringify(doc)).not.toContain("createdVia");
+      const events = await partnerEventsCollection(doc!.uid).get();
+      const created = events.docs.map((event) => event.data()).find((event) => event.kind === "created");
+      expect(created?.metadata).toMatchObject({ direct: true, createdVia: "FINANCE_AGREEMENT_ONBOARDING" });
+
+      // absent: the event carries no provenance key (existing behavior unchanged)
+      const plain = await createPartner(head, { displayName: uniqueName("No Provenance"), regionIds: ["Kerala"] }, "req-provenance-plain");
+      if (!plain.ok) throw new Error("unreachable");
+      const plainDoc = await getPartnerDocByRef(plain.data.partnerRef);
+      const plainEvents = (await partnerEventsCollection(plainDoc!.uid).get()).docs.map((event) => event.data());
+      expect(plainEvents.find((event) => event.kind === "created")?.metadata).toEqual({ displayName: plainDoc!.displayName, direct: true });
+
+      // any other value (or a client-invented provenance) is rejected by the strict schema
+      for (const bad of ["SOMETHING_ELSE", "", null, true]) {
+        const rejected = await createPartner(head, { displayName: uniqueName("Bad Provenance"), regionIds: ["Kerala"], createdVia: bad }, "req-provenance-bad");
+        expect(rejected).toMatchObject({ ok: false, code: "invalid_input" });
+      }
     });
 
     it("Target Audience can be captured directly at create (multi-value), changed via ordinary edit, and filtered on (any-of) in listPartners", async () => {
@@ -470,6 +495,22 @@ describe("Partners domain (real emulator)", () => {
 
       const claim = await getPartnerAccountIdentityClaim(claimIdFor(computeNormalizedIdentity({ platform: "Instagram", handle: sharedHandle })!));
       expect(claim).toBeTruthy();
+    });
+
+    it("Step 14B.1 provenance: createdVia is recorded on the `account_created` event, optional, and rejected for any other value", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Account Provenance"), regionIds: ["Kerala"] }, "req-accprov-create");
+      if (!created.ok) throw new Error("unreachable");
+      const partnerDoc = await getPartnerDocByRef(created.data.partnerRef);
+      const marked = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", handle: `accprov${runId}`, createdVia: "FINANCE_AGREEMENT_ONBOARDING" }, "req-accprov-account");
+      expect(marked.ok).toBe(true);
+      const plain = await createPartnerAccount(head, created.data.partnerRef, { platform: "YouTube", handle: `accprovyt${runId}` }, "req-accprov-plain");
+      expect(plain.ok).toBe(true);
+      const bad = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", handle: `accprovbad${runId}`, createdVia: "OTHER" }, "req-accprov-bad");
+      expect(bad).toMatchObject({ ok: false, code: "invalid_input" });
+      const events = (await partnerEventsCollection(partnerDoc!.uid).get()).docs.map((event) => event.data()).filter((event) => event.kind === "account_created");
+      expect(events).toHaveLength(2);
+      expect(events.filter((event) => event.metadata?.createdVia === "FINANCE_AGREEMENT_ONBOARDING")).toHaveLength(1);
     });
 
     it("partnerAccountRef - the durable canonical identity - never changes across any edit, identity-evolving or not", async () => {

@@ -92,6 +92,8 @@ describe("status chips (text always present, total over every enum)", () => {
     expect(Object.keys(KYC_STATE_CHIPS).sort()).toEqual(["AVAILABLE", "INCOMPLETE", "MISSING", "RESTRICTED", "UNAVAILABLE"]);
     expect(KYC_COMPONENT_CHIPS.PRESENT.label).toBe("Available");
     expect(KYC_COMPONENT_CHIPS.RESTRICTED.label).toBe("Restricted");
+    expect(Object.keys(KYC_COMPONENT_CHIPS).sort()).toEqual(["INCOMPLETE", "MISSING", "NOT_APPLICABLE", "PRESENT", "RESTRICTED"]);
+    expect(KYC_COMPONENT_CHIPS.INCOMPLETE.label).toBe("Incomplete");
   });
 });
 

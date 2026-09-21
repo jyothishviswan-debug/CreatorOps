@@ -38,7 +38,12 @@ export const paymentCycleSchema = z.enum(PAYMENT_CYCLES);
 export type PaymentCycle = z.infer<typeof paymentCycleSchema>;
 
 // Component presence in the canonical restricted store - status only, never a value.
-export const IDENTITY_COMPONENT_STATUSES = ["PRESENT", "MISSING", "NOT_APPLICABLE"] as const;
+//   PRESENT         the canonical value is on file
+//   MISSING         nothing on file for the component
+//   INCOMPLETE      (Step 14B.1) a document of that type is on file but the canonical details are not entered yet, or GST applies
+//                   but no number is on file - "document on file, details not entered"
+//   NOT_APPLICABLE  the component does not apply to this counterparty
+export const IDENTITY_COMPONENT_STATUSES = ["PRESENT", "MISSING", "INCOMPLETE", "NOT_APPLICABLE"] as const;
 export const identityComponentStatusSchema = z.enum(IDENTITY_COMPONENT_STATUSES);
 export type IdentityComponentStatus = z.infer<typeof identityComponentStatusSchema>;
 
@@ -315,3 +320,25 @@ export type IdentityComponents = z.infer<typeof identityComponentsSchema>;
 
 export const identityStatusSnapshotSchema = z.object({ state: identityStatusStateSchema, components: identityComponentsSchema, capturedAt: isoTimestamp }).strict();
 export type IdentityStatusSnapshot = z.infer<typeof identityStatusSnapshotSchema>;
+
+// --- Original Agreement document failure codes (Step 14B.1) --------------------------------------------------------------------
+// Safe, closed codes for a failed attempt to store the original signed Agreement in Drive. Kept here (a pure registry module) so the
+// version document schema, the audit event allowlist and the browser can all name the same set without importing any storage code.
+export const AGREEMENT_DOCUMENT_FAILURE_CODES = [
+  // Storage is not set up (no credentials / no folder for this counterparty type).
+  "not_configured",
+  // The real Drive adapter refuses to run inside an automated test run.
+  "live_drive_disabled_in_tests",
+  "invalid_input",
+  "access_denied",
+  "folder_not_found",
+  "quota_exceeded",
+  "drive_unavailable",
+  "unexpected_response",
+  // The exact bytes could not be read back / did not match the recorded checksum (service-level, never from an adapter).
+  "artifact_unavailable",
+  "artifact_mismatch",
+  "unknown",
+] as const;
+export type AgreementDocumentFailureCode = (typeof AGREEMENT_DOCUMENT_FAILURE_CODES)[number];
+

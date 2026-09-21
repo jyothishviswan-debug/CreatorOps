@@ -1,5 +1,6 @@
 import type { AgreementHeadDto, AgreementVersionSummaryDto } from "@/server/finance-agreements/client-dto";
 
+import { versionDocumentCell, type VersionDocumentCell } from "../document-view";
 import { NO_VALUE_TEXT, formatEffectivePeriod, formatInstant, sourceModeLabel, versionStatusChip, type ChipSpec } from "../format";
 
 // Step 14B: the immutable version list of an Agreement, mapped for display (pure). Version documents are never edited once
@@ -19,6 +20,8 @@ export type VersionRow = {
   activatedAt: string;
   activatedBy: string | null;
   sourceMode: string;
+  // The Document column: the ORIGINAL signed Agreement of THIS version (status, file name, and the Drive link only when the server sent one).
+  document: VersionDocumentCell;
   isViewing: boolean;
   isGoverning: boolean;
   isOpen: boolean;
@@ -66,6 +69,7 @@ export function buildVersionRows(versions: readonly AgreementVersionSummaryDto[]
         activatedAt: entry.activatedAt ? formatInstant(entry.activatedAt) : NO_VALUE_TEXT,
         activatedBy: entry.activatedByUserRef,
         sourceMode: sourceModeLabel(entry.sourceMode),
+        document: versionDocumentCell(entry.document),
         isViewing: viewingVersion === entry.version,
         isGoverning: role === "governing",
         isOpen: head.openVersion === entry.version,

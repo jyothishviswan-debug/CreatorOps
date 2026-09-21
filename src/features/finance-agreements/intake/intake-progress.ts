@@ -18,7 +18,10 @@ export type IntakeSectionKey =
   | "performance_targets"
   | "kyc"
   | "additional_details"
-  | "review";
+  | "review"
+  // Step 14B.1: the new-counterparty wizard. It is NOT one of the ten sections (it replaces sections 2-4 until the Partner / Vendor exists),
+  // so it is deliberately absent from INTAKE_SECTIONS and the ten-step checklist; SECTION_META below is the lookup SectionCard uses.
+  | "onboarding";
 
 export const INTAKE_SECTIONS: ReadonlyArray<{ key: IntakeSectionKey; number: number; title: string }> = [
   { key: "agreement_for", number: 1, title: "Agreement for" },
@@ -32,6 +35,12 @@ export const INTAKE_SECTIONS: ReadonlyArray<{ key: IntakeSectionKey; number: num
   { key: "additional_details", number: 9, title: "Additional details" },
   { key: "review", number: 10, title: "Review & confirm" },
 ];
+
+// The wizard's own heading (a new counterparty is being created from the Agreement). Number 0: it sits between sections 1 and 2 only while it is shown.
+export const ONBOARDING_SECTION = { key: "onboarding", number: 0, title: "New Partner or Vendor from Agreement" } as const satisfies { key: IntakeSectionKey; number: number; title: string };
+
+// Every section a SectionCard can render (SectionCard crashes on a key missing here, so keep this total: a test checks every IntakeSectionKey).
+export const SECTION_META: ReadonlyArray<{ key: IntakeSectionKey; number: number; title: string }> = [...INTAKE_SECTIONS, ONBOARDING_SECTION];
 
 // The six sections that other agents / blockers already address through sectionAnchorId keep that id; the three sections owned by the
 // orchestrator agent get the same `section-<key>` shape.
@@ -90,7 +99,7 @@ export function computeIntakeProgress(input: ProgressInput): ProgressItem[] {
   return INTAKE_SECTIONS.map((section) => ({ key: section.key, number: section.number, title: section.title, state: stateFor(section.key), anchorId: intakeSectionAnchor(section.key) }));
 }
 
-export function progressSummary(items: readonly ProgressItem[]): { done: number; total: number } {
+export function progressSummary(items: ReadonlyArray<{ state: ProgressState }>): { done: number; total: number } {
   const counted = items.filter((item) => item.state !== "optional");
   return { done: counted.filter((item) => item.state === "done").length, total: counted.length };
 }

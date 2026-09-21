@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { toAgreementEventDto, toAgreementHeadDto, toAgreementVersionDto, toAgreementVersionSummaryDto, toContractArtifactDto, toExtractionRunDto, toIdentityStatusDto } from "./client-dto";
+import { toAgreementDocumentDto, toAgreementEventDto, toAgreementHeadDto, toAgreementVersionDto, toAgreementVersionSummaryDto, toContractArtifactDto, toExtractionRunDto, toIdentityStatusDto } from "./client-dto";
 import {
   agreementEventSchema,
   agreementHeadDocSchema,
@@ -117,6 +117,64 @@ function expectClean(dto: unknown) {
   for (const secret of [UID, OWNER, VENDOR_UID, REGION, TEAM, LOCATOR, "SECRET-BUCKET", "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"]) expect(json).not.toContain(secret);
 }
 
+// Step 14B.1: the original signed Agreement document as the browser may see it.
+describe("Agreement document DTO", () => {
+  const confirmedParts = {
+    terms: { agreementNumber: null, dates: { signedDate: null, effectiveFrom: "2026-01-01", effectiveTo: null }, contractTerms: { renewalTerms: null, noticeTerms: null, terminationTerms: null }, platform: { platforms: [], collaboratorPageLink: null, collaboratorPageName: null }, commercial: { currency: null, paymentCycle: null, fixedComponent: null, monthlyRequiredQualifyingContentCount: null, qualifyingUnit: null, accountTransferFee: null, advancePayment: null, invoiceRequired: null, invoiceDueTerms: null, paymentDueTerms: null, servicesMandated: null, incentive: null, lfcSfc: null }, performanceTargets: [], admin: { onboardingProcessCompleted: null, remarks: null }, agreementType: "UNSPECIFIED" },
+    contactSnapshot: { counterpartyName: "A", contactNumber: null, emailAddress: null, state: null, address: null, pinCode: null },
+    identityStatusSnapshot: { state: "MISSING", components: { pan: "MISSING", aadhaar: "MISSING", gst: "NOT_APPLICABLE", bank: "MISSING" }, capturedAt: NOW },
+    fieldProvenance: {},
+    effective: { signedDate: null, effectiveFrom: "2026-01-01", effectiveTo: null },
+    confirmation: { confirmedByUserRef: "user-ref-1", confirmedAt: NOW },
+    draft: {},
+  };
+  const DRIVE_LINK = "https://drive.example.test/SECRET-FILE-LINK";
+  const DRIVE_ID = "SECRET-DRIVE-FILE-ID";
+  const base = { ...version, ...confirmedParts };
+  const parse = (over: object) => agreementVersionDocSchema.parse({ ...base, ...over });
+  const stored = { status: "STORED", driveFileId: DRIVE_ID, driveLink: DRIVE_LINK, fileName: "signed.pdf", storedAt: NOW, storedByUserRef: "user-ref-1", artifactRef: "ca_0123456789abcdef0123", artifactSha256: "b".repeat(64), attemptCount: 2, lastFailureCode: null, lastAttemptAt: NOW };
+  const failedRecord = (code: string) => ({ ...stored, status: "FAILED", driveFileId: null, driveLink: null, storedAt: null, storedByUserRef: null, lastFailureCode: code });
+
+  it("STORED: the link is delivered ONLY when the caller passes contractDetailVisible; the Drive file id never leaves the server", () => {
+    const withLink = toAgreementDocumentDto(parse({ document: stored }), { contractDetailVisible: true });
+    expect(withLink).toEqual({ status: "STORED", fileName: "signed.pdf", storedAt: NOW, hasLink: true, link: DRIVE_LINK, attemptCount: 2, message: null, canStore: false });
+    for (const options of [{ contractDetailVisible: false }, {}]) {
+      const hidden = toAgreementDocumentDto(parse({ document: stored }), options);
+      expect(hidden).toEqual({ status: "STORED", fileName: "signed.pdf", storedAt: NOW, hasLink: true, attemptCount: 2, message: null, canStore: false });
+      expect(JSON.stringify(hidden)).not.toContain(DRIVE_LINK);
+    }
+    expect(JSON.stringify(withLink)).not.toContain(DRIVE_ID);
+    // every builder that carries it: the version DTO, the summary DTO and the whole detail shape
+    const doc = parse({ document: stored });
+    for (const dto of [toAgreementVersionDto(doc, { identityDetailVisible: false }), toAgreementVersionSummaryDto(doc)]) {
+      expect(JSON.stringify(dto)).not.toContain(DRIVE_LINK);
+      expect(JSON.stringify(dto)).not.toContain(DRIVE_ID);
+    }
+    expect(toAgreementVersionSummaryDto(doc, { contractDetailVisible: true }).document.link).toBe(DRIVE_LINK);
+    expect(toAgreementVersionDto(doc, { identityDetailVisible: false, contractDetailVisible: true }).document.link).toBe(DRIVE_LINK);
+    expectClean(toAgreementVersionDto(doc, { identityDetailVisible: false, contractDetailVisible: false }));
+  });
+
+  it("FAILED and NOT_CONFIGURED carry no link, a plain fixed message, and stay retriable", () => {
+    const failedDto = toAgreementDocumentDto(parse({ document: failedRecord("drive_unavailable") }), { contractDetailVisible: true });
+    expect(failedDto).toMatchObject({ status: "FAILED", hasLink: false, storedAt: null, canStore: true, attemptCount: 2, message: expect.stringMatching(/temporarily unavailable/i) });
+    expect(failedDto.link).toBeUndefined();
+    for (const code of ["not_configured", "live_drive_disabled_in_tests"]) {
+      const dto = toAgreementDocumentDto(parse({ document: failedRecord(code) }), { contractDetailVisible: true });
+      expect(dto.status).toBe("NOT_CONFIGURED");
+      expect(dto.link).toBeUndefined();
+      expect(dto.hasLink).toBe(false);
+    }
+    expect(toAgreementDocumentDto(parse({ document: failedRecord("not_configured") })).message).toBe("Drive storage not configured");
+  });
+
+  it("no document yet: PENDING when the version has its own signed file (store is meaningful once confirmed), NOT_APPLICABLE otherwise - honestly labelled", () => {
+    expect(toAgreementDocumentDto(parse({ document: null }))).toEqual({ status: "PENDING", fileName: null, storedAt: null, hasLink: false, attemptCount: 0, message: null, canStore: true });
+    expect(toAgreementDocumentDto(version)).toMatchObject({ status: "PENDING", canStore: false }); // the fixture draft is unconfirmed
+    expect(toAgreementDocumentDto(parse({ document: null, source: {} }))).toEqual({ status: "NOT_APPLICABLE", fileName: null, storedAt: null, hasLink: false, attemptCount: 0, message: "No new signed document for this version", canStore: false });
+  });
+});
+
 describe("client DTOs carry no uid / scope / locator / identity values", () => {
   it("head DTO", () => {
     const dto = toAgreementHeadDto(head, "Acme Partner");
@@ -151,6 +209,10 @@ describe("client DTOs carry no uid / scope / locator / identity values", () => {
     expect(shown?.components).toEqual({ pan: "PRESENT", aadhaar: "MISSING", gst: "NOT_APPLICABLE", bank: "MISSING" });
     expect(shown?.valuesVisible).toBe(false);
     expect(toIdentityStatusDto(null, { identityDetailVisible: true })).toBeNull();
+    // Step 14B.1: a component-level INCOMPLETE is passed through as status (visible) and hidden with the rest when restricted
+    const withIncomplete = { state: "INCOMPLETE" as const, components: { pan: "PRESENT" as const, aadhaar: "MISSING" as const, gst: "INCOMPLETE" as const, bank: "INCOMPLETE" as const }, capturedAt: NOW };
+    expect(toIdentityStatusDto(withIncomplete, { identityDetailVisible: true })?.components).toEqual({ pan: "PRESENT", aadhaar: "MISSING", gst: "INCOMPLETE", bank: "INCOMPLETE" });
+    expect(toIdentityStatusDto(withIncomplete, { identityDetailVisible: false })?.components).toEqual({ pan: "RESTRICTED", aadhaar: "RESTRICTED", gst: "RESTRICTED", bank: "RESTRICTED" });
   });
 
   it("event DTO re-screens metadata through the allowlist even if a stored event held extra keys", () => {

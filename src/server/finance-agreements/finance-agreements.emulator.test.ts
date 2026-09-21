@@ -40,10 +40,13 @@ import {
   listAgreementsForCounterparty,
   listAgreementVersions,
   resumeAgreement,
+  storeAgreementDocument,
   suspendAgreement,
   type AgreementDetailDto,
   type CreateAgreementDraftOutcome,
 } from "./index";
+import { createInMemoryArtifactStore, setContractArtifactStoreForTests } from "./contract-artifacts/store";
+import { installFakeAgreementDocumentStorage, seedByteBackedArtifact } from "./testing/agreement-document-fixtures";
 import { AGREEMENT_EVENT_METADATA_ALLOWLIST } from "./agreement-events";
 import {
   agreementClaimId,
@@ -1594,6 +1597,17 @@ describe("reads", () => {
 // The Finance boundary
 // =====================================================================================================================
 describe("Finance boundary", () => {
+  // Step 14B.1: an artifact-backed version must have its original signed document stored before it can be activated, so this
+  // journey (which activates artifact-backed versions) stores through the FAKE Drive adapter first - real bytes in an in-memory
+  // artifact store, no Google call.
+  const artifactStore = createInMemoryArtifactStore();
+  const drive = installFakeAgreementDocumentStorage();
+  beforeAll(() => setContractArtifactStoreForTests(artifactStore));
+  afterAll(() => {
+    setContractArtifactStoreForTests(null);
+    drive.restore();
+  });
+
   it("the whole service surface writes ONLY financeAgreements* documents, never touches a Payable / Invoice / Payment / money collection, and changes no Partner, Vendor, Account or KYC document", async () => {
     const manager = await syntheticActor("partnership_manager");
     const head = await syntheticActor("partnership_head");
@@ -1608,12 +1622,17 @@ describe("Finance boundary", () => {
     const io = instrument();
     for (const counterparty of [partnerCp(partner, [account.partnerAccountRef]), vendorCp(vendor)]) {
       const created = await newAgreement(manager, counterparty);
-      const artifact = await seedArtifact(counterparty.type, counterparty.type === "PARTNER" ? counterparty.partnerRef : counterparty.vendorRef);
+      const seeded = await seedByteBackedArtifact({ type: counterparty.type, ref: counterparty.type === "PARTNER" ? counterparty.partnerRef : counterparty.vendorRef, artifactStore, label: counterparty.type });
+      cleanup.push(seeded.docRef);
+      const artifact = seeded.artifact;
       // (the run doc below is the TEST's own fixture write, recorded but excluded from the assertion by path)
       const run = await seedRun(created.agreement.head.agreementRef, artifact.artifactRef, [{ fieldKey: "currency", normalizedValue: "INR" }]);
       const attached = must(await attachExtractionProposals(manager, { agreementRef: created.agreement.head.agreementRef, version: 1, expectedDocVersion: 1, extractionRunRef: run.runRef }, requestId()), "attach");
       const ready = await acceptPending(manager, await decideAll(manager, attached.agreement, READY_DECISIONS));
       const confirmed = await confirm(manager, ready);
+      // Activation is blocked until the original signed document is stored (Step 14B.1) ...
+      expect(failed(await activateAgreementVersion(head, { agreementRef: confirmed.head.agreementRef, version: 1, expectedDocVersion: confirmed.head.docVersion }, requestId()))).toMatchObject({ code: "not_ready", blockers: [{ code: "agreement_document_not_stored" }] });
+      expect(must(await storeAgreementDocument(manager, { agreementRef: confirmed.head.agreementRef, version: 1 }, requestId()), "store document")).toMatchObject({ outcome: "stored" });
       let current = await activate(head, confirmed);
       const ref = current.head.agreementRef;
       current = must(await suspendAgreement(head, { agreementRef: ref, expectedDocVersion: current.head.docVersion, reason: "Paused for review" }, requestId()), "suspend");

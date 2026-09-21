@@ -7,6 +7,8 @@ import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import { EmptyState } from "@/ui/States";
 import type { PartnerDto } from "@/server/partners/client-dto";
+import type { CounterpartyAgreementDocumentsDto } from "@/server/finance-agreements/client-dto";
+import { AgreementDocumentList } from "@/features/finance-agreements/components/AgreementDocumentList";
 import { getPartner } from "./api-client";
 import { absoluteTime, STATUS_LABELS, statusTone } from "./format";
 import { HistoryPanel } from "./HistoryPanel";
@@ -30,7 +32,20 @@ const TABS: { key: TabKey; label: string }[] = [
 // `canOpenPartnerReviews` / `canOpenFinance` are computed by the server page from the actor's own `partner_reviews` /
 // `finance` feature grants (they only decide whether a contextual link is RENDERED; the destination independently
 // re-authorizes the actor and this Partner's live scope). Without them the Context tab is exactly as before.
-export function PartnerDetail({ initialPartner, canOpenPartnerReviews = false, canOpenFinance = false }: { initialPartner: PartnerDto; canOpenPartnerReviews?: boolean; canOpenFinance?: boolean }) {
+// `agreementDocuments` (Step 14B.1) is the server-computed projection of this Partner's signed Agreement documents - the same stored file the Finance
+// detail shows. The server page passes it ONLY to an actor who holds the Finance feature (null / absent otherwise, and the Finance tile is then exactly
+// as before); a row's link is present only when that actor also holds the contract-detail category.
+export function PartnerDetail({
+  initialPartner,
+  canOpenPartnerReviews = false,
+  canOpenFinance = false,
+  agreementDocuments = null,
+}: {
+  initialPartner: PartnerDto;
+  canOpenPartnerReviews?: boolean;
+  canOpenFinance?: boolean;
+  agreementDocuments?: CounterpartyAgreementDocumentsDto | null;
+}) {
   const [partner, setPartner] = useState(initialPartner);
   const [selectedTab, setSelectedTab] = useState<TabKey>("overview");
   // Bumped on every successful mutation - partnerRef alone never changes
@@ -219,20 +234,7 @@ export function PartnerDetail({ initialPartner, canOpenPartnerReviews = false, c
                 </PanelBody>
               </Panel>
             ) : label === "Finance" && canOpenFinance ? (
-              <Panel span={4} key={label}>
-                <PanelHead title={label} description="Agreements" />
-                <PanelBody>
-                  <p className="detailcopy">Review this Partner&apos;s Agreements or start a new one from the Finance module.</p>
-                  <div className="actions" style={{ marginTop: 12 }}>
-                    <Link href="/finance/agreements?counterpartyType=PARTNER" className="btn">
-                      Open Finance Agreements
-                    </Link>
-                    <Link href={`/finance/agreements/new?counterpartyType=PARTNER&ref=${encodeURIComponent(partner.partnerRef)}`} className="btn">
-                      New Agreement
-                    </Link>
-                  </div>
-                </PanelBody>
-              </Panel>
+              <PartnerFinanceTile key={label} label={label} partnerRef={partner.partnerRef} agreementDocuments={agreementDocuments} />
             ) : (
               <Panel span={4} key={label}>
                 <PanelHead title={label} />
@@ -245,5 +247,27 @@ export function PartnerDetail({ initialPartner, canOpenPartnerReviews = false, c
         </PanelGrid>
       )}
     </>
+  );
+}
+
+// The Context tab's Finance tile (only rendered for an actor who holds the Finance feature): links into the Finance Agreements module and - Step 14B.1 -
+// lists this Partner's signed Agreement documents when the server page supplied them (the same stored file the Finance detail shows).
+export function PartnerFinanceTile({ label, partnerRef, agreementDocuments = null }: { label: string; partnerRef: string; agreementDocuments?: CounterpartyAgreementDocumentsDto | null }) {
+  return (
+    <Panel span={4}>
+      <PanelHead title={label} description="Agreements" />
+      <PanelBody>
+        <p className="detailcopy">Review this Partner&apos;s Agreements or start a new one from the Finance module.</p>
+        {agreementDocuments && <AgreementDocumentList documents={agreementDocuments} />}
+        <div className="actions" style={{ marginTop: 12 }}>
+          <Link href="/finance/agreements?counterpartyType=PARTNER" className="btn">
+            Open Finance Agreements
+          </Link>
+          <Link href={`/finance/agreements/new?counterpartyType=PARTNER&ref=${encodeURIComponent(partnerRef)}`} className="btn">
+            New Agreement
+          </Link>
+        </div>
+      </PanelBody>
+    </Panel>
   );
 }

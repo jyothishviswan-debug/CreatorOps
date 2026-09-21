@@ -27,6 +27,7 @@ const summary = (overrides: Partial<AgreementVersionSummaryDto> & { version: num
   createdByUserRef: "usr_a",
   updatedAt: "2026-09-02T10:00:00.000Z",
   updatedByUserRef: "usr_b",
+  document: { status: "NOT_APPLICABLE", fileName: null, storedAt: null, hasLink: false, attemptCount: 0, message: "No new signed document for this version", canStore: false },
   ...overrides,
 });
 
@@ -113,5 +114,30 @@ describe("defaultViewedVersion", () => {
     expect(defaultViewedVersion({ openVersion: 1, activeVersion: null, lastEndedVersion: null, latestVersion: 1 })).toBe(1);
     expect(defaultViewedVersion({ openVersion: null, activeVersion: null, lastEndedVersion: null, latestVersion: 4 })).toBe(4);
     expect(currentVersionNumber({ openVersion: null, activeVersion: 5, lastEndedVersion: null, latestVersion: 5 })).toBe(5);
+  });
+});
+
+// Step 14B.1: the Document column - each version's OWN document (never another version's), the link only when the server sent one.
+describe("the Document column of the version rows", () => {
+  const stored = (n: number, link?: string): AgreementVersionSummaryDto["document"] => ({ status: "STORED", fileName: `v${n}.pdf`, storedAt: "2026-09-01T10:00:00.000Z", hasLink: true, ...(link ? { link } : {}), attemptCount: 1, message: null, canStore: false });
+  const v1 = summary({ version: 1, status: "SUPERSEDED", supersededByVersion: 2, document: stored(1, "https://drive.invalid/fake/v1") });
+  const v2 = summary({ version: 2, supersededVersion: 1, document: stored(2, "https://drive.invalid/fake/v2") });
+  const v3 = summary({ version: 3, status: "DRAFT", confirmed: false, confirmedAt: null, confirmedByUserRef: null, activatedAt: null, activatedByUserRef: null, document: { status: "NOT_APPLICABLE", fileName: null, storedAt: null, hasLink: false, attemptCount: 0, message: "No new signed document for this version", canStore: false } });
+
+  it("v1 keeps its own reference and v2 has its own: distinct files and links", () => {
+    const rows = buildVersionRows([v1, v2, v3], HEAD, 2);
+    const byVersion = new Map(rows.map((row) => [row.version, row.document]));
+    expect(byVersion.get(1)).toMatchObject({ chip: { label: "Stored" }, fileName: "v1.pdf", link: "https://drive.invalid/fake/v1" });
+    expect(byVersion.get(2)).toMatchObject({ chip: { label: "Stored" }, fileName: "v2.pdf", link: "https://drive.invalid/fake/v2" });
+  });
+
+  it("a version without a new signed document says so and never presents the prior file", () => {
+    const row = buildVersionRows([v1, v2, v3], HEAD, 2).find((entry) => entry.version === 3)!;
+    expect(row.document).toMatchObject({ chip: { label: "No new signed document" }, note: "No new signed document for this version", link: null, fileName: null });
+  });
+
+  it("without the contract-detail category the DTO carries no link: the row shows 'Agreement document on file' and no link", () => {
+    const row = buildVersionRows([summary({ version: 1, document: stored(1) })], { openVersion: null, activeVersion: 1, lastEndedVersion: null }, 1)[0]!;
+    expect(row.document).toMatchObject({ link: null, note: "Agreement document on file", fileName: "v1.pdf" });
   });
 });

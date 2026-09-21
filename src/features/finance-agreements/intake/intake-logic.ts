@@ -112,7 +112,9 @@ export function describeFlush(outcome: Pick<FlushOutcome, "saved" | "failed">): 
 // --- URLs -----------------------------------------------------------------------------------------------------------------------------------
 export const INTAKE_PATH = "/finance/agreements/new";
 
-export type IntakeUrlParams = { counterpartyType: CounterpartyType | null; ref: string | null; agreementRef: string | null; version: number | null };
+// `mode: "new"` (Step 14B.1) opens the intake with the "create a new Partner / Vendor from the Agreement" choice already made
+// (?counterpartyType=&mode=new). It is only meaningful together with a counterpartyType and no agreementRef.
+export type IntakeUrlParams = { counterpartyType: CounterpartyType | null; ref: string | null; agreementRef: string | null; version: number | null; mode: "new" | null };
 
 const REF_PATTERN = /^[A-Za-z0-9._:-]{1,120}$/;
 type RawParam = string | string[] | undefined;
@@ -125,20 +127,27 @@ export function parseIntakeSearchParams(raw: Record<string, RawParam>): IntakeUr
   const agreementRef = first(raw.agreementRef)?.trim();
   const versionText = first(raw.version)?.trim();
   const version = versionText !== undefined && /^[1-9]\d{0,5}$/.test(versionText) ? Number(versionText) : null;
+  const counterpartyType = type === "PARTNER" || type === "VENDOR" ? type : null;
   return {
-    counterpartyType: type === "PARTNER" || type === "VENDOR" ? type : null,
+    counterpartyType,
     ref: ref && REF_PATTERN.test(ref) ? ref : null,
     agreementRef: agreementRef && REF_PATTERN.test(agreementRef) ? agreementRef : null,
     version,
+    // Only "new" is understood, and only with a type to create (anything else is dropped, never echoed).
+    mode: first(raw.mode)?.trim() === "new" && counterpartyType !== null ? "new" : null,
   };
 }
 
 // /finance/agreements/new?agreementRef=&version= (resume) or ?counterpartyType=&ref= (deep link preselect).
-export function intakeHref(params: { agreementRef?: string | null; version?: number | null; counterpartyType?: CounterpartyType | null; ref?: string | null } = {}): string {
+export function intakeHref(params: { agreementRef?: string | null; version?: number | null; counterpartyType?: CounterpartyType | null; ref?: string | null; mode?: "new" | null } = {}): string {
   const search = new URLSearchParams();
   if (params.agreementRef) {
     search.set("agreementRef", params.agreementRef);
     if (params.version) search.set("version", String(params.version));
+  } else if (params.counterpartyType && params.mode === "new") {
+    // Create-new deep link: the counterparty does not exist yet, so there is no ref.
+    search.set("counterpartyType", params.counterpartyType);
+    search.set("mode", "new");
   } else if (params.counterpartyType && params.ref) {
     search.set("counterpartyType", params.counterpartyType);
     search.set("ref", params.ref);
@@ -150,7 +159,8 @@ export function intakeHref(params: { agreementRef?: string | null; version?: num
 // The stable key the server page uses to remount the client tree when the route identity changes.
 export function intakeRouteKey(params: IntakeUrlParams): string {
   if (params.agreementRef) return `resume:${params.agreementRef}:${params.version ?? "open"}`;
-  return `new:${params.counterpartyType ?? "-"}:${params.ref ?? "-"}`;
+  // A create-new deep link is a different form from the plain / preselect one (its provider is seeded differently), so it gets its own key.
+  return params.mode === "new" ? `new:${params.counterpartyType ?? "-"}:-:new` : `new:${params.counterpartyType ?? "-"}:${params.ref ?? "-"}`;
 }
 
 // --- Counterparty of a created draft ----------------------------------------------------------------------------------------------------------

@@ -20,6 +20,7 @@ import {
   extractionRunDocSchema,
   performanceTargetSchema,
   resumeAgreementInputSchema,
+  storeAgreementDocumentInputSchema,
   suspendAgreementInputSchema,
   type ConfirmedAgreementTerms,
 } from "./types";
@@ -259,6 +260,13 @@ describe("head / version document invariants", () => {
     expect(parsed.terms).toBeNull();
     expect(parsed.activation).toBeNull();
   });
+  it("version: the identity status snapshot accepts the component-level INCOMPLETE (Step 14B.1) and still parses pre-INCOMPLETE snapshots", () => {
+    const withComponents = (state: string, components: object) => version({ ...confirmed(), identityStatusSnapshot: { state, components, capturedAt: NOW } });
+    expect(agreementVersionDocSchema.safeParse(withComponents("INCOMPLETE", { pan: "PRESENT", aadhaar: "INCOMPLETE", gst: "NOT_APPLICABLE", bank: "INCOMPLETE" })).success).toBe(true);
+    // frozen, older snapshots (no INCOMPLETE component) stay readable
+    expect(agreementVersionDocSchema.safeParse(withComponents("MISSING", { pan: "MISSING", aadhaar: "MISSING", gst: "NOT_APPLICABLE", bank: "MISSING" })).success).toBe(true);
+    expect(agreementVersionDocSchema.safeParse(withComponents("INCOMPLETE", { pan: "PARTIAL", aadhaar: "MISSING", gst: "NOT_APPLICABLE", bank: "MISSING" })).success).toBe(false);
+  });
   it("version: confirmed parts are set together, clear the draft, and effective mirrors the terms' dates", () => {
     expect(agreementVersionDocSchema.safeParse(version(confirmed())).success).toBe(true);
     expect(agreementVersionDocSchema.safeParse(version({ ...confirmed(), confirmation: null })).success).toBe(false);
@@ -276,6 +284,53 @@ describe("head / version document invariants", () => {
     expect(agreementVersionDocSchema.safeParse(version({ ...active, status: "SUPERSEDED" })).success).toBe(false);
     expect(agreementVersionDocSchema.safeParse(version({ ...active, status: "SUPERSEDED", supersededByVersion: 2 })).success).toBe(true);
     expect(agreementVersionDocSchema.safeParse(version({ activation: { activatedByUserRef: "u", activatedAt: NOW } })).success).toBe(false);
+  });
+});
+
+describe("version document: the original signed Agreement in Drive (Step 14B.1)", () => {
+  const ARTIFACT_REF = "ca_0123456789abcdef0123";
+  const stored = { status: "STORED", driveFileId: "file-1", driveLink: "https://drive.example/file-1", fileName: "signed.pdf", storedAt: NOW, storedByUserRef: "u", artifactRef: ARTIFACT_REF, artifactSha256: "a".repeat(64), attemptCount: 1, lastFailureCode: null, lastAttemptAt: NOW };
+  const failedDoc = { ...stored, status: "FAILED", driveFileId: null, driveLink: null, storedAt: null, storedByUserRef: null, lastFailureCode: "drive_unavailable" };
+  const version = (over: object = {}) => ({
+    agreementRef: AGR, version: 1, status: "DRAFT", docVersion: 1, counterparty: { type: "PARTNER", partnerRef: "p1" }, sourceMode: "MANUAL", source: { contractArtifactRef: ARTIFACT_REF }, draft: {},
+    terms: baseTerms(),
+    contactSnapshot: { counterpartyName: "A", contactNumber: null, emailAddress: null, state: null, address: null, pinCode: null },
+    identityStatusSnapshot: { state: "MISSING", components: { pan: "MISSING", aadhaar: "MISSING", gst: "NOT_APPLICABLE", bank: "MISSING" }, capturedAt: NOW },
+    fieldProvenance: {}, effective: { signedDate: null, effectiveFrom: "2026-01-01", effectiveTo: null }, confirmation: { confirmedByUserRef: "u", confirmedAt: NOW },
+    createdAt: NOW, createdByUserRef: "u", updatedAt: NOW, updatedByUserRef: "u", ...over,
+  });
+
+  it("is additive: a version written before this step (no `document`) still parses, as null", () => {
+    const { document: _omitted, ...withoutDocument } = version() as Record<string, unknown>;
+    void _omitted;
+    expect(agreementVersionDocSchema.parse(withoutDocument).document).toBeNull();
+  });
+  it("STORED records the Drive file, link, time and actor and no failure; FAILED claims none of them and says why", () => {
+    expect(agreementVersionDocSchema.safeParse(version({ document: stored })).success).toBe(true);
+    expect(agreementVersionDocSchema.safeParse(version({ document: failedDoc })).success).toBe(true);
+    for (const missing of ["driveFileId", "driveLink", "storedAt", "storedByUserRef"]) expect(agreementVersionDocSchema.safeParse(version({ document: { ...stored, [missing]: null } })).success, `STORED without ${missing}`).toBe(false);
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...stored, lastFailureCode: "unknown" } })).success).toBe(false);
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...failedDoc, lastFailureCode: null } })).success).toBe(false);
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...failedDoc, driveLink: "https://drive.example/x" } })).success).toBe(false);
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...failedDoc, lastFailureCode: "made_up_code" } })).success).toBe(false);
+  });
+  it("the link must be https; the record is strict; the checksum is a hex digest; attempts are counted from 1", () => {
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...stored, driveLink: "http://drive.example/x" } })).success).toBe(false);
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...stored, driveLink: "javascript:alert(1)" } })).success).toBe(false);
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...stored, storageLocator: "finance-contracts/x.pdf" } })).success).toBe(false);
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...stored, artifactSha256: "nothex" } })).success).toBe(false);
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...stored, attemptCount: 0 } })).success).toBe(false);
+  });
+  it("a document exists only on a CONFIRMED version and only for that version's own source artifact", () => {
+    expect(agreementVersionDocSchema.safeParse(version({ document: { ...stored, artifactRef: "ca_ffffffffffffffffffff" } })).success).toBe(false);
+    expect(agreementVersionDocSchema.safeParse(version({ source: {}, document: stored })).success).toBe(false);
+    const unconfirmed = { terms: null, contactSnapshot: null, identityStatusSnapshot: null, fieldProvenance: null, effective: null, confirmation: null };
+    expect(agreementVersionDocSchema.safeParse(version({ ...unconfirmed, document: stored })).success).toBe(false);
+  });
+  it("the store command names the agreement and version; expectedDocVersion is optional; nothing else is accepted", () => {
+    expect(storeAgreementDocumentInputSchema.safeParse({ agreementRef: AGR, version: 1 }).success).toBe(true);
+    expect(storeAgreementDocumentInputSchema.safeParse({ agreementRef: AGR, version: 1, expectedDocVersion: 4 }).success).toBe(true);
+    for (const bad of [{ agreementRef: AGR }, { agreementRef: AGR, version: 0 }, { agreementRef: "x", version: 1 }, { agreementRef: AGR, version: 1, driveLink: "https://x" }, { agreementRef: AGR, version: 1, bytes: "AAAA" }]) expect(storeAgreementDocumentInputSchema.safeParse(bad).success, JSON.stringify(bad)).toBe(false);
   });
 });
 

@@ -123,3 +123,35 @@ describe("reasonIssue", () => {
     expect(reasonIssue("x".repeat(1001))).toMatch(/too long/);
   });
 });
+
+// Step 14B.1: activation readiness mirrors the server (`agreement_document_not_stored`): Activate stays present for an activator but carries the plain reason
+// while the confirmed open version's OWN signed Agreement document is not stored.
+describe("activation and the Agreement document", () => {
+  const withDocument = (status: "STORED" | "PENDING" | "FAILED" | "NOT_CONFIGURED" | "NOT_APPLICABLE", message: string | null = null) => ({ head: head({ status: "DRAFT", openVersion: 1, activeVersion: null }), versions: [{ ...version(1, "DRAFT", true), document: { status, message } }] });
+
+  it("STORED and NOT_APPLICABLE (manual version / a revision without a new signed file) block nothing", () => {
+    for (const status of ["STORED", "NOT_APPLICABLE"] as const) {
+      const state = computeAgreementActionState({ permissions: BOTH, ...withDocument(status) });
+      expect(state.canActivate, status).toBe(true);
+      expect(state.activateBlockedReason, status).toBeNull();
+    }
+  });
+
+  it("PENDING / FAILED / NOT_CONFIGURED keep Activate but block it with the plain reason", () => {
+    const pending = computeAgreementActionState({ permissions: BOTH, ...withDocument("PENDING") });
+    expect(pending.canActivate).toBe(true);
+    expect(pending.activateBlockedReason).toBe("Store the signed Agreement document before activating this version.");
+    expect(computeAgreementActionState({ permissions: BOTH, ...withDocument("FAILED", "Drive is temporarily unavailable. Try again.") }).activateBlockedReason).toContain("Retry storing it before activating");
+    expect(computeAgreementActionState({ permissions: BOTH, ...withDocument("NOT_CONFIGURED", "Drive storage not configured") }).activateBlockedReason).toContain("Drive storage not configured");
+  });
+
+  it("an actor who cannot activate has no button and therefore no blocked reason", () => {
+    const state = computeAgreementActionState({ permissions: MANAGER, ...withDocument("PENDING") });
+    expect(state.canActivate).toBe(false);
+    expect(state.activateBlockedReason).toBeNull();
+  });
+
+  it("a caller that supplies no document never blocks (the server still enforces the rule)", () => {
+    expect(computeAgreementActionState({ permissions: BOTH, ...CONFIRMED_DRAFT }).activateBlockedReason).toBeNull();
+  });
+});

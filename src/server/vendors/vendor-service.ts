@@ -2,6 +2,7 @@ import { z } from "zod";
 
 import { getUserDocByRef } from "@/server/authz/firestore";
 import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
+import { createdViaSchema } from "@/server/shared/onboarding-provenance";
 import type { ActorContext } from "@/server/authz/types";
 import { toVendorDto, toVendorDtos, type VendorDto } from "./client-dto";
 import { getVendorDocByRef, listVendorDocs, vendorsCollection, runVendorMutation, type VendorListCursor } from "./firestore";
@@ -45,6 +46,8 @@ const createVendorInputSchema = z
     regionIds: z.array(z.string().min(1)).max(50).optional(),
     ownerUserRef: z.string().min(1).optional(),
     teamIds: z.array(z.string().min(1)).max(50).optional(),
+    // Step 14B.1: optional provenance marker recorded on the `created` event only (never a second identity source, never a grant).
+    createdVia: createdViaSchema.optional(),
   })
   .strict();
 export type CreateVendorInput = z.input<typeof createVendorInputSchema>;
@@ -91,7 +94,7 @@ export async function createVendor(actor: ActorContext | null, rawInput: unknown
   });
 
   await vendorsCollection().doc(uid).set(doc);
-  await writeVendorEvent({ vendorUid: uid, kind: "created", actorUserRef: actor!.userRef, metadata: { displayName: doc.displayName, vendorType: doc.vendorType }, requestId });
+  await writeVendorEvent({ vendorUid: uid, kind: "created", actorUserRef: actor!.userRef, metadata: { displayName: doc.displayName, vendorType: doc.vendorType, ...(input.createdVia ? { createdVia: input.createdVia } : {}) }, requestId });
 
   return { ok: true, data: await toVendorDto(doc) };
 }

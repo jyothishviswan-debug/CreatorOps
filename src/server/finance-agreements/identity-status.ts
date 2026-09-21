@@ -8,6 +8,7 @@ import {
 } from "@/server/shared/restricted-financial-identity";
 
 import { deriveIdentityStatusState } from "./fields";
+import type { IdentityComponentStatus } from "./terms";
 import type { CounterpartyType, IdentityComponents, IdentityStatusSnapshot } from "./types";
 
 // Step 14A: identity STATUS for an Agreement counterparty - component PRESENCE only.
@@ -19,17 +20,26 @@ import type { CounterpartyType, IdentityComponents, IdentityStatusSnapshot } fro
 // Finance therefore stores no duplicate identity data, and the reconciliation service reuses
 // this exact function so both compute status the same way.
 
-// Pure. `doc` null = nothing recorded yet.
-//   pan      PRESENT when a PAN number is on file, else MISSING
-//   aadhaar  Partner only: PRESENT when on file, else MISSING; a Vendor has none (NOT_APPLICABLE)
-//   gst      applicable:false -> NOT_APPLICABLE; applicable with a number -> PRESENT; else MISSING
-//   bank     PRESENT when the record holds a bank account, else MISSING
+// Pure. `doc` null = nothing recorded yet. A component is:
+//   PRESENT         the canonical value is on file
+//   INCOMPLETE      the canonical value is absent BUT an evidence document of that type is on file ("document on file, details
+//                   not entered"); for GST also: GST applies but no number is on file
+//   MISSING         nothing on file
+//   NOT_APPLICABLE  Aadhaar for a Vendor; GST recorded as not applicable
+// Only the evidence TYPE is consulted (never its link / file name), so no value or evidence detail can reach the result.
+//   pan      doc.pan                          -> PRESENT; else an evidence "pan" -> INCOMPLETE; else MISSING
+//   aadhaar  Partner only; same rule with "aadhaar"; a Vendor has none (NOT_APPLICABLE)
+//   gst      applicable:false -> NOT_APPLICABLE; applicable with a number -> PRESENT; applicable without a number -> INCOMPLETE;
+//            no gst record -> an evidence "gst" -> INCOMPLETE, else MISSING
+//   bank     doc.bank -> PRESENT; else an evidence "bank" -> INCOMPLETE; else MISSING (a partial bank record cannot be stored)
 export function deriveIdentityComponents(counterpartyType: CounterpartyType, doc: RestrictedFinancialIdentityDoc | null): IdentityComponents {
+  const evidence = new Set((doc?.evidence ?? []).map((item) => item.docType));
+  const absent = (docType: "pan" | "aadhaar" | "gst" | "bank"): IdentityComponentStatus => (evidence.has(docType) ? "INCOMPLETE" : "MISSING");
   return {
-    pan: doc?.pan ? "PRESENT" : "MISSING",
-    aadhaar: counterpartyType === "VENDOR" ? "NOT_APPLICABLE" : doc?.aadhaar ? "PRESENT" : "MISSING",
-    gst: doc?.gst ? (doc.gst.applicable ? (doc.gst.number ? "PRESENT" : "MISSING") : "NOT_APPLICABLE") : "MISSING",
-    bank: doc?.bank ? "PRESENT" : "MISSING",
+    pan: doc?.pan ? "PRESENT" : absent("pan"),
+    aadhaar: counterpartyType === "VENDOR" ? "NOT_APPLICABLE" : doc?.aadhaar ? "PRESENT" : absent("aadhaar"),
+    gst: doc?.gst ? (doc.gst.applicable ? (doc.gst.number ? "PRESENT" : "INCOMPLETE") : "NOT_APPLICABLE") : absent("gst"),
+    bank: doc?.bank ? "PRESENT" : absent("bank"),
   };
 }
 

@@ -17,7 +17,7 @@ export type ContractUploadRequest =
   | { ok: true; input: { fileName: string; bytes: Uint8Array; counterparty: { type: string; ref: string } } }
   | { ok: false; status: 400 | 413 | 415; error: string };
 
-const refuse = (status: 400 | 413 | 415, error: string): ContractUploadRequest => ({ ok: false, status, error });
+const refuse = (status: 400 | 413 | 415, error: string): { ok: false; status: 400 | 413 | 415; error: string } => ({ ok: false, status, error });
 
 // Reads the request body up to the cap. Returns null when the stream exceeds it (the reader is
 // cancelled, nothing beyond the cap is retained).
@@ -45,9 +45,10 @@ async function readBoundedBody(request: Request): Promise<Uint8Array | null | un
   return bytes;
 }
 
-// multipart/form-data with fields: file (the PDF), counterpartyType (PARTNER | VENDOR), counterpartyRef.
-// The values are handed to the service as-is - it validates the counterparty and the PDF itself.
-export async function readContractUploadRequest(request: Request): Promise<ContractUploadRequest> {
+type MultipartRead = { ok: true; form: FormData } | { ok: false; status: 400 | 413 | 415; error: string };
+
+// The bounded multipart read shared by the contract upload and the onboarding preview: content type, declared size, bounded stream, parse.
+async function readBoundedMultipart(request: Request): Promise<MultipartRead> {
   const contentType = request.headers.get("content-type") ?? "";
   if (!/^multipart\/form-data\s*;/i.test(contentType)) return refuse(415, "Upload the contract as multipart/form-data.");
 
@@ -61,17 +62,38 @@ export async function readContractUploadRequest(request: Request): Promise<Contr
   if (body === null) return refuse(413, "The upload is larger than the 10 MB contract limit.");
   if (body === undefined || body.byteLength === 0) return refuse(400, "Invalid upload payload.");
 
-  let form: FormData;
   try {
-    form = await new Response(body as BodyInit, { headers: { "content-type": contentType } }).formData();
+    return { ok: true, form: await new Response(body as BodyInit, { headers: { "content-type": contentType } }).formData() };
   } catch {
     return refuse(400, "Invalid upload payload.");
   }
+}
 
-  const file = form.get("file");
-  const counterpartyType = form.get("counterpartyType");
-  const counterpartyRef = form.get("counterpartyRef");
+// multipart/form-data with fields: file (the PDF), counterpartyType (PARTNER | VENDOR), counterpartyRef.
+// The values are handed to the service as-is - it validates the counterparty and the PDF itself.
+export async function readContractUploadRequest(request: Request): Promise<ContractUploadRequest> {
+  const read = await readBoundedMultipart(request);
+  if (!read.ok) return read;
+
+  const file = read.form.get("file");
+  const counterpartyType = read.form.get("counterpartyType");
+  const counterpartyRef = read.form.get("counterpartyRef");
   if (!(file instanceof File) || typeof counterpartyType !== "string" || typeof counterpartyRef !== "string") return refuse(400, "Invalid upload payload.");
 
   return { ok: true, input: { fileName: file.name, bytes: new Uint8Array(await file.arrayBuffer()), counterparty: { type: counterpartyType, ref: counterpartyRef } } };
+}
+
+export type OnboardingPreviewRequest = { ok: true; input: { type: string; fileName: string; bytes: Uint8Array } } | { ok: false; status: 400 | 413 | 415; error: string };
+
+// Step 14B.1: POST /api/finance/onboarding/preview - multipart/form-data with fields: file (the PDF), counterpartyType (PARTNER | VENDOR).
+// The same 10 MB bound as the contract upload; the service validates the PDF and the type itself.
+export async function readOnboardingPreviewRequest(request: Request): Promise<OnboardingPreviewRequest> {
+  const read = await readBoundedMultipart(request);
+  if (!read.ok) return read;
+
+  const file = read.form.get("file");
+  const counterpartyType = read.form.get("counterpartyType");
+  if (!(file instanceof File) || typeof counterpartyType !== "string") return refuse(400, "Invalid upload payload.");
+
+  return { ok: true, input: { type: counterpartyType, fileName: file.name, bytes: new Uint8Array(await file.arrayBuffer()) } };
 }

@@ -29,7 +29,7 @@ import {
   txSetAgreementHead,
   txSetAgreementVersion,
 } from "./firestore";
-import { loadAuthorizedAgreement, loadAuthorizedCounterparty, requireFinanceAgreementsAccess } from "./finance-agreements-gate";
+import { loadAuthorizedAgreement, loadAuthorizedCounterparty, requireContractSensitiveAccess, requireFinanceAgreementsAccess } from "./finance-agreements-gate";
 import { generateAgreementRef } from "./ids";
 import { computeIdentityStatus } from "./identity-status";
 import { authorizeAgreementCommand, buildAgreementDetailDto, defaultVersionNumber, formatIssues, isAlreadyExistsError, newDraftVersionDoc, scopeFieldsOf } from "./service-common";
@@ -84,6 +84,22 @@ type CreateTxResult = { kind: "created"; head: AgreementHeadDoc; version: Agreem
 // when the record has exactly one region, and platform/page context from the derived counterparty
 // - NEVER an identity value.
 export async function createAgreementDraft(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<FinanceAgreementsServiceResult<CreateAgreementDraftOutcome>> {
+  return createAgreementDraftWithProvenance(actor, rawInput, requestId, null);
+}
+
+// Step 14B.1: the SAME command, additionally recording on the `created` event that the Agreement was started from Finance Agreement
+// onboarding (provenance only: the allowlisted keys `createdVia`, `onboardingMode`, `onboardingRef`). Used by the onboarding orchestration;
+// it changes no rule of draft creation, and an idempotent replay keeps the original event.
+export type AgreementDraftProvenance = {
+  createdVia: "FINANCE_AGREEMENT_ONBOARDING";
+  onboardingMode: "NEW_COUNTERPARTY" | "EXISTING_COUNTERPARTY";
+  onboardingRef: string;
+  // The deliberate "create new despite a possible duplicate" decision (the reviewer's own words are screened by the event allowlist).
+  duplicatesAcknowledged?: boolean;
+  reason?: string;
+};
+
+export async function createAgreementDraftWithProvenance(actor: ActorContext | null, rawInput: unknown, requestId: string, provenance: AgreementDraftProvenance | null): Promise<FinanceAgreementsServiceResult<CreateAgreementDraftOutcome>> {
   const access = await requireFinanceAgreementsAccess(actor, "manage_agreements");
   if (!access.ok) return financeAgreementsUnauthorizedResult(access.reason);
 
@@ -147,7 +163,7 @@ export async function createAgreementDraft(actor: ActorContext | null, rawInput:
         kind: "created",
         version: 1,
         actorUserRef: actor!.userRef,
-        metadata: { counterpartyType: authorized.type, sourceMode: version.sourceMode, fieldCount: Object.keys(draft).length, platformCount: authorized.counterparty.type === "PARTNER" ? authorized.counterparty.platformScope.length : 0, accountCount: authorized.counterparty.type === "PARTNER" ? authorized.counterparty.partnerAccountRefs.length : 0 },
+        metadata: { counterpartyType: authorized.type, sourceMode: version.sourceMode, fieldCount: Object.keys(draft).length, platformCount: authorized.counterparty.type === "PARTNER" ? authorized.counterparty.platformScope.length : 0, accountCount: authorized.counterparty.type === "PARTNER" ? authorized.counterparty.partnerAccountRefs.length : 0, ...(provenance ?? {}) },
         requestId,
         createdAt: now,
       });
@@ -189,7 +205,8 @@ export async function listAgreementVersions(actor: ActorContext | null, agreemen
   const loaded = await loadAuthorizedAgreement(actor, typeof agreementRef === "string" ? agreementRef : "");
   if (!loaded.ok) return loaded.error;
   const listed = await listAgreementVersionDocs(loaded.authorized.head.agreementRef);
-  return { ok: true, data: { agreementRef: loaded.authorized.head.agreementRef, versions: listed.versions.map(toAgreementVersionSummaryDto), hasMore: listed.hasMore } };
+  const contractDetailVisible = (await requireContractSensitiveAccess(actor!)).ok;
+  return { ok: true, data: { agreementRef: loaded.authorized.head.agreementRef, versions: listed.versions.map((doc) => toAgreementVersionSummaryDto(doc, { contractDetailVisible })), hasMore: listed.hasMore } };
 }
 
 const eventLimitSchema = z.number().int().min(1).max(MAX_AGREEMENT_EVENT_PAGE);
@@ -227,9 +244,17 @@ export async function listAgreementsForCounterparty(actor: ActorContext | null, 
   if (!loaded.ok) return loaded.error;
   const liveUid = loaded.authorized.type === "PARTNER" ? loaded.authorized.scope.partnerUid : loaded.authorized.scope.vendorUid;
 
+  const listed = await loadCounterpartyHeadDocs(type, parsed.data.ref, liveUid);
+  return { ok: true, data: { agreements: listed.heads.map((head) => toAgreementHeadDto(head, loaded.authorized.displayName)), hasMore: listed.hasMore } };
+}
+
+// The Agreement heads of ONE already-authorized counterparty (shared by the counterparty list and the Step 14B.1 document
+// projection, so both use the one audited query): bounded, newest first, and each head re-checked against the counterparty's LIVE
+// uid. The CALLER must have verified the counterparty's Record Scope.
+export async function loadCounterpartyHeadDocs(type: CounterpartyType, ref: string, liveUid: string | null): Promise<{ heads: AgreementHeadDoc[]; hasMore: boolean }> {
   const field = type === "PARTNER" ? "counterparty.partnerRef" : "counterparty.vendorRef";
   const snapshot = await financeAgreementsCollection()
-    .where(field, "==", parsed.data.ref)
+    .where(field, "==", ref)
     .limit(MAX_COUNTERPARTY_AGREEMENTS + 1)
     .get();
 
@@ -242,7 +267,7 @@ export async function listAgreementsForCounterparty(actor: ActorContext | null, 
     heads.push(head.data);
   }
   heads.sort((a, b) => (a.updatedAt === b.updatedAt ? a.agreementRef.localeCompare(b.agreementRef) : b.updatedAt.localeCompare(a.updatedAt)));
-  return { ok: true, data: { agreements: heads.map((head) => toAgreementHeadDto(head, loaded.authorized.displayName)), hasMore: snapshot.docs.length > MAX_COUNTERPARTY_AGREEMENTS } };
+  return { heads, hasMore: snapshot.docs.length > MAX_COUNTERPARTY_AGREEMENTS };
 }
 
 export type ReconciliationDraftFields = {

@@ -35,6 +35,8 @@ export function gstinStatusChip(status: CounterpartyPreviewDto["gstinStatus"]): 
       return { label: "On record", tone: "default" };
     case "MISSING":
       return { label: "Not on record", tone: "orange" };
+    case "INCOMPLETE":
+      return { label: "Incomplete", tone: "orange" };
     case "NOT_APPLICABLE":
       return { label: "Not applicable", tone: "gray" };
     default:

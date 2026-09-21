@@ -10,7 +10,7 @@ export function draftEntry(over: Partial<AgreementDraftEntryDto> = {}): Agreemen
 
 export function permissionsDto(over: Partial<FinanceAgreementPermissionsDto> = {}): FinanceAgreementPermissionsDto {
   const detail = { canViewIdentity: false, canManageCounterpartyKyc: false };
-  return { canView: true, canManage: true, canActivate: false, canViewContractDetail: false, canViewIdentity: false, canManageCounterpartyKyc: false, counterpartyType: null, byCounterpartyType: { PARTNER: { ...detail }, VENDOR: { ...detail } }, ...over };
+  return { canView: true, canManage: true, canActivate: false, canViewContractDetail: false, canViewIdentity: false, canManageCounterpartyKyc: false, canCreatePartner: false, canCreateVendor: false, canManagePartnerAccounts: false, counterpartyType: null, byCounterpartyType: { PARTNER: { ...detail }, VENDOR: { ...detail } }, ...over };
 }
 
 export function agreementDto(
@@ -28,6 +28,8 @@ export function agreementDto(
     versions?: AgreementDetailDto["versions"];
     extractionRunRef?: string | null;
     displayName?: string | null;
+    // Step 14B.1: the version's Agreement document DTO (default: PENDING, nothing to store).
+    document?: AgreementVersionDto["document"];
   } = {},
 ): AgreementDetailDto {
   const type = over.type ?? "PARTNER";
@@ -57,6 +59,7 @@ export function agreementDto(
     createdByUserRef: "usr_1",
     updatedAt: "2026-09-01T00:00:00.000Z",
     updatedByUserRef: "usr_1",
+    document: over.document ?? { status: "PENDING" as const, fileName: null, storedAt: null, hasLink: false, attemptCount: 0, message: null, canStore: false },
   };
   return {
     head: {

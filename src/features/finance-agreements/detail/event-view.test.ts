@@ -22,6 +22,18 @@ describe("describeAgreementEvent", () => {
     expect(describeAgreementEvent(event("created", null)).detail).toBe("Draft version 1 opened.");
   });
 
+  it("created (Step 14B.1): names Agreement-led onboarding provenance, new vs existing counterparty, without any ref", () => {
+    const fresh = describeAgreementEvent(event("created", { counterpartyType: "PARTNER", sourceMode: "EXTRACTED", createdVia: "FINANCE_AGREEMENT_ONBOARDING", onboardingMode: "NEW_COUNTERPARTY", onboardingRef: "onb_abc" })).detail;
+    expect(fresh).toBe("Draft version 1 opened (Partner Agreement · source: Extracted). Created from Finance Agreement onboarding: the Partner record was created from this Agreement.");
+    expect(fresh).not.toContain("onb_");
+    const deliberate = describeAgreementEvent(event("created", { counterpartyType: "PARTNER", createdVia: "FINANCE_AGREEMENT_ONBOARDING", onboardingMode: "NEW_COUNTERPARTY", duplicatesAcknowledged: true, reason: "Different business, shared mailbox." })).detail;
+    expect(deliberate).toContain("Created from Finance Agreement onboarding");
+    expect(deliberate).toContain("A possible existing Partner was reviewed and a new one was created deliberately. Reason: Different business, shared mailbox.");
+
+    const existing = describeAgreementEvent(event("created", { counterpartyType: "VENDOR", createdVia: "FINANCE_AGREEMENT_ONBOARDING", onboardingMode: "EXISTING_COUNTERPARTY" })).detail;
+    expect(existing).toContain("Started from Finance Agreement onboarding using an existing Vendor.");
+  });
+
   it("field_decided: names the field and the decision, never a value", () => {
     const view = describeAgreementEvent(event("field_decided", { fieldKey: "currency", decision: "ACCEPTED", version: 1 }));
     expect(view.detail).toBe("Currency: Accepted.");
@@ -59,6 +71,14 @@ describe("describeAgreementEvent", () => {
     expect(describeAgreementEvent(event("master_data_updated", { fieldKey: "contactNumber", counterpartyType: "PARTNER", mode: "FILL_MISSING" })).detail).toBe("Contact number on the Partner record: filled a missing value.");
     expect(describeAgreementEvent(event("kyc_updated_from_agreement", { components: ["pan", "gst"] })).detail).toBe("KYC updated in the owning record: PAN, GST certificate.");
     expect(describeAgreementEvent(event("kyc_updated_from_agreement", null)).detail).toBe("KYC updated in the owning record.");
+  });
+
+  it("describes the original signed document being stored, or failing (a code and a count only - never a link)", () => {
+    expect(describeAgreementEvent(event("document_stored", { fileName: "Signed Agreement.pdf", documentStatus: "STORED", attemptCount: 1 })).detail).toBe("The original signed document (Signed Agreement.pdf) was stored.");
+    expect(describeAgreementEvent(event("document_stored", null)).detail).toBe("The original signed document was stored.");
+    expect(describeAgreementEvent(event("document_store_failed", { attemptCount: 3, failureCode: "drive_unavailable" })).detail).toBe("The original signed document could not be stored (attempt 3). It can be retried.");
+    expect(describeAgreementEvent(event("document_store_failed", { attemptCount: 1 })).detail).toBe("The original signed document could not be stored. It can be retried.");
+    expect(describeAgreementEvent(event("document_store_failed", null)).label).toBe("Agreement document not stored");
   });
 
   it("never renders anything beyond the allowlisted shapes (a smuggled value key is ignored)", () => {

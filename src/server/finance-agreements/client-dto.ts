@@ -1,4 +1,5 @@
 import { redactAgreementEventMetadata } from "./agreement-events";
+import { AGREEMENT_DOCUMENT_FAILURE_MESSAGES } from "./document-storage/types";
 import { describeExtractionReason } from "./extraction-reasons";
 import { AGREEMENT_FIELD_BY_KEY, type AgreementFieldKey } from "./fields";
 import type {
@@ -61,6 +62,52 @@ export type AgreementHeadDto = {
   updatedByUserRef: string;
 };
 
+// Step 14B.1: the durable Drive copy of the ORIGINAL signed Agreement, as the browser may see it.
+//   STORED          the exact uploaded PDF is in Drive (fileName / storedAt are set; `hasLink` is true)
+//   PENDING         the version has its own signed file and it has not been stored yet
+//   FAILED          the last store attempt failed (`message` says why in plain words); retriable
+//   NOT_CONFIGURED  Drive storage is not set up ("Drive storage not configured"); retriable once it is
+//   NOT_APPLICABLE  no signed file of its own for this version (a manual entry or a revision without a new signed document)
+// `link` is present ONLY for an actor holding finance_contracts (the caller passes contractDetailVisible); everyone else
+// gets `hasLink` and no URL. Neither the Drive file id nor any storage locator / bucket / credential is ever in this shape.
+export type AgreementDocumentStatusDto = "STORED" | "PENDING" | "FAILED" | "NOT_CONFIGURED" | "NOT_APPLICABLE";
+
+export type AgreementDocumentDto = {
+  status: AgreementDocumentStatusDto;
+  fileName: string | null;
+  storedAt: string | null;
+  hasLink: boolean;
+  link?: string;
+  attemptCount: number;
+  // Plain human text for FAILED / NOT_CONFIGURED / NOT_APPLICABLE; null otherwise.
+  message: string | null;
+  // The version is confirmed, has its own signed file, and it is not stored yet: a store / retry is meaningful.
+  canStore: boolean;
+};
+
+// One row of the Partner / Vendor contextual list: a version's document reference (the SAME stored Drive reference the Finance
+// detail shows). `document.link` is present only when the actor holds finance_contracts.
+export type CounterpartyAgreementDocumentDto = {
+  agreementRef: string;
+  version: number;
+  lifecycle: AgreementVersionStatus;
+  headStatus: AgreementHeadStatus;
+  effectiveFrom: string | null;
+  effectiveTo: string | null;
+  document: AgreementDocumentDto;
+};
+
+export type CounterpartyAgreementDocumentsDto = {
+  counterpartyType: CounterpartyType;
+  ref: string;
+  documents: CounterpartyAgreementDocumentDto[];
+  hasMore: boolean;
+  // true only when the actor holds finance_contracts (links may be present); false = status only.
+  linksVisible: boolean;
+};
+
+export const NO_NEW_SIGNED_DOCUMENT_MESSAGE = "No new signed document for this version";
+
 export type AgreementVersionSummaryDto = {
   version: number;
   status: AgreementVersionStatus;
@@ -85,6 +132,7 @@ export type AgreementVersionSummaryDto = {
   createdByUserRef: string;
   updatedAt: string;
   updatedByUserRef: string;
+  document: AgreementDocumentDto;
 };
 
 // KYC STATUS only. `state` is visible to anyone authorized for the Agreement; the per-component
@@ -179,7 +227,42 @@ export function toAgreementHeadDto(head: AgreementHeadDoc, counterpartyDisplayNa
   };
 }
 
-export function toAgreementVersionSummaryDto(doc: AgreementVersionDoc): AgreementVersionSummaryDto {
+const NOT_CONFIGURED_CODES: ReadonlySet<string> = new Set(["not_configured", "live_drive_disabled_in_tests"]);
+
+export function toAgreementDocumentDto(doc: AgreementVersionDoc, options: { contractDetailVisible?: boolean } = {}): AgreementDocumentDto {
+  const stored = doc.document;
+  const ownFile = doc.source.contractArtifactRef !== null;
+  const confirmed = doc.confirmation !== null;
+  if (stored?.status === "STORED") {
+    return {
+      status: "STORED",
+      fileName: stored.fileName,
+      storedAt: stored.storedAt,
+      hasLink: stored.driveLink !== null,
+      ...(options.contractDetailVisible && stored.driveLink ? { link: stored.driveLink } : {}),
+      attemptCount: stored.attemptCount,
+      message: null,
+      canStore: false,
+    };
+  }
+  if (stored?.status === "FAILED") {
+    const code = stored.lastFailureCode ?? "unknown";
+    const notConfigured = NOT_CONFIGURED_CODES.has(code);
+    return {
+      status: notConfigured ? "NOT_CONFIGURED" : "FAILED",
+      fileName: stored.fileName,
+      storedAt: null,
+      hasLink: false,
+      attemptCount: stored.attemptCount,
+      message: AGREEMENT_DOCUMENT_FAILURE_MESSAGES[code],
+      canStore: confirmed && ownFile,
+    };
+  }
+  if (!ownFile) return { status: "NOT_APPLICABLE", fileName: null, storedAt: null, hasLink: false, attemptCount: 0, message: NO_NEW_SIGNED_DOCUMENT_MESSAGE, canStore: false };
+  return { status: "PENDING", fileName: null, storedAt: null, hasLink: false, attemptCount: 0, message: null, canStore: confirmed };
+}
+
+export function toAgreementVersionSummaryDto(doc: AgreementVersionDoc, options: { contractDetailVisible?: boolean } = {}): AgreementVersionSummaryDto {
   const effective: AgreementEffective | null = doc.effective;
   return {
     version: doc.version,
@@ -205,6 +288,7 @@ export function toAgreementVersionSummaryDto(doc: AgreementVersionDoc): Agreemen
     createdByUserRef: doc.createdByUserRef,
     updatedAt: doc.updatedAt,
     updatedByUserRef: doc.updatedByUserRef,
+    document: toAgreementDocumentDto(doc, options),
   };
 }
 
@@ -228,11 +312,11 @@ function toDraftEntryDto(entry: AgreementDraftEntry): AgreementDraftEntryDto {
   };
 }
 
-export function toAgreementVersionDto(doc: AgreementVersionDoc, options: { identityDetailVisible: boolean }): AgreementVersionDto {
+export function toAgreementVersionDto(doc: AgreementVersionDoc, options: { identityDetailVisible: boolean; contractDetailVisible?: boolean }): AgreementVersionDto {
   const draft: AgreementVersionDto["draft"] = {};
   for (const [key, entry] of Object.entries(doc.draft) as Array<[AgreementFieldKey, AgreementDraftEntry]>) draft[key] = toDraftEntryDto(entry);
   return {
-    ...toAgreementVersionSummaryDto(doc),
+    ...toAgreementVersionSummaryDto(doc, { contractDetailVisible: options.contractDetailVisible }),
     counterparty: toAgreementCounterpartyDto(doc.counterparty),
     source: { contractArtifactRef: doc.source.contractArtifactRef, extractionRunRef: doc.source.extractionRunRef, parserVersion: doc.source.parserVersion },
     draft,

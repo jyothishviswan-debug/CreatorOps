@@ -55,7 +55,8 @@ export function sanitizeContractFileName(raw: string): string {
   return `${cleaned.slice(0, MAX_FILE_NAME_CHARS - extension.length)}${extension}`;
 }
 
-const REJECTION_MESSAGES: Record<ContractPdfRejection, string> = {
+// Step 14B.1: exported so the ephemeral onboarding preview words a rejected file exactly as the upload does.
+export const REJECTION_MESSAGES: Record<ContractPdfRejection, string> = {
   empty: "The contract file is empty.",
   too_large: `The contract file is larger than the ${MAX_CONTRACT_PDF_BYTES / (1024 * 1024)} MB limit.`,
   not_a_pdf: "The contract file is not a PDF.",

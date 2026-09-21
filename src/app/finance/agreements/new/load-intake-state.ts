@@ -5,7 +5,10 @@
 //   - the permissions object (computeFinanceAgreementPermissions, for the resumed Agreement's counterparty type or the deep link's);
 //   - for a RESUMED draft / revision: the Agreement detail, its reconciliation, KYC status, the latest extraction (+ its artifact), the
 //     counterparty's master-data preview and, for a revision, the prior confirmed terms to diff against;
-//   - for a deep link (?counterpartyType=&ref=): the preselected counterparty's preview.
+//   - for a deep link (?counterpartyType=&ref=): the preselected counterparty's preview;
+//   - for a create-new deep link (?counterpartyType=&mode=new): the "Create new Partner / Vendor from Agreement" choice already made (Step 14B.1).
+//   The permissions object also carries the OWNING modules' create rights (canCreatePartner / canCreateVendor / canManagePartnerAccounts), computed
+//   here on the server, so the wizard's final step is rendered enabled or disabled-with-a-reason from the first frame - never revealed then hidden.
 // A missing / forged / out-of-scope reference is ONE neutral not_found; every other refusal is ONE neutral denied. Never distinguished.
 import type { ActorContext } from "@/server/authz/types";
 import {
@@ -40,7 +43,11 @@ async function loadNew(actor: ActorContext | null, params: IntakeUrlParams): Pro
   if (!permissions.canView || !permissions.canManage) return { kind: "denied" };
 
   const initial: NonNullable<IntakeProviderProps["initial"]> = {};
-  if (params.counterpartyType && params.ref) {
+  if (params.mode === "new" && params.counterpartyType) {
+    // Create-new deep link: no counterparty exists yet, so nothing is looked up (a ref in the URL is ignored). A person who may review but not
+    // create still opens the wizard - the final step tells them why it is disabled.
+    initial.onboarding = { mode: "new", counterpartyType: params.counterpartyType };
+  } else if (params.counterpartyType && params.ref) {
     // A deep link only PRESELECTS: a counterparty that is not visible to this actor simply starts the form empty (nothing is echoed).
     const preview = await getCounterpartyPreview(actor, { type: params.counterpartyType, ref: params.ref });
     if (preview.ok) initial.preview = preview.data;

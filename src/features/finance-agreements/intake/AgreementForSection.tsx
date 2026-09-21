@@ -4,6 +4,9 @@
 //   Before a draft: the four choices -> a searchable, authorized Partner / Vendor -> (Partner) the Partner Accounts and the explicit
 //   Account-specific vs Partner-level choice -> `Start draft`. Nothing is inferred: an account is never chosen by display name, several
 //   accounts on one platform need a deliberate pick, and a Vendor never implies a represented Partner.
+//   Step 14B.1: after the Partner / Vendor card an explicit MODE choice - `Select existing Partner` (the flow above, the DEFAULT, unchanged) or
+//   `Create new Partner from Agreement` (the onboarding wizard replaces the counterparty search: the record is created from the signed
+//   Agreement, after a duplicate check). The Partner platform choice still means ONE Partner with an account per platform.
 //   After a draft: a read-only summary (the counterparty cannot change) and a `Start a new draft` link.
 import Link from "next/link";
 import { useCallback, useEffect, useId, useRef, useState, type KeyboardEvent, type MouseEvent } from "react";
@@ -32,6 +35,7 @@ import {
 } from "./agreement-for-ui";
 import { INTAKE_BUSY, useIntake } from "./intake-context";
 import { intakeHref } from "./intake-logic";
+import { onboardingModeOptions, type OnboardingModeChoice } from "./onboarding/onboarding-mode";
 import { SectionCard } from "./SectionCard";
 
 // `.attention` is the accepted row-style button; the inline box turns it into a compact selectable card (its first/last-child paddings are overridden).
@@ -52,7 +56,9 @@ export function AgreementForSection() {
 }
 
 // --- Before a draft ----------------------------------------------------------------------------------------------------------------------------------------
-function initialState(preview: ReturnType<typeof useIntake>["preview"]): AgreementForState {
+function initialState(preview: ReturnType<typeof useIntake>["preview"], seededChoice: AgreementForChoice | null): AgreementForState {
+  // A create-new deep link (?counterpartyType=VENDOR&mode=new) seeds the card (a Partner still needs its platform choice).
+  if (!preview && seededChoice) return { ...EMPTY_AGREEMENT_FOR, choice: seededChoice };
   // A deep link from a Partner / Vendor page preselects the counterparty. A Vendor implies the Vendor card; a Partner still needs the platform choice.
   if (!preview) return EMPTY_AGREEMENT_FOR;
   return { ...EMPTY_AGREEMENT_FOR, choice: preview.type === "VENDOR" ? "VENDOR" : null, counterparty: { id: preview.ref, label: preview.displayName }, preselectedType: preview.type };
@@ -60,15 +66,22 @@ function initialState(preview: ReturnType<typeof useIntake>["preview"]): Agreeme
 
 function ChoiceForm() {
   const intake = useIntake();
-  const { preview, setPreview, setPreviewLoad, startDraft, isBusy } = intake;
-  const [state, setState] = useState<AgreementForState>(() => initialState(preview));
+  const { preview, setPreview, setPreviewLoad, startDraft, isBusy, onboarding, permissions } = intake;
+  const [state, setState] = useState<AgreementForState>(() => initialState(preview, onboarding.selection.choice));
   const [showIssues, setShowIssues] = useState(false);
   const scopeGroupId = useId();
   const comboboxId = useId();
+  const modeGroupId = useId();
   const busy = isBusy(INTAKE_BUSY.startDraft);
   const anyBusy = isBusy();
+  // Once a create request was sent for a new counterparty the choices are fixed (the request must not drift).
+  const choicesLocked = busy || onboarding.locked;
 
   const counterpartyType = choiceCounterpartyType(state.choice);
+  const creatingNew = onboarding.selection.mode === "new";
+  const isPartner = counterpartyType === "PARTNER";
+  const noun = counterpartyType === "VENDOR" ? "Vendor" : "Partner";
+  const platformCount = state.choice ? resolveAgreementFor(state.choice).platforms.length : 0;
   const accounts = preview && state.counterparty && preview.ref === state.counterparty.id ? preview.partnerAccounts : null;
   const evaluation = evaluateAgreementFor(state, accounts);
   const platforms = state.choice ? resolveAgreementFor(state.choice).platforms : [];
@@ -123,8 +136,6 @@ function ChoiceForm() {
     await startDraft({ counterparty: evaluation.counterparty, recordPlatformsField: evaluation.recordPlatformsField, displayName: state.counterparty?.label ?? null });
   };
 
-  const isPartner = counterpartyType === "PARTNER";
-  const noun = counterpartyType === "VENDOR" ? "Vendor" : "Partner";
   const issues = evaluation.ok ? [] : evaluation.issues;
 
   return (
@@ -137,13 +148,36 @@ function ChoiceForm() {
           <CardRadioGroup
             labelledBy={`${scopeGroupId}-choice`}
             value={state.choice}
-            disabled={busy}
+            disabled={choicesLocked}
             items={AGREEMENT_FOR_OPTIONS.map((option) => ({ value: option.value, title: option.label, description: option.description }))}
-            onChange={(value) => setState((current) => selectChoice(current, value as AgreementForChoice))}
+            onChange={(value) => {
+              setState((current) => selectChoice(current, value as AgreementForChoice));
+              onboarding.setSelection({ choice: value as AgreementForChoice });
+            }}
           />
         </div>
 
-        {state.choice && (
+        {state.choice && counterpartyType && (
+          <div className="field full">
+            <span id={`${modeGroupId}-mode`} style={{ fontSize: 11, fontWeight: 550 }}>
+              Existing or new {noun}
+            </span>
+            <CardRadioGroup
+              labelledBy={`${modeGroupId}-mode`}
+              value={onboarding.selection.mode}
+              disabled={choicesLocked}
+              items={onboardingModeOptions(counterpartyType, permissions).map((option) => ({ value: option.value, title: option.title, description: option.description }))}
+              onChange={(value) => onboarding.setSelection({ mode: value as OnboardingModeChoice })}
+            />
+            {creatingNew && (
+              <small className="muted" role="status">
+                {isPartner ? `One ${noun} is created${platformCount > 1 ? " with a separate account on each platform" : ""}, from the signed Agreement, after a check for an existing ${noun}.` : `The ${noun} is created from the signed Agreement, after a check for an existing ${noun}. No represented Partner is created or linked.`}
+              </small>
+            )}
+          </div>
+        )}
+
+        {state.choice && !creatingNew && (
           <div className="field full">
             <label htmlFor={comboboxId}>
               {noun} <span style={{ color: "var(--orange)" }}>*</span>
@@ -164,7 +198,7 @@ function ChoiceForm() {
           </div>
         )}
 
-        {isPartner && state.counterparty && (
+        {isPartner && state.counterparty && !creatingNew && (
           <PartnerScope
             state={state}
             groups={groups}
@@ -175,7 +209,7 @@ function ChoiceForm() {
           />
         )}
 
-        {counterpartyType === "VENDOR" && state.counterparty && (
+        {counterpartyType === "VENDOR" && state.counterparty && !creatingNew && (
           <div className="field full">
             <p className="foundationnote" style={{ margin: 0 }}>
               This Agreement is with the Vendor itself. A Partner the Vendor may represent is not inferred and does not become a party to the Agreement.
@@ -184,7 +218,7 @@ function ChoiceForm() {
         )}
       </div>
 
-      {showIssues && issues.length > 0 && (
+      {showIssues && !creatingNew && issues.length > 0 && (
         <div className="banner" role="alert" style={{ margin: "14px 0 0" }}>
           <span>
             <b>Before you start the draft</b>
@@ -197,16 +231,18 @@ function ChoiceForm() {
         </div>
       )}
 
-      <div className="actions" style={{ marginTop: 16, alignItems: "center" }}>
-        <button type="button" className="btn primary" onClick={onStart} disabled={busy || anyBusy || !evaluation.ok} aria-disabled={busy || anyBusy || !evaluation.ok} style={busy || anyBusy || !evaluation.ok ? DISABLED_BUTTON_STYLE : undefined} data-testid="start-draft">
-          {busy ? "Starting draft…" : "Start draft"}
-        </button>
-        {!evaluation.ok && issues[0] && (
-          <small className="muted" role="status">
-            {issues[0].message}
-          </small>
-        )}
-      </div>
+      {!creatingNew && (
+        <div className="actions" style={{ marginTop: 16, alignItems: "center" }}>
+          <button type="button" className="btn primary" onClick={onStart} disabled={busy || anyBusy || !evaluation.ok} aria-disabled={busy || anyBusy || !evaluation.ok} style={busy || anyBusy || !evaluation.ok ? DISABLED_BUTTON_STYLE : undefined} data-testid="start-draft">
+            {busy ? "Starting draft…" : "Start draft"}
+          </button>
+          {!evaluation.ok && issues[0] && (
+            <small className="muted" role="status">
+              {issues[0].message}
+            </small>
+          )}
+        </div>
+      )}
     </SectionCard>
   );
 }

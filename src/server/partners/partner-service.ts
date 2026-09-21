@@ -3,6 +3,7 @@ import { z } from "zod";
 import { targetAudienceArraySchema } from "@/server/discovery/types";
 import { getUserDocByRef } from "@/server/authz/firestore";
 import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
+import { createdViaSchema } from "@/server/shared/onboarding-provenance";
 import type { ActorContext } from "@/server/authz/types";
 import { toPartnerDto, toPartnerDtos, type PartnerDto } from "./client-dto";
 import { getPartnerDocByRef, listPartnerDocs, partnersCollection, runPartnerMutation, type PartnerListCursor } from "./firestore";
@@ -50,6 +51,8 @@ const createPartnerInputSchema = z.object({
   // originate from a specific Lead even though it is being created
   // directly rather than through convertLead.
   originLeadRef: z.string().min(1).optional(),
+  // Step 14B.1: optional provenance marker recorded on the `created` event only (never a second identity source, never a grant).
+  createdVia: createdViaSchema.optional(),
 }).strict();
 export type CreatePartnerInput = z.input<typeof createPartnerInputSchema>;
 
@@ -101,7 +104,7 @@ export async function createPartner(actor: ActorContext | null, rawInput: unknow
   });
 
   await partnersCollection().doc(uid).set(doc);
-  await writePartnerEvent({ partnerUid: uid, kind: "created", actorUserRef: actor!.userRef, metadata: { displayName: doc.displayName, direct: true }, requestId });
+  await writePartnerEvent({ partnerUid: uid, kind: "created", actorUserRef: actor!.userRef, metadata: { displayName: doc.displayName, direct: true, ...(input.createdVia ? { createdVia: input.createdVia } : {}) }, requestId });
 
   return { ok: true, data: await toPartnerDto(doc) };
 }

@@ -5,6 +5,10 @@ import {
   FINANCE_NETWORK_MESSAGE,
   activateAgreementVersion,
   addKycLinkEvidence,
+  checkOnboardingDuplicates,
+  createCounterpartyFromOnboarding,
+  getOnboardingStatus,
+  previewOnboardingFromContract,
   applyExtractedKyc,
   attachExtractionProposals,
   confirmAgreementVersion,
@@ -15,6 +19,7 @@ import {
   errorKindForStatus,
   extractContract,
   getAgreementDetail,
+  getAgreementDocumentStatus,
   getAgreementKycStatus,
   getAgreementReconciliation,
   getCounterpartyPreview,
@@ -24,9 +29,11 @@ import {
   listAgreementEvents,
   listAgreementVersions,
   listAgreementsForCounterparty,
+  listCounterpartyAgreementDocuments,
   loadAgreementsWorkspace,
   resumeAgreement,
   searchCounterparties,
+  storeAgreementDocument,
   suspendAgreement,
   updateCounterpartyContact,
   uploadContractArtifact,
@@ -61,6 +68,11 @@ describe("request wiring - every /api/finance route, method, query and body", ()
     { name: "listAgreementEvents", call: () => listAgreementEvents(REF, { limit: 25 }), method: "GET", url: `/api/finance/agreements/${REF}/events?limit=25` },
     { name: "decideField", call: () => decideField(REF, { version: 1, expectedDocVersion: 3, fieldKey: "paymentCycle", decision: "CORRECTED", value: "MONTHLY" }), method: "POST", url: `/api/finance/agreements/${REF}/fields`, body: { version: 1, expectedDocVersion: 3, fieldKey: "paymentCycle", decision: "CORRECTED", value: "MONTHLY" } },
     { name: "confirmAgreementVersion", call: () => confirmAgreementVersion(REF, { version: 1, expectedDocVersion: 4 }), method: "POST", url: `/api/finance/agreements/${REF}/confirm`, body: { version: 1, expectedDocVersion: 4 } },
+    { name: "storeAgreementDocument", call: () => storeAgreementDocument(REF, { version: 1 }), method: "POST", url: `/api/finance/agreements/${REF}/document`, body: { version: 1 } },
+    { name: "storeAgreementDocument (expectedDocVersion)", call: () => storeAgreementDocument(REF, { version: 2, expectedDocVersion: 5 }), method: "POST", url: `/api/finance/agreements/${REF}/document`, body: { version: 2, expectedDocVersion: 5 } },
+    { name: "getAgreementDocumentStatus (default version)", call: () => getAgreementDocumentStatus(REF), method: "GET", url: `/api/finance/agreements/${REF}/document` },
+    { name: "getAgreementDocumentStatus (version)", call: () => getAgreementDocumentStatus(REF, { version: 2 }), method: "GET", url: `/api/finance/agreements/${REF}/document?version=2` },
+    { name: "listCounterpartyAgreementDocuments", call: () => listCounterpartyAgreementDocuments({ counterpartyType: "VENDOR", ref: "v_1" }), method: "GET", url: "/api/finance/counterparties/documents?counterpartyType=VENDOR&ref=v_1" },
     { name: "activateAgreementVersion", call: () => activateAgreementVersion(REF, { version: 1, expectedDocVersion: 2 }), method: "POST", url: `/api/finance/agreements/${REF}/activate`, body: { version: 1, expectedDocVersion: 2 } },
     { name: "createAgreementRevision", call: () => createAgreementRevision(REF, { expectedDocVersion: 5 }), method: "POST", url: `/api/finance/agreements/${REF}/revise`, body: { expectedDocVersion: 5 } },
     { name: "suspendAgreement", call: () => suspendAgreement(REF, { expectedDocVersion: 5, reason: "Paused" }), method: "POST", url: `/api/finance/agreements/${REF}/suspend`, body: { expectedDocVersion: 5, reason: "Paused" } },
@@ -136,6 +148,48 @@ describe("contract upload (multipart)", () => {
     expect(result).toMatchObject({ ok: false, status: 413, kind: "invalid", message: "The upload is larger than the 10 MB contract limit." });
     mockFetch(() => json({ error: "Upload the contract as multipart/form-data." }, 415));
     expect(await uploadContractArtifact({ file: new File(["x"], "a.pdf"), counterpartyType: "VENDOR", counterpartyRef: "v_1" })).toMatchObject({ kind: "invalid", status: 415 });
+  });
+});
+
+describe("Agreement-led onboarding (Step 14B.1)", () => {
+  const request = {
+    clientRequestId: "onb-req-12345678",
+    type: "PARTNER" as const,
+    reviewedProfile: { displayName: "Asha Studio", regionIds: ["Kerala"] },
+    accounts: [{ platform: "Instagram", handle: "asha.studio" }],
+    duplicateDecision: { kind: "CREATE_NEW" as const, acknowledgedDuplicates: false },
+  };
+
+  it("previews with multipart {file, counterpartyType} and lets the browser set the content type", async () => {
+    const calls = mockFetch(() => json({ counterpartyType: "PARTNER" }));
+    const file = new File(["%PDF-1.4 test"], "Signed Agreement.pdf", { type: "application/pdf" });
+    expect(await previewOnboardingFromContract({ file, counterpartyType: "PARTNER" })).toMatchObject({ ok: true, status: 200 });
+    expect(calls[0]!.url).toBe("/api/finance/onboarding/preview");
+    expect(calls[0]!.init.method).toBe("POST");
+    const form = calls[0]!.init.body as FormData;
+    expect(form.get("counterpartyType")).toBe("PARTNER");
+    expect((form.get("file") as File).name).toBe("Signed Agreement.pdf");
+    expect(Object.keys(calls[0]!.init.headers as Record<string, string>).map((k) => k.toLowerCase())).not.toContain("content-type");
+  });
+
+  it("sends the duplicate check, the create command and the status read to their routes", async () => {
+    const calls = mockFetch(() => json({ outcome: "COMPLETED" }));
+    await checkOnboardingDuplicates({ type: "VENDOR", displayName: "Acme Media", email: "a@b.co" });
+    await createCounterpartyFromOnboarding(request);
+    await getOnboardingStatus({ clientRequestId: "onb-req-12345678" });
+    await getOnboardingStatus({ onboardingRef: `onb_${"a".repeat(64)}` });
+    expect(calls.map((call) => `${call.init.method} ${call.url}`)).toEqual([
+      "POST /api/finance/onboarding/duplicates",
+      "POST /api/finance/onboarding",
+      "GET /api/finance/onboarding?clientRequestId=onb-req-12345678",
+      `GET /api/finance/onboarding?onboardingRef=onb_${"a".repeat(64)}`,
+    ]);
+    expect(JSON.parse(calls[1]!.init.body as string)).toEqual(request);
+  });
+
+  it("a blocked create is a not_ready failure that carries the typed blocker code", async () => {
+    mockFetch(() => json({ error: "You can review this Agreement, but you do not have permission to create a new Partner.", blockers: [{ code: "counterparty_create_not_permitted", message: "no" }] }, 409));
+    expect(await createCounterpartyFromOnboarding(request)).toMatchObject({ ok: false, kind: "not_ready", blockers: [{ code: "counterparty_create_not_permitted" }] });
   });
 });
 

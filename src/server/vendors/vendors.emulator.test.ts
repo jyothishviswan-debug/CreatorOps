@@ -21,7 +21,7 @@ import { seedAccessControlData, TEST_IDENTITIES } from "@/server/authz/seed-acce
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminAuth } from "@/server/firebase/admin";
 import { checkForVendorDuplicates } from "./duplicate-check";
-import { getVendorDocByRef, getVendorPartnerLinkDocByRef } from "./firestore";
+import { getVendorDocByRef, getVendorPartnerLinkDocByRef, vendorEventsCollection } from "./firestore";
 import { archiveVendor, checkVendorDependencies, restoreVendor } from "./vendor-lifecycle-service";
 import {
   createVendorPartnerLink,
@@ -207,6 +207,29 @@ describe("Vendor model", () => {
     expect(history.data.events.every((e) => e.actorDisplayName)).toBe(true);
     const json = JSON.stringify(history.data.events);
     expect(json).not.toMatch(/pan|ifsc|accountNumber|gst.*number/i);
+  });
+});
+
+describe("Vendor provenance (Step 14B.1)", () => {
+  it("createdVia is optional, recorded on the `created` event only, and rejected for any other value", async () => {
+    const head = await actorFor("partnership_head");
+    const marked = await createVendor(head, { displayName: uniqueName("Onboarding Vendor"), vendorType: "AGENCY", regionIds: ["Kerala"], createdVia: "FINANCE_AGREEMENT_ONBOARDING" }, "req-vprov-create");
+    expect(marked.ok).toBe(true);
+    if (!marked.ok) throw new Error("unreachable");
+    const doc = await getVendorDocByRef(marked.data.vendorRef);
+    expect(JSON.stringify(doc)).not.toContain("createdVia");
+    const created = (await vendorEventsCollection(doc!.uid).get()).docs.map((event) => event.data()).find((event) => event.kind === "created");
+    expect(created?.metadata).toMatchObject({ vendorType: "AGENCY", createdVia: "FINANCE_AGREEMENT_ONBOARDING" });
+
+    const plain = await createVendor(head, { displayName: uniqueName("Plain Vendor"), vendorType: "AGENCY", regionIds: ["Kerala"] }, "req-vprov-plain");
+    if (!plain.ok) throw new Error("unreachable");
+    const plainDoc = await getVendorDocByRef(plain.data.vendorRef);
+    const plainCreated = (await vendorEventsCollection(plainDoc!.uid).get()).docs.map((event) => event.data()).find((event) => event.kind === "created");
+    expect(plainCreated?.metadata).toEqual({ displayName: plainDoc!.displayName, vendorType: "AGENCY" });
+
+    for (const bad of ["SOMETHING_ELSE", "", null, true]) {
+      expect(await createVendor(head, { displayName: uniqueName("Bad Vendor"), vendorType: "AGENCY", regionIds: ["Kerala"], createdVia: bad }, "req-vprov-bad")).toMatchObject({ ok: false, code: "invalid_input" });
+    }
   });
 });
 

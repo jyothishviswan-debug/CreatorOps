@@ -97,7 +97,7 @@ describe("the scan itself is sound", () => {
     expect(names).toContain("src/server/finance-agreements/extraction/pdf-text.ts");
     expect(names).toContain("src/server/finance-agreements/contract-artifacts/store.ts");
     expect(names).toContain("src/server/finance-agreements/policy-adapter.ts");
-    expect(names.filter((name) => name.startsWith("src/app/api/finance/")).length).toBeGreaterThanOrEqual(23);
+    expect(names.filter((name) => name.startsWith("src/app/api/finance/")).length).toBeGreaterThanOrEqual(25);
     expect(codeOnly("const a = 1; // campaign\n// assignment\n/* creator */ const b = 2;")).not.toMatch(/campaign|assignment|creator/);
     expect(importsOf('import { a } from "./x";\nexport { b } from "../y";')).toEqual(["./x", "../y"]);
   });
@@ -130,12 +130,19 @@ describe("routes: thin, and exactly the documented surface", () => {
     "counterparties/search/route.ts": ["GET"],
     "counterparties/preview/route.ts": ["GET"],
     "permissions/route.ts": ["GET"],
+    // Step 14B.1: the original signed Agreement document (store / retry + status) and its Partner / Vendor contextual projection.
+    "agreements/[agreementRef]/document/route.ts": ["GET", "POST"],
+    "counterparties/documents/route.ts": ["GET"],
+    // Step 14B.1: Agreement-led counterparty onboarding (ephemeral preview, live-scope duplicate check, create / resume + status).
+    "onboarding/route.ts": ["GET", "POST"],
+    "onboarding/duplicates/route.ts": ["POST"],
+    "onboarding/preview/route.ts": ["POST"],
   };
 
-  it("the route tree is exactly the 23 documented route files (no payables / invoices / payments / delete / campaign route exists)", () => {
+  it("the route tree is exactly the 28 documented route files (no payables / invoices / payments / delete / campaign route exists)", () => {
     const actual = routeFiles.map((file) => path.relative(routesDir, file).split(path.sep).join("/")).sort();
     expect(actual).toEqual(Object.keys(EXPECTED).sort());
-    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "permissions"]);
+    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "onboarding", "permissions"]);
   });
 
   it("every route exports only the documented HTTP methods - never PUT / PATCH / DELETE", () => {
@@ -288,7 +295,8 @@ describe("no Payable / Invoice / Payment creation", () => {
 
 // =====================================================================================================================
 describe("extraction and contract upload can never write a Partner, Vendor or KYC record", () => {
-  const WRITE_SERVICE_IDENTIFIERS = /\b(editPartner|editVendor|savePartnerRestrictedIdentity|saveVendorRestrictedIdentity|createPartner|createVendor|addPartnerRestrictedIdentity\w*|addVendorRestrictedIdentity\w*)\b/;
+  // (Step 14B.1 adds createPartnerAccount: the onboarding orchestration is the only other file that may name the owning WRITE services.)
+  const WRITE_SERVICE_IDENTIFIERS = /\b(editPartner|editVendor|savePartnerRestrictedIdentity|saveVendorRestrictedIdentity|createPartner|createVendor|createPartnerAccount|addPartnerRestrictedIdentity\w*|addVendorRestrictedIdentity\w*)\b/;
   // The read-side helpers the gate / status code may import from the owning modules (none of them writes).
   const READ_ONLY_OWNER_IMPORTS = /^@\/server\/(partners|vendors)\/(firestore|types|partners-gate|vendors-gate)$|^@\/server\/shared\/restricted-financial-identity$/;
 
@@ -296,6 +304,7 @@ describe("extraction and contract upload can never write a Partner, Vendor or KY
     const graph = importGraph(["extraction-service.ts", "contract-service.ts", "extraction-run-builder.ts"]);
     expect(graph.files).toContain("finance-agreements-gate.ts"); // the graph is real (it follows the gate)
     expect(graph.files).not.toContain("master-data-commands.ts");
+    expect(graph.files).not.toContain("onboarding-service.ts");
     for (const file of graph.files) expect(code.get(`src/server/finance-agreements/${file}`), file).not.toMatch(WRITE_SERVICE_IDENTIFIERS);
     for (const spec of graph.external) {
       if (!/^@\/server\/(partners|vendors)\//.test(spec) && !/restricted-identity|restricted-financial-identity/.test(spec)) continue;
@@ -308,17 +317,75 @@ describe("extraction and contract upload can never write a Partner, Vendor or KY
   it("the read-only reconciliation / KYC-status / status snapshot code likewise imports no write service", () => {
     const graph = importGraph(["reconciliation-service.ts", "kyc-status-service.ts", "identity-status.ts", "agreement-service.ts", "agreement-lifecycle-service.ts", "policy-adapter.ts"]);
     expect(graph.files).not.toContain("master-data-commands.ts");
+    expect(graph.files).not.toContain("onboarding-service.ts");
     for (const file of graph.files) expect(code.get(`src/server/finance-agreements/${file}`), file).not.toMatch(WRITE_SERVICE_IDENTIFIERS);
     expect(graph.external.filter((spec) => /partner-service|vendor-service|restricted-identity-service/.test(spec))).toEqual([]);
   });
 
-  it("the master-data commands are the ONLY module file that imports the owning modules' edit / restricted-identity save services", () => {
+  // DELIBERATE 14B.1 CHANGE: exactly TWO module files may import / name the owning WRITE services - the master-data commands (edit +
+  // restricted identity) and the Agreement-led onboarding orchestration (create Partner / Vendor / Partner Account). Nothing else, and the
+  // extraction / upload / read-only graphs below still must not reach either of them.
+  const WRITE_SERVICE_FILES = ["master-data-commands.ts", "onboarding-service.ts"];
+
+  it("the master-data commands and the onboarding orchestration are the ONLY module files that import the owning modules' write services", () => {
     const importers = productionFiles
-      .filter((file) => importsOf(read(file)).some((spec) => /^@\/server\/(partners|vendors)\/(partner-service|vendor-service|restricted-identity-service)$/.test(spec)))
+      .filter((file) => importsOf(read(file)).some((spec) => /^@\/server\/(partners|vendors)\/(partner-service|vendor-service|partner-account-service|restricted-identity-service)$/.test(spec)))
       .map((file) => path.relative(moduleDir, file));
-    expect(importers).toEqual(["master-data-commands.ts"]);
+    expect(importers.sort()).toEqual(WRITE_SERVICE_FILES);
     const namers = productionFiles.filter((file) => WRITE_SERVICE_IDENTIFIERS.test(code.get(rel(file))!)).map((file) => path.relative(moduleDir, file));
-    expect(namers).toEqual(["master-data-commands.ts"]);
+    expect(namers.sort()).toEqual(WRITE_SERVICE_FILES);
+    // Partner Account creation is reachable from the onboarding orchestration only
+    const accountWriters = productionFiles.filter((file) => importsOf(read(file)).some((spec) => /partner-account-service$/.test(spec))).map((file) => path.relative(moduleDir, file));
+    expect(accountWriters).toEqual(["onboarding-service.ts"]);
+  });
+
+  it("the onboarding orchestration reaches every owning record ONLY through the owning services: it never writes a Partner / Vendor / Account / identity document or a Payable / Invoice / Payment", () => {
+    const service = code.get("src/server/finance-agreements/onboarding-service.ts")!;
+    expect(service).toMatch(/createPartner\(/);
+    expect(service).toMatch(/createVendor\(/);
+    expect(service).toMatch(/createPartnerAccount\(/);
+    expect(service).toMatch(/createAgreementDraftWithProvenance\(/);
+    expect(service).not.toMatch(/partnersCollection|vendorsCollection|partnerAccountsCollection|partnerAccountIdentityClaimsCollection|restrictedFinancialIdentitiesCollection|vendorPartnerLinksCollection|tx\.(set|update|create)\(|runTransaction|\.set\(|\.update\(|\.create\(/);
+    // a Vendor Agreement never creates a represented-Partner link
+    expect(service).not.toMatch(/VendorPartnerLink|createVendorPartnerLink|vendor-partner-link/);
+    // the only ledger writer is the ledger module (financeAgreementClaims, onb_ ids); the service imports no Firestore collection helper of its own
+    for (const spec of importsOf(read(path.join(moduleDir, "onboarding-service.ts")))) expect(spec, spec).not.toMatch(/^\.\/firestore$|firebase\/admin/);
+    const ledgerWriters = productionFiles.filter((file) => /ONBOARDING_LEDGER_ID_PREFIX/.test(code.get(rel(file))!)).map((file) => path.relative(moduleDir, file));
+    expect(ledgerWriters.sort()).toEqual(["onboarding-ledger.ts"]);
+  });
+
+  it("the onboarding orchestration is reached only by its own route; the preview and duplicate services are read-only and reach no write service", () => {
+    const users = routeFiles.filter((file) => /createCounterpartyFromOnboarding|getOnboardingStatus/.test(code.get(rel(file))!)).map((file) => path.relative(routesDir, file).split(path.sep).join("/"));
+    expect(users).toEqual(["onboarding/route.ts"]);
+    for (const readOnly of ["onboarding-preview-service.ts", "onboarding-duplicates.ts"]) {
+      const graph = importGraph([readOnly]);
+      expect(graph.files, readOnly).not.toContain("onboarding-service.ts");
+      expect(graph.files, readOnly).not.toContain("master-data-commands.ts");
+      for (const file of graph.files) expect(code.get(`src/server/finance-agreements/${file}`), file).not.toMatch(WRITE_SERVICE_IDENTIFIERS);
+      expect(graph.external.filter((spec) => /partner-service|vendor-service|partner-account-service|restricted-identity-service/.test(spec)), readOnly).toEqual([]);
+    }
+    // the preview persists NOTHING: no store, no transaction, no write call of any kind in its own code
+    const preview = code.get("src/server/finance-agreements/onboarding-preview-service.ts")!;
+    expect(preview).not.toMatch(/getContractArtifactStore|uploadContractArtifact|runTransaction|txCreate|\.doc\(|\.(create|update)\(|Collection\(\)/);
+    const duplicates = code.get("src/server/finance-agreements/onboarding-duplicates.ts")!;
+    expect(duplicates).not.toMatch(/runTransaction|txCreate|\.doc\(|\.(create|update)\(|Collection\(\)/);
+  });
+
+  it("the onboarding ledger is status-only: no contact detail, identity value, contract text or account locator in its schema", async () => {
+    const { onboardingLedgerDocSchema } = await import("./onboarding-ledger");
+    const names = new Set<string>();
+    const collect = (node: unknown) => {
+      if (Array.isArray(node)) node.forEach(collect);
+      else if (node && typeof node === "object") {
+        for (const [key, child] of Object.entries(node)) {
+          if (key === "properties" && child && typeof child === "object") Object.keys(child).forEach((property) => names.add(property));
+          collect(child);
+        }
+      }
+    };
+    collect(z.toJSONSchema(onboardingLedgerDocSchema, { io: "input", unrepresentable: "any" }));
+    expect(names.size).toBeGreaterThan(20);
+    expect([...names].filter((name) => /email|phone|pan|aadhaar|gst|bank|ifsc|handle|profileUrl|displayName|legalName|snippet|locator|url/i.test(name) && name !== "displayName")).toEqual([]);
   });
 
   it("the master-data commands are reached only by their two routes, and both go through the owning module", () => {
@@ -400,5 +467,102 @@ describe("the Partner Reviews seam: the adapter exists, is unregistered, and Par
 
   it("the adapter's local list of supported qualifying units equals Partner Reviews' own (no drift)", () => {
     expect([...PARTNER_REVIEW_QUALIFYING_UNITS]).toEqual([...QUALIFYING_UNITS]);
+  });
+});
+
+// =====================================================================================================================
+// Step 14B.1: the original signed Agreement document (Drive). These guards keep a test - or any stray import - from ever reaching real
+// Google Drive, keep folder ids and links out of source / events / DTO shapes, and keep the storage seam the only way in.
+describe("Agreement document storage (Drive) boundaries", () => {
+  const srcRoot = path.join(repoRoot, "src");
+  const walkAll = (dir: string, into: string[] = []): string[] => {
+    for (const name of readdirSync(dir).sort()) {
+      const full = path.join(dir, name);
+      if (statSync(full).isDirectory()) walkAll(full, into);
+      else if (full.endsWith(".ts") || full.endsWith(".tsx") || full.endsWith(".mts")) into.push(full);
+    }
+    return into;
+  };
+  const allSource = walkAll(srcRoot);
+  const isTest = (file: string) => /\.test\.tsx?$/.test(file);
+
+  it("the real Drive adapter is reachable only through the storage resolver, and 'googleapis' is loaded only by it (lazily) within Finance", () => {
+    const importers = allSource.filter((file) => !isTest(file) && importsOf(read(file)).some((spec) => /(^|\/)document-storage\/google-drive$|^\.\/google-drive$/.test(spec))).map((file) => path.relative(moduleDir, file));
+    expect(importers).toEqual(["document-storage/index.ts"]);
+    const googleapisUsers = productionFiles.filter((file) => importsOf(read(file)).includes("googleapis")).map((file) => path.relative(moduleDir, file));
+    expect(googleapisUsers).toEqual(["document-storage/google-drive.ts"]);
+    // dynamic import only (a top-level import would load the Google client for every route that imports the barrel)
+    expect(read(path.join(moduleDir, "document-storage/google-drive.ts"))).not.toMatch(/^import[^;]*from\s+"googleapis"/m);
+  });
+
+  it("no TEST file can reach real Drive: only the adapter's own mocked-googleapis unit test imports the real adapter or 'googleapis'", () => {
+    const offenders = allSource
+      .filter((file) => isTest(file) && !file.endsWith(`document-storage${path.sep}document-storage.test.ts`))
+      .filter((file) => {
+        const source = read(file);
+        return /createGoogleDriveAgreementStorage|document-storage\/google-drive|from\s+"googleapis"|import\(\s*"googleapis"\s*\)|vi\.mock\(\s*"googleapis"/.test(source);
+      })
+      .map(rel);
+    // (this scan file itself names the identifiers above inside string / regex literals)
+    expect(offenders.filter((name) => !name.endsWith("finance-agreements-static.test.ts"))).toEqual([]);
+    const own = read(path.join(moduleDir, "document-storage/document-storage.test.ts"));
+    expect(own).toMatch(/vi\.mock\(\s*"googleapis"/);
+  });
+
+  it("the real adapter checks the automated-test-run guard FIRST on every call, and the guard covers both NODE_ENV=test and VITEST", () => {
+    const adapter = code.get("src/server/finance-agreements/document-storage/google-drive.ts")!;
+    const storeBody = adapter.slice(adapter.indexOf("async store("));
+    expect(storeBody.indexOf("isAutomatedTestRun()")).toBeGreaterThan(-1);
+    expect(storeBody.indexOf("isAutomatedTestRun()")).toBeLessThan(storeBody.indexOf("getClient()"));
+    expect(storeBody.indexOf("isAutomatedTestRun()")).toBeLessThan(storeBody.indexOf("config."));
+    const guard = code.get("src/server/finance-agreements/document-storage/guard.ts")!;
+    expect(guard).toMatch(/NODE_ENV === "test"/);
+    expect(guard).toMatch(/process\.env\.VITEST/);
+  });
+
+  it("no Drive folder id, link or credential is hard-coded in source; folder ids come only from configuration", () => {
+    for (const file of allSource.filter((f) => !isTest(f))) {
+      const source = read(file);
+      expect(source, rel(file)).not.toMatch(/1K8lBfs_n4N2TDwmgRjfFEHeciuH41e56|17ml7p5D5n2L5P0jyEv1cqjxBK_PVkFrG/);
+    }
+    const adapter = code.get("src/server/finance-agreements/document-storage/google-drive.ts")!;
+    expect(adapter).not.toMatch(/drive\.google\.com\/(drive|file)/);
+    const env = read(path.join(repoRoot, "src/lib/env/server.ts"));
+    expect(env).toMatch(/FINANCE_AGREEMENT_DRIVE_PARTNERS_FOLDER_ID/);
+    expect(env).toMatch(/FINANCE_AGREEMENT_DRIVE_VENDORS_FOLDER_ID/);
+    // the tracked example documents the variables; the real credential path stays blank there
+    const example = read(path.join(repoRoot, ".env.example"));
+    expect(example).toMatch(/^FINANCE_AGREEMENT_DRIVE_PARTNERS_FOLDER_ID=/m);
+    expect(example).toMatch(/^FINANCE_AGREEMENT_DRIVE_VENDORS_FOLDER_ID=/m);
+    expect(example).toMatch(/^GOOGLE_APPLICATION_CREDENTIALS=\s*$/m);
+    expect(example).toMatch(/^# FINANCE_AGREEMENT_DRIVE_MODE=fake/m);
+  });
+
+  it("the fake selection is honoured only outside production, and the fake link host is the reserved .invalid one", () => {
+    const resolver = code.get("src/server/finance-agreements/document-storage/index.ts")!;
+    expect(resolver).toMatch(/mode === "fake" && inputs\.nodeEnv !== "production"/);
+    expect(read(path.join(moduleDir, "document-storage/in-memory.ts"))).toMatch(/https:\/\/drive\.invalid\/fake\//);
+  });
+
+  it("the Drive link / file id never appear on a DTO shape or in an audit event key: DTOs expose `link` only, events carry a file NAME and a code", async () => {
+    const dto = code.get("src/server/finance-agreements/client-dto.ts")!;
+    expect(dto).not.toMatch(/driveFileId/);
+    expect(dto.match(/driveLink/g)?.length ?? 0).toBeLessThanOrEqual(3); // read from the stored record and copied to `link` under the finance_contracts flag only
+    expect(dto).toMatch(/options\.contractDetailVisible && stored\.driveLink/);
+    const { AGREEMENT_EVENT_METADATA_ALLOWLIST } = await import("./agreement-events");
+    expect(Object.keys(AGREEMENT_EVENT_METADATA_ALLOWLIST).filter((key) => /link|url|fileId|driveFile|folder|locator|bucket/i.test(key))).toEqual([]);
+    // the version document schema is the only place the reference is declared
+    const version = z.toJSONSchema(agreementVersionDocSchema, { io: "input", unrepresentable: "any" }) as { properties: Record<string, unknown> };
+    expect(Object.keys(version.properties)).toContain("document");
+    expect(JSON.stringify(z.toJSONSchema(agreementEventSchema, { io: "input", unrepresentable: "any" }))).not.toMatch(/driveLink|driveFileId/);
+  });
+
+  it("only the document service writes the version's `document`, and it reads the bytes through the artifact store and the storage seam (no direct Drive / Storage client)", () => {
+    const writers = productionFiles.filter((file) => /\{\s*\.\.\.\w+,\s*document,/.test(code.get(rel(file))!) && /txSetAgreementVersion\(/.test(code.get(rel(file))!) && !/export function txSetAgreementVersion/.test(code.get(rel(file))!)).map((file) => path.relative(moduleDir, file));
+    expect(writers).toEqual(["agreement-document-service.ts"]);
+    const service = code.get("src/server/finance-agreements/agreement-document-service.ts")!;
+    expect(service).toMatch(/getContractArtifactStore\(\)\.get\(/);
+    expect(service).toMatch(/getAgreementDocumentStorage\(\)/);
+    expect(service).not.toMatch(/googleapis|firebase-admin\/storage|getStorage\(/);
   });
 });

@@ -15,7 +15,7 @@
 // whole-collection size assertion (a global-scope actor is always narrowed by a per-run name tag); everything created is removed.
 import { randomUUID } from "node:crypto";
 
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
 import { resolveActor } from "@/server/authz/actor";
@@ -44,6 +44,7 @@ import {
   listAgreementsWorkspace,
   resumeAgreement,
   searchCounterparties,
+  storeAgreementDocument,
   suspendAgreement,
   type AgreementDetailDto,
   type AgreementWorkspaceDto,
@@ -55,11 +56,12 @@ import {
   financeAgreementClaimsCollection,
   financeAgreementExtractionRunsCollection,
   financeAgreementsCollection,
-  financeContractArtifactsCollection,
 } from "./firestore";
-import { generateContractArtifactRef, generateExtractionRunRef } from "./ids";
+import { createInMemoryArtifactStore, setContractArtifactStoreForTests } from "./contract-artifacts/store";
+import { generateExtractionRunRef } from "./ids";
+import { installFakeAgreementDocumentStorage, seedByteBackedArtifact } from "./testing/agreement-document-fixtures";
 import { READY_DECISIONS, type FieldDecisionSeed } from "./testing/agreement-service-fixtures";
-import { agreementHeadDocSchema, contractArtifactDocSchema, extractionRunDocSchema, type AgreementCounterpartyInput, type FinanceAgreementsErrorResult, type FinanceAgreementsServiceResult } from "./types";
+import { agreementHeadDocSchema, extractionRunDocSchema, type AgreementCounterpartyInput, type FinanceAgreementsErrorResult, type FinanceAgreementsServiceResult } from "./types";
 
 vi.setConfig({ testTimeout: 90_000 });
 
@@ -427,10 +429,18 @@ describe("head display projection", () => {
     const created = await newAgreement(manager, partnerCp(partner));
     const ref = created.agreement.head.agreementRef;
 
-    const artifact = contractArtifactDocSchema.parse({ artifactRef: generateContractArtifactRef(), fileName: "synthetic.pdf", mimeType: "application/pdf", sizeBytes: 1234, sha256: "a".repeat(64), uploadedByUserRef: "faw-test", uploadedAt: new Date().toISOString(), counterparty: { type: "PARTNER", ref: partner.partnerRef }, status: "EXTRACTED", storageLocator: `test/${randomUUID()}` });
-    const artifactRef = financeContractArtifactsCollection().doc(artifact.artifactRef);
-    await artifactRef.set(artifact);
-    cleanup.push(artifactRef);
+    // Step 14B.1: this artifact-backed version is activated below, which now needs its original signed document stored first - so the
+    // artifact has REAL bytes in an in-memory artifact store and the document goes to the FAKE Drive adapter (no Google call).
+    const artifactStore = createInMemoryArtifactStore();
+    setContractArtifactStoreForTests(artifactStore);
+    const drive = installFakeAgreementDocumentStorage();
+    onTestFinished(() => {
+      setContractArtifactStoreForTests(null);
+      drive.restore();
+    });
+    const seeded = await seedByteBackedArtifact({ type: "PARTNER", ref: partner.partnerRef, artifactStore, label: "workspace-display" });
+    cleanup.push(seeded.docRef);
+    const artifact = seeded.artifact;
     const run = extractionRunDocSchema.parse({
       runRef: generateExtractionRunRef(),
       agreementRef: ref,
@@ -459,6 +469,7 @@ describe("head display projection", () => {
     // decisions keep the extraction status; confirming + activating + revising resets it for the fresh revision
     const confirmed = await confirm(manager, await acceptPending(manager, await decideAll(manager, outcome.agreement, READY_DECISIONS)));
     expect((await rawHead(ref)).display?.extractionStatus).toBe("PARTIAL");
+    must(await storeAgreementDocument(manager, { agreementRef: ref, version: 1 }, requestId()), "store document");
     const active = await activate(headActor, confirmed);
     must(await createAgreementRevision(headActor, { agreementRef: ref, expectedDocVersion: active.head.docVersion }, requestId()), "revise");
     expect((await rawHead(ref)).display?.extractionStatus).toBeNull();
@@ -1055,7 +1066,7 @@ describe("counterparty preview", () => {
 // Permissions: the five-role matrix from REAL grants
 // =====================================================================================================================
 describe("finance agreement permissions", () => {
-  const BASE = { canView: false, canManage: false, canActivate: false, canViewContractDetail: false, canViewIdentity: false, canManageCounterpartyKyc: false };
+  const BASE = { canView: false, canManage: false, canActivate: false, canViewContractDetail: false, canViewIdentity: false, canManageCounterpartyKyc: false, canCreatePartner: false, canCreateVendor: false, canManagePartnerAccounts: false };
   const permissions = async (role: string, type?: string) => must(await getFinanceAgreementPermissions(await seededActor(role), type), role);
 
   it("Viewer and Analyst hold nothing (no finance grant): every boolean is false - the page renders the neutral denied state", async () => {
@@ -1064,8 +1075,25 @@ describe("finance agreement permissions", () => {
     }
   });
 
-  it("Manager prepares (view + manage) but never activates and holds no sensitive category or identity-management right", async () => {
-    for (const type of [undefined, "PARTNER", "VENDOR"]) expect(await permissions("partnership_manager", type), `manager ${type}`).toMatchObject({ ...BASE, canView: true, canManage: true });
+  it("Manager prepares (view + manage) but never activates and holds no sensitive category or identity-management right; it holds the owning create rights (Step 14B.1)", async () => {
+    for (const type of [undefined, "PARTNER", "VENDOR"]) expect(await permissions("partnership_manager", type), `manager ${type}`).toMatchObject({ ...BASE, canView: true, canManage: true, canCreatePartner: true, canCreateVendor: true, canManagePartnerAccounts: true });
+  });
+
+  it("Step 14B.1 five-role matrix for the onboarding booleans (real grants): Viewer/Analyst none; Manager/Head/Admin hold the owning create + account rights", async () => {
+    for (const role of ["viewer", "analyst"]) expect(await permissions(role), role).toMatchObject({ canCreatePartner: false, canCreateVendor: false, canManagePartnerAccounts: false });
+    for (const role of ["partnership_manager", "partnership_head", "super_admin"]) {
+      for (const type of [undefined, "PARTNER", "VENDOR"]) expect(await permissions(role, type), `${role} ${type}`).toMatchObject({ canCreatePartner: true, canCreateVendor: true, canManagePartnerAccounts: true });
+    }
+  });
+
+  it("Step 14B.1: a per-user override removing partners:create / vendors:create / manage_partner_accounts is honoured independently of manage_agreements", async () => {
+    const uid = `faw-onb-override-${runId}-${randomUUID().slice(0, 6)}`;
+    const overrideRef = getAdminFirestore().collection(COLLECTIONS.userAccessOverrides).doc(uid);
+    cleanup.push(overrideRef);
+    const actor: ActorContext = { uid, email: `${uid}@example.test`, role: "partnership_head", displayName: "override", userRef: `ref-${uid}` };
+    expect(must(await getFinanceAgreementPermissions(actor), "baseline")).toMatchObject({ canManage: true, canCreatePartner: true, canCreateVendor: true, canManagePartnerAccounts: true });
+    await overrideRef.set({ uid, version: 1, features: { partners: { actions: { create: false, manage_partner_accounts: false } }, vendors: { actions: { create: false } } } });
+    expect(must(await getFinanceAgreementPermissions(actor), "no owning create")).toMatchObject({ canView: true, canManage: true, canCreatePartner: false, canCreateVendor: false, canManagePartnerAccounts: false });
   });
 
   it("Head and Super Admin hold view + manage + activate + finance_contracts, and the identity category / KYC management for the requested counterparty type", async () => {

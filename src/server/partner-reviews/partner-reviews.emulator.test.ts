@@ -2054,7 +2054,9 @@ describe("finalized-review handoff (Step 13A.1 revised)", () => {
     expect(await reviewState(reviewRef)).toEqual(before.review);
     expect(await Promise.all(upstream.map(rawDoc))).toEqual(before.upstream);
     const rootAfter = (await getAdminFirestore().listCollections()).map((c) => c.id).sort();
-    expect(rootAfter).toEqual(rootBefore);
+    // The reads must not CREATE a root collection. (Other test files create and empty their own collections concurrently, so the
+    // list itself is not compared - only what appeared that was not there before; the Agreement roots are owned by Step 14A files.)
+    expect(rootAfter.filter((name) => !rootBefore.includes(name) && !FINANCE_AGREEMENT_ROOTS.test(name))).toEqual([]);
     expect(rootAfter.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name) && !FINANCE_AGREEMENT_ROOTS.test(name))).toEqual([]);
   });
 });

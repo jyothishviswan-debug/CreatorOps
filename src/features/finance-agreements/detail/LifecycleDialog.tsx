@@ -86,12 +86,13 @@ export function LifecycleDialog(props: LifecycleDialogProps) {
       }
     >
       {dialog && <DialogCopy {...props} dialog={dialog} reasonProblem={reasonProblem} running={running} />}
-      {error && (
+      {/* An activation refusal is one banner: the blocker list already carries the server's plain reason (no duplicate generic line). */}
+      {error && !(dialog === "activate" && blockers && blockers.length > 0) && (
         <div className="banner" role="alert" style={{ marginTop: 10 }}>
           {error}
         </div>
       )}
-      {blockers && blockers.length > 0 && <BlockerList {...props} blockers={blockers} />}
+      {blockers && blockers.length > 0 && (dialog === "activate" ? <ActivationBlockerList blockers={blockers} /> : <BlockerList {...props} blockers={blockers} />)}
     </DialogShell>
   );
 }
@@ -170,6 +171,22 @@ function DialogCopy(props: LifecycleDialogProps & { dialog: LifecycleDialogKey; 
         </>
       );
   }
+}
+
+// The activation gate's blockers (e.g. the signed Agreement document is not stored yet), in the server's own plain words.
+function ActivationBlockerList({ blockers }: { blockers: FinanceApiBlocker[] }) {
+  const needsDocument = blockers.some((blocker) => blocker.code === "agreement_document_not_stored");
+  return (
+    <div className="banner" role="alert" data-testid="activate-blockers" style={{ marginTop: 10, display: "block" }}>
+      <b>Not ready to activate.</b>
+      <ul style={{ margin: "6px 0 0", paddingLeft: 18, overflowWrap: "anywhere" }}>
+        {blockers.map((blocker, index) => (
+          <li key={`${blocker.code}-${index}`}>{blocker.message}</li>
+        ))}
+      </ul>
+      {needsDocument && <p style={{ margin: "8px 0 0" }}>Close this and store the Agreement document from the Agreement document panel on the Overview, then activate again.</p>}
+    </div>
+  );
 }
 
 // The confirm gate's blockers, in plain language, each with a link straight to the field in the intake form.

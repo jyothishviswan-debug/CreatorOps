@@ -97,6 +97,27 @@ export async function getPartnerDocsByRefs(partnerRefs: string[]): Promise<Map<s
   return result;
 }
 
+// Step 14B.1: bounded EXACT-equality lookups for the Finance Agreement onboarding wrapper (never a fuzzy / prefix search, never unbounded).
+// `displayNameLower` is the owning module's own normalized-name field; both queries are equality-only (no composite index needed).
+export const MAX_PARTNER_EXACT_LOOKUP = 10;
+
+export async function findPartnerDocsByDisplayNameLower(displayNameLower: string, limit: number = MAX_PARTNER_EXACT_LOOKUP): Promise<PartnerDoc[]> {
+  const snapshot = await partnersCollection().where("displayNameLower", "==", displayNameLower).limit(Math.max(1, Math.min(limit, MAX_PARTNER_EXACT_LOOKUP))).get();
+  return snapshot.docs.flatMap((doc) => {
+    const parsed = partnerDocSchema.safeParse(doc.data());
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+// Records THIS user created with exactly this normalized name (the onboarding crash-recovery "adopt" lookup).
+export async function findPartnerDocsCreatedByUser(createdByUserRef: string, displayNameLower: string, limit: number = MAX_PARTNER_EXACT_LOOKUP): Promise<PartnerDoc[]> {
+  const snapshot = await partnersCollection().where("createdByUserRef", "==", createdByUserRef).where("displayNameLower", "==", displayNameLower).limit(Math.max(1, Math.min(limit, MAX_PARTNER_EXACT_LOOKUP))).get();
+  return snapshot.docs.flatMap((doc) => {
+    const parsed = partnerDocSchema.safeParse(doc.data());
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
 export async function getPartnerAccountDocByUid(uid: string): Promise<PartnerAccountDoc | null> {
   const snapshot = await partnerAccountsCollection().doc(uid).get();
   if (!snapshot.exists) return null;

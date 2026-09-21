@@ -4,15 +4,21 @@
 // links), and the actions. `Save Draft` lives in the form footer directly below this section (one button, not two) and saves the buffered edits. `Confirm Agreement` freezes this version's terms and is disabled,
 // with its reason shown, while items are unresolved. `Activate Agreement` exists ONLY when the server says this person may activate AND the
 // version is confirmed - otherwise it is absent (nothing is revealed and then hidden). Saving or confirming never writes master data.
+// Step 14B.1: right after a SUCCESSFUL Confirm the ORIGINAL signed Agreement is stored in Drive automatically (storeAgreementDocument for the
+// confirmed version): a visible status line says `Storing the original Agreement…` / stored / not stored (with the plain reason and a Retry).
+// While the version has its own signed file that is not stored yet, `Activate Agreement` is DISABLED with the plain reason - the same rule the
+// server enforces (`agreement_document_not_stored`), mirrored from the version's document DTO so the button state matches.
 import Link from "next/link";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useRef, useState } from "react";
 
 import { DialogShell } from "@/ui/Dialog";
 
 import { KeyValueRow } from "../components/KeyValueRow";
 import { StatusChip } from "../components/StatusChip";
+import { storeAgreementDocument } from "../api-client";
 import { blockerHeadline } from "../confirm-blockers";
-import { DISABLED_BUTTON_STYLE, fieldLabel, lifecycleChip, type ChipSpec } from "../format";
+import { activationDocumentGate, describeStoreOutcome, reviewDocumentState, STORING_TEXT, type DocumentNotice } from "../document-view";
+import { AGREEMENT_DOCUMENT_LABEL, DISABLED_BUTTON_STYLE, OPEN_AGREEMENT_DOCUMENT_LABEL, fieldLabel, lifecycleChip, type ChipSpec } from "../format";
 import { commercialIssues } from "./editors/commercial-logic";
 import { INTAKE_BUSY, useIntake } from "./intake-context";
 import { buildReadiness, buildReviewGroups, confirmDisabledReason, draftResolver, frozenResolver, type ReviewGroup } from "./review-summary";
@@ -29,6 +35,11 @@ export function ReviewConfirmSection() {
   const [dialog, setDialog] = useState<DialogKind>(null);
   const [dialogError, setDialogError] = useState<string | null>(null);
   const reasonId = useId();
+  const activateReasonId = useId();
+  // The signed Agreement document: one store call at a time (a ref guards a double submit before React re-renders) and its last result.
+  const [storing, setStoring] = useState(false);
+  const storingRef = useRef(false);
+  const [documentNotice, setDocumentNotice] = useState<DocumentNotice | null>(null);
 
   const confirmed = !!version?.confirmed;
   const resolve = useMemo(() => (version && confirmed ? frozenResolver(version) : draftResolver(fieldModels, localEdits)), [version, confirmed, fieldModels, localEdits]);
@@ -64,6 +75,10 @@ export function ReviewConfirmSection() {
   const confirming = intake.isBusy(INTAKE_BUSY.confirm);
   const activating = intake.isBusy(INTAKE_BUSY.activate);
   const headStatus = agreement.head.status;
+  const documentState = reviewDocumentState({ confirmed, document: version.document, storing, canManage: flags.canManage });
+  const activationGate = activationDocumentGate(confirmed ? version.document : null);
+  const activateBlockedText = storing ? STORING_TEXT : activationGate.reason;
+  const activateOff = busy || storing || activationGate.blocked;
 
   const chip: ChipSpec = confirmed ? (headStatus === "DRAFT" ? { label: "Confirmed · not active", tone: "blue" } : lifecycleChip(headStatus)) : readiness.length > 0 ? { label: `${readiness.length} to resolve`, tone: "orange" } : { label: "Ready to confirm", tone: "default" };
 
@@ -73,11 +88,34 @@ export function ReviewConfirmSection() {
     setDialogError(null);
   };
 
+  // Stores the ORIGINAL signed Agreement of a confirmed version (idempotent on the server; a Drive failure is a retriable `failed` outcome), then reads the
+  // version again so its document status is the server's.
+  const storeDocument = async (versionNumber: number, docVersion: number) => {
+    if (!agreementRef || storingRef.current) return;
+    storingRef.current = true;
+    setStoring(true);
+    setDocumentNotice(null);
+    try {
+      const result = await storeAgreementDocument(agreementRef, { version: versionNumber, expectedDocVersion: docVersion });
+      if (result.ok) {
+        setDocumentNotice(describeStoreOutcome(result.data));
+        await intake.refreshDetail();
+      } else if (!result.aborted) setDocumentNotice({ tone: "error", text: `The Agreement document was not stored. ${result.message}` });
+    } finally {
+      storingRef.current = false;
+      setStoring(false);
+    }
+  };
+
   const runConfirm = async () => {
     setDialogError(null);
     const result = await intake.confirmAgreement();
-    if (result.ok) setDialog(null);
-    else if (result.aborted) return;
+    if (result.ok) {
+      setDialog(null);
+      // Durable point = right after confirmation: only a version with its own signed file has a document to store, and only someone who may manage Agreements stores it.
+      const confirmedVersion = result.data.selectedVersion;
+      if (confirmedVersion && confirmedVersion.document.canStore && flags.canManage) void storeDocument(confirmedVersion.version, confirmedVersion.docVersion);
+    } else if (result.aborted) return;
     else if (result.kind === "not_ready") setDialog(null);
     else setDialogError(result.message);
   };
@@ -86,7 +124,7 @@ export function ReviewConfirmSection() {
     setDialogError(null);
     const result = await intake.activateAgreement();
     if (result.ok) setDialog(null);
-    else if (!result.aborted) setDialogError(result.message);
+    else if (!result.aborted) setDialogError(result.kind === "not_ready" && result.blockers && result.blockers.length > 0 ? result.blockers.map((blocker) => blocker.message).join(" ") : result.message);
   };
 
   return (
@@ -116,6 +154,43 @@ export function ReviewConfirmSection() {
           <GroupCard key={group.key} group={group} onJump={(anchorId) => intake.scrollToAnchor(anchorId)} />
         ))}
       </div>
+
+      {documentState && (
+        <section className="scopebox" style={{ marginTop: 14, marginBottom: 0 }} aria-label={AGREEMENT_DOCUMENT_LABEL} data-testid="review-document" data-document-phase={documentState.phase}>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 8, alignItems: "center", justifyContent: "space-between" }}>
+            <b>{AGREEMENT_DOCUMENT_LABEL}</b>
+            <StatusChip chip={documentState.chip} status={documentState.phase} />
+          </div>
+          <div role="status" aria-live="polite" style={{ marginTop: 6, overflowWrap: "anywhere" }}>
+            <span>{documentState.text}</span>
+            {documentState.note && <span>{` ${documentState.note}`}</span>}
+            {documentNotice && !storing && documentNotice.tone === "error" && <span>{` ${documentNotice.text}`}</span>}
+          </div>
+          {documentState.action && (
+            <div className="actions" style={{ marginTop: 8 }}>
+              <button
+                type="button"
+                className={documentState.action.kind === "store" ? "btn primary" : "btn"}
+                disabled={busy || storing}
+                aria-disabled={busy || storing}
+                style={busy || storing ? DISABLED_BUTTON_STYLE : undefined}
+                onClick={() => version && void storeDocument(version.version, version.docVersion)}
+                data-testid="store-agreement-document"
+              >
+                {documentState.action.label}
+              </button>
+            </div>
+          )}
+          {documentState.phase === "stored" && version.document.link && (
+            <div className="actions" style={{ marginTop: 8 }}>
+              <a className="btn" href={version.document.link} target="_blank" rel="noopener noreferrer">
+                {OPEN_AGREEMENT_DOCUMENT_LABEL}
+                <span className="sr"> (opens in a new tab)</span>
+              </a>
+            </div>
+          )}
+        </section>
+      )}
 
       <div id={BLOCKERS_ID} tabIndex={-1} style={{ marginTop: 14, outline: "none" }}>
         {confirmBlockers.length > 0 && (
@@ -167,7 +242,16 @@ export function ReviewConfirmSection() {
           </button>
         )}
         {flags.canActivate && (
-          <button type="button" className="btn primary" onClick={() => setDialog("activate")} disabled={busy} aria-disabled={busy} style={busy ? DISABLED_BUTTON_STYLE : undefined} data-testid="activate-agreement">
+          <button
+            type="button"
+            className="btn primary"
+            onClick={() => setDialog("activate")}
+            disabled={activateOff}
+            aria-disabled={activateOff}
+            aria-describedby={activateBlockedText ? activateReasonId : undefined}
+            style={activateOff ? DISABLED_BUTTON_STYLE : undefined}
+            data-testid="activate-agreement"
+          >
             {activating ? "Activating…" : "Activate Agreement"}
           </button>
         )}
@@ -177,6 +261,11 @@ export function ReviewConfirmSection() {
           </Link>
         )}
       </div>
+      {flags.canActivate && activateBlockedText && (
+        <small id={activateReasonId} className="muted" style={{ display: "block", marginTop: 8 }} data-testid="activate-blocked-reason">
+          {activateBlockedText}
+        </small>
+      )}
       {flags.canConfirm && disabledReason && (
         <small id={reasonId} className="muted" style={{ display: "block", marginTop: 8 }}>
           {disabledReason} Resolve them above to enable Confirm Agreement.
