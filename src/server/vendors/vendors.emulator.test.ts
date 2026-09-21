@@ -682,11 +682,17 @@ describe("Regression", () => {
     const head = await actorFor("partnership_head");
     const admin = await actorFor("super_admin");
 
-    const before = await listVendors(admin, { limit: 100 });
-    if (!before.ok) throw new Error("unreachable");
-    const vendorRefsBefore = new Set(before.data.vendors.map((v) => v.vendorRef));
+    // Hermetic: never a whole-collection snapshot (other files create Vendors concurrently). A Vendor created BY THIS conversion would
+    // carry the Lead's own (unique) name, so that is what is watched - before and after.
+    const leadName = uniqueName("No Vendor Lead");
+    const namedLikeLead = async () => {
+      const found = await listVendors(admin, { displayNamePrefix: leadName, limit: 20 });
+      if (!found.ok) throw new Error("unreachable");
+      return found.data.vendors.map((v) => v.vendorRef);
+    };
+    expect(await namedLikeLead()).toEqual([]);
 
-    const lead = await createLead(head, { displayName: uniqueName("No Vendor Lead"), source: { type: "referral" }, regionIds: ["Kerala"], email: `${uniqueName("novendor").replace(/\s+/g, "")}@example.com` }, "req-no-vendor-create");
+    const lead = await createLead(head, { displayName: leadName, source: { type: "referral" }, regionIds: ["Kerala"], email: `${uniqueName("novendor").replace(/\s+/g, "")}@example.com` }, "req-no-vendor-create");
     if (!lead.ok) throw new Error("unreachable");
     let version = lead.data.version;
     const research = await saveResearch(head, lead.data.leadRef, { targetAudience: ["India 1"], expectedVersion: version }, "req-nv-research");
@@ -741,10 +747,7 @@ describe("Regression", () => {
     const converted = await convertLead(head, lead.data.leadRef, { idempotencyKey: `nv-${runId}`, expectedVersion: version }, "req-nv-convert");
     expect(converted.ok).toBe(true);
 
-    const after = await listVendors(admin, { limit: 100 });
-    if (!after.ok) throw new Error("unreachable");
-    const vendorRefsAfter = new Set(after.data.vendors.map((v) => v.vendorRef));
-    expect(vendorRefsAfter).toEqual(vendorRefsBefore); // not one new Vendor
+    expect(await namedLikeLead()).toEqual([]); // not one new Vendor came out of the conversion
   });
 
   it("Partner schema is unaffected - no polymorphic Partner regression", async () => {

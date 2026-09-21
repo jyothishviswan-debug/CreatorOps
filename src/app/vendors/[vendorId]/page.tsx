@@ -5,6 +5,7 @@ import { EmptyState } from "@/ui/States";
 import { VendorDetail } from "@/features/vendors/VendorDetail";
 import { resolveRequestActor } from "@/server/vendors/http";
 import { getVendor } from "@/server/vendors/vendor-service";
+import { canAccessFeature } from "@/server/authz/capabilities";
 
 export default async function VendorDetailPage({ params }: { params: Promise<{ vendorId: string }> }) {
   const { vendorId } = await params;
@@ -23,9 +24,12 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ v
     );
   }
 
+  // The contextual Finance Agreements link (Payee / Commercial Context tab) is shown only to an actor who holds the Finance feature.
+  const canOpenFinance = actor ? await canAccessFeature(actor, "finance") : false;
+
   return (
     <AppShell>
-      <VendorDetail initialVendor={result.data} />
+      <VendorDetail initialVendor={result.data} canOpenFinance={canOpenFinance} />
     </AppShell>
   );
 }

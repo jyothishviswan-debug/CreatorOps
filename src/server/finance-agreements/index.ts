@@ -42,3 +42,22 @@ export {
   type UpdateCounterpartyContactInput,
   type UpdateCounterpartyContactOutcome,
 } from "./master-data-commands";
+// Step 14B: workspace list, counterparty picker (search + preview) and permissions.
+// Routes: GET /api/finance/agreements/workspace, GET /api/finance/counterparties/search, GET /api/finance/counterparties/preview, GET /api/finance/permissions.
+export { listAgreementsWorkspace, AGREEMENT_HEAD_SCAN_CEILING } from "./agreement-workspace-service";
+export { getCounterpartyPreview, searchCounterparties, type CounterpartySearchResponse } from "./counterparty-picker-service";
+export { computeFinanceAgreementPermissions, getFinanceAgreementPermissions } from "./finance-permissions";
+export type {
+  AgreementWorkspaceDisclosureDto,
+  AgreementWorkspaceDto,
+  AgreementWorkspaceKycDto,
+  AgreementWorkspacePrimaryActionDto,
+  AgreementWorkspacePrimaryActionKind,
+  AgreementWorkspaceQuery,
+  AgreementWorkspaceRowDto,
+  CounterpartyPartnerAccountDto,
+  CounterpartyPreviewDto,
+  CounterpartySearchResultDto,
+  CounterpartyUnavailableFieldDto,
+  FinanceAgreementPermissionsDto,
+} from "./workspace-dto";

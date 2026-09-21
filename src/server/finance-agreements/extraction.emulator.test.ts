@@ -569,14 +569,25 @@ describe("extractContract", () => {
     const agreementRef = created.agreement.head.agreementRef;
     const uploaded = must(await upload(manager, partnerCp(partner), SAMPLE_PDF()), "upload");
 
-    const watched = [financeAgreementsCollection().doc(agreementRef), financeAgreementsCollection().doc(agreementRef).collection("versions").doc("1"), partnersCollection().doc(partner.uid), partnerAccountsCollection().doc(account.uid), identityRef];
+    const watched = [financeAgreementsCollection().doc(agreementRef).collection("versions").doc("1"), partnersCollection().doc(partner.uid), partnerAccountsCollection().doc(account.uid), identityRef];
     const before = await Promise.all(watched.map(fingerprint));
     const eventsBefore = (await financeAgreementsCollection().doc(agreementRef).collection("events").get()).size;
+    const headBefore = (await financeAgreementsCollection().doc(agreementRef).get()).data()!;
 
     const result = must(await extract(manager, agreementRef, uploaded.artifact.artifactRef), "extract");
     expect(["EXTRACTED", "PARTIAL"]).toContain(result.run.status);
 
     expect(await Promise.all(watched.map(fingerprint))).toEqual(before);
+    // Step 14B (intended change): the head's ONLY change is its `display` list projection (extractionStatus) and the
+    // last-touched stamp - docVersion, lifecycle pointers, counterparty and scope snapshot are exactly as they were.
+    const headAfter = (await financeAgreementsCollection().doc(agreementRef).get()).data()!;
+    const { display: displayBefore, updatedAt: _updatedBefore, ...headBeforeRest } = headBefore;
+    const { display: displayAfter, updatedAt: _updatedAfter, ...headAfterRest } = headAfter;
+    void _updatedBefore;
+    void _updatedAfter;
+    expect(headAfterRest).toEqual(headBeforeRest);
+    expect(displayBefore.extractionStatus).toBeNull();
+    expect(displayAfter).toEqual({ ...displayBefore, extractionStatus: result.run.status, projectedAt: displayAfter.projectedAt });
     expect((await financeAgreementsCollection().doc(agreementRef).collection("events").get()).size).toBe(eventsBefore);
 
     const detail = must(await getAgreementDetail(manager, agreementRef), "detail");

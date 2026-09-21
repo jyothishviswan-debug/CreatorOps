@@ -1,4 +1,11 @@
-import { getRestrictedFinancialIdentityDoc, type RestrictedFinancialIdentityDoc } from "@/server/shared/restricted-financial-identity";
+import { getAdminFirestore } from "@/server/firebase/admin";
+import {
+  getRestrictedFinancialIdentityDoc,
+  restrictedFinancialIdentitiesCollection,
+  restrictedFinancialIdentityDocSchema,
+  restrictedIdentityDocId,
+  type RestrictedFinancialIdentityDoc,
+} from "@/server/shared/restricted-financial-identity";
 
 import { deriveIdentityStatusState } from "./fields";
 import type { CounterpartyType, IdentityComponents, IdentityStatusSnapshot } from "./types";
@@ -44,4 +51,27 @@ export async function computeIdentityStatus(counterpartyType: CounterpartyType, 
   } catch {
     return { state: "UNAVAILABLE", components: deriveIdentityComponents(counterpartyType, null), capturedAt };
   }
+}
+
+// Step 14B: the SAME status for a bounded PAGE of subjects with ONE Firestore round trip (`getAll`) instead of one read per
+// row. Same reduction as computeIdentityStatus (presence flags only - no value ever leaves this function), same fail-closed
+// rule: if the store cannot be read every subject is UNAVAILABLE, never guessed as present. Keyed by `${type}:${uid}`.
+export const MAX_BULK_IDENTITY_SUBJECTS = 100;
+
+export async function computeIdentityStatusBulk(subjects: ReadonlyArray<{ type: CounterpartyType; uid: string }>, now: () => string = () => new Date().toISOString()): Promise<Map<string, IdentityStatusSnapshot>> {
+  const capturedAt = now();
+  const unique = [...new Map(subjects.slice(0, MAX_BULK_IDENTITY_SUBJECTS).map((subject) => [restrictedIdentityDocId(subject.type, subject.uid), subject] as const)).entries()];
+  const result = new Map<string, IdentityStatusSnapshot>();
+  if (unique.length === 0) return result;
+  try {
+    const snapshots = await getAdminFirestore().getAll(...unique.map(([key]) => restrictedFinancialIdentitiesCollection().doc(key)));
+    snapshots.forEach((snapshot, index) => {
+      const [key, subject] = unique[index]!;
+      const parsed = snapshot.exists ? restrictedFinancialIdentityDocSchema.safeParse(snapshot.data()) : null;
+      result.set(key, buildIdentityStatusSnapshot(subject.type, parsed?.success ? parsed.data : null, capturedAt));
+    });
+  } catch {
+    for (const [key, subject] of unique) result.set(key, { state: "UNAVAILABLE", components: deriveIdentityComponents(subject.type, null), capturedAt });
+  }
+  return result;
 }

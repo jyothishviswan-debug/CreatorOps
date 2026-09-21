@@ -83,6 +83,22 @@ export async function getVendorDocByRef(vendorRef: string): Promise<VendorDoc | 
   return result.success ? result.data : null;
 }
 
+// Step 14B: bounded bulk resolution by vendorRef (same chunked pattern as getPartnerDocsByRefs) for a page of
+// some other domain's rows that each name a Vendor - never one query per row.
+export async function getVendorDocsByRefs(vendorRefs: string[]): Promise<Map<string, VendorDoc>> {
+  const unique = [...new Set(vendorRefs)];
+  const result = new Map<string, VendorDoc>();
+  for (let i = 0; i < unique.length; i += MAX_SCOPE_IN_VALUES) {
+    const chunk = unique.slice(i, i + MAX_SCOPE_IN_VALUES);
+    const snapshot = await vendorsCollection().where("vendorRef", "in", chunk).get();
+    for (const doc of snapshot.docs) {
+      const parsed = vendorDocSchema.safeParse(doc.data());
+      if (parsed.success) result.set(parsed.data.vendorRef, parsed.data);
+    }
+  }
+  return result;
+}
+
 export async function getVendorPartnerLinkDocByUid(uid: string): Promise<VendorPartnerLinkDoc | null> {
   const snapshot = await vendorPartnerLinksCollection().doc(uid).get();
   if (!snapshot.exists) return null;

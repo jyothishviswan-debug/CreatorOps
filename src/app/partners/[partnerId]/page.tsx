@@ -27,9 +27,12 @@ export default async function PartnerDetailPage({ params }: { params: Promise<{ 
   // The contextual "Partner Reviews" link (Context tab) is shown only to an actor who holds the Partner Reviews feature.
   const canOpenPartnerReviews = actor ? await canAccessFeature(actor, "partner_reviews") : false;
 
+  // Likewise the contextual Finance Agreements links (Context tab): rendered only for an actor who holds the Finance feature.
+  const canOpenFinance = actor ? await canAccessFeature(actor, "finance") : false;
+
   return (
     <AppShell>
-      <PartnerDetail initialPartner={result.data} canOpenPartnerReviews={canOpenPartnerReviews} />
+      <PartnerDetail initialPartner={result.data} canOpenPartnerReviews={canOpenPartnerReviews} canOpenFinance={canOpenFinance} />
     </AppShell>
   );
 }

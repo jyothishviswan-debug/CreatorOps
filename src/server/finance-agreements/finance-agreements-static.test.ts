@@ -97,7 +97,7 @@ describe("the scan itself is sound", () => {
     expect(names).toContain("src/server/finance-agreements/extraction/pdf-text.ts");
     expect(names).toContain("src/server/finance-agreements/contract-artifacts/store.ts");
     expect(names).toContain("src/server/finance-agreements/policy-adapter.ts");
-    expect(names.filter((name) => name.startsWith("src/app/api/finance/")).length).toBeGreaterThanOrEqual(19);
+    expect(names.filter((name) => name.startsWith("src/app/api/finance/")).length).toBeGreaterThanOrEqual(23);
     expect(codeOnly("const a = 1; // campaign\n// assignment\n/* creator */ const b = 2;")).not.toMatch(/campaign|assignment|creator/);
     expect(importsOf('import { a } from "./x";\nexport { b } from "../y";')).toEqual(["./x", "../y"]);
   });
@@ -125,12 +125,17 @@ describe("routes: thin, and exactly the documented surface", () => {
     "agreements/[agreementRef]/end/route.ts": ["POST"],
     "contracts/upload/route.ts": ["POST"],
     "contracts/extract/route.ts": ["POST"],
+    // Step 14B: the workspace list, the intake counterparty picker and the permissions probe (all GET, read-only).
+    "agreements/workspace/route.ts": ["GET"],
+    "counterparties/search/route.ts": ["GET"],
+    "counterparties/preview/route.ts": ["GET"],
+    "permissions/route.ts": ["GET"],
   };
 
-  it("the route tree is exactly the 19 documented route files (no payables / invoices / payments / delete / campaign route exists)", () => {
+  it("the route tree is exactly the 23 documented route files (no payables / invoices / payments / delete / campaign route exists)", () => {
     const actual = routeFiles.map((file) => path.relative(routesDir, file).split(path.sep).join("/")).sort();
     expect(actual).toEqual(Object.keys(EXPECTED).sort());
-    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts"]);
+    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "permissions"]);
   });
 
   it("every route exports only the documented HTTP methods - never PUT / PATCH / DELETE", () => {

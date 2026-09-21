@@ -1361,7 +1361,9 @@ describe("audit events", () => {
     // shape of each transaction: {claim?, head, version, event}
     const shape = (label: string) => perTx.get(label)!.map((w) => w.path.split("/").slice(0, 1).concat(w.path.split("/").length > 2 ? w.path.split("/")[2]! : "head").join(":")).sort();
     expect(shape("create")).toEqual(["financeAgreementClaims:head", "financeAgreements:events", "financeAgreements:head", "financeAgreements:versions"]);
-    for (const label of ["decide", "confirm"]) expect(shape(label), label).toEqual(["financeAgreements:events", "financeAgreements:versions"]);
+    // Step 14B (intended change): decide / confirm ALSO rewrite the head - only its `display` list projection (+ updatedAt), never
+    // docVersion or a lifecycle pointer (proved in finance-agreements-workspace.emulator.test.ts) - inside the same transaction.
+    for (const label of ["decide", "confirm"]) expect(shape(label), label).toEqual(["financeAgreements:events", "financeAgreements:head", "financeAgreements:versions"]);
     for (const label of ["suspend", "resume", "end"]) expect(shape(label), label).toEqual(["financeAgreements:events", "financeAgreements:head", "financeAgreements:versions"]);
     expect(shape("revise")).toEqual(["financeAgreements:events", "financeAgreements:head", "financeAgreements:versions"]);
     expect(shape("activate")).toEqual(["financeAgreements:events", "financeAgreements:head", "financeAgreements:versions"]);

@@ -13,7 +13,9 @@ export function getFirebaseAuth(): Auth {
 
   const env = getClientEnv();
   if (env.useEmulators && !emulatorConnected) {
-    connectAuthEmulator(auth, "http://127.0.0.1:9099", { disableWarnings: true });
+    // Default: the shared local Auth emulator. A PRIVATE emulator (private test runs that must not touch the shared 9099 one)
+    // sets NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_URL, e.g. http://127.0.0.1:9499 (referenced statically so Next inlines it).
+    connectAuthEmulator(auth, process.env.NEXT_PUBLIC_FIREBASE_AUTH_EMULATOR_URL ?? "http://127.0.0.1:9099", { disableWarnings: true });
     emulatorConnected = true;
   }
 

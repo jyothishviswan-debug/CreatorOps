@@ -25,7 +25,9 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "history", label: "History" },
 ];
 
-export function VendorDetail({ initialVendor }: { initialVendor: VendorDto }) {
+// `canOpenFinance` is computed by the server page from the actor's own `finance` feature grant; it only decides whether
+// the contextual Agreements link (Payee / Commercial Context tab) is RENDERED - the destination re-authorizes.
+export function VendorDetail({ initialVendor, canOpenFinance = false }: { initialVendor: VendorDto; canOpenFinance?: boolean }) {
   const [vendor, setVendor] = useState(initialVendor);
   const [selectedTab, setSelectedTab] = useState<TabKey>("overview");
   // Bumped on every successful mutation - vendorRef alone never changes
@@ -132,7 +134,7 @@ export function VendorDetail({ initialVendor }: { initialVendor: VendorDto }) {
         </PanelGrid>
       )}
 
-      {selectedTab === "payee" && <VendorPayeeContextPanel vendorRef={vendor.vendorRef} />}
+      {selectedTab === "payee" && <VendorPayeeContextPanel vendorRef={vendor.vendorRef} canOpenFinance={canOpenFinance} />}
 
       {selectedTab === "restricted" && (
         <PanelGrid>

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { planAssignmentListQuery } from "@/server/assignments/firestore";
 import type { ScopeGrant } from "@/server/authz/types";
 import { planCampaignListQuery } from "@/server/campaigns/firestore";
+import { planAgreementHeadListQuery } from "@/server/finance-agreements/firestore";
 import { planPartnerListQuery } from "@/server/partners/firestore";
 import { planPartnerReviewListQuery } from "@/server/partner-reviews/firestore";
 import { planVendorListQuery } from "@/server/vendors/firestore";
@@ -479,10 +480,80 @@ describe("firestore.indexes.json - Finance Agreements (Step 14A query audit)", (
     expect(audit.otherOperators).toEqual([]);
   });
 
-  it("consequently firestore.indexes.json declares NO Finance composite (nothing is definitely required) and no field override disables an automatic single-field index", () => {
+  it("consequently NONE of the 14A queries needs a composite (the only Finance composites are the five Step 14B workspace scope shapes below) and no field override disables an automatic single-field index", () => {
     const financeCollections = ["financeAgreements", "versions", "events", "extractionRuns", "financeAgreementClaims", "financeContractArtifacts", "financeAgreementRestrictedExtractions"];
-    expect(indexesFile.indexes.filter((index) => financeCollections.includes(index.collectionGroup))).toEqual([]);
+    // Step 14B (deliberate update): the workspace head scan added exactly five `financeAgreements` scope x updatedAt composites; every other Finance collection still has none.
+    expect(indexesFile.indexes.filter((index) => financeCollections.includes(index.collectionGroup) && index.collectionGroup !== "financeAgreements")).toEqual([]);
     const overrides = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "../../../firestore.indexes.json"), "utf8")).fieldOverrides ?? [];
     expect((overrides as Array<{ collectionGroup: string }>).filter((override) => financeCollections.includes(override.collectionGroup))).toEqual([]);
+  });
+});
+
+// Step 14B (production query/index audit): the Finance Agreements WORKSPACE head scan (agreement-workspace-service.ts ->
+// listAgreementHeadDocs) reads `financeAgreements` heads through the accepted scoped-list machinery, newest first by
+// `updatedAt`. Scope is decomposed into SELF (ownerUid), REGION / TEAM (array-contains-any on the head's scope snapshot),
+// PARTNER-grant (`partnerUid in`) and explicit-vendor (`vendorUid in`) branches; the GLOBAL branch pushes no filter (single-field
+// updatedAt order, automatic index). No business filter (lifecycle / type / search / period / discrepancy) is pushed to Firestore -
+// they are in-memory over the bounded set - so the composite set is exactly these five. Derived from the REAL planner output.
+// "Production verification pending": the emulator never enforces composite indexes; deploying firestore.indexes.json is a
+// separate, explicit step (NOT done here).
+describe("firestore.indexes.json - Finance Agreements workspace (Step 14B)", () => {
+  const updatedAtDesc: IndexField = { fieldPath: "updatedAt", order: "DESCENDING" };
+  const partnerGrant: ScopeGrant = { type: "PARTNER", partnerId: "p-1", ...AUDIT };
+  const vendorGrant: ScopeGrant = { type: "EXPLICIT_RECORD", resourceType: "vendor", resourceId: "v-1", ...AUDIT };
+  const partnerRecordGrant: ScopeGrant = { type: "EXPLICIT_RECORD", resourceType: "partner", resourceId: "p-2", ...AUDIT };
+
+  it("every scope branch (self / region / team / partner-grant / explicit-vendor) maps to a certified financeAgreements index", () => {
+    const { plan } = planAgreementHeadListQuery({ actorUid: "actor-uid", grants: [self(), region("Kerala"), team("t1"), partnerGrant, partnerRecordGrant, vendorGrant], hasGlobal: false });
+    expect(plan.branches.map((branch) => branch.name)).toEqual(["self", "region", "team", "partnerGrant", "vendorGrant"]);
+    // self / region / team are equality / array shapes (hasIndexForBranch); the two `in` branches are asserted explicitly, like Partner Reviews'.
+    for (const name of ["self", "region", "team"]) expect(hasIndexForBranch("financeAgreements", firestoreBranch(plan, name)), name).toBe(true);
+    expect(hasIndex("financeAgreements", [{ fieldPath: "partnerUid", order: "ASCENDING" }, updatedAtDesc])).toBe(true);
+    expect(hasIndex("financeAgreements", [{ fieldPath: "vendorUid", order: "ASCENDING" }, updatedAtDesc])).toBe(true);
+    expect(firestoreBranch(plan, "partnerGrant").pushedFilters).toEqual([{ field: "partnerUid", op: "in", value: ["p-1", "p-2"] }]);
+    expect(firestoreBranch(plan, "vendorGrant").pushedFilters).toEqual([{ field: "vendorUid", op: "in", value: ["v-1"] }]);
+  });
+
+  it("the GLOBAL branch pushes no filter and needs no composite index (a single-field updatedAt order)", () => {
+    const branch = firestoreBranch(planAgreementHeadListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: true }).plan, "main");
+    expect(branch.pushedFilters).toEqual([]);
+    expect(branch.orderField).toBe("updatedAt");
+    expect(branch.orderDirection).toBe("desc");
+  });
+
+  it("an actor with no relevant grant plans no branch at all (no Firestore read)", () => {
+    expect(planAgreementHeadListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: false }).plan.branches).toEqual([]);
+  });
+
+  it("no branch pushes two array-type filters or a documentId() in (assertProductionValidPlan territory)", () => {
+    const { plan } = planAgreementHeadListQuery({ actorUid: "actor-uid", grants: [self(), region("Kerala"), team("t1"), partnerGrant, vendorGrant], hasGlobal: false });
+    for (const branch of plan.branches) {
+      if (branch.kind !== "firestore-query") continue;
+      expect(branch.pushedFilters.filter((f) => f.op === "array-contains" || f.op === "array-contains-any").length).toBeLessThanOrEqual(1);
+      expect(branch.pushedFilters.some((f) => f.field === "__name__")).toBe(false);
+    }
+  });
+
+  it("every financeAgreements index in the file is one the planner can actually produce (exact count: 5, no speculative extras)", () => {
+    const mine = indexesFile.indexes.filter((index) => index.collectionGroup === "financeAgreements");
+    expect(mine).toHaveLength(5);
+    for (const index of mine) {
+      expect(index.fields).toHaveLength(2);
+      expect(index.fields[1]).toEqual(updatedAtDesc);
+    }
+    expect(mine.map((index) => indexFieldKey(index.fields[0]!)).sort()).toEqual(["ownerUid:ASCENDING", "partnerUid:ASCENDING", "regionIds:CONTAINS", "teamIds:CONTAINS", "vendorUid:ASCENDING"]);
+  });
+
+  // The intake counterparty search (searchCounterparties) reuses the OWNING modules' scoped list plans with an optional display-name
+  // prefix and applies ACTIVE in memory (a status x scope x displayNameLower composite is not a certified shape - see
+  // counterparty-picker-service.ts); those shapes are the owning modules' own certified indexes.
+  it("the counterparty search's Partner / Vendor list shapes (optional name prefix, no pushed status, every scope branch) each map to a certified index", () => {
+    const grants: ScopeGrant[] = [self(), region("Kerala"), team("t1")];
+    for (const displayNamePrefix of [undefined, "acme"]) {
+      const partners = planPartnerListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, displayNamePrefix }).plan;
+      for (const name of ["self", "region", "team"]) expect(hasIndexForBranch("partners", firestoreBranch(partners, name)), `partners ${name} ${displayNamePrefix ?? "-"}`).toBe(true);
+      const vendors = planVendorListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, displayNamePrefix }).plan;
+      for (const name of ["self", "region", "team"]) expect(hasIndexForBranch("vendors", firestoreBranch(vendors, name)), `vendors ${name} ${displayNamePrefix ?? "-"}`).toBe(true);
+    }
   });
 });

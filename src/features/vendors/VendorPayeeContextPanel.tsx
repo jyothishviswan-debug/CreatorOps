@@ -20,11 +20,15 @@ import { effectiveDateLabel, LINK_STATUS_LABELS, linkStatusTone, RELATIONSHIP_TY
 // payeeRole is true are shown here - an active relationship without
 // payeeRole means this Vendor handles representation but NOT payments
 // for that Partner (the Partner itself remains the payee subject,
-// per Step 8B.1 REVISED section 4, until Finance is built). Agreements/
-// Payables/Invoices/Payments don't exist yet, so those are shown as an
+// per Step 8B.1 REVISED section 4, until Finance is built).
+// Step 14B: the Agreements panel is now a contextual link into the
+// Finance Agreements module (rendered only when the server page says the
+// actor holds the Finance feature - `canOpenFinance` - and the
+// destination re-authorizes independently); it shows no Agreement data
+// here. Payables/Invoices/Payments still don't exist, so those stay an
 // honest "not yet built" state rather than a fabricated number, count,
 // or amount.
-export function VendorPayeeContextPanel({ vendorRef }: { vendorRef: string }) {
+export function VendorPayeeContextPanel({ vendorRef, canOpenFinance = false }: { vendorRef: string; canOpenFinance?: boolean }) {
   const [links, setLinks] = useState<VendorPartnerLinkWithPartnerDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -53,7 +57,7 @@ export function VendorPayeeContextPanel({ vendorRef }: { vendorRef: string }) {
         <Panel span={12}>
           <PanelHead
             title="Payee / Commercial Context"
-            description="This Vendor's active Partner relationships where it is the party currently handling payments. Context for future Agreement/Finance truth, not Finance truth itself."
+            description="This Vendor's active Partner relationships where it is the party currently handling payments. Context only, not Finance truth itself."
           />
           <PanelBody>
             {loading ? (
@@ -89,14 +93,31 @@ export function VendorPayeeContextPanel({ vendorRef }: { vendorRef: string }) {
         </Panel>
       </PanelGrid>
       <PanelGrid>
-        {(["Agreements", "Payables", "Invoices", "Payments"] as const).map((label) => (
-          <Panel span={3} key={label}>
-            <PanelHead title={label} />
-            <PanelBody>
-              <EmptyState title="Not yet built" description={`${label} has no real trusted source wired to Vendors yet.`} icon="clock" />
-            </PanelBody>
-          </Panel>
-        ))}
+        {(["Agreements", "Payables", "Invoices", "Payments"] as const).map((label) =>
+          label === "Agreements" && canOpenFinance ? (
+            <Panel span={3} key={label}>
+              <PanelHead title={label} />
+              <PanelBody>
+                <p className="detailcopy">Review this Vendor&apos;s Agreements or start a new one from the Finance module.</p>
+                <div className="actions" style={{ marginTop: 12 }}>
+                  <Link href="/finance/agreements?counterpartyType=VENDOR" className="btn">
+                    Open Finance Agreements
+                  </Link>
+                  <Link href={`/finance/agreements/new?counterpartyType=VENDOR&ref=${encodeURIComponent(vendorRef)}`} className="btn">
+                    New Agreement
+                  </Link>
+                </div>
+              </PanelBody>
+            </Panel>
+          ) : (
+            <Panel span={3} key={label}>
+              <PanelHead title={label} />
+              <PanelBody>
+                <EmptyState title="Not yet built" description={`${label} has no real trusted source wired to Vendors yet.`} icon="clock" />
+              </PanelBody>
+            </Panel>
+          ),
+        )}
       </PanelGrid>
     </>
   );

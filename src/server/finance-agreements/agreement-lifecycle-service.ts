@@ -6,6 +6,7 @@ import { getAdminFirestore } from "@/server/firebase/admin";
 
 import { draftFromConfirmedVersion } from "./agreement-draft";
 import { appendAgreementEvent } from "./agreement-events";
+import { txResolveDisplayVersions, withHeadDisplay } from "./agreement-head-display";
 import type { AgreementDetailDto } from "./client-dto";
 import { txCreateAgreementVersion, txGetAgreementHead, txGetAgreementVersion, txSetAgreementHead, txSetAgreementVersion } from "./firestore";
 import { authorizeAgreementCommand, buildAgreementDetailDto, newDraftVersionDoc, scopeFieldsOf } from "./service-common";
@@ -88,7 +89,7 @@ export async function activateAgreementVersion(actor: ActorContext | null, rawIn
     const superseded: AgreementVersionDoc | null = prior
       ? { ...prior, status: "SUPERSEDED", supersededByVersion: target.version, supersededAt: now, docVersion: prior.docVersion + 1, updatedAt: now, updatedByUserRef: actor!.userRef }
       : null;
-    const nextHead: AgreementHeadDoc = {
+    const steppedHead: AgreementHeadDoc = {
       ...head,
       ...scopeFieldsOf(authorized.liveScope),
       status: "ACTIVE",
@@ -98,6 +99,8 @@ export async function activateAgreementVersion(actor: ActorContext | null, rawIn
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
     };
+    // List projection (same transaction; describes the POST-activation state). Reads precede the first write.
+    const nextHead = withHeadDisplay(steppedHead, { counterpartyName: authorized.displayName, ...(await txResolveDisplayVersions(tx, steppedHead, [activated])), projectedAt: now });
 
     txSetAgreementVersion(tx, activated);
     if (superseded) txSetAgreementVersion(tx, superseded);
@@ -163,7 +166,7 @@ export async function createAgreementRevision(actor: ActorContext | null, rawInp
     const now = new Date().toISOString();
     const nextNumber = head.latestVersion + 1;
     const draftVersion = newDraftVersionDoc({ agreementRef: input.agreementRef, version: nextNumber, counterparty: base.counterparty, sourceMode: "MANUAL", draft: draftFromConfirmedVersion(base), now, actorUserRef: actor!.userRef });
-    const nextHead: AgreementHeadDoc = {
+    const steppedHead: AgreementHeadDoc = {
       ...head,
       ...scopeFieldsOf(authorized.liveScope),
       latestVersion: nextNumber,
@@ -172,6 +175,8 @@ export async function createAgreementRevision(actor: ActorContext | null, rawInp
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
     };
+    // A fresh revision has no extraction of its own yet.
+    const nextHead = withHeadDisplay(steppedHead, { counterpartyName: authorized.displayName, ...(await txResolveDisplayVersions(tx, steppedHead, [draftVersion, ...(base ? [base] : [])])), extractionStatus: null, projectedAt: now });
 
     txCreateAgreementVersion(tx, draftVersion);
     txSetAgreementHead(tx, nextHead);
@@ -223,7 +228,7 @@ async function transitionGoverningVersion<T extends { agreementRef: string; expe
 
     const now = new Date().toISOString();
     const nextVersion = spec.applyVersion(governing, input, now, actor!.userRef);
-    const nextHead: AgreementHeadDoc = {
+    const steppedHead: AgreementHeadDoc = {
       ...head,
       ...scopeFieldsOf(authorized.liveScope),
       ...spec.applyHead(head, nextVersion),
@@ -231,6 +236,8 @@ async function transitionGoverningVersion<T extends { agreementRef: string; expe
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
     };
+    // List projection (same transaction; describes the POST-transition state). Reads precede the first write.
+    const nextHead = withHeadDisplay(steppedHead, { counterpartyName: authorized.displayName, ...(await txResolveDisplayVersions(tx, steppedHead, [nextVersion])), projectedAt: now });
     txSetAgreementVersion(tx, { ...nextVersion, docVersion: governing.docVersion + 1, updatedAt: now, updatedByUserRef: actor!.userRef });
     txSetAgreementHead(tx, nextHead);
     const reason = spec.reason(input);

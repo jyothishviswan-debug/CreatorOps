@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
 
+import { txResolveDisplayVersions, withHeadDisplay } from "./agreement-head-display";
 import { ContractArtifactStoreError, getContractArtifactStore } from "./contract-artifacts/store";
 import { toExtractionResultDto, type ExtractionResultDto } from "./client-dto";
 import { redactIdentityFromText } from "./extraction-redaction";
@@ -18,6 +19,7 @@ import {
   txCreateRestrictedExtraction,
   txGetAgreementHead,
   txGetAgreementVersion,
+  txSetAgreementHead,
 } from "./firestore";
 import { loadAuthorizedAgreement, requireContractSensitiveAccess, requireFinanceAgreementsAccess, requireIdentitySensitiveAccess } from "./finance-agreements-gate";
 import { generateExtractionRunRef } from "./ids";
@@ -50,7 +52,8 @@ import {
 //   - financeAgreementRestrictedExtractions/{runRef}    raw snippets/locators + raw identity values;
 //   - the artifact's status.
 // It NEVER attaches a proposal to the draft (that is the separate, explicit attachExtractionProposals
-// call), never confirms or activates, never writes the head or a version, and never touches a
+// call), never confirms or activates, never writes a version (the head gets only its display projection,
+// docVersion untouched), and never touches a
 // Partner, Vendor or KYC record. Nothing extracted is operational, whatever the status.
 
 // --- Input shapes ---------------------------------------------------------------------------------------------------------------
@@ -161,9 +164,13 @@ export async function extractContract(actor: ActorContext | null, rawInput: unkn
     if (!freshHead || !version || !freshArtifact?.success || !artifactBelongsToHead(freshArtifact.data, freshHead)) return { kind: "not_found" };
     if (freshHead.openVersion !== version.version || version.status !== "DRAFT" || version.confirmation !== null) return { kind: "locked", version: version.version };
 
+    // List projection: the head's display.extractionStatus follows the newest run. Reads precede the first write.
+    const displayed = await txResolveDisplayVersions(tx, freshHead, [version]);
     txCreateExtractionRun(tx, docs.run);
     txCreateRestrictedExtraction(tx, docs.restricted);
-    // Only the artifact's own status changes; the head and every version stay untouched.
+    // The head's ONLY change is that projection (docVersion, lifecycle pointers and scope stay as they were);
+    // every version stays untouched. Apart from that, only the artifact's own status changes.
+    txSetAgreementHead(tx, withHeadDisplay(freshHead, { counterpartyName: authorized.displayName, ...displayed, extractionStatus: docs.run.status, projectedAt: now, touchedBy: { actorUserRef: actor!.userRef } }));
     tx.set(
       financeContractArtifactsCollection().doc(artifact.artifactRef),
       contractArtifactDocSchema.parse({ ...freshArtifact.data, status: docs.run.status === "MANUAL_REVIEW_REQUIRED" ? "MANUAL_REVIEW_REQUIRED" : "EXTRACTED" }),

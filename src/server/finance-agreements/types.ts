@@ -1,7 +1,7 @@
 import { z } from "zod";
 
 import { agreementFieldKeySchema, AGREEMENT_FIELD_BY_KEY, AGREEMENT_FIELD_DECISIONS, checkFieldDecisionValue, type AgreementFieldKey } from "./fields";
-import { confirmedAgreementTermsSchema, contactSnapshotSchema, identityStatusSnapshotSchema, utcDateSchema } from "./terms";
+import { agreementTypeSchema, confirmedAgreementTermsSchema, contactSnapshotSchema, identityStatusSnapshotSchema, utcDateSchema } from "./terms";
 
 // Step 14A: the canonical Finance Agreements domain. One logical Agreement
 // ("head") = one Partner OR Vendor counterparty. Each head owns an append-only
@@ -222,6 +222,36 @@ export const agreementVersionDocSchema = z
   });
 export type AgreementVersionDoc = z.infer<typeof agreementVersionDocSchema>;
 
+// --- Head list projection (Step 14B) ---------------------------------------------------------------------------------------
+// A LIST PROJECTION written by every mutation that writes the head (in the SAME transaction) - never
+// authorization and never lifecycle truth (the head fields and the version docs are). It serves the
+// bounded workspace list only: name search, period / discrepancy filters and the row summary, "as of
+// last update". It carries no identity value, no scope-snapshot field and no contract text. It is
+// additive and optional: a head written before Step 14B has `display: null` and is refreshed by its
+// next mutation. Writing it NEVER changes head.docVersion (see buildHeadDisplay / display writes).
+export const agreementHeadDisplaySchema = z
+  .object({
+    // The counterparty's display name as of the last write (the live name is still shown in rows).
+    counterpartyName: z.string().min(1).max(200),
+    counterpartyNameLower: z.string().min(1).max(200),
+    agreementNumber: z.string().min(1).max(100).nullable().default(null),
+    agreementType: agreementTypeSchema.nullable().default(null),
+    effectiveFrom: utcDateSchema.nullable().default(null),
+    effectiveTo: utcDateSchema.nullable().default(null),
+    sourceMode: agreementSourceModeSchema.nullable().default(null),
+    // PENDING (proposed / prefilled, not yet decided) entries of the OPEN version's working draft.
+    unresolvedFieldCount: z.number().int().min(0).max(1000).default(0),
+    // The open version exists and is already confirmed (awaiting activation) - drives the row's primary action hint.
+    openVersionConfirmed: z.boolean().default(false),
+    // Status of the most recent extraction run recorded for the open version (completeness only).
+    extractionStatus: z.enum(["EXTRACTED", "PARTIAL", "MANUAL_REVIEW_REQUIRED"]).nullable().default(null),
+    // The head status when the projection was written.
+    governingStatus: agreementHeadStatusSchema,
+    projectedAt: isoTimestamp,
+  })
+  .strict();
+export type AgreementHeadDisplay = z.infer<typeof agreementHeadDisplaySchema>;
+
 // --- Head document (financeAgreements/{agreementRef}) -------------------------------------------------------------------
 // The head's own scope fields (ownerUid/regionIds/teamIds/partnerUid|vendorUid) are a point-in-time
 // copy of the counterparty's scope (see AgreementScopeSnapshot).
@@ -246,6 +276,9 @@ export const agreementHeadDocSchema = z
     // The ACTIVE or SUSPENDED version, if any.
     activeVersion: z.number().int().min(1).nullable().default(null),
     lastEndedVersion: z.number().int().min(1).nullable().default(null),
+
+    // Step 14B list projection (additive; null on heads written before it). See agreementHeadDisplaySchema.
+    display: agreementHeadDisplaySchema.nullable().default(null),
 
     createdAt: isoTimestamp,
     createdByUserRef: nonEmpty,

@@ -5,6 +5,7 @@ import { getAdminFirestore } from "@/server/firebase/admin";
 
 import { applyFieldDecision, attachProposalsToDraft, buildMasterDataDraft, reconciliationEntriesForVersion, type ReconciliationFieldEntry } from "./agreement-draft";
 import { appendAgreementEvent } from "./agreement-events";
+import { buildHeadDisplay, txResolveDisplayVersions, withHeadDisplay } from "./agreement-head-display";
 import { toAgreementEventDto, toAgreementHeadDto, toAgreementVersionSummaryDto, type AgreementDetailDto, type AgreementEventDto, type AgreementHeadDto, type AgreementVersionSummaryDto } from "./client-dto";
 import { assembleConfirmedAgreement, fieldAppliesTo } from "./fields";
 import {
@@ -25,6 +26,7 @@ import {
   txGetAgreementClaim,
   txGetAgreementHead,
   txGetAgreementVersion,
+  txSetAgreementHead,
   txSetAgreementVersion,
 } from "./firestore";
 import { loadAuthorizedAgreement, loadAuthorizedCounterparty, requireFinanceAgreementsAccess } from "./finance-agreements-gate";
@@ -118,6 +120,7 @@ export async function createAgreementDraft(actor: ActorContext | null, rawInput:
       if (claim) return { kind: "existing", agreementRef: claim.agreementRef, fingerprint: claim.inputFingerprint };
 
       const now = new Date().toISOString();
+      const version = newDraftVersionDoc({ agreementRef, version: 1, counterparty: authorized.counterparty, sourceMode: parsed.data.sourceMode ?? "MANUAL", draft, now, actorUserRef: actor!.userRef });
       const head: AgreementHeadDoc = agreementHeadDocSchema.parse({
         agreementRef,
         docVersion: 1,
@@ -128,12 +131,13 @@ export async function createAgreementDraft(actor: ActorContext | null, rawInput:
         openVersion: 1,
         activeVersion: null,
         lastEndedVersion: null,
+        // Step 14B list projection, written in the same transaction as the head.
+        display: buildHeadDisplay({ head: { status: "DRAFT", openVersion: 1, activeVersion: null, lastEndedVersion: null }, counterpartyName: authorized.displayName, open: version, governing: null, extractionStatus: null, projectedAt: now }),
         createdAt: now,
         createdByUserRef: actor!.userRef,
         updatedAt: now,
         updatedByUserRef: actor!.userRef,
       });
-      const version = newDraftVersionDoc({ agreementRef, version: 1, counterparty: authorized.counterparty, sourceMode: parsed.data.sourceMode ?? "MANUAL", draft, now, actorUserRef: actor!.userRef });
 
       txCreateAgreementClaim(tx, claimId, { agreementRef, inputFingerprint: fingerprint, createdAt: now });
       txCreateAgreementHead(tx, head);
@@ -314,9 +318,13 @@ export async function decideField(actor: ActorContext | null, rawInput: unknown,
     if (!applied.ok) return { kind: "invalid", message: applied.message };
 
     const next: AgreementVersionDoc = { ...version, draft: { ...version.draft, [input.fieldKey]: applied.entry }, docVersion: version.docVersion + 1, updatedAt: now, updatedByUserRef: actor!.userRef };
+    // List projection: refreshed in this same transaction; head.docVersion is deliberately NOT bumped.
+    const displayed = await txResolveDisplayVersions(tx, head, [next]);
+    const nextHead = withHeadDisplay(head, { counterpartyName: authorized.displayName, ...displayed, projectedAt: now, touchedBy: { actorUserRef: actor!.userRef } });
     txSetAgreementVersion(tx, next);
+    txSetAgreementHead(tx, nextHead);
     appendAgreementEvent(tx, { agreementRef: input.agreementRef, kind: "field_decided", version: version.version, actorUserRef: actor!.userRef, metadata: { fieldKey: input.fieldKey, decision: input.decision, ...(input.note ? { note: input.note } : {}) }, requestId, createdAt: now });
-    return { kind: "ok", head, version: next };
+    return { kind: "ok", head: nextHead, version: next };
   });
 
   if (result.kind === "invalid") return financeAgreementsInvalidInputResult(result.message);
@@ -369,7 +377,10 @@ export async function attachExtractionProposals(actor: ActorContext | null, rawI
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
     };
+    const displayed = await txResolveDisplayVersions(tx, head, [next]);
+    const nextHead = withHeadDisplay(head, { counterpartyName: authorized.displayName, ...displayed, extractionStatus: run.data.status, projectedAt: now, touchedBy: { actorUserRef: actor!.userRef } });
     txSetAgreementVersion(tx, next);
+    txSetAgreementHead(tx, nextHead);
     appendAgreementEvent(tx, {
       agreementRef: input.agreementRef,
       kind: "extraction_attached",
@@ -379,7 +390,7 @@ export async function attachExtractionProposals(actor: ActorContext | null, rawI
       requestId,
       createdAt: now,
     });
-    return { kind: "ok", head, version: next, attachedCount: attached.attachedCount, keptDecisionCount: attached.keptDecisionCount, skippedCount: attached.skippedCount };
+    return { kind: "ok", head: nextHead, version: next, attachedCount: attached.attachedCount, keptDecisionCount: attached.keptDecisionCount, skippedCount: attached.skippedCount };
   });
 
   if (result.kind !== "ok") return editFailureResult(result);
@@ -432,7 +443,10 @@ export async function confirmAgreementVersion(actor: ActorContext | null, rawInp
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
     };
+    const displayed = await txResolveDisplayVersions(tx, head, [next]);
+    const nextHead = withHeadDisplay(head, { counterpartyName: authorized.displayName, ...displayed, projectedAt: now, touchedBy: { actorUserRef: actor!.userRef } });
     txSetAgreementVersion(tx, next);
+    txSetAgreementHead(tx, nextHead);
     appendAgreementEvent(tx, {
       agreementRef: input.agreementRef,
       kind: "confirmed",
@@ -448,7 +462,7 @@ export async function confirmAgreementVersion(actor: ActorContext | null, rawInp
       requestId,
       createdAt: now,
     });
-    return { kind: "ok", head, version: next };
+    return { kind: "ok", head: nextHead, version: next };
   });
 
   if (result.kind === "not_ready") return financeAgreementsNotReadyResult("This agreement version is not ready to confirm.", result.blockers);

@@ -27,10 +27,10 @@ const TABS: { key: TabKey; label: string }[] = [
   { key: "context", label: "Context" },
 ];
 
-// `canOpenPartnerReviews` is computed by the server page from the actor's own `partner_reviews` feature grant
-// (it only decides whether the contextual link is RENDERED; the destination independently re-authorizes the
-// actor and this Partner's live scope). Without it the Context tab is exactly as before.
-export function PartnerDetail({ initialPartner, canOpenPartnerReviews = false }: { initialPartner: PartnerDto; canOpenPartnerReviews?: boolean }) {
+// `canOpenPartnerReviews` / `canOpenFinance` are computed by the server page from the actor's own `partner_reviews` /
+// `finance` feature grants (they only decide whether a contextual link is RENDERED; the destination independently
+// re-authorizes the actor and this Partner's live scope). Without them the Context tab is exactly as before.
+export function PartnerDetail({ initialPartner, canOpenPartnerReviews = false, canOpenFinance = false }: { initialPartner: PartnerDto; canOpenPartnerReviews?: boolean; canOpenFinance?: boolean }) {
   const [partner, setPartner] = useState(initialPartner);
   const [selectedTab, setSelectedTab] = useState<TabKey>("overview");
   // Bumped on every successful mutation - partnerRef alone never changes
@@ -214,6 +214,21 @@ export function PartnerDetail({ initialPartner, canOpenPartnerReviews = false }:
                   <div style={{ marginTop: 12 }}>
                     <Link href={`/partner-reviews/partner/${encodeURIComponent(partner.partnerRef)}`} className="btn">
                       Open Partner Reviews
+                    </Link>
+                  </div>
+                </PanelBody>
+              </Panel>
+            ) : label === "Finance" && canOpenFinance ? (
+              <Panel span={4} key={label}>
+                <PanelHead title={label} description="Agreements" />
+                <PanelBody>
+                  <p className="detailcopy">Review this Partner&apos;s Agreements or start a new one from the Finance module.</p>
+                  <div className="actions" style={{ marginTop: 12 }}>
+                    <Link href="/finance/agreements?counterpartyType=PARTNER" className="btn">
+                      Open Finance Agreements
+                    </Link>
+                    <Link href={`/finance/agreements/new?counterpartyType=PARTNER&ref=${encodeURIComponent(partner.partnerRef)}`} className="btn">
+                      New Agreement
                     </Link>
                   </div>
                 </PanelBody>
