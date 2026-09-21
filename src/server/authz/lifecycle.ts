@@ -122,6 +122,26 @@ export const PARTNER_REVIEW_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
   SUPERSEDED: ["FINALIZED"],
 };
 
+// Step 14A: the canonical Finance Agreement VERSION lifecycle. Keyed by target
+// state -> allowed predecessor states, same convention as every map above.
+// A version is created DRAFT (a mutable working copy until it is CONFIRMED -
+// confirmation is a field on the DRAFT version, not a status, so a confirmed
+// draft is "activatable but not yet operational"). DRAFT is reachable by no
+// transition (versions are only ever CREATED as DRAFT). ACTIVE is reached from
+// DRAFT (activation) or from SUSPENDED (resume). SUSPENDED only from ACTIVE.
+// ENDED is terminal and reachable from ACTIVE or SUSPENDED - never from DRAFT
+// (an unconfirmed/unactivated draft is never "ended"; it is superseded or
+// simply left). SUPERSEDED is set only by the activation of a REPLACEMENT
+// version, on the previously ACTIVE or SUSPENDED one; nothing leaves ENDED or
+// SUPERSEDED, and there is no hard delete anywhere.
+export const FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  DRAFT: [],
+  ACTIVE: ["DRAFT", "SUSPENDED"],
+  SUSPENDED: ["ACTIVE"],
+  ENDED: ["ACTIVE", "SUSPENDED"],
+  SUPERSEDED: ["ACTIVE", "SUSPENDED"],
+};
+
 export function canTransitionLifecycle(currentState: string, nextState: string, transitions: LifecycleTransitionMap): boolean {
   const allowedFrom = transitions[nextState];
   if (!allowedFrom) return false;

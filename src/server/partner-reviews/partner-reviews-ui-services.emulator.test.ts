@@ -429,6 +429,8 @@ async function rawHeadWithoutHint(reviewRef: string): Promise<string> {
 const partnerNames = (rows: ReviewListRowDto[]) => rows.map((row) => row.partnerDisplayName);
 
 // ======================================================================================================================
+const FINANCE_AGREEMENT_ROOTS = /^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions)$/; // Step 14A: the Agreement foundation legitimately owns these roots (Partner Reviews writing them is proven by the write-instrumentation tests); anything else Finance-shaped is still a violation.
+
 describe("write-time list projections (summary / display / freshnessHint)", () => {
   it("generate writes a version summary and a head display block that match the canonical snapshot; freshnessHint is recorded without touching docVersion", async () => {
     const { partner } = await seedRich({ dueAt: "2016-03-10" });
@@ -1307,6 +1309,6 @@ describe("redaction and canonical results", () => {
 describe("Finance boundary (runtime)", () => {
   it("none of the new services or writes introduced a Finance-shaped collection", async () => {
     const roots = (await getAdminFirestore().listCollections()).map((c) => c.id);
-    expect(roots.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name))).toEqual([]);
+    expect(roots.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name) && !FINANCE_AGREEMENT_ROOTS.test(name))).toEqual([]);
   });
 });

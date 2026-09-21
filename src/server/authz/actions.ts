@@ -103,6 +103,11 @@ export const ACTIONS = [
   "finalize_approve",
   // Finance
   "manage_agreements",
+  // Step 14A: the governance-weight Agreement lifecycle actions (activate,
+  // revise, suspend, resume, end) - deliberately its own id, never folded
+  // into manage_agreements, so Manager can prepare/confirm an Agreement
+  // without being trusted to make it operational.
+  "activate_agreements",
   "manage_payables",
   "approve_payables",
   "manage_invoices",

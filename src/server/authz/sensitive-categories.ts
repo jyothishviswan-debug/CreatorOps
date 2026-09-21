@@ -15,4 +15,8 @@ export const SENSITIVE_CATEGORIES: SensitiveCategoryDef[] = [
   // restricted identity uses) - a role trusted with a Partner's bank/PAN
   // details is not automatically trusted with a Vendor's, and vice versa.
   { id: "vendor_payment_details", label: "Vendor payment details", description: "Restricted Vendor tax/bank/KYC identity: PAN, GST and bank account details on file." },
+  // Step 14A: raw contract text/locators of extracted Agreement fields and
+  // the restricted extraction record. Identity VALUES additionally require
+  // the owning boundary's own category (payment_details / vendor_payment_details).
+  { id: "finance_contracts", label: "Finance contracts", description: "Raw contract snippets and locators of extracted Agreement fields, and restricted extracted identity values." },
 ];

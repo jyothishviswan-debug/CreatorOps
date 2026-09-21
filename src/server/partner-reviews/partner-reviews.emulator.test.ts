@@ -421,6 +421,8 @@ async function generateAndFinalize(partnerRef: string, periodKey = "2019-03") {
 
 // ---- Identity, generation, idempotency -----------------------------------------------
 
+const FINANCE_AGREEMENT_ROOTS = /^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions)$/; // Step 14A: the Agreement foundation legitimately owns these roots (Partner Reviews writing them is proven by the write-instrumentation tests); anything else Finance-shaped is still a violation.
+
 describe("logical identity and generation", () => {
   it("the logical identity is deterministic: one Partner + one month always resolves to the same reviewRef, and different months/Partners differ", async () => {
     const head = await actorFor("partnership_head");
@@ -1163,7 +1165,7 @@ describe("upstream and Finance boundaries", () => {
     expect(after[3]).toBe(before[3]);
 
     const rootAfter = (await getAdminFirestore().listCollections()).map((c) => c.id).sort();
-    expect(rootAfter.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name))).toEqual([]);
+    expect(rootAfter.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name) && !FINANCE_AGREEMENT_ROOTS.test(name))).toEqual([]);
     // Other emulator test files run concurrently (default parallel mode) and
     // may legitimately FIRST-WRITE a root collection of their own during this
     // window (e.g. analyticsReadModelSnapshots, auditEvents), so "no new root
@@ -1912,10 +1914,12 @@ describe("commercial evidence in the stored snapshot (Step 13A.1 revised)", () =
   it("a malformed / client-supplied policy is impossible: generate and refresh reject a policy in the input, writing nothing", async () => {
     const head = await actorFor("partnership_head");
     const fx = await seedCommercialPartner();
-    const before = (await getAdminFirestore().collection(PARTNER_REVIEWS_COLLECTIONS.partnerReviews).get()).size;
+    // Hermetic: the rejected input must not create THIS Partner-month's review head (never a whole-collection size, which parallel files change).
+    const headRef = getAdminFirestore().collection(PARTNER_REVIEWS_COLLECTIONS.partnerReviews).doc(reviewRefFor(fx.partner.partnerRef, "2019-03"));
+    expect((await headRef.get()).exists).toBe(false);
     const rejected = await generatePartnerReviewDraft(head, { partnerRef: fx.partner.partnerRef, periodKey: "2019-03", commercialPolicy: { agreementRef: "x", agreementVersion: 1 } }, "req-policy");
     expect(rejected).toMatchObject({ ok: false, code: "invalid_input" });
-    expect((await getAdminFirestore().collection(PARTNER_REVIEWS_COLLECTIONS.partnerReviews).get()).size).toBe(before);
+    expect((await headRef.get()).exists).toBe(false);
 
     const generated = await generateFor(head, fx.partner.partnerRef);
     const refresh = await refreshPartnerReviewEvidence(head, generated.review.head.reviewRef, { expectedDocVersion: 1, commercialPolicy: { agreementRef: "x", agreementVersion: 1 } }, "req-policy-2");
@@ -2051,7 +2055,7 @@ describe("finalized-review handoff (Step 13A.1 revised)", () => {
     expect(await Promise.all(upstream.map(rawDoc))).toEqual(before.upstream);
     const rootAfter = (await getAdminFirestore().listCollections()).map((c) => c.id).sort();
     expect(rootAfter).toEqual(rootBefore);
-    expect(rootAfter.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name))).toEqual([]);
+    expect(rootAfter.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name) && !FINANCE_AGREEMENT_ROOTS.test(name))).toEqual([]);
   });
 });
 

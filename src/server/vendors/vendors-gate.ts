@@ -2,7 +2,7 @@ import type { ActionId } from "@/server/authz/actions";
 import { canAccessFeature, canPerformAction } from "@/server/authz/capabilities";
 import { canAccessSensitive } from "@/server/authz/sensitive";
 import { getActorScopeGrants, hasGlobalScope, isExplicitRecordInScope, isRegionInScope, isSelfInScope, isTeamInScope } from "@/server/authz/scope";
-import type { ActorContext } from "@/server/authz/types";
+import type { ActorContext, ScopeGrant } from "@/server/authz/types";
 import type { VendorsDenialReason } from "./types";
 
 export type VendorsAccessResult = { ok: true } | { ok: false; reason: VendorsDenialReason };
@@ -42,20 +42,27 @@ export async function requireVendorsFeatureAccess(actor: ActorContext | null): P
 // SELF via ownerUid, REGION/TEAM via the Vendor's own dimensions, or an
 // EXPLICIT_RECORD grant naming this Vendor specifically) grants access
 // here.
+// Pure, in-memory form of the Vendor Record Scope decision - the ONE place the
+// rule lives. requireVendorInScope delegates to it; bulk/in-memory callers that
+// already hold the actor's grants (e.g. Finance Agreements' per-head live scope
+// re-verification) call it directly. Same refactor pattern as
+// isPartnerDocInScope. Behavior-identical to the previous inline rule.
+export function isVendorDocInScope(grants: ScopeGrant[], actorUid: string, vendor: { uid: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] }): boolean {
+  return (
+    hasGlobalScope(grants) ||
+    isSelfInScope(grants, actorUid, vendor.ownerUid ?? undefined) ||
+    vendor.regionIds.some((region) => isRegionInScope(grants, region)) ||
+    vendor.teamIds.some((teamId) => isTeamInScope(grants, teamId)) ||
+    isExplicitRecordInScope(grants, "vendor", vendor.uid)
+  );
+}
+
 export async function requireVendorInScope(
   actor: ActorContext,
   vendor: { uid: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] },
 ): Promise<VendorsAccessResult> {
   const grants = await getActorScopeGrants(actor);
-
-  const inScope =
-    hasGlobalScope(grants) ||
-    isSelfInScope(grants, actor.uid, vendor.ownerUid ?? undefined) ||
-    vendor.regionIds.some((region) => isRegionInScope(grants, region)) ||
-    vendor.teamIds.some((teamId) => isTeamInScope(grants, teamId)) ||
-    isExplicitRecordInScope(grants, "vendor", vendor.uid);
-
-  return inScope ? { ok: true } : { ok: false, reason: "scope_denied" };
+  return isVendorDocInScope(grants, actor.uid, vendor) ? { ok: true } : { ok: false, reason: "scope_denied" };
 }
 
 // Sensitive Access gate for the restricted financial identity package -

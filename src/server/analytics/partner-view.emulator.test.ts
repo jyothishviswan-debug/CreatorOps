@@ -892,7 +892,7 @@ describe("Data Explorer Partner / Partner Account filter - real, scoped and curs
 describe("Partner Analytics is read-only and finance-free", () => {
   it("viewing it writes nothing: no Finance-shaped collection appears and Analytics documents are unchanged", async () => {
     const db = getAdminFirestore();
-    const probe = async () => (await db.listCollections()).map((c) => c.id).filter((id) => /finance|payout|invoice|agreement/i.test(id));
+    const probe = async () => (await db.listCollections()).map((c) => c.id).filter((id) => /finance|payout|invoice|agreement/i.test(id) && !/^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions)$/.test(id)); // (the Step 14A Agreement roots are created concurrently by other files)
     const before = await probe();
     const actor = await syntheticActor("a", REGION_A);
     await partnerView(actor, P1);

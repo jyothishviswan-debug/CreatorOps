@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canTransitionLifecycle, CONTENT_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS, PARTNER_REVIEW_LIFECYCLE_TRANSITIONS } from "./lifecycle";
+import { canTransitionLifecycle, CONTENT_LIFECYCLE_TRANSITIONS, FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS, PARTNER_REVIEW_LIFECYCLE_TRANSITIONS } from "./lifecycle";
 
 describe("canTransitionLifecycle", () => {
   it("allows a transition from a listed predecessor state", () => {
@@ -134,5 +134,37 @@ describe("PARTNER_REVIEW_LIFECYCLE_TRANSITIONS", () => {
       expect(canTransitionLifecycle(state, "DRAFT", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
     }
     expect(canTransitionLifecycle("FINALIZED", "NEEDS_REVIEW", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)).toBe(false);
+  });
+});
+
+// Step 14A: Finance Agreement version lifecycle. Confirmation is a field on a
+// DRAFT version (not a status), so a confirmed draft activates straight to ACTIVE.
+describe("FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS", () => {
+  const T = FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS;
+
+  it("DRAFT -> ACTIVE (activate), ACTIVE <-> SUSPENDED (suspend/resume), ACTIVE|SUSPENDED -> ENDED", () => {
+    expect(canTransitionLifecycle("DRAFT", "ACTIVE", T)).toBe(true);
+    expect(canTransitionLifecycle("ACTIVE", "SUSPENDED", T)).toBe(true);
+    expect(canTransitionLifecycle("SUSPENDED", "ACTIVE", T)).toBe(true);
+    expect(canTransitionLifecycle("ACTIVE", "ENDED", T)).toBe(true);
+    expect(canTransitionLifecycle("SUSPENDED", "ENDED", T)).toBe(true);
+  });
+
+  it("SUPERSEDED is set only on a previously ACTIVE/SUSPENDED version (never a DRAFT)", () => {
+    expect(canTransitionLifecycle("ACTIVE", "SUPERSEDED", T)).toBe(true);
+    expect(canTransitionLifecycle("SUSPENDED", "SUPERSEDED", T)).toBe(true);
+    expect(canTransitionLifecycle("DRAFT", "SUPERSEDED", T)).toBe(false);
+    expect(canTransitionLifecycle("ENDED", "SUPERSEDED", T)).toBe(false);
+  });
+
+  it("DRAFT is only ever an initial state; ENDED and SUPERSEDED are terminal; an unactivated DRAFT cannot be suspended or ended", () => {
+    for (const state of Object.keys(T)) expect(canTransitionLifecycle(state, "DRAFT", T)).toBe(false);
+    for (const terminal of ["ENDED", "SUPERSEDED"]) {
+      for (const next of Object.keys(T)) expect(canTransitionLifecycle(terminal, next, T)).toBe(false);
+    }
+    expect(canTransitionLifecycle("DRAFT", "SUSPENDED", T)).toBe(false);
+    expect(canTransitionLifecycle("DRAFT", "ENDED", T)).toBe(false);
+    expect(canTransitionLifecycle("ACTIVE", "ACTIVE", T)).toBe(false);
+    expect(canTransitionLifecycle("ACTIVE", "CONFIRMED", T)).toBe(false);
   });
 });

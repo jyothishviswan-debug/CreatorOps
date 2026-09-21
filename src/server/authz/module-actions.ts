@@ -106,6 +106,7 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
   ],
   finance: [
     { id: "manage_agreements", label: "Manage agreements" },
+    { id: "activate_agreements", label: "Activate/revise/suspend/resume/end agreements" },
     { id: "manage_payables", label: "Manage payables" },
     { id: "approve_payables", label: "Approve payables" },
     { id: "manage_invoices", label: "Manage invoices" },

@@ -206,7 +206,10 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
   partnership_head: {
     features: {
       ...featuresOf(["dashboard", "partners", "vendors", "assignments", "analytics", "partner_reviews", "operations", "reports"]),
-      finance: featureGrant(true, { manage_agreements: true, manage_payables: true, approve_payables: true, manage_invoices: true, record_payments: true }),
+      // Step 14A: the only role (besides Super Admin) trusted with the
+      // Agreement lifecycle (activate/revise/suspend/resume/end) - Manager
+      // holds manage_agreements only (prepare/decide/confirm).
+      finance: featureGrant(true, { manage_agreements: true, activate_agreements: true, manage_payables: true, approve_payables: true, manage_invoices: true, record_payments: true }),
       discovery: featureGrant(true, {
         create: true,
         edit: true,
@@ -330,8 +333,11 @@ const SENSITIVE_GRANTS: Record<Role, string[]> = {
   // Step 8A: "vendor_payment_details" is its own category, deliberately
   // separate from "payment_details" (Partners') - same non-monotonic
   // independence proof, applied to Vendor restricted identity.
-  partnership_head: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details"],
-  super_admin: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details"],
+  // Step 14A: "finance_contracts" (raw contract snippets/locators, restricted
+  // extraction) is Head + Super Admin only; Manager holds manage_agreements
+  // (the ACTION) without it, same action-vs-category independence.
+  partnership_head: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details", "finance_contracts"],
+  super_admin: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details", "finance_contracts"],
 };
 
 // Every South/West Zone state (per REGION_ZONES, the canonical

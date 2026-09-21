@@ -1,4 +1,4 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -390,5 +390,99 @@ describe("firestore.indexes.json - Assignments (Partner Reviews Needs Review can
       expect(index.fields).toHaveLength(2);
       expect(index.fields[1]).toEqual(createdAtDesc);
     }
+  });
+});
+
+// Step 14A (production query/index audit): EVERY Firestore query introduced in src/server/finance-agreements. The emulator never
+// enforces composite indexes, so this certifies by SOURCE SCAN that no Finance query needs one, and pins the inventory
+// (exact-count style - a new query must be audited and added here deliberately):
+//
+//   #  collection                                   filters                            orderBy          limit  index need                          covered by
+//   1  financeAgreements                            counterparty.partnerRef ==         (none)           51     single-field equality               automatic single-field index
+//   2  financeAgreements                            counterparty.vendorRef ==          (none)           51     single-field equality               automatic single-field index
+//   3  financeAgreements                            counterparty.partnerRef ==         (none)           51     single-field equality               automatic (policy adapter; bounded)
+//   4  financeAgreements/{ref}/versions             (none)                             version desc     N+1    single-field order, no filter       automatic single-field index
+//   5  financeAgreements/{ref}/events               (none)                             createdAt desc   N+1    single-field order, no filter       automatic single-field index
+//   6  financeAgreements/{ref}/extractionRuns       (none)                             createdAt desc   1      single-field order, no filter       automatic single-field index (x2 call sites)
+//
+// #1/#2 share one call site (the field name is a variable); #6 has two call sites (extraction result read, reconciliation loader).
+// Every other read is a direct document get / transaction get (no query). The owner-module reads Finance calls (Partner by ref,
+// Partner Accounts by refs, Vendor by ref) are those modules' own, already-audited queries.
+// "Production verification pending": that Firestore production serves each of these from its automatic single-field index (the
+// documented behavior for equality-only and single-field-order queries) is not something an emulator can prove.
+describe("firestore.indexes.json - Finance Agreements (Step 14A query audit)", () => {
+  const financeDir = path.resolve(import.meta.dirname, "../finance-agreements");
+
+  function sourceFiles(dir: string, into: string[] = []): string[] {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) sourceFiles(full, into);
+      else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) into.push(full);
+    }
+    return into;
+  }
+
+  const strip = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/(\s)\/\/.*$/gm, "$1");
+
+  type QueryShape = { file: string; wheres: Array<{ field: string; op: string }>; orderBys: Array<{ field: string; direction: string }>; limited: boolean };
+
+  function queriesIn(dir: string): { queries: QueryShape[]; collectionGroupUses: number; otherOperators: string[] } {
+    const queries: QueryShape[] = [];
+    let collectionGroupUses = 0;
+    const otherOperators: string[] = [];
+    for (const file of sourceFiles(dir)) {
+      const source = strip(readFileSync(file, "utf8"));
+      collectionGroupUses += (source.match(/collectionGroup\s*\(/g) ?? []).length;
+      for (const operator of source.matchAll(/\.(startAfter|startAt|endAt|endBefore|offset|select|count)\s*\(/g)) otherOperators.push(`${path.basename(file)}:${operator[1]}`);
+      // A query statement: `await <collection chain> ... .get()` containing a where / orderBy.
+      for (const statement of source.matchAll(/await\s[^;]*?\.get\(\)/g)) {
+        const text = statement[0];
+        const wheres = [...text.matchAll(/\.where\(\s*([^,]+?)\s*,\s*"([^"]+)"/g)].map((m) => ({ field: m[1]!, op: m[2]! }));
+        const orderBys = [...text.matchAll(/\.orderBy\(\s*"([^"]+)"\s*(?:,\s*"([^"]+)")?/g)].map((m) => ({ field: m[1]!, direction: m[2] ?? "asc" }));
+        if (wheres.length === 0 && orderBys.length === 0) continue;
+        queries.push({ file: path.relative(financeDir, file), wheres, orderBys, limited: /\.limit\(/.test(text) });
+      }
+    }
+    return { queries, collectionGroupUses, otherOperators };
+  }
+
+  const audit = queriesIn(financeDir);
+
+  it("the scan sees the real query call sites (it is not vacuous)", () => {
+    expect(audit.queries.length).toBeGreaterThan(0);
+    expect(audit.queries.map((query) => query.file)).toContain("firestore.ts");
+  });
+
+  it("the inventory is exactly the audited set: 2 equality-only queries (one on counterparty.<ref>, one adapter query) and 4 single-field-order queries", () => {
+    const summary = audit.queries
+      .map((query) => `${query.file} where[${query.wheres.map((w) => `${w.field} ${w.op}`).join(",")}] orderBy[${query.orderBys.map((o) => `${o.field} ${o.direction}`).join(",")}] limit:${query.limited}`)
+      .sort();
+    expect(summary).toEqual(
+      [
+        'agreement-service.ts where[field ==] orderBy[] limit:true',
+        'policy-adapter.ts where["counterparty.partnerRef" ==] orderBy[] limit:true',
+        'firestore.ts where[] orderBy[version desc] limit:true',
+        'firestore.ts where[] orderBy[createdAt desc] limit:true',
+        'reconciliation-loaders.ts where[] orderBy[createdAt desc] limit:true',
+        'extraction-service.ts where[] orderBy[createdAt desc] limit:true',
+      ].sort(),
+    );
+  });
+
+  it("no Finance query needs a composite index: only equality filters, never a filter AND an order, never two fields, always bounded, no collection group / cursor / offset", () => {
+    for (const query of audit.queries) {
+      for (const where of query.wheres) expect(where.op, `${query.file} filter op`).toBe("==");
+      expect(query.wheres.length + query.orderBys.length, `${query.file} uses more than one field`).toBe(1);
+      expect(query.limited, `${query.file} is unbounded`).toBe(true);
+    }
+    expect(audit.collectionGroupUses).toBe(0);
+    expect(audit.otherOperators).toEqual([]);
+  });
+
+  it("consequently firestore.indexes.json declares NO Finance composite (nothing is definitely required) and no field override disables an automatic single-field index", () => {
+    const financeCollections = ["financeAgreements", "versions", "events", "extractionRuns", "financeAgreementClaims", "financeContractArtifacts", "financeAgreementRestrictedExtractions"];
+    expect(indexesFile.indexes.filter((index) => financeCollections.includes(index.collectionGroup))).toEqual([]);
+    const overrides = JSON.parse(readFileSync(path.resolve(import.meta.dirname, "../../../firestore.indexes.json"), "utf8")).fieldOverrides ?? [];
+    expect((overrides as Array<{ collectionGroup: string }>).filter((override) => financeCollections.includes(override.collectionGroup))).toEqual([]);
   });
 });

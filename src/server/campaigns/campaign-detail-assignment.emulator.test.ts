@@ -222,9 +222,11 @@ describe("Create Assignment from Campaign - trusted outcome-aware create", () =>
     const afterDto = await getCampaign(manager, campaign.campaignRef);
     expect(afterDto.ok && beforeDto.ok && afterDto.data).toEqual(beforeDto.ok && beforeDto.data);
     if (afterDto.ok) expect(afterDto.data.status).toBe("ACTIVE");
-    // Finance: this codebase has no Finance collection at all, and creation never introduces one.
+    // Finance: Assignment creation never introduces a Payable / Invoice / Payment (or any other Finance-shaped) collection. The Step 14A
+    // Agreement foundation legitimately owns four roots (other files create them concurrently), so those are exempt here - a Campaign or
+    // Assignment writing Agreement data is separately barred by the Agreement module's static guards.
     const rootCollections = (await getAdminFirestore().listCollections()).map((c) => c.id);
-    expect(rootCollections.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name))).toEqual([]);
+    expect(rootCollections.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name) && !/^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions)$/.test(name))).toEqual([]);
   });
 
   it("a Campaign outside the actor's scope is denied (scope_denied), and no Assignment is written", async () => {
