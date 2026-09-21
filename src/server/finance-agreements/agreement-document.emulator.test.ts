@@ -510,7 +510,7 @@ describe("Finance and the Partner / Vendor projection carry the SAME file refere
     expect(detail.selectedVersion!.document).toMatchObject({ status: "STORED", link: file.webViewLink });
     expect(status).toMatchObject({ agreementRef: ref, version: 1, storageConfigured: true, document: { status: "STORED", link: file.webViewLink } });
     expect(listed).toMatchObject({ counterpartyType: type, ref: refOf(cp), linksVisible: true, hasMore: false });
-    expect(listed.documents).toEqual([expect.objectContaining({ agreementRef: ref, version: 1, lifecycle: "DRAFT", headStatus: "DRAFT", document: expect.objectContaining({ status: "STORED", link: file.webViewLink, fileName: "Signed Agreement.pdf" }) })]);
+    expect(listed.documents).toEqual([expect.objectContaining({ agreementRef: ref, version: 1, lifecycle: "DRAFT", confirmed: true, headStatus: "DRAFT", document: expect.objectContaining({ status: "STORED", link: file.webViewLink, fileName: "Signed Agreement.pdf" }) })]);
     // the same reference, stored ONCE on the version: the projection reads it, nothing else holds a copy
     expect((await rawVersion(ref, 1)).document).toMatchObject({ driveFileId: file.fileId, driveLink: file.webViewLink });
 

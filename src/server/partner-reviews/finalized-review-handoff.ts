@@ -1,5 +1,5 @@
 import { commercialOrNeutral } from "./commercial-neutral";
-import type { EvidenceGoverningIdentity, EvidenceLfcSfc, EvidenceMonthlyDeliverable, EvidenceTarget, PartnerReviewHeadDoc, PartnerReviewVersionDoc, QualifyingUnit } from "./types";
+import type { EvidenceGoverningIdentity, EvidenceLfcSfc, EvidenceMonthlyDeliverable, EvidenceTarget, PartnerReviewHeadDoc, PartnerReviewVersionDoc, PolicyConflictMarker, QualifyingUnit } from "./types";
 
 // Step 13A.1 (revised): the stable, versioned, READ-ONLY handoff contract of a
 // FINALIZED Partner Review, for a future downstream consumer. Partner Reviews
@@ -80,6 +80,10 @@ export type FinalizedReviewHandoffDto = {
   evidenceCutoff: string;
   sourceFingerprint: string;
   governingAgreement: EvidenceGoverningIdentity | null;
+  // Step 14C (ADDITIVE, present ONLY when it applies): more than one applicable Agreement covered the
+  // month, so the commercial evidence below is empty BECAUSE OF the conflict, not because no Agreement
+  // governs. Reason and count only - no refs. A consumer that ignores this key sees the same shape as before.
+  policyConflict?: { reason: PolicyConflictMarker["reason"]; conflictCount: number };
   // Each present ONLY when Agreement-governed AND evaluated; otherwise null.
   paymentAffectingEvidence: {
     monthlyDeliverable: HandoffMonthlyDeliverable | null;
@@ -133,6 +137,7 @@ export function buildFinalizedReviewHandoff(args: { head: PartnerReviewHeadDoc; 
     evidenceCutoff: version.evidenceCutoff,
     sourceFingerprint: version.sourceFingerprint,
     governingAgreement: commercial.governingAgreement ? { ...commercial.governingAgreement } : null,
+    ...(commercial.policyConflict ? { policyConflict: { reason: commercial.policyConflict.reason, conflictCount: commercial.policyConflict.agreementRefs.length } } : {}),
     paymentAffectingEvidence: {
       monthlyDeliverable: handoffDeliverable(commercial.monthlyDeliverable),
       lfcSfc: handoffLfcSfc(commercial.lfcSfc),

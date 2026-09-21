@@ -8,16 +8,37 @@ import {
   describeSignal,
   effectiveDecision,
   NO_DECISION,
+  NO_STRONG_MATCH_HEADING,
+  NO_STRONG_MATCH_MESSAGE,
   OUTSIDE_ACCESS_MESSAGE,
   refusalNeedsRecheck,
+  SUPPORTING_ONLY_HEADING,
   summarizeDuplicates,
   toDuplicateDecision,
 } from "./duplicate-rules";
 
 describe("summary of a duplicate check", () => {
-  it("none: a new record can be created, nothing to acknowledge", () => {
+  it("none: `No strong match found` + the limitation (never `No duplicate` / `No existing`), nothing to acknowledge", () => {
     const summary = summarizeDuplicates(duplicatesDto());
-    expect(summary).toMatchObject({ kind: "none", heading: "No existing Partner found", requiresAcknowledgement: false, blocksCreateNew: false, blockMessage: null });
+    expect(summary).toMatchObject({ kind: "none", heading: "No strong match found", requiresAcknowledgement: false, blocksCreateNew: false, blockMessage: null });
+    expect(summary.message).toContain("Records stored with a different email or phone format may not be detected.");
+    expect(`${summary.heading} ${summary.message}`).not.toMatch(/no duplicate|no existing|nothing in creatorops/i);
+    for (const type of ["PARTNER", "VENDOR"] as const) {
+      const each = summarizeDuplicates(duplicatesDto({ type }));
+      expect(each.heading).toBe(NO_STRONG_MATCH_HEADING);
+      expect(each.message).toBe(NO_STRONG_MATCH_MESSAGE);
+    }
+  });
+
+  it("supporting-only: a name-only result is `Possible match (name only)`; other supporting evidence is worded as a hint; neither is called a strong or existing match", () => {
+    const nameOnly = summarizeDuplicates(duplicatesDto({ status: "possible", candidates: [candidate({ strength: "SUPPORTING", signals: ["DISPLAY_NAME"] })] }));
+    expect(nameOnly).toMatchObject({ kind: "possible", heading: "Possible match (name only)", hasStrong: false, requiresAcknowledgement: false, blocksCreateNew: false });
+    expect(nameOnly.message).toMatch(/only a hint/);
+    const phoneOnly = summarizeDuplicates(duplicatesDto({ status: "possible", candidates: [candidate({ strength: "SUPPORTING", signals: ["PHONE"] })] }));
+    expect(phoneOnly).toMatchObject({ heading: SUPPORTING_ONLY_HEADING, hasStrong: false });
+    // a strong candidate (or a strong match outside access) keeps the full warning
+    expect(summarizeDuplicates(duplicatesDto({ status: "possible", candidates: [candidate({ strength: "SUPPORTING", signals: ["DISPLAY_NAME"] }), candidate({ ref: "b", strength: "STRONG", signals: ["EMAIL"] })] })).heading).toBe("Possible existing Partner found");
+    expect(summarizeDuplicates(duplicatesDto({ status: "possible", strongMatchOutsideYourAccess: true })).heading).toBe("Possible existing Partner found");
   });
 
   it("possible: uses the exact heading, per type", () => {
@@ -33,8 +54,9 @@ describe("summary of a duplicate check", () => {
 
   it("unknown is never none: it needs acknowledgement and says the check could not be completed", () => {
     const summary = summarizeDuplicates(duplicatesDto({ status: "unknown" }));
-    expect(summary).toMatchObject({ kind: "unknown", requiresAcknowledgement: true, heading: "Could not check for an existing Partner" });
+    expect(summary).toMatchObject({ kind: "unknown", requiresAcknowledgement: true, heading: "The duplicate check could not be completed" });
     expect(summary.message).toMatch(/cannot be ruled out/);
+    expect(summary.heading).not.toMatch(/No strong match|no duplicate|no existing/i);
   });
 
   it("a strong match outside access blocks creating with the neutral message and reveals nothing else", () => {

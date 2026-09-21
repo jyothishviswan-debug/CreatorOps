@@ -175,7 +175,7 @@ test.describe("Create Partner", () => {
 
     // Clean: an identifier nothing matches.
     await formField(page, "Email address").fill(`${uniqueName("nomatch").replace(/\s+/g, "")}@example-partner.test`);
-    await expect(page.getByText("No duplicate found")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("No strong match found")).toBeVisible({ timeout: 5000 });
 
     // Lookup failure - never silently "no duplicate".
     await page.route("**/api/partners/duplicate-check", (route) => route.abort());

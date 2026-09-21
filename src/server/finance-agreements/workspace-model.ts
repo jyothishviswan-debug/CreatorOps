@@ -140,6 +140,13 @@ export function currentVersionOf(head: Pick<AgreementHeadDoc, "status" | "active
   return governingVersionNumber(head) ?? head.openVersion ?? head.latestVersion;
 }
 
+// Step 14C: a never-activated Agreement (head DRAFT) whose open version is already confirmed is "Confirmed · awaiting activation"
+// (read from the head's display projection, exactly like the primary-action hint). An ACTIVE Agreement with a confirmed open
+// revision is still Active - the revision, not the Agreement, awaits activation.
+export function isAwaitingActivation(head: Pick<AgreementHeadDoc, "status" | "openVersion" | "display">): boolean {
+  return head.status === "DRAFT" && head.openVersion !== null && head.display?.openVersionConfirmed === true;
+}
+
 // A HINT for the row's primary button (the destination re-checks everything server-side):
 //   open version unconfirmed + may manage    -> CONTINUE_DRAFT (first draft or revision in progress)
 //   open version confirmed + may activate    -> REVIEW (awaiting activation)

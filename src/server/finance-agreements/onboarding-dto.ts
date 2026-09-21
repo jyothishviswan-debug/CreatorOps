@@ -23,7 +23,8 @@ export type OnboardingDuplicateCandidateDto = {
 };
 
 // status
-//   none      every lookup ran and nothing matched
+//   none      every lookup ran and nothing matched - NOT proof that no duplicate exists (a record stored with a different email / phone
+//             format can be missed), so the UI words it `No strong match found`, never "no duplicate"
 //   possible  at least one match (an in-scope candidate, or a strong match outside the actor's access)
 //   unknown   a lookup could not run: NEVER read this as "no duplicate"
 export type OnboardingDuplicatesDto = {

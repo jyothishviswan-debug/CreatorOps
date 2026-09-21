@@ -18,7 +18,7 @@ import { StatusChip } from "../components/StatusChip";
 import { storeAgreementDocument } from "../api-client";
 import { blockerHeadline } from "../confirm-blockers";
 import { activationDocumentGate, describeStoreOutcome, reviewDocumentState, STORING_TEXT, type DocumentNotice } from "../document-view";
-import { AGREEMENT_DOCUMENT_LABEL, DISABLED_BUTTON_STYLE, OPEN_AGREEMENT_DOCUMENT_LABEL, fieldLabel, lifecycleChip, type ChipSpec } from "../format";
+import { AGREEMENT_DOCUMENT_LABEL, DISABLED_BUTTON_STYLE, OPEN_AGREEMENT_DOCUMENT_LABEL, fieldLabel, lifecycleDisplayChip, type ChipSpec } from "../format";
 import { commercialIssues } from "./editors/commercial-logic";
 import { INTAKE_BUSY, useIntake } from "./intake-context";
 import { buildReadiness, buildReviewGroups, confirmDisabledReason, draftResolver, frozenResolver, type ReviewGroup } from "./review-summary";
@@ -80,7 +80,7 @@ export function ReviewConfirmSection() {
   const activateBlockedText = storing ? STORING_TEXT : activationGate.reason;
   const activateOff = busy || storing || activationGate.blocked;
 
-  const chip: ChipSpec = confirmed ? (headStatus === "DRAFT" ? { label: "Confirmed · not active", tone: "blue" } : lifecycleChip(headStatus)) : readiness.length > 0 ? { label: `${readiness.length} to resolve`, tone: "orange" } : { label: "Ready to confirm", tone: "default" };
+  const chip: ChipSpec = confirmed ? lifecycleDisplayChip(headStatus, true) : readiness.length > 0 ? { label: `${readiness.length} to resolve`, tone: "orange" } : { label: "Ready to confirm", tone: "default" };
 
   const closeDialog = (key: "confirm" | "activate") => {
     if (intake.isBusy(key === "confirm" ? INTAKE_BUSY.confirm : INTAKE_BUSY.activate)) return;

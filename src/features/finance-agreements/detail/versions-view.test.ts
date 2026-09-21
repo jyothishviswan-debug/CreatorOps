@@ -75,7 +75,7 @@ describe("version rows", () => {
     const [row] = buildVersionRows([confirmedDraft], HEAD, null);
     expect(row!.role).toBe("awaiting_activation");
     expect(row!.roleText).toBe("Confirmed · waiting for activation");
-    expect(row!.status.label).toBe("Confirmed · not active");
+    expect(row!.status.label).toBe("Confirmed · awaiting activation");
   });
 });
 

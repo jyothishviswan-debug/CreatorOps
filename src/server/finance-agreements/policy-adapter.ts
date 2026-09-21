@@ -1,4 +1,4 @@
-import { governingCommercialPolicySchema, type CommercialPolicyProvider, type GoverningCommercialPolicy } from "@/server/partner-reviews/commercial-policy";
+import { POLICY_CONFLICT_REASON, governingCommercialPolicySchema, type CommercialPolicyConflict, type CommercialPolicyProvider, type GoverningCommercialPolicy } from "@/server/partner-reviews/commercial-policy";
 import { getPartnerDocByRef } from "@/server/partners/firestore";
 
 import { financeAgreementsCollection, listAgreementVersionDocs } from "./firestore";
@@ -6,12 +6,10 @@ import { agreementHeadDocSchema, type AgreementVersionDoc } from "./types";
 
 // Step 14A: the Agreement -> Partner Reviews COMMERCIAL-POLICY ADAPTER.
 //
-// STATUS: contract + tests only. PRODUCTION REGISTRATION IS DEFERRED: nothing in production code
-// (least of all src/server/partner-reviews, whose boundary tests forbid any Agreement import) calls
-// this yet. The default Partner Reviews provider still returns null ("no Agreement governs"), so no
-// review behavior changes until a later step deliberately swaps that ONE provider for this function
-// (the adapter is exactly a CommercialPolicyProvider). Tests plug it in through
-// setCommercialPolicyProviderForTests.
+// STATUS (Step 14C): REGISTERED in production. src/server/composition/register-providers.ts (called once per server
+// instance from src/instrumentation.ts) registers this function as THE Partner Reviews commercial-policy provider (the
+// adapter is exactly a CommercialPolicyProvider). That composition module is the ONLY production importer of this file;
+// src/server/partner-reviews (whose boundary tests forbid any Agreement / Finance import) only sees the neutral registry.
 //
 // WHAT IT IS: a server-only, ACTOR-INDEPENDENT, DETERMINISTIC and TIME-INDEPENDENT function. The
 // caller (the trusted Partner Reviews service) has already authorized the actor against the Partner;
@@ -41,11 +39,19 @@ import { agreementHeadDocSchema, type AgreementVersionDoc } from "./types";
 //      partial month, and nothing is prorated (there is no money calculation anywhere).
 //   5. When several versions of one Agreement cover the month, the HIGHEST version number wins.
 //   6. When two DIFFERENT Agreements of the same Partner both govern the month, the answer is
-//      ambiguous and the adapter FAILS LOUD (throws) rather than pick one silently - the same posture
-//      Partner Reviews takes for an invalid policy ("never silently degraded to no policy").
+//      ambiguous: the adapter does NOT pick one, does NOT merge and does NOT throw. It returns the neutral
+//      conflict object {kind:"conflict", reason:"multiple_applicable_agreements", agreementRefs:[sorted]}, which
+//      Partner Reviews shows as unavailable commercial evidence until the overlap is resolved in the Agreement
+//      workflow (for example by correcting one Agreement's effective range through a revision; NOTE: ending an
+//      Agreement only stops it governing months AFTER its end date, so a month that has already elapsed stays in
+//      conflict until an Agreement's range is corrected).
 //   7. No governing version => null.
 //
-// WHAT IT RETURNS: the strict GoverningCommercialPolicy (validated before it leaves):
+// A month that straddles a v1 / v2 boundary (v2 effective mid-month) has NO governing version (rule 4): it reads
+// unavailable and is never attributed to either version.
+//
+// WHAT IT RETURNS: null, the overlap conflict, or the strict GoverningCommercialPolicy (validated before it leaves).
+// It carries NO fixed amount, currency, payment cycle or any other money term - only:
 //   - agreementRef + agreementVersion of the governing version;
 //   - monthlyDeliverableRequirement ONLY when the confirmed terms carry a required count AND a
 //     qualifying unit Partner Reviews supports (a free-text unit it cannot evaluate is left out - it is
@@ -62,6 +68,8 @@ export const PARTNER_REVIEW_QUALIFYING_UNITS = ["approved_content_thread", "appr
 // A Partner with more Agreement heads than this is an anomaly, not a normal book: fail loud.
 export const MAX_ADAPTER_AGREEMENT_HEADS = 50;
 
+// Thrown for genuine anomalies (an implausible number of Agreements for one Partner, a policy that fails the strict
+// contract). An overlap is NOT an error: it is the conflict answer.
 export class AgreementPolicyError extends Error {
   constructor(message: string) {
     super(message);
@@ -138,8 +146,8 @@ function buildPolicy(agreementRef: string, version: AgreementVersionDoc): Govern
   return policy;
 }
 
-// (partnerRef, periodKey) -> the strict policy of the Agreement version governing that month, or null.
-export async function getAgreementCommercialPolicy(partnerRef: string, periodKey: string): Promise<GoverningCommercialPolicy | null> {
+// (partnerRef, periodKey) -> the strict policy of the Agreement version governing that month, the overlap conflict, or null.
+export async function getAgreementCommercialPolicy(partnerRef: string, periodKey: string): Promise<GoverningCommercialPolicy | CommercialPolicyConflict | null> {
   const month = monthBounds(periodKey);
   if (!month || typeof partnerRef !== "string" || partnerRef.length === 0) return null;
 
@@ -168,7 +176,10 @@ export async function getAgreementCommercialPolicy(partnerRef: string, periodKey
   }
 
   if (governing.length === 0) return null;
-  if (governing.length > 1) throw new AgreementPolicyError("More than one Agreement governs this Partner and month; end or correct one of them.");
+  if (governing.length > 1) {
+    const agreementRefs = governing.map((entry) => entry.agreementRef).sort();
+    return { kind: "conflict", reason: POLICY_CONFLICT_REASON, agreementRefs };
+  }
 
   const only = governing[0]!;
   const parsed = governingCommercialPolicySchema.safeParse(buildPolicy(only.agreementRef, only.version));

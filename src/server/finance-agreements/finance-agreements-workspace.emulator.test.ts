@@ -707,8 +707,11 @@ describe("workspace filters and row content", () => {
   it("row content: live name, type, platform scope, lifecycle, versions, projected dates / type, extraction + unresolved, primary action per role", async () => {
     const dto = await workspace(headActor, { q: fltTag });
     const row = (key: string) => dto.rows.find((r) => r.agreementRef === refs[key])!;
-    expect(row("a1")).toMatchObject({ counterparty: { type: "PARTNER", displayName: `${fltTag} Alpha`, platformScope: ["instagram"] }, lifecycle: "ACTIVE", currentVersion: 1, openVersion: null, effectiveFrom: "2024-01-01", effectiveTo: "2024-12-31", agreementType: "FIXED_PLUS_INCENTIVE_PLUS_REQUIRED_CONTENT", sourceMode: "MANUAL", unresolvedFieldCount: 0, hasDiscrepancy: false, extractionStatus: null });
-    expect(row("a2")).toMatchObject({ lifecycle: "DRAFT", currentVersion: 1, openVersion: 1, agreementType: null, hasDiscrepancy: true, counterparty: { platformScope: ["youtube"] } });
+    expect(row("a1")).toMatchObject({ counterparty: { type: "PARTNER", displayName: `${fltTag} Alpha`, platformScope: ["instagram"] }, lifecycle: "ACTIVE", currentVersion: 1, openVersion: null, effectiveFrom: "2024-01-01", effectiveTo: "2024-12-31", agreementType: "FIXED_PLUS_INCENTIVE_PLUS_REQUIRED_CONTENT", sourceMode: "MANUAL", unresolvedFieldCount: 0, hasDiscrepancy: false, extractionStatus: null, awaitingActivation: false });
+    expect(row("a2")).toMatchObject({ lifecycle: "DRAFT", currentVersion: 1, openVersion: 1, agreementType: null, hasDiscrepancy: true, awaitingActivation: false, counterparty: { platformScope: ["youtube"] } });
+    // Step 14C: a never-activated Agreement whose open version is CONFIRMED is "awaiting activation" (lifecycle stays DRAFT - no new backend state); nothing else is.
+    expect(row("a3")).toMatchObject({ lifecycle: "DRAFT", openVersion: 1, awaitingActivation: true, primaryAction: { kind: "REVIEW" } });
+    for (const key of ["a1", "a4", "a5"]) expect(row(key).awaitingActivation, key).toBe(false);
     expect(row("a2").unresolvedFieldCount).toBeGreaterThan(0);
     expect(row("a3")).toMatchObject({ counterparty: { type: "VENDOR", platformScope: [] }, lifecycle: "DRAFT", openVersion: 1 });
     expect(row("a4")).toMatchObject({ lifecycle: "SUSPENDED", counterparty: { platformScope: ["instagram", "youtube"] } });
@@ -757,7 +760,7 @@ describe("workspace filters and row content", () => {
     await financeAgreementsCollection().doc(created.agreement.head.agreementRef).update({ display: null });
     const dto = await workspace(managerActor, { q: `${fltTag} Legacy` });
     expect(dto.rows).toHaveLength(1);
-    expect(dto.rows[0]).toMatchObject({ lifecycle: "DRAFT", agreementNumber: null, effectiveFrom: null, unresolvedFieldCount: 0, hasDiscrepancy: false, extractionStatus: null, primaryAction: { kind: "CONTINUE_DRAFT", version: 1 } });
+    expect(dto.rows[0]).toMatchObject({ lifecycle: "DRAFT", agreementNumber: null, effectiveFrom: null, unresolvedFieldCount: 0, hasDiscrepancy: false, extractionStatus: null, awaitingActivation: false, primaryAction: { kind: "CONTINUE_DRAFT", version: 1 } });
     expect(dto.rows[0]!.counterparty.displayName).toBe(`${fltTag} Legacy`);
   });
 });

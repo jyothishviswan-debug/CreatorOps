@@ -87,10 +87,13 @@ export type AgreementDocumentDto = {
 
 // One row of the Partner / Vendor contextual list: a version's document reference (the SAME stored Drive reference the Finance
 // detail shows). `document.link` is present only when the actor holds finance_contracts.
+// Step 14C: `confirmed` (additive) - the version's terms are confirmed. With `lifecycle` DRAFT it means "Confirmed · awaiting
+// activation" (never shown as a bare "Draft"); the backend lifecycle vocabulary is unchanged.
 export type CounterpartyAgreementDocumentDto = {
   agreementRef: string;
   version: number;
   lifecycle: AgreementVersionStatus;
+  confirmed: boolean;
   headStatus: AgreementHeadStatus;
   effectiveFrom: string | null;
   effectiveTo: string | null;

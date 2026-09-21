@@ -11,17 +11,14 @@ import { DISABLED_BUTTON_STYLE } from "../../format";
 import { INTAKE_BUSY, useIntake } from "../intake-context";
 import { clearDuplicatesResultFocusRequest, consumeDuplicatesResultFocusRequest } from "./duplicates-focus";
 import { candidateCards, DUPLICATE_REASON_MAX, DUPLICATE_REASON_MIN, summarizeDuplicates } from "./duplicate-rules";
-import { createRight } from "./onboarding-mode";
 import { ONBOARDING_STEP_ANCHORS } from "./onboarding-progress";
 import { VISUALLY_HIDDEN, WizardBlock } from "./WizardBlock";
 
 export function WizardDuplicatesBlock() {
-  const { onboarding, isBusy, permissions } = useIntake();
+  const { onboarding, isBusy } = useIntake();
   const { state, gates, type } = onboarding;
   const noun = type === "PARTNER" ? "Partner" : "Vendor";
   const baseId = useId();
-  // "A new Partner can be created" is only said to a person who may create one (a review-only person is told the plain reason in step 4).
-  const mayCreateNew = createRight(permissions, type, state.form.accounts.length > 0).canCreate;
   const resultRef = useRef<HTMLDivElement>(null);
   const focusResultRef = useRef(false);
 
@@ -30,8 +27,9 @@ export function WizardDuplicatesBlock() {
   const busy = isBusy();
   const locked = gates.locked;
   const result = gates.duplicates;
-  const rawSummary = result ? summarizeDuplicates(result) : null;
-  const summary = rawSummary && rawSummary.kind === "none" && !mayCreateNew ? { ...rawSummary, message: `Nothing in CreatorOps matched these details.` } : rawSummary;
+  // The result copy never claims "no duplicate exists" (Step 14C): see duplicate-rules.ts. It also never says a record CAN be created - a
+  // review-only person is told the plain reason in step 4.
+  const summary = result ? summarizeDuplicates(result) : null;
   const cards = result ? candidateCards(result) : [];
   const decision = gates.decision;
   const validForm = state.preview.status === "ready" && gates.issues.length === 0;

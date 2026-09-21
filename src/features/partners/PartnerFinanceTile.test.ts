@@ -10,7 +10,7 @@ import { PartnerFinanceTile } from "./PartnerDetail";
 // actor holding the Finance feature). Without it the tile is exactly as it was: the description and the two Finance links.
 const stored = (over: Partial<AgreementDocumentDto> = {}): AgreementDocumentDto => ({ status: "STORED", fileName: "Asha Rao Agreement.pdf", storedAt: "2026-09-03T09:30:00.000Z", hasLink: true, link: "https://drive.invalid/fake/file_1", attemptCount: 1, message: null, canStore: false, ...over });
 const projection = (documents: CounterpartyAgreementDocumentsDto["documents"]): CounterpartyAgreementDocumentsDto => ({ counterpartyType: "PARTNER", ref: "p_1", documents, hasMore: false, linksVisible: true });
-const entry = (version: number, document: AgreementDocumentDto) => ({ agreementRef: "agr_1", version, lifecycle: "ACTIVE" as const, headStatus: "ACTIVE" as const, effectiveFrom: "2026-09-01", effectiveTo: null, document });
+const entry = (version: number, document: AgreementDocumentDto) => ({ agreementRef: "agr_1", version, lifecycle: "ACTIVE" as const, confirmed: true, headStatus: "ACTIVE" as const, effectiveFrom: "2026-09-01", effectiveTo: null, document });
 
 describe("PartnerFinanceTile", () => {
   it("without the projection: the old tile (description + two links), no document list", () => {
@@ -36,6 +36,16 @@ describe("PartnerFinanceTile", () => {
     expect(html.split("Open Agreement document").length - 1).toBe(2);
     // the links into Finance are unchanged
     expect(html).toContain("Open Finance Agreements");
+  });
+
+  it("Step 14C: a confirmed-but-not-active version reads 'Confirmed · awaiting activation', never 'Draft' (an unconfirmed draft still reads 'Draft')", () => {
+    const awaiting = { ...entry(1, stored()), lifecycle: "DRAFT" as const, headStatus: "DRAFT" as const, confirmed: true };
+    const html = renderToStaticMarkup(createElement(PartnerFinanceTile, { label: "Finance", partnerRef: "p_1", agreementDocuments: projection([awaiting]) }));
+    expect(html).toContain("Agreement version 1");
+    expect(html).toContain("Confirmed · awaiting activation");
+    expect(html).not.toMatch(/\bDraft\b/);
+    const draft = { ...awaiting, confirmed: false };
+    expect(renderToStaticMarkup(createElement(PartnerFinanceTile, { label: "Finance", partnerRef: "p_1", agreementDocuments: projection([draft]) }))).toMatch(/\bDraft\b/);
   });
 
   it("no link in the projection: a neutral 'Agreement document on file' and no link, no matter what", () => {

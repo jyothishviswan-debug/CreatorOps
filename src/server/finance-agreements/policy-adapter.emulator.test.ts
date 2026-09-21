@@ -7,7 +7,8 @@
 // Part 2 plugs the adapter into Partner Reviews through the test-only provider seam (setCommercialPolicyProviderForTests)
 // and proves the review picks up governingAgreement + the required count, that a NEW governing Agreement version changes
 // the source fingerprint and provenance, and that review generation / refresh / finalization never writes any Finance
-// document. PRODUCTION REGISTRATION OF THE ADAPTER IS DEFERRED - only these tests install it.
+// document. (Step 14C: production registration now happens in src/server/composition/register-providers.ts; the tests here still install
+// the adapter through the override so the adapter contract is proven independently of the registration.)
 //
 // Hermetic: every Partner has a unique uid/ref; the agreement dates are in 2019 and the review evidence fixtures carry a
 // private region; everything created is removed afterwards.
@@ -25,7 +26,7 @@ import type { ActorContext } from "@/server/authz/types";
 import { contentCollection } from "@/server/content/firestore";
 import { contentDocSchema } from "@/server/content/types";
 import { getAdminAuth, getAdminFirestore } from "@/server/firebase/admin";
-import { setCommercialPolicyProviderForTests, governingCommercialPolicySchema } from "@/server/partner-reviews/commercial-policy";
+import { commercialPolicyConflictSchema, setCommercialPolicyProviderForTests, governingCommercialPolicySchema } from "@/server/partner-reviews/commercial-policy";
 import { getFinalizedReviewHandoff } from "@/server/partner-reviews/finalized-review-handoff-service";
 import { createPartnerReviewRevision, finalizePartnerReview, submitPartnerReviewForReview } from "@/server/partner-reviews/partner-review-lifecycle-service";
 import { generatePartnerReviewDraft, getPartnerReview, inspectPartnerReviewFreshness, refreshPartnerReviewEvidence } from "@/server/partner-reviews/partner-review-service";
@@ -46,7 +47,7 @@ import {
   type AgreementDetailDto,
 } from "./index";
 import { agreementClaimId, financeAgreementClaimsCollection, financeAgreementsCollection, financeAgreementVersionsCollection } from "./firestore";
-import { AgreementPolicyError, agreementCommercialPolicyProvider, getAgreementCommercialPolicy } from "./policy-adapter";
+import { agreementCommercialPolicyProvider, getAgreementCommercialPolicy } from "./policy-adapter";
 import { READY_DECISIONS, SAMPLE_TARGETS, type FieldDecisionSeed } from "./testing/agreement-service-fixtures";
 import type { AgreementCounterpartyInput, FinanceAgreementsServiceResult } from "./types";
 
@@ -451,12 +452,17 @@ describe("the adapter contract on real Agreement data", () => {
     expect(await at("2019-08")).toMatchObject({ agreementVersion: 3, monthlyDeliverableRequirement: { requiredCount: 5 } });
   });
 
-  it("two DIFFERENT Agreements of one Partner governing the same month is ambiguous and FAILS LOUD (never picks one silently)", async () => {
+  // DELIBERATE 14C CHANGE (was: "...is ambiguous and FAILS LOUD (rejects with AgreementPolicyError)"). An overlap is now a first-class neutral
+  // answer: the adapter returns the conflict object (sorted refs) - it does not throw, pick one or merge.
+  it("two DIFFERENT Agreements of one Partner governing the same month return the CONFLICT object (sorted refs) - never a throw, never a pick", async () => {
     const partner = await seedPartner();
-    await activeAgreement(partner, decisionsWith(POLICY_TERMS()));
-    await activeAgreement(partner, decisionsWith(POLICY_TERMS()));
-    await expect(getAgreementCommercialPolicy(partner.partnerRef, PERIOD)).rejects.toBeInstanceOf(AgreementPolicyError);
-    // a month only one of them covers is unambiguous... (both cover 2019, so 2018 stays null)
+    const first = await activeAgreement(partner, decisionsWith(POLICY_TERMS()));
+    const second = await activeAgreement(partner, decisionsWith(POLICY_TERMS()));
+    const expected = [first.head.agreementRef, second.head.agreementRef].sort();
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, PERIOD)).toEqual({ kind: "conflict", reason: "multiple_applicable_agreements", agreementRefs: expected });
+    // the answer is deterministic and valid for the Partner Reviews conflict contract
+    expect(commercialPolicyConflictSchema.safeParse(await agreementCommercialPolicyProvider(partner.partnerRef, PERIOD)).success).toBe(true);
+    // a month neither covers is unambiguous (both cover 2019, so 2018 stays null)
     expect(await getAgreementCommercialPolicy(partner.partnerRef, "2018-06")).toBeNull();
   });
 

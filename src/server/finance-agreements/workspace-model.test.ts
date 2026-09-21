@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   compareWorkspaceHeads,
   currentVersionOf,
+  isAwaitingActivation,
   decodeWorkspaceCursor,
   encodeWorkspaceCursor,
   matchesPeriodFilter,
@@ -192,6 +193,16 @@ describe("currentVersionOf / primaryActionHint", () => {
     const confirmed = head({ status: "DRAFT", activeVersion: null, openVersion: 1, display: display({ governingStatus: "DRAFT", openVersionConfirmed: true }) });
     expect(primaryActionHint(confirmed, perms)).toEqual({ kind: "REVIEW", version: 1 });
     expect(primaryActionHint(confirmed, { canManage: true, canActivate: false })).toEqual({ kind: "OPEN", version: 1 });
+  });
+
+  it("Step 14C: awaiting activation = a never-activated (DRAFT) head whose open version is confirmed - nothing else (no new lifecycle state)", () => {
+    const confirmedDraft = head({ status: "DRAFT", activeVersion: null, openVersion: 1, display: display({ governingStatus: "DRAFT", openVersionConfirmed: true }) });
+    expect(isAwaitingActivation(confirmedDraft)).toBe(true);
+    expect(isAwaitingActivation(head({ status: "DRAFT", activeVersion: null, openVersion: 1, display: display({ governingStatus: "DRAFT", openVersionConfirmed: false }) }))).toBe(false);
+    expect(isAwaitingActivation(head({ status: "DRAFT", activeVersion: null, openVersion: 1, display: null }))).toBe(false);
+    // an ACTIVE Agreement with a CONFIRMED revision open is still just Active (the revision, not the Agreement, awaits activation)
+    expect(isAwaitingActivation(head({ status: "ACTIVE", activeVersion: 1, openVersion: 2, latestVersion: 2, display: display({ openVersionConfirmed: true }) }))).toBe(false);
+    expect(isAwaitingActivation(head({ status: "ENDED", activeVersion: null, lastEndedVersion: 1, openVersion: null }))).toBe(false);
   });
 
   it("ACTIVE with nothing open -> CREATE_REVISION for someone who may activate; otherwise (and for SUSPENDED / ENDED) OPEN", () => {

@@ -302,6 +302,20 @@ export const evidenceTargetSchema = z
   .strict();
 export type EvidenceTarget = z.infer<typeof evidenceTargetSchema>;
 
+// Step 14C: an OVERLAP marker. Present ONLY when more than one Agreement governed the month: the
+// commercial sections are then unavailable (typed reason), `governingAgreement` is null, and nothing
+// is picked or merged. Optional and additive - a stored version without it reads exactly as before.
+// (The refs are stored for audit and the fingerprint; the actor-facing view carries only a count.)
+// (The literal and the bound mirror commercial-policy.ts' POLICY_CONFLICT_REASON / MAX_POLICY_CONFLICT_REFS -
+// pinned equal by a unit test - because this file must stay free of the provider seam's import graph.)
+export const policyConflictSchema = z
+  .object({
+    reason: z.literal("multiple_applicable_agreements"),
+    agreementRefs: z.array(z.string().min(1).max(200)).min(2).max(50),
+  })
+  .strict();
+export type PolicyConflictMarker = z.infer<typeof policyConflictSchema>;
+
 export const commercialEvidenceSchema = z
   .object({
     policyVersion: z.literal(COMMERCIAL_EVIDENCE_POLICY_VERSION),
@@ -309,6 +323,7 @@ export const commercialEvidenceSchema = z
     monthlyDeliverable: evidenceMonthlyDeliverableSchema,
     lfcSfc: evidenceLfcSfcSchema,
     targets: z.array(evidenceTargetSchema),
+    policyConflict: policyConflictSchema.optional(),
   })
   .strict();
 export type CommercialEvidence = z.infer<typeof commercialEvidenceSchema>;

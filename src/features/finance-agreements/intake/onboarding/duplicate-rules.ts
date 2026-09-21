@@ -6,7 +6,8 @@ import type { CounterpartyType } from "@/server/finance-agreements/types";
 //
 // The server returns only records the actor may see (with STRONG / SUPPORTING evidence) plus one neutral flag for a strong match outside
 // the actor's access. From that the UI must decide, deliberately and never by fuzzy guessing:
-//   - the heading and copy (`Possible existing Partner found`),
+//   - the heading and copy (`Possible existing Partner found`; `Possible match (name only)`; `No strong match found`; `The duplicate check
+//     could not be completed`),
 //   - which actions exist (`Use existing` per candidate, `Continue creating new`),
 //   - what `Continue creating new` requires (a STRONG match or an UNKNOWN check needs an explicit acknowledgement AND a reason),
 //   - what BLOCKS creating a new record (a strong match outside access; an Account that already belongs to a Partner).
@@ -17,11 +18,21 @@ const noun = (type: CounterpartyType): string => (type === "PARTNER" ? "Partner"
 export const DUPLICATE_REASON_MIN = 3;
 export const DUPLICATE_REASON_MAX = 1000;
 
+// Step 14C: the check can prove a match, never the ABSENCE of one - owning modules store email / phone as entered, so a record kept in a different
+// format (mixed-case email, formatted phone) can be missed. The "none" result is therefore worded `No strong match found` plus this limitation,
+// and NEVER `No duplicate exists / found`.
+export const NO_STRONG_MATCH_HEADING = "No strong match found";
+export const DUPLICATE_LIMITATION_TEXT = "Records stored with a different email or phone format may not be detected.";
+export const NO_STRONG_MATCH_MESSAGE = `These email, phone and account details did not strongly match any record. ${DUPLICATE_LIMITATION_TEXT}`;
+export const DUPLICATE_UNKNOWN_HEADING = "The duplicate check could not be completed";
+export const NAME_ONLY_HEADING = "Possible match (name only)";
+export const SUPPORTING_ONLY_HEADING = "Possible match (supporting evidence only)";
+
 export type DuplicateKind = "none" | "possible" | "unknown";
 
 export type DuplicateSummary = {
   kind: DuplicateKind;
-  // The section heading ("Possible existing Partner found" / "No existing Partner found" / "Could not check for an existing Partner").
+  // The section heading ("Possible existing Partner found" / "Possible match (name only)" / "No strong match found" / "The duplicate check could not be completed").
   heading: string;
   // One plain sentence under the heading.
   message: string;
@@ -48,17 +59,27 @@ export function summarizeDuplicates(dto: OnboardingDuplicatesDto): DuplicateSumm
   const unknown = dto.status === "unknown";
   const kind: DuplicateKind = unknown ? "unknown" : dto.candidates.length > 0 || outsideAccess ? "possible" : "none";
 
+  // Only supporting evidence, none of it strong and nothing hidden outside the person's access: a name alone (or a phone alone) is a hint, not a match.
+  const supportingOnly = kind === "possible" && !hasStrong && !outsideAccess && dto.candidates.length > 0;
+  const nameOnly = supportingOnly && dto.candidates.every((candidate) => candidate.signals.length === 1 && candidate.signals[0] === "DISPLAY_NAME");
+
   let heading: string;
   let message: string;
   if (kind === "unknown") {
-    heading = `Could not check for an existing ${name}`;
-    message = `The check for an existing ${name} could not be completed, so a match cannot be ruled out. Try again, or confirm that you want to create a new one anyway.`;
+    heading = DUPLICATE_UNKNOWN_HEADING;
+    message = `A match cannot be ruled out. Try again, or confirm that you want to create a new ${name} anyway.`;
+  } else if (nameOnly) {
+    heading = NAME_ONLY_HEADING;
+    message = `A ${name} with the same name exists, but no email, phone or account matched. A name alone is only a hint - check the record before creating a new one.`;
+  } else if (supportingOnly) {
+    heading = SUPPORTING_ONLY_HEADING;
+    message = `A ${name} shares some details, but no email or account matched. That is only a hint - check the record before creating a new one.`;
   } else if (kind === "possible") {
     heading = `Possible existing ${name} found`;
     message = dto.candidates.length > 0 ? `Check ${dto.candidates.length === 1 ? "this record" : "these records"} before creating anything. Use an existing ${name} if it is the same person or business.` : `A matching ${name} exists, but not in your access.`;
   } else {
-    heading = `No existing ${name} found`;
-    message = `Nothing in CreatorOps matched these details. A new ${name} can be created.`;
+    heading = NO_STRONG_MATCH_HEADING;
+    message = NO_STRONG_MATCH_MESSAGE;
   }
 
   const blocksCreateNew = outsideAccess || accountCollision;

@@ -42,7 +42,7 @@ export function DuplicateStatusBanner({ result, checking }: { result: VendorDupl
   return (
     <div className="kv">
       <span>Duplicate check</span>
-      <Pill tone="default">No duplicate found</Pill>
+      <Pill tone="default">No strong match found</Pill>
     </div>
   );
 }

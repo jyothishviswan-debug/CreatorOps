@@ -557,3 +557,41 @@ describe("firestore.indexes.json - Finance Agreements workspace (Step 14B)", () 
     }
   });
 });
+
+// Step 14C (production query/index audit): the ONE Firestore query the composition folder adds - the Finance dependency guard
+// (src/server/composition/finance-dependency-guard.ts) that blocks archiving / blacklisting a Partner / Vendor while an Agreement is
+// ACTIVE or SUSPENDED:
+//
+//   #  collection          filters                                                        orderBy  limit  index need              covered by
+//   7  financeAgreements   counterparty.partnerRef == / counterparty.vendorRef == (one       (none)   51     single-field equality   automatic single-field index
+//                          call site, the field name is a variable)
+//
+// The head status is filtered IN CODE on the raw stored value (never a second pushed filter), so no composite index is required and
+// firestore.indexes.json is unchanged. This scan lives beside (not inside) the Finance module audit above because the query is
+// composition code, not Finance-module code; it is exact-count on purpose so a new composition query must be audited deliberately.
+describe("firestore.indexes.json - composition dependency guard (Step 14C query audit)", () => {
+  const compositionDir = path.resolve(import.meta.dirname, "../composition");
+  const strip = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/(\s)\/\/.*$/gm, "$1");
+  const files = readdirSync(compositionDir).filter((name) => name.endsWith(".ts") && !name.endsWith(".test.ts"));
+
+  const queries = files.flatMap((name) => {
+    const source = strip(readFileSync(path.join(compositionDir, name), "utf8"));
+    return [...source.matchAll(/await\s[^;]*?\.get\(\)/g)]
+      .map((statement) => statement[0])
+      .filter((text) => /\.where\(|\.orderBy\(/.test(text))
+      .map((text) => ({
+        file: name,
+        wheres: [...text.matchAll(/\.where\(\s*([^,]+?)\s*,\s*"([^"]+)"/g)].map((match) => `${match[1]} ${match[2]}`),
+        orderBys: [...text.matchAll(/\.orderBy\(/g)].length,
+        limited: /\.limit\(/.test(text),
+      }));
+  });
+
+  it("the composition folder issues exactly one query: a bounded, single-field equality read of financeAgreements (no composite index)", () => {
+    expect(files).toContain("finance-dependency-guard.ts"); // the scan is not vacuous
+    expect(queries).toEqual([{ file: "finance-dependency-guard.ts", wheres: ["field =="], orderBys: 0, limited: true }]);
+    const source = strip(readFileSync(path.join(compositionDir, "finance-dependency-guard.ts"), "utf8"));
+    expect(source).toMatch(/const field = type === "PARTNER" \? "counterparty\.partnerRef" : "counterparty\.vendorRef"/);
+    expect(source).not.toMatch(/collectionGroup\s*\(|\.startAfter\(|\.offset\(/);
+  });
+});

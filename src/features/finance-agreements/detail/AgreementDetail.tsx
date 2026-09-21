@@ -24,7 +24,7 @@ import {
   type FinanceApiResult,
 } from "../api-client";
 import { describeStoreOutcome, documentPanelRows, type DocumentNotice } from "../document-view";
-import { DISABLED_BUTTON_STYLE, counterpartyTypeLabel, formatEffectivePeriod, formatPlatformList, lifecycleChip } from "../format";
+import { DISABLED_BUTTON_STYLE, counterpartyTypeLabel, formatEffectivePeriod, formatPlatformList, lifecycleDisplayChip } from "../format";
 import { ActivityTab } from "./ActivityTab";
 import { AGREEMENTS_WORKSPACE_HREF, DETAIL_TABS, DETAIL_TAB_LABELS, TAB_PANEL_ID, intakeHref, tabElementId, tabKeyTarget, type DetailTab } from "./detail-model";
 import type { TabContext } from "./detail-types";
@@ -118,6 +118,8 @@ export function AgreementDetail(props: AgreementDetailProps) {
   const actions = computeAgreementActionState({ permissions, head, versions });
   const counterpartyName = head.counterpartyDisplayName ?? counterpartyTypeLabel(head.counterparty.type);
   const current = versions.find((entry) => entry.version === currentVersionNumber(head)) ?? null;
+  // A never-activated Agreement whose current (open) version is confirmed reads "Confirmed · awaiting activation", not "Draft" (Step 14C).
+  const headStatusChip = lifecycleDisplayChip(head.status, head.status === "DRAFT" && current?.confirmed === true);
 
   // --- Loading what the page needs beyond the server's first read ------------------------------------------------------------------
   // Missing version documents (e.g. after choosing a version on the Versions tab): read once each; a failure is not retried in a loop.
@@ -404,7 +406,7 @@ export function AgreementDetail(props: AgreementDetailProps) {
         </div>
         <div>
           <small>Status</small>
-          <Pill tone={lifecycleChip(head.status).tone}>{lifecycleChip(head.status).label}</Pill>
+          <Pill tone={headStatusChip.tone}>{headStatusChip.label}</Pill>
           <small style={{ marginTop: 4 }}>
             Current version {currentVersionNumber(head)} of {head.latestVersion}
             {head.openVersion !== null && head.openVersion !== currentVersionNumber(head) ? ` · draft version ${head.openVersion} open` : ""}

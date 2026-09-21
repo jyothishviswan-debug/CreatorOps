@@ -159,13 +159,24 @@ describe("commercial policy seam boundary (Step 13A.1 revised)", () => {
   const nonTestFiles = readdirSync(moduleDir).filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"));
 
   it("the governing policy is fetched in exactly one place - the trusted evidence collector - never by a service, route or client payload", () => {
-    const callers = nonTestFiles.filter((file) => file !== "commercial-policy.ts" && /getGoverningCommercialPolicy\(/.test(codeOnly(readModule(file))));
+    const callers = nonTestFiles.filter((file) => file !== "commercial-policy.ts" && /getGoverningCommercialPolicy(Resolution)?\(/.test(codeOnly(readModule(file))));
     expect(callers).toEqual(["evidence-collector.ts"]);
 
     const routesDir = path.resolve(moduleDir, "../../app/api/partner-reviews");
     const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walk(path.join(dir, entry.name)) : entry.name.endsWith(".ts") ? [path.join(dir, entry.name)] : []));
     for (const file of walk(routesDir)) {
       expect({ file: path.relative(routesDir, file), policy: /commercial-policy|CommercialPolicy|commercialPolicy/.test(readFileSync(file, "utf8")) }).toEqual({ file: path.relative(routesDir, file), policy: false });
+    }
+  });
+
+  // Step 14C: the collector handles an overlap conflict explicitly (the legacy single-policy function fails loud on one), and provider
+  // REGISTRATION is not something the module does to itself: only the neutral registry lives here, the composition folder calls it.
+  it("the collector consumes the policy RESOLUTION (policy | none | conflict), and no Partner Reviews file registers a provider", () => {
+    const collector = codeOnly(readModule("evidence-collector.ts"));
+    expect(collector).toMatch(/getGoverningCommercialPolicyResolution\(partnerRef, period\.periodKey\)/);
+    expect(collector).not.toMatch(/getGoverningCommercialPolicy\(/);
+    for (const file of nonTestFiles.filter((name) => name !== "commercial-policy.ts")) {
+      expect({ file, registers: /registerCommercialPolicyProvider|setCommercialPolicyProviderForTests|resetRegisteredCommercialPolicyProviderForTests/.test(codeOnly(readModule(file))) }).toEqual({ file, registers: false });
     }
   });
 

@@ -4,7 +4,7 @@ import type { AssignmentBrief, AssignmentDoc } from "@/server/assignments/types"
 import type { ContentDoc } from "@/server/content/types";
 
 import { buildCommercialEvidence, selectFollowerSnapshotCandidates, type ChannelSnapshotRecordSource } from "./commercial-builder";
-import { policyFingerprintFacts, policyNeedsChannelSnapshots, type GoverningCommercialPolicy } from "./commercial-policy";
+import { policyConflictFingerprintFacts, policyFingerprintFacts, policyNeedsChannelSnapshots, type CommercialPolicyConflict, type GoverningCommercialPolicy } from "./commercial-policy";
 import { computeSourceFingerprint } from "./fingerprint";
 import { dateRangeOverlapsPeriod, dueInstantMs, parseLeadingUtcDate, toUtcDate, type ReviewPeriod } from "./period";
 import {
@@ -231,6 +231,8 @@ export type BuildEvidenceInput = {
   // commercial-policy.ts, channel snapshot records are only supplied (by the
   // collector) when the policy asks for followerGrowth.
   commercialPolicy?: GoverningCommercialPolicy | null;
+  // Step 14C: an overlap conflict (mutually exclusive with a policy).
+  commercialPolicyConflict?: Pick<CommercialPolicyConflict, "reason" | "agreementRefs"> | null;
   channelRecords?: readonly ChannelSnapshotRecordSource[];
   channelScanTruncated?: boolean;
 };
@@ -358,12 +360,14 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
 
   // --- Commercial (evidence only; see commercial-builder.ts) ----------------------------
   const policy = input.commercialPolicy ?? null;
+  const policyConflict = policy ? null : (input.commercialPolicyConflict ?? null);
   const channelRecords = policyNeedsChannelSnapshots(policy) ? (input.channelRecords ?? []) : [];
   const channelScanTruncated = policyNeedsChannelSnapshots(policy) ? (input.channelScanTruncated ?? false) : false;
   const commercialResult = buildCommercialEvidence({
     partnerRef: input.partnerRef,
     period: input.period,
     policy,
+    policyConflict,
     production,
     records,
     assignmentsTruncated: input.assignmentScanTruncated || assignmentSelection.truncated,
@@ -478,6 +482,9 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
     // section is derived from; these add the policy identity and the channel
     // snapshot records a followerGrowth target reads.
     policy: policy ? policyFingerprintFacts(policy) : undefined,
+    // Step 14C: an overlap conflict participates ONLY when present, so resolving it flips freshness
+    // while every Partner without one hashes byte-for-byte as before.
+    policyConflict: policyConflict ? policyConflictFingerprintFacts(policyConflict) : undefined,
     channelSnapshots: policyNeedsChannelSnapshots(policy)
       ? {
           truncated: channelScanTruncated,

@@ -61,10 +61,20 @@ export function lifecycleChip(status: LifecycleStatus): ChipSpec {
 export const lifecycleLabel = (status: LifecycleStatus): string => LIFECYCLE_CHIPS[status].label;
 export const lifecycleTone = (status: LifecycleStatus): PillTone => LIFECYCLE_CHIPS[status].tone;
 
-// A version is a DRAFT until it is activated, but a CONFIRMED draft is a different thing from an editable one.
+// Step 14C: a version / Agreement is a DRAFT until it is activated, but a CONFIRMED draft is a different thing from an editable one - its
+// terms are frozen and it only awaits activation. It is NEVER worded as a bare "Draft". A presentation rule only: the backend lifecycle
+// vocabulary (DRAFT / ACTIVE / SUSPENDED / ENDED / SUPERSEDED) is unchanged and no new state exists.
+export const CONFIRMED_AWAITING_ACTIVATION_LABEL = "Confirmed · awaiting activation";
+
+// The ONE place that words a lifecycle status. `confirmed` is meaningful only for DRAFT (an ACTIVE / ENDED / ... status is never re-worded).
+export function lifecycleDisplayChip(status: LifecycleStatus, confirmed: boolean): ChipSpec {
+  if (status === "DRAFT" && confirmed) return { label: CONFIRMED_AWAITING_ACTIVATION_LABEL, tone: "blue" };
+  return LIFECYCLE_CHIPS[status];
+}
+export const lifecycleDisplayLabel = (status: LifecycleStatus, confirmed: boolean): string => lifecycleDisplayChip(status, confirmed).label;
+
 export function versionStatusChip(version: { status: AgreementVersionStatus; confirmed: boolean }): ChipSpec {
-  if (version.status === "DRAFT" && version.confirmed) return { label: "Confirmed · not active", tone: "blue" };
-  return LIFECYCLE_CHIPS[version.status];
+  return lifecycleDisplayChip(version.status, version.confirmed);
 }
 
 export const SOURCE_MODE_LABELS: Record<AgreementSourceMode, string> = { MANUAL: "Manual", EXTRACTED: "Extracted", MIXED: "Mixed" };

@@ -435,7 +435,7 @@ describe("no delete, no rank, no roles - across the module, sub-folders and rout
 });
 
 // =====================================================================================================================
-describe("the Partner Reviews seam: the adapter exists, is unregistered, and Partner Reviews production code knows nothing of Finance", () => {
+describe("the Partner Reviews seam: the adapter is registered ONLY by the server composition module, and Partner Reviews production code knows nothing of Finance", () => {
   const partnerReviewFiles = walk(partnerReviewsDir);
 
   it("no Partner Reviews production file imports anything Finance / Agreement", () => {
@@ -445,14 +445,29 @@ describe("the Partner Reviews seam: the adapter exists, is unregistered, and Par
     }
   });
 
-  it("production registration is DEFERRED: no non-test file outside the adapter imports it or installs a provider", () => {
+  // DELIBERATE 14C CHANGE (was: "production registration is DEFERRED: no non-test file outside the adapter imports it"). Step 14C registers the
+  // adapter as THE Partner Reviews commercial-policy provider. Exactly ONE production file may import the adapter - the server composition
+  // module - and exactly ONE production file may install it (that module, via the neutral registry). Nothing else, and the test-only override
+  // stays confined to commercial-policy.ts.
+  it("production registration: ONLY src/server/composition/register-providers.ts imports the adapter, and ONLY it (plus the registry itself) calls the registry", () => {
     const serverRoot = path.join(repoRoot, "src");
-    const all = walk(serverRoot).filter((file) => !file.endsWith("policy-adapter.ts"));
+    const all = walk(serverRoot).filter((file) => !file.endsWith("finance-agreements/policy-adapter.ts"));
+    const importers = all.filter((file) => importsOf(read(file)).some((spec) => /policy-adapter/.test(spec))).map(rel);
+    expect(importers).toEqual(["src/server/composition/register-providers.ts"]);
+
+    const registrars = all.filter((file) => /\bregisterCommercialPolicyProvider\s*\(/.test(codeOnly(read(file)))).map(rel);
+    expect(registrars.sort()).toEqual(["src/server/composition/register-providers.ts", "src/server/partner-reviews/commercial-policy.ts"]);
+
     for (const file of all) {
-      const source = read(file);
-      expect(importsOf(source).filter((spec) => /policy-adapter/.test(spec)), rel(file)).toEqual([]);
-      if (!rel(file).endsWith("partner-reviews/commercial-policy.ts")) expect(codeOnly(source), rel(file)).not.toMatch(/setCommercialPolicyProviderForTests/);
+      if (!rel(file).endsWith("partner-reviews/commercial-policy.ts")) expect(codeOnly(read(file)), rel(file)).not.toMatch(/setCommercialPolicyProviderForTests|resetRegisteredCommercialPolicyProviderForTests/);
     }
+  });
+
+  it("the composition module registers the adapter under one stable id and is reached from exactly one place (src/instrumentation.ts)", () => {
+    const composition = codeOnly(read(path.join(repoRoot, "src/server/composition/register-providers.ts")));
+    expect(composition).toMatch(/registerCommercialPolicyProvider\(\{ id: AGREEMENT_COMMERCIAL_POLICY_PROVIDER_ID, provider: agreementCommercialPolicyProvider \}\)/);
+    const callers = walk(path.join(repoRoot, "src")).filter((file) => importsOf(read(file)).some((spec) => /composition\/register-providers/.test(spec))).map(rel);
+    expect(callers).toEqual(["src/instrumentation.ts"]);
   });
 
   it("the adapter is server-only, actor-independent, time-independent and read-only", () => {

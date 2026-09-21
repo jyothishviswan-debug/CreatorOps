@@ -19,7 +19,7 @@ import { Combobox } from "../components/Combobox";
 import type { ComboboxSearchResult } from "../components/combobox-logic";
 import { KeyValueRow } from "../components/KeyValueRow";
 import { StatusChip } from "../components/StatusChip";
-import { counterpartyTypeLabel, DISABLED_BUTTON_STYLE, formatPlatformList, lifecycleChip, NO_VALUE_TEXT } from "../format";
+import { counterpartyTypeLabel, DISABLED_BUTTON_STYLE, formatPlatformList, lifecycleDisplayChip, NO_VALUE_TEXT } from "../format";
 import {
   accountLabel,
   choiceCounterpartyType,
@@ -410,7 +410,7 @@ function LockedSummary() {
         )}
         <KeyValueRow label="Agreement ref">{head.agreementRef}</KeyValueRow>
         <KeyValueRow label="Draft version">
-          {version ? `Version ${version.version}` : NO_VALUE_TEXT} <StatusChip chip={lifecycleChip(head.status)} />
+          {version ? `Version ${version.version}` : NO_VALUE_TEXT} <StatusChip chip={lifecycleDisplayChip(head.status, version?.confirmed === true)} />
         </KeyValueRow>
       </div>
       <div className="actions" style={{ marginTop: 12 }}>

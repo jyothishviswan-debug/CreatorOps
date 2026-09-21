@@ -16,7 +16,10 @@ import {
   KYC_AVAILABLE_NOTE,
   KYC_COMPONENT_CHIPS,
   KYC_STATE_CHIPS,
+  CONFIRMED_AWAITING_ACTIVATION_LABEL,
   LIFECYCLE_CHIPS,
+  lifecycleDisplayChip,
+  lifecycleDisplayLabel,
   MASTER_DATA_SOURCE_LABEL,
   PAYMENT_CYCLE_OPTIONS,
   QUALIFYING_UNIT_OPTIONS,
@@ -66,8 +69,18 @@ describe("status chips (text always present, total over every enum)", () => {
   });
   it("distinguishes a confirmed-not-active draft from an editable one", () => {
     expect(versionStatusChip({ status: "DRAFT", confirmed: false }).label).toBe("Draft");
-    expect(versionStatusChip({ status: "DRAFT", confirmed: true }).label).toBe("Confirmed · not active");
+    expect(versionStatusChip({ status: "DRAFT", confirmed: true }).label).toBe("Confirmed · awaiting activation");
     expect(versionStatusChip({ status: "ACTIVE", confirmed: true }).label).toBe("Active");
+  });
+  it("Step 14C: lifecycleDisplayChip words a confirmed-but-not-active DRAFT as 'Confirmed · awaiting activation' and never re-words any other status", () => {
+    expect(CONFIRMED_AWAITING_ACTIVATION_LABEL).toBe("Confirmed · awaiting activation");
+    expect(lifecycleDisplayChip("DRAFT", true)).toEqual({ label: "Confirmed · awaiting activation", tone: "blue" });
+    expect(lifecycleDisplayChip("DRAFT", false)).toEqual(LIFECYCLE_CHIPS.DRAFT);
+    expect(lifecycleDisplayLabel("DRAFT", false)).toBe("Draft");
+    for (const status of ["ACTIVE", "SUSPENDED", "ENDED", "SUPERSEDED"] as const) {
+      expect(lifecycleDisplayChip(status, true)).toEqual(LIFECYCLE_CHIPS[status]);
+      expect(lifecycleDisplayChip(status, false)).toEqual(LIFECYCLE_CHIPS[status]);
+    }
   });
   it("maps every reconciliation state to the exact human vocabulary", () => {
     expect(RECONCILIATION_STATES.map(reconciliationLabel)).toEqual(["Match", "Missing in CreatorOps", "Missing in Agreement", "Mismatch", "Not applicable", "Restricted", "Unavailable"]);

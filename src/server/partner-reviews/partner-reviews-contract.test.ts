@@ -380,9 +380,9 @@ describe("Finance boundary", () => {
     const moduleDir = import.meta.dirname;
     for (const name of COMMERCIAL_FILES) {
       const source = readFileSync(path.join(moduleDir, name), "utf8");
-      // every identifier that starts with "agreement" is one of the two documented fields
+      // every identifier that starts with "agreement" is one of the documented fields (Step 14C added agreementRefs: the overlap marker's refs)
       const identifiers = new Set([...source.matchAll(/\bagreement[A-Za-z]*/g)].map((match) => match[0]));
-      for (const identifier of identifiers) expect(["agreementRef", "agreementVersion", "agreement"]).toContain(identifier);
+      for (const identifier of identifiers) expect(["agreementRef", "agreementVersion", "agreementRefs", "agreement"]).toContain(identifier);
       // every identifier that CONTAINS "Agreement" is governingAgreement (or plain prose "Agreement")
       const containing = new Set([...source.matchAll(/\b[A-Za-z]*Agreement[A-Za-z]*\b/g)].map((match) => match[0]));
       for (const identifier of containing) expect(["Agreement", "governingAgreement"]).toContain(identifier);

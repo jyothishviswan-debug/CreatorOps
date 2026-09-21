@@ -10,6 +10,7 @@ import type { ReviewActionPermissions } from "@/server/partner-reviews/ui-dto";
 import { DETAIL_TABS, DETAIL_TAB_LABELS, monthLabel, partnerHistoryHref, workspaceHref, type DetailTab } from "@/server/partner-reviews/ui-params";
 
 import { createReviewRevision, finalizeReview, loadReviewDetail, refreshReviewEvidence, submitReview, type ReviewsApiResult } from "./api-client";
+import { COMMERCIAL_CONFLICT_HEADER_LABEL, commercialConflictNotice } from "./commercial-conflict";
 import { absoluteTime, dateOnly, DISABLED_BUTTON_STYLE, FRESHNESS_LABELS, freshnessTone, LIFECYCLE_LABELS, lifecycleTone } from "./format";
 import { classifyActionFailure, computeReviewActionState, type ActionFailure } from "./review-action-state";
 import { ComplianceSection, FRESHNESS_EXPLANATIONS, OverviewSection, PerformanceSection, ProductionSection, VersionHistorySection } from "./ReviewDetailTabs";
@@ -158,6 +159,7 @@ export function ReviewDetail({
   const supersededBy = version?.status === "SUPERSEDED" ? version.supersededByVersion : null;
   const viewingHistorical = version !== null && (version.status === "SUPERSEDED" || (head.currentFinalizedVersion !== null && version.status === "FINALIZED" && head.currentFinalizedVersion !== version.version));
   const commercialGoverned = version?.snapshot.commercial.governingAgreement ?? null;
+  const commercialConflicted = version ? commercialConflictNotice(version.snapshot.commercial) !== null : false;
 
   return (
     <>
@@ -200,7 +202,7 @@ export function ReviewDetail({
           <small>Evidence cutoff</small>
           <b>{version ? absoluteTime(version.evidenceCutoff) : "—"}</b>
           <small style={{ marginTop: 4 }}>
-            {version?.finalizedAt ? `Finalized ${dateOnly(version.finalizedAt)}` : "Not finalized"} · {commercialGoverned ? "Agreement-governed evidence" : "No governing Agreement"}
+            {version?.finalizedAt ? `Finalized ${dateOnly(version.finalizedAt)}` : "Not finalized"} · {commercialGoverned ? "Agreement-governed evidence" : commercialConflicted ? COMMERCIAL_CONFLICT_HEADER_LABEL : "No governing Agreement"}
           </small>
         </div>
       </div>

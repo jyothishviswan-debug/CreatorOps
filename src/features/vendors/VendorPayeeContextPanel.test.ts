@@ -39,7 +39,7 @@ describe("VendorPayeeContextPanel Agreements panel", () => {
 import type { AgreementDocumentDto, CounterpartyAgreementDocumentDto, CounterpartyAgreementDocumentsDto } from "@/server/finance-agreements/client-dto";
 
 const stored = (over: Partial<AgreementDocumentDto> = {}): AgreementDocumentDto => ({ status: "STORED", fileName: "Studio Co Agreement.pdf", storedAt: "2026-09-03T09:30:00.000Z", hasLink: true, link: "https://drive.invalid/fake/file_1", attemptCount: 1, message: null, canStore: false, ...over });
-const row = (over: Partial<CounterpartyAgreementDocumentDto> = {}): CounterpartyAgreementDocumentDto => ({ agreementRef: "agr_1", version: 1, lifecycle: "ACTIVE", headStatus: "ACTIVE", effectiveFrom: "2026-09-01", effectiveTo: null, document: stored(), ...over });
+const row = (over: Partial<CounterpartyAgreementDocumentDto> = {}): CounterpartyAgreementDocumentDto => ({ agreementRef: "agr_1", version: 1, lifecycle: "ACTIVE", confirmed: true, headStatus: "ACTIVE", effectiveFrom: "2026-09-01", effectiveTo: null, document: stored(), ...over });
 const projection = (documents: CounterpartyAgreementDocumentDto[], over: Partial<CounterpartyAgreementDocumentsDto> = {}): CounterpartyAgreementDocumentsDto => ({ counterpartyType: "VENDOR", ref: "v_1", documents, hasMore: false, linksVisible: true, ...over });
 
 describe("VendorPayeeContextPanel Agreement documents (Step 14B.1)", () => {

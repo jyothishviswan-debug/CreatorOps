@@ -105,7 +105,8 @@ test("every lifecycle appears with the right primary action: Continue draft / Re
   await gotoWorkspace(page);
   const expected: Array<[string, string, string]> = [
     [names_.draft, "Draft", "Continue draft"],
-    [names_.confirmed, "Draft", "Review"],
+    // Step 14C: a confirmed-but-not-yet-active Agreement is never worded as a bare "Draft".
+    [names_.confirmed, "Confirmed · awaiting activation", "Review"],
     [names_.active, "Active", "Create revision"],
     [names_.suspended, "Suspended", "Open"],
     [names_.ended, "Ended", "Open"],

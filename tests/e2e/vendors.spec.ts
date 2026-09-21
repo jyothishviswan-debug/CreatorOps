@@ -174,7 +174,7 @@ test.describe("Vendor profile", () => {
     await expect(page.getByText(/Likely duplicate found|Possible duplicate/)).toBeVisible({ timeout: 5000 });
 
     await formField(page, "Email address").fill(`${uniqueName("nomatch").replace(/\s+/g, "")}@example-vendor.test`);
-    await expect(page.getByText("No duplicate found")).toBeVisible({ timeout: 5000 });
+    await expect(page.getByText("No strong match found")).toBeVisible({ timeout: 5000 });
 
     await page.route("**/api/vendors/duplicate-check", (route) => route.abort());
     await formField(page, "Phone number").fill("+91 90000 09999");

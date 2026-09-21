@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ActorContext } from "@/server/authz/types";
+import { checkCounterpartyDependencyGuards, type CounterpartyDependencyAction } from "@/server/shared/counterparty-dependency-guards";
 import { toPartnerDto, type PartnerDto } from "./client-dto";
 import { getPartnerDocByRef, partnerAccountsCollection, runPartnerMutation } from "./firestore";
 import { writePartnerEvent } from "./partner-events";
@@ -14,7 +15,18 @@ import { PARTNER_GOVERNANCE_STATUSES, partnersInvalidInputResult, partnersNotRea
 // the same function instead of each module inventing its own gate.
 // Unknown/error MUST block - never fabricate "safe to archive" on a
 // failed lookup.
-export async function checkPartnerDependencies(partner: Pick<PartnerDoc, "uid" | "partnerRef">): Promise<PartnerDependencyResult> {
+//
+// Step 14C section 3: modules that depend on a Partner (Finance Agreements)
+// plug in through the neutral counterparty-dependency-guards registry - this
+// module never imports them. Only ARCHIVE and BLACKLIST consult the check
+// (they are the transitions that could orphan a dependent record). The
+// reversible INACTIVE deactivation (setPartnerStatus) and restore are
+// deliberately NOT guarded: INACTIVE keeps the record, its Agreements and
+// their provenance fully intact and is undone with one click, so it cannot
+// orphan anything. The registry's `unknown` (a guard could not prove safety)
+// blocks exactly like a failed own lookup; `blocked` returns the guard's
+// reason as a blocker. Nothing here ever ends or edits a dependent record.
+export async function checkPartnerDependencies(partner: Pick<PartnerDoc, "uid" | "partnerRef">, action: CounterpartyDependencyAction = "archive"): Promise<PartnerDependencyResult> {
   const blockers: string[] = [];
   try {
     // Two equality filters, no orderBy - Firestore's automatic per-field
@@ -24,11 +36,12 @@ export async function checkPartnerDependencies(partner: Pick<PartnerDoc, "uid" |
     const activeAccounts = await partnerAccountsCollection().where("partnerRef", "==", partner.partnerRef).where("status", "==", "ACTIVE").limit(1).get();
     if (!activeAccounts.empty) blockers.push("This Partner has at least one active Partner Account - inactivate it first.");
 
-    // Future adapters plug in here, e.g.:
-    // const activeCampaigns = await campaignsCollection().where("partnerRef", "==", partner.partnerRef).where("status", "==", "ACTIVE").limit(1).get();
-    // if (!activeCampaigns.empty) blockers.push("...");
+    // Dependent-module guards (never throws; a failing guard is `unknown`).
+    const guarded = await checkCounterpartyDependencyGuards("PARTNER", partner.partnerRef, { action });
+    blockers.push(...guarded.reasons);
 
-    return { status: blockers.length > 0 ? "blocked" : "clear", blockers };
+    const status = blockers.length === 0 ? "clear" : activeAccounts.empty && guarded.status === "unknown" ? "unknown" : "blocked";
+    return { status, blockers };
   } catch {
     return { status: "unknown", blockers: ["Dependency lookup failed - cannot confirm this Partner is safe to archive/blacklist."] };
   }
@@ -67,7 +80,7 @@ export async function blacklistPartner(actor: ActorContext | null, partnerRef: u
     return partnersInvalidInputResult(`Cannot blacklist a Partner that is already ${loaded.partner.status} - restore it first.`);
   }
 
-  const dependencies = await checkPartnerDependencies(loaded.partner);
+  const dependencies = await checkPartnerDependencies(loaded.partner, "blacklist");
   if (dependencies.status !== "clear") {
     return partnersNotReadyResult("This Partner cannot be blacklisted yet.", dependencies.blockers.map((message, i) => ({ code: `DEPENDENCY_${i}`, message })));
   }
@@ -102,7 +115,7 @@ export async function archivePartner(actor: ActorContext | null, partnerRef: unk
     return partnersInvalidInputResult("This Partner is already archived - restore it first.");
   }
 
-  const dependencies = await checkPartnerDependencies(loaded.partner);
+  const dependencies = await checkPartnerDependencies(loaded.partner, "archive");
   if (dependencies.status !== "clear") {
     return partnersNotReadyResult("This Partner cannot be archived yet.", dependencies.blockers.map((message, i) => ({ code: `DEPENDENCY_${i}`, message })));
   }

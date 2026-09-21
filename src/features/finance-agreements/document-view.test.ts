@@ -204,6 +204,7 @@ describe("Partner / Vendor contextual rows", () => {
     agreementRef: "agr_1",
     version: 1,
     lifecycle: "ACTIVE",
+    confirmed: true,
     headStatus: "ACTIVE",
     effectiveFrom: "2026-09-01",
     effectiveTo: null,
@@ -214,6 +215,18 @@ describe("Partner / Vendor contextual rows", () => {
     const [row] = buildCounterpartyDocumentRows([entry({ document: STORED })]);
     expect(row).toMatchObject({ title: "Signed Agreement.pdf", link: LINK, onFileText: null, chip: null, note: null });
     expect(row!.metaText).toMatch(/^Agreement version 1 · Active · Stored \d{1,2} \w+ 2026/);
+  });
+
+  it("Step 14C: a confirmed version that is not active reads 'Confirmed · awaiting activation', never a bare 'Draft'; an unconfirmed draft still reads 'Draft'", () => {
+    const [awaiting] = buildCounterpartyDocumentRows([entry({ document: STORED, lifecycle: "DRAFT", headStatus: "DRAFT", confirmed: true })]);
+    expect(awaiting!.metaText).toMatch(/^Agreement version 1 · Confirmed · awaiting activation · Stored /);
+    expect(awaiting!.metaText).not.toMatch(/Draft/);
+    const [unconfirmed] = buildCounterpartyDocumentRows([entry({ document: PENDING, lifecycle: "DRAFT", headStatus: "DRAFT", confirmed: false })]);
+    expect(unconfirmed!.metaText).toBe("Agreement version 1 · Draft");
+    for (const [lifecycle, label] of [["ACTIVE", "Active"], ["SUSPENDED", "Suspended"], ["ENDED", "Ended"], ["SUPERSEDED", "Superseded"]] as const) {
+      const [row] = buildCounterpartyDocumentRows([entry({ document: NOT_APPLICABLE, lifecycle, confirmed: true })]);
+      expect(row!.metaText, lifecycle).toBe(`Agreement version 1 · ${label}`);
+    }
   });
 
   it("without the link (finance access without contract access): the neutral 'Agreement document on file', never a link", () => {

@@ -7,7 +7,7 @@ import {
   STORE_AGREEMENT_DOCUMENT_LABEL,
   documentStatusChip,
   formatInstant,
-  lifecycleLabel,
+  lifecycleDisplayLabel,
   type ChipSpec,
 } from "./format";
 
@@ -185,7 +185,7 @@ export type CounterpartyDocumentRow = {
 export function buildCounterpartyDocumentRows(documents: readonly CounterpartyAgreementDocumentDto[]): CounterpartyDocumentRow[] {
   return documents.map((entry) => {
     const { document } = entry;
-    const meta = [`Agreement version ${entry.version}`, lifecycleLabel(entry.lifecycle)];
+    const meta = [`Agreement version ${entry.version}`, lifecycleDisplayLabel(entry.lifecycle, entry.confirmed)];
     if (document.status === "STORED" && document.storedAt) meta.push(`Stored ${formatInstant(document.storedAt)}`);
     const link = document.status === "STORED" ? safeDocumentLink(document.link) : null;
     return {

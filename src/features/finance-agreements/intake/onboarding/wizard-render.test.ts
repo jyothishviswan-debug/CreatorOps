@@ -238,16 +238,30 @@ describe("duplicates block", () => {
   it("an unknown check says it could not be completed and needs acknowledgement", () => {
     show(run(checked(duplicatesDto({ status: "unknown" })), { type: "continueNew" }));
     const markup = html(WizardDuplicatesBlock);
-    expect(markup).toContain("Could not check for an existing Partner");
+    expect(markup).toContain("The duplicate check could not be completed");
+    expect(markup).toContain("A match cannot be ruled out.");
     expect(markup).toContain("I understand the check could not be completed");
+    expect(markup).not.toMatch(/No strong match found|No existing/);
   });
 
-  it("`none` says a new record can be created and asks for nothing", () => {
+  it("`none` is worded `No strong match found` with the honest limitation - never `No duplicate` / `No existing` - and asks for nothing", () => {
     show(checked());
     const markup = html(WizardDuplicatesBlock);
-    expect(markup).toContain("No existing Partner found");
+    expect(markup).toContain("No strong match found");
+    expect(markup).toContain("Records stored with a different email or phone format may not be detected.");
+    expect(markup).not.toMatch(/No duplicate|No existing Partner|no duplicate/i);
     expect(markup).not.toContain("Continue creating new");
     expect(markup).not.toContain("onboarding-acknowledge");
+  });
+
+  it("a name-only (supporting) result is `Possible match (name only)`: a hint, not a strong match, no acknowledgement needed", () => {
+    show(checked(duplicatesDto({ status: "possible", candidates: [candidate({ ref: "prt_n", displayName: "Asha Rao", strength: "SUPPORTING", signals: ["DISPLAY_NAME"] })] })));
+    const markup = html(WizardDuplicatesBlock);
+    expect(markup).toContain("Possible match (name only)");
+    expect(markup).toContain("Same name");
+    expect(markup).toContain("Supporting match");
+    expect(markup).not.toContain("Possible existing Partner found");
+    expect(markup).not.toContain("No strong match found");
   });
 
   it("a Vendor uses the Vendor wording", () => {

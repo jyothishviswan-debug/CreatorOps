@@ -16,6 +16,7 @@ import type {
   PartnerReviewSourceRef,
   PartnerReviewSourceType,
   PartnerReviewVersionDoc,
+  PolicyConflictMarker,
 } from "./types";
 
 // Step 13A.1: the ONE pure, actor-scoped source-context redaction.
@@ -143,7 +144,12 @@ export type ActorEvidenceTarget = Omit<EvidenceTarget, "provenance"> & {
   };
 };
 
-export type ActorCommercialEvidence = Omit<CommercialEvidence, "monthlyDeliverable" | "lfcSfc" | "targets"> & {
+// Step 14C: the overlap marker as an actor sees it - the reason and HOW MANY Agreement records collided, never
+// their refs (the page already names the single governing Agreement when there is one; a conflict names none).
+export type ActorPolicyConflict = { reason: PolicyConflictMarker["reason"]; conflictCount: number };
+
+export type ActorCommercialEvidence = Omit<CommercialEvidence, "monthlyDeliverable" | "lfcSfc" | "targets" | "policyConflict"> & {
+  policyConflict?: ActorPolicyConflict;
   monthlyDeliverable: Omit<EvidenceMonthlyDeliverable, "actualCountSources"> & {
     actualCountSources: { sourceType: "content_thread" | "content_link"; units: ActorCountUnit[] } | null;
   };
@@ -311,6 +317,8 @@ function redactCommercial(commercial: CommercialEvidence, keyForAssignment: (ass
   return {
     policyVersion: commercial.policyVersion,
     governingAgreement: commercial.governingAgreement ? { ...commercial.governingAgreement } : null,
+    // Only when a conflict exists (an old / conflict-free snapshot has no key at all).
+    ...(commercial.policyConflict ? { policyConflict: { reason: commercial.policyConflict.reason, conflictCount: commercial.policyConflict.agreementRefs.length } } : {}),
     monthlyDeliverable: {
       ...deliverable,
       requirementSource: deliverable.requirementSource ? { ...deliverable.requirementSource } : null,

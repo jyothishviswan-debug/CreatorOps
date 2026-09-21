@@ -63,6 +63,9 @@ export type AgreementWorkspaceRowDto = {
   currentVersion: number;
   openVersion: number | null;
   lifecycle: AgreementHeadStatus;
+  // Step 14C (additive): the Agreement was never activated (lifecycle DRAFT) and its open version is already CONFIRMED - shown as
+  // "Confirmed · awaiting activation", never as a bare "Draft". A display fact only; there is no new backend lifecycle state.
+  awaitingActivation: boolean;
   agreementNumber: string | null;
   agreementType: AgreementType | null;
   effectiveFrom: string | null;

@@ -8,7 +8,7 @@ import { contentCollection } from "@/server/content/firestore";
 import { contentDocSchema } from "@/server/content/types";
 
 import type { ChannelSnapshotRecordSource } from "./commercial-builder";
-import { getGoverningCommercialPolicy, policyNeedsChannelSnapshots } from "./commercial-policy";
+import { getGoverningCommercialPolicyResolution, policyNeedsChannelSnapshots } from "./commercial-policy";
 import { buildEvidence, selectInPeriodAssignments, type AnalyticsRecordSource, type AssignmentSource, type BuiltEvidence, type ContentThreadSource } from "./evidence-builder";
 import type { ReviewPeriod } from "./period";
 
@@ -86,7 +86,10 @@ async function scanByEquality<T>(
 }
 
 export async function collectPartnerEvidence(partnerRef: string, period: ReviewPeriod, options: { now?: () => Date } = {}): Promise<BuiltEvidence> {
-  const policy = await getGoverningCommercialPolicy(partnerRef, period.periodKey);
+  // Step 14C: a policy, nothing, or a NEUTRAL overlap conflict (never picked, never merged, never thrown).
+  const resolution = await getGoverningCommercialPolicyResolution(partnerRef, period.periodKey);
+  const policy = resolution.kind === "policy" ? resolution.policy : null;
+  const policyConflict = resolution.kind === "conflict" ? { reason: "multiple_applicable_agreements" as const, agreementRefs: resolution.agreementRefs } : null;
 
   const [assignmentScan, analyticsScan, channelScan] = await Promise.all([
     scanByEquality<AssignmentSource>(
@@ -154,6 +157,7 @@ export async function collectPartnerEvidence(partnerRef: string, period: ReviewP
     analyticsScanTruncated: analyticsScan.truncated,
     analyticsRecordsScanned: analyticsScan.scanned,
     commercialPolicy: policy,
+    commercialPolicyConflict: policyConflict,
     channelRecords: channelScan.items,
     channelScanTruncated: channelScan.truncated,
   });

@@ -6,6 +6,8 @@ import type { PartnerReviewEventKind, PartnerReviewFreshnessState, PartnerReview
 import type { ReviewRowLifecycle } from "@/server/partner-reviews/ui-dto";
 import type { WorkspaceSignal } from "@/server/partner-reviews/ui-params";
 
+import { COMMERCIAL_CONFLICT_SECTION_REASON } from "./commercial-conflict";
+
 export { absoluteTime, relativeTime, platformLabel };
 
 // Step 13B: display-only labels and tones for Partner Reviews. Nothing here changes a stored value;
@@ -92,6 +94,7 @@ const UNAVAILABLE_REASON_LABELS: Record<string, string> = {
   conflicting_follower_snapshots: "Comparable snapshots conflict, so growth is not judged.",
   channel_scan_truncated: "The channel snapshot read was bounded.",
   unsupported_metric: "This metric is not supported as an Analytics target.",
+  multiple_applicable_agreements: COMMERCIAL_CONFLICT_SECTION_REASON,
 };
 
 export function unavailableReasonLabel(code: string | null): string | null {

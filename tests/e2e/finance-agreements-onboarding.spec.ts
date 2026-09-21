@@ -141,7 +141,7 @@ async function goToCreate(page: import("@playwright/test").Page, noun: "Partner"
 const createButton = (page: import("@playwright/test").Page) => page.getByTestId("onboarding-create");
 
 // ---------------------------------------------------------------------------------------------------------------------------------------
-test("NEW PARTNER (Instagram): no duplicate -> the Partner is created through the OWNING service with its Instagram Account, the Agreement is linked, the SAME file is re-uploaded, extracted and attached, and the intake continues", async ({ page }) => {
+test("NEW PARTNER (Instagram): no strong match found -> the Partner is created through the OWNING service with its Instagram Account, the Agreement is linked, the SAME file is re-uploaded, extracted and attached, and the intake continues", async ({ page }) => {
   const errors = collectBrowserErrors(page);
   const id = uniqueIdentity("ig");
   const name = `${TAG} Instagram Media`;
@@ -150,7 +150,10 @@ test("NEW PARTNER (Instagram): no duplicate -> the Partner is created through th
   await openWizard(page, "INSTAGRAM_PARTNER");
   await extractInWizard(page, pdf);
   await goToCreate(page, "Partner");
-  await expect(page.getByTestId("onboarding-duplicates-result")).toContainText("No existing Partner found");
+  // Step 14C: never "No duplicate / No existing ... found" - the check cannot prove absence, so it says so.
+  await expect(page.getByTestId("onboarding-duplicates-result")).toContainText("No strong match found");
+  await expect(page.getByTestId("onboarding-duplicates-result")).toContainText("Records stored with a different email or phone format may not be detected.");
+  await expect(page.getByTestId("onboarding-duplicates-result")).not.toContainText(/no duplicate|no existing/i);
   await expect(page.getByTestId("onboarding-continue-new")).toHaveCount(0);
   await expect(page.getByTestId("onboarding-confirmed-values")).toContainText(name);
   await shot(page, "06-wizard-no-duplicate-confirmed-values");
@@ -559,7 +562,7 @@ test("SECURITY: a Manager who can manage Agreements but has NO Partner-create ri
     await extractInWizard(page, pdfFile({ name, email: id.email, phone: id.phone, state: "Kerala", pageLink: `https://www.instagram.com/${id.handle}/` }));
     await expect(field(page, /^Name/)).toHaveValue(name);
     await checkDuplicates(page, "Partner");
-    await expect(page.getByTestId("onboarding-duplicates-result")).toContainText("No existing Partner found");
+    await expect(page.getByTestId("onboarding-duplicates-result")).toContainText("No strong match found");
     await expect(createButton(page)).toBeDisabled();
     await expect(page.getByTestId("onboarding-create-blocked")).toContainText("you do not have permission to create a new Partner");
     await shot(page, "13-wizard-review-only-manager", { fullPage: false });
@@ -608,7 +611,7 @@ test("NEW VENDOR: the Vendor type is REQUIRED; the Vendor is created through the
   await shot(page, "14-wizard-vendor-type-required", { fullPage: false });
   await field(page, /^Vendor type/).selectOption("AGENCY");
   await checkDuplicates(page, "Vendor");
-  await expect(page.getByTestId("onboarding-duplicates-result")).toContainText("No existing Vendor found");
+  await expect(page.getByTestId("onboarding-duplicates-result")).toContainText("No strong match found");
   await expect(createButton(page)).toHaveText("Create Vendor and start Agreement");
   await createButton(page).click();
   await expect(page).toHaveURL(/\/finance\/agreements\/new\?agreementRef=agr_[0-9a-f]{20}/);
@@ -827,7 +830,7 @@ test("KEYBOARD + LIVE REGIONS: the wizard is operable without a mouse - Extract 
   await page.getByTestId("onboarding-check-duplicates").focus();
   await page.keyboard.press("Enter");
   await expect(page.getByTestId("onboarding-duplicates-result")).toBeFocused();
-  await expect(page.getByTestId("onboarding-duplicates-status")).toContainText("No existing Partner found");
+  await expect(page.getByTestId("onboarding-duplicates-status")).toContainText("No strong match found");
   // the create button is a real, focusable button whose disabled reason is a visible sentence (never only a grey button)
   await createButton(page).focus();
   await expect(createButton(page)).toBeFocused();

@@ -245,6 +245,7 @@ export async function listCounterpartyAgreementDocuments(actor: ActorContext | n
         agreementRef: head.agreementRef,
         version: version.version,
         lifecycle: version.status,
+        confirmed: version.confirmation !== null,
         headStatus: head.status,
         effectiveFrom: version.effective?.effectiveFrom ?? null,
         effectiveTo: version.effective?.effectiveTo ?? null,

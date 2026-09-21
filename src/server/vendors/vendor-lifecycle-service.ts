@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 import type { ActorContext } from "@/server/authz/types";
+import { checkCounterpartyDependencyGuards, type CounterpartyDependencyAction } from "@/server/shared/counterparty-dependency-guards";
 import { toVendorDto, type VendorDto } from "./client-dto";
 import { getVendorDocByRef, runVendorMutation, vendorPartnerLinksCollection } from "./firestore";
 import { writeVendorEvent } from "./vendor-events";
@@ -14,7 +15,16 @@ import { VENDOR_GOVERNANCE_STATUSES, vendorsInvalidInputResult, vendorsNotReadyR
 // Agreement/Payable adapters can extend the same function instead of
 // each module inventing its own gate. Unknown/error MUST block - never
 // fabricate "safe to archive" on a failed lookup.
-export async function checkVendorDependencies(vendor: Pick<VendorDoc, "uid" | "vendorRef">): Promise<VendorDependencyResult> {
+//
+// Step 14C section 3: dependent modules (Finance Agreements) plug in through
+// the neutral counterparty-dependency-guards registry - this module never
+// imports them. Only ARCHIVE consults the check; the reversible INACTIVE
+// deactivation (setVendorStatus) and restore are deliberately NOT guarded
+// (INACTIVE leaves the record and its Agreements and provenance intact and is
+// undone with one click). `unknown` from a guard blocks like a failed own
+// lookup; `blocked` returns the guard's reason. Nothing here ever ends or
+// edits a dependent record.
+export async function checkVendorDependencies(vendor: Pick<VendorDoc, "uid" | "vendorRef">, action: CounterpartyDependencyAction = "archive"): Promise<VendorDependencyResult> {
   const blockers: string[] = [];
   try {
     // Two equality filters, no orderBy - Firestore's automatic per-field
@@ -26,11 +36,12 @@ export async function checkVendorDependencies(vendor: Pick<VendorDoc, "uid" | "v
     const activeLinks = await vendorPartnerLinksCollection().where("vendorRef", "==", vendor.vendorRef).where("status", "==", "ACTIVE").limit(1).get();
     if (!activeLinks.empty) blockers.push("This Vendor has at least one active Partner relationship - end it first.");
 
-    // Future adapters plug in here, e.g.:
-    // const activeAgreements = await agreementsCollection().where("vendorRef", "==", vendor.vendorRef).where("status", "==", "ACTIVE").limit(1).get();
-    // if (!activeAgreements.empty) blockers.push("...");
+    // Dependent-module guards (never throws; a failing guard is `unknown`).
+    const guarded = await checkCounterpartyDependencyGuards("VENDOR", vendor.vendorRef, { action });
+    blockers.push(...guarded.reasons);
 
-    return { status: blockers.length > 0 ? "blocked" : "clear", blockers };
+    const status = blockers.length === 0 ? "clear" : activeLinks.empty && guarded.status === "unknown" ? "unknown" : "blocked";
+    return { status, blockers };
   } catch {
     return { status: "unknown", blockers: ["Dependency lookup failed - cannot confirm this Vendor is safe to archive."] };
   }

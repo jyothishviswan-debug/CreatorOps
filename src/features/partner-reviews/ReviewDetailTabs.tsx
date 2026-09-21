@@ -10,6 +10,7 @@ import type { PartnerReviewDetailDto, PartnerReviewVersionDto, PartnerReviewVers
 import { computeReviewListSummary } from "@/server/partner-reviews/review-list-summary";
 import { PARTNER_REVIEW_STATUSES, type PartnerReviewFreshnessState } from "@/server/partner-reviews/types";
 
+import { commercialConflictNotice } from "./commercial-conflict";
 import {
   absoluteTime,
   COMMERCIAL_EVIDENCE_LABEL,
@@ -45,6 +46,20 @@ function Kv({ label, children }: { label: string; children: ReactNode }) {
     <div className="kv">
       <span>{label}</span>
       <b>{children}</b>
+    </div>
+  );
+}
+
+// The overlap notice (Step 14C): the exact sentence once, plus the neutral note. Nothing is picked or merged.
+function ConflictNotice({ commercial }: { commercial: Snapshot["commercial"] }) {
+  const notice = commercialConflictNotice(commercial);
+  if (!notice) return null;
+  return (
+    <div role="status" data-testid="commercial-conflict-notice" style={{ margin: "0 0 12px" }}>
+      <Pill tone="orange">{notice.text}</Pill>
+      <p className="foundationnote" style={{ margin: "6px 0 0" }}>
+        {notice.note}
+      </p>
     </div>
   );
 }
@@ -175,14 +190,16 @@ export function OverviewSection({ detail, freshnessState }: { detail: PartnerRev
 function CommercialPanel({ snapshot }: { snapshot: Snapshot }) {
   const commercial = snapshot.commercial;
   const governed = commercial.governingAgreement !== null;
+  const conflicted = commercialConflictNotice(commercial) !== null;
   const deliverable = commercial.monthlyDeliverable;
   const lfcSfc = commercial.lfcSfc;
 
   return (
     <PanelGrid>
       <Panel span={12}>
-        <PanelHead title="Monthly commercial evidence" description={governed ? "Evidence supplied by the governing Agreement · no money is calculated here" : "No Agreement governs this Partner-month · no money is calculated here"} />
+        <PanelHead title="Monthly commercial evidence" description={governed ? "Evidence supplied by the governing Agreement · no money is calculated here" : conflicted ? "More than one Agreement applies to this Partner-month · no money is calculated here" : "No Agreement governs this Partner-month · no money is calculated here"} />
         <PanelBody>
+          <ConflictNotice commercial={commercial} />
           <h3 style={{ margin: "0 0 8px" }}>Payment-affecting evidence</h3>
           {governed && commercial.governingAgreement && (
             <Kv label="Governing Agreement">
@@ -217,15 +234,15 @@ function CommercialPanel({ snapshot }: { snapshot: Snapshot }) {
           )}
 
           <h3 style={{ margin: "18px 0 8px" }}>Warning-only targets</h3>
-          <TargetsTable targets={commercial.targets} />
+          <TargetsTable targets={commercial.targets} conflicted={conflicted} />
         </PanelBody>
       </Panel>
     </PanelGrid>
   );
 }
 
-function TargetsTable({ targets }: { targets: Snapshot["commercial"]["targets"] }) {
-  if (targets.length === 0) return <p className="foundationnote">No Agreement target applies to this Partner-month.</p>;
+function TargetsTable({ targets, conflicted }: { targets: Snapshot["commercial"]["targets"]; conflicted: boolean }) {
+  if (targets.length === 0) return <p className="foundationnote">{conflicted ? "Targets are not evaluated while the Agreement overlap is unresolved." : "No Agreement target applies to this Partner-month."}</p>;
   return (
     <div className="tablewrap">
       <table className="compact">
@@ -279,6 +296,7 @@ export function ProductionSection({ detail }: { detail: PartnerReviewDetailDto }
         <Panel span={12}>
           <PanelHead title="Production evidence" description="Inspectable monthly evidence · never scored" />
           <PanelBody>
+            <ConflictNotice commercial={commercial} />
             <Kv label="Assignments included">{summary.production.assignmentsIncluded}</Kv>
             <Kv label="Monthly required qualifying content">{commercial.monthlyDeliverable.requiredCount === null ? <Unavailable reason={unavailableReasonLabel(commercial.monthlyDeliverable.unavailableReason)} /> : commercial.monthlyDeliverable.requiredCount}</Kv>
             <Kv label="Actual qualifying content">{commercial.monthlyDeliverable.actualQualifyingCount === null ? <Unavailable reason="Approved Content evidence only - raw submitted links never count." /> : commercial.monthlyDeliverable.actualQualifyingCount}</Kv>
@@ -584,7 +602,7 @@ export function PerformanceSection({ detail }: { detail: PartnerReviewDetailDto 
         <Panel span={12}>
           <PanelHead title="Agreement targets" description="Warning-only · a missed or unavailable target never changes payment-affecting evidence" />
           <PanelBody>
-            <TargetsTable targets={snapshot.commercial.targets} />
+            <TargetsTable targets={snapshot.commercial.targets} conflicted={commercialConflictNotice(snapshot.commercial) !== null} />
           </PanelBody>
         </Panel>
       </PanelGrid>

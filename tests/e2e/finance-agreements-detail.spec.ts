@@ -312,6 +312,8 @@ test("a Manager sees the Agreement but NO Activate / Create revision / Suspend /
   await open(page, "Confirmed");
   await expect(page.getByRole("button", { name: "Activate Agreement", exact: true })).toHaveCount(0);
   await expect(page.getByText(/waiting to be activated by someone with activation permission/)).toBeVisible();
+  // Step 14C: the header status says "Confirmed · awaiting activation" - never a bare "Draft" - for a confirmed, not-yet-active version
+  await expect(page.locator("main").getByText("Confirmed · awaiting activation").first()).toBeVisible();
   // ...and a Head sees Activate on that same confirmed version
   await signInAs(page, "head");
   await open(page, "Confirmed");

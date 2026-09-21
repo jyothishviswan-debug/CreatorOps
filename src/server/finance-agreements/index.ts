@@ -3,8 +3,8 @@
 // (firestore helpers, draft builders) stay module-private. The HTTP mapper stays in ./http
 // (it imports next/server; the services must stay importable without it) and the multipart upload
 // reader stays in ./upload-request. The Partner Reviews commercial-policy adapter (./policy-adapter)
-// is deliberately NOT exported here: its production registration is deferred, and nothing that imports
-// this barrel (every route) should be able to reach it.
+// is deliberately NOT exported here: only the server composition module (src/server/composition) imports it, to
+// register it into Partner Reviews, and nothing that imports this barrel (every route) should be able to reach it.
 export {
   attachExtractionProposals,
   confirmAgreementVersion,

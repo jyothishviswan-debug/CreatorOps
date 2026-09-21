@@ -2,7 +2,7 @@ import type { AnalyticsChannelSourceRecordDoc } from "@/server/analytics/types";
 import { ANALYTICS_METRIC_IDS, ANALYTICS_METRIC_REGISTRY, type AnalyticsMetricId } from "@/server/analytics/metric-registry";
 
 import { unavailableDeliverable, unavailableLfcSfc } from "./commercial-neutral";
-import type { GoverningCommercialPolicy } from "./commercial-policy";
+import type { CommercialPolicyConflict, GoverningCommercialPolicy } from "./commercial-policy";
 import { parseLeadingUtcDate, type ReviewPeriod } from "./period";
 import {
   COMMERCIAL_EVIDENCE_POLICY_VERSION,
@@ -67,6 +67,8 @@ export type CommercialBuildInput = {
   partnerRef: string;
   period: ReviewPeriod;
   policy: GoverningCommercialPolicy | null;
+  // Step 14C: set (with a null policy) when more than one applicable Agreement governs the month.
+  policyConflict?: Pick<CommercialPolicyConflict, "reason" | "agreementRefs"> | null;
   // Canonical in-period Production rows and Performance records (already
   // built by the evidence builder).
   production: readonly EvidenceProductionAssignment[];
@@ -370,6 +372,23 @@ export type CommercialBuildResult = {
 };
 
 export function buildCommercialEvidence(input: CommercialBuildInput): CommercialBuildResult {
+  // An overlap conflict: nothing Agreement-governed is evaluated, picked or merged. Every section is
+  // unavailable with the typed conflict reason; the marker records which Agreement refs collided.
+  if (input.policyConflict) {
+    const reason = input.policyConflict.reason;
+    return {
+      commercial: commercialEvidenceSchema.parse({
+        policyVersion: COMMERCIAL_EVIDENCE_POLICY_VERSION,
+        governingAgreement: null,
+        monthlyDeliverable: unavailableDeliverable(reason),
+        lfcSfc: unavailableLfcSfc(reason),
+        targets: [],
+        policyConflict: { reason, agreementRefs: [...input.policyConflict.agreementRefs].sort() },
+      }),
+      channelSourceRefs: [],
+    };
+  }
+
   const { targets, channelSourceRefs } = evaluateTargets(input);
   const commercial = commercialEvidenceSchema.parse({
     policyVersion: COMMERCIAL_EVIDENCE_POLICY_VERSION,
