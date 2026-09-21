@@ -1,5 +1,6 @@
 import type { ActorContext } from "@/server/authz/types";
 import { listPartnerDocs } from "@/server/partners/firestore";
+import { narrowingRegions } from "@/server/shared/region-filter";
 
 import { compareCandidates } from "./needs-review-candidates";
 import { getReviewActionPermissions } from "./partner-review-permissions";
@@ -50,7 +51,8 @@ export type PartnerReviewsWorkspaceDto = {
   month: MonthResolutionDto;
   rows: ReviewListRowDto[];
   nextCursor: string | null;
-  // The exact size of the bounded, filtered result (the cursor pages over it).
+  // The exact size of the bounded, filtered result (the cursor pages over it). It is NOT the month's total when
+  // `disclosure.headsTruncated` is true: reviews beyond the bounded head read are then unread, so this is a lower bound.
   totalInBoundedSet: number;
   partnerFilter: { partnerRef: string; displayName: string } | null;
   permissions: ReviewActionPermissions;
@@ -88,7 +90,11 @@ async function headRows(scope: ScopeContext, heads: PartnerReviewHeadDoc[]): Pro
   return visible.map((head) => buildReviewRow(head, displays.get(head.reviewRef), live.get(head.partnerRef)?.displayName ?? null));
 }
 
-export async function getPartnerReviewsWorkspace(actor: ActorContext | null, query: WorkspaceQuery): Promise<PartnerReviewsServiceResult<PartnerReviewsWorkspaceDto>> {
+// `options.headCeiling` exists so tests can prove the bounded-read behaviour with a handful of fixtures; every real caller
+// (the page and the load-more API) omits it and gets the production HEAD_SCAN_CEILING.
+export type WorkspaceReadOptions = { headCeiling?: number };
+
+export async function getPartnerReviewsWorkspace(actor: ActorContext | null, query: WorkspaceQuery, options: WorkspaceReadOptions = {}): Promise<PartnerReviewsServiceResult<PartnerReviewsWorkspaceDto>> {
   const gate = await requirePartnerReviewsFeatureAccess(actor);
   if (!gate.ok) return partnerReviewsUnauthorizedResult(gate.reason);
 
@@ -117,12 +123,14 @@ export async function getPartnerReviewsWorkspace(actor: ActorContext | null, que
   if (!months.resolved) return { ok: true, data: { ...base, rows: [], nextCursor: null, totalInBoundedSet: 0, disclosure: emptyDisclosure } };
 
   const decoded = decodeCursor(query.cursor);
-  const regions = query.region;
+  // Choosing EVERY State/UT ("All regions") is no region filter (shared rule with the Analytics selector).
+  const regions = narrowingRegions(query.region);
   const partnerScoped = partnerFilter ? { partnerRef: partnerFilter.partnerRef, partnerAuthorized: true } : {};
 
   // The month's reviews, scope-first and bounded. The Region narrowing is applied to the (already bounded)
   // set - never as a raw-document filter inside the scoped query.
-  const scan = await scanHeads(scope, { periodKey: months.resolved, ceiling: HEAD_SCAN_CEILING, ...partnerScoped });
+  const headCeiling = options.headCeiling !== undefined && Number.isInteger(options.headCeiling) && options.headCeiling >= 1 ? options.headCeiling : HEAD_SCAN_CEILING;
+  const scan = await scanHeads(scope, { periodKey: months.resolved, ceiling: headCeiling, ...partnerScoped });
   const scanned = regions.length > 0 ? scan.heads.filter((head) => head.regionIds.some((region) => regions.includes(region))) : scan.heads;
   let rows = await headRows(scope, scanned);
 

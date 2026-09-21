@@ -14,6 +14,7 @@ import {
   absoluteTime,
   COMMERCIAL_EVIDENCE_LABEL,
   dateOnly,
+  DISABLED_BUTTON_STYLE,
   formatCount,
   FRESHNESS_LABELS,
   freshnessTone,
@@ -681,7 +682,7 @@ function VersionRow({ entry, isCurrentFinalized, isOpen, isNewest, freshnessStat
         {viewing ? (
           <span className="foundationnote">Viewing</span>
         ) : (
-          <button type="button" className="btn" disabled={busy} onClick={onView} aria-label={`View version ${entry.version}`}>
+          <button type="button" className="btn" disabled={busy} style={busy ? DISABLED_BUTTON_STYLE : undefined} onClick={onView} aria-label={`View version ${entry.version}`}>
             View version
           </button>
         )}

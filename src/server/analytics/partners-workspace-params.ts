@@ -16,7 +16,9 @@
 // they narrow the search list (choosing every option of one is no narrowing). They never select Partners, never filter the
 // already-selected Partners, never rewrite Analytics data and never broaden
 // scope. No Tier parameter exists anywhere in this file.
-import { DISCOVERY_REGIONS, TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
+import { TARGET_AUDIENCES, type TargetAudience } from "@/server/discovery/types";
+
+import { narrowingRegions, selectsEveryRegion } from "@/server/shared/region-filter";
 
 import { parsePartnerViewSelection, type PartnerViewSelection } from "./partner-view-metrics";
 import { PLATFORM_VIEW_METRICS, type PlatformViewMetricId } from "./platform-view-metrics";
@@ -83,16 +85,10 @@ export function parseRegionValues(input: unknown): string[] {
 }
 
 // "Select all" in a filter is the SAME as no filter: a Partner with no region /
-// Target Audience recorded stays searchable. These two functions are the only
-// place a selector value becomes a real search narrowing.
-export function selectsEveryRegion(regions: readonly string[]): boolean {
-  const chosen = new Set(regions.map((region) => region.toLowerCase()));
-  return DISCOVERY_REGIONS.every((region) => chosen.has(region.toLowerCase()));
-}
-
-export function narrowingRegions(regions: readonly string[]): string[] {
-  return selectsEveryRegion(regions) ? [] : [...regions];
-}
+// Target Audience recorded stays searchable. The region rule is shared with the
+// Partner Reviews Workspace (shared/region-filter.ts); these are the only places a
+// selector value becomes a real search narrowing.
+export { narrowingRegions, selectsEveryRegion };
 
 export function narrowingTargetAudiences(values: readonly TargetAudience[]): TargetAudience[] {
   return TARGET_AUDIENCES.every((value) => values.includes(value)) ? [] : [...values];

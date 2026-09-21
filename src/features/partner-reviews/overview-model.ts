@@ -50,6 +50,10 @@ export function buildOverviewModel(data: PartnerReviewsOverviewDto): OverviewMod
   const monthReady = month.resolved !== null;
   const reviews = counts.monthlyReviews;
   const monthNote = month.label ?? "No review months yet";
+  // Step 13C: when the bounded head read stopped early, every review-derived figure covers only the reviews read, so a count is a
+  // lower bound (never an exact-looking month total) and its wording says "the first N ... read".
+  const truncated = disclosure.headsTruncated;
+  const reviewsLabel = (count: number, noun: string) => (truncated ? `the first ${count} ${noun}${count === 1 ? "" : "s"} read` : plural(count, noun));
 
   // --- KPIs -----------------------------------------------------------------------------------
   const requirementComplete = reviews > 0 && counts.reviewsWithRequirement === reviews;
@@ -61,10 +65,10 @@ export function buildOverviewModel(data: PartnerReviewsOverviewDto): OverviewMod
 
   const kpis: OverviewModel["kpis"] = monthReady
     ? [
-        { icon: "file", label: KPI_LABELS[0], value: String(reviews), hint: monthNote },
+        { icon: "file", label: KPI_LABELS[0], value: truncated ? `${reviews}+` : String(reviews), hint: truncated ? `${monthNote} · first ${reviews} read` : monthNote },
         { icon: "check", label: KPI_LABELS[1], value: String(counts.assignmentsReceived), hint: "by due date, else created date" },
         { icon: "flag", label: KPI_LABELS[2], value: String(counts.qualifyingContent), hint: qualifyingHint },
-        { icon: "shield", label: KPI_LABELS[3], value: String(counts.finalizedReviews), hint: `of ${plural(reviews, "monthly review")}` },
+        { icon: "shield", label: KPI_LABELS[3], value: String(counts.finalizedReviews), hint: `of ${reviewsLabel(reviews, "monthly review")}` },
       ]
     : [
         { icon: "file", label: KPI_LABELS[0], value: "—", hint: monthNote },
@@ -125,7 +129,7 @@ export function buildOverviewModel(data: PartnerReviewsOverviewDto): OverviewMod
           kind: "donut",
           icon: "chart",
           title: TOP_PANEL_TITLES[2],
-          note: `${plural(performanceTotal, "monthly Partner review")} · no composite score`,
+          note: `${reviewsLabel(performanceTotal, "monthly Partner review")} · no composite score`,
           foot: "Stale = behind upstream at the last recorded check. Missing is not zero and not failed. Performance is evidence-based, never a composite score.",
           span: 4,
           total: performanceTotal,
@@ -146,7 +150,7 @@ export function buildOverviewModel(data: PartnerReviewsOverviewDto): OverviewMod
           kind: "donut",
           icon: "layers",
           title: BOTTOM_PANEL_TITLES[0],
-          note: counts.candidates > 0 ? `${plural(reviews, "monthly review")} + ${plural(counts.candidates, "Partner-month")} awaiting a first review` : plural(reviews, "monthly review"),
+          note: counts.candidates > 0 ? `${reviewsLabel(reviews, "monthly review")} + ${plural(counts.candidates, "Partner-month")} awaiting a first review` : reviewsLabel(reviews, "monthly review"),
           foot: "Exclusive states: a review behind upstream counts once, under Needs review. Needs review is derived, never stored.",
           span: 3,
           total: lifecycleTotal,
@@ -219,7 +223,7 @@ export function buildOverviewModel(data: PartnerReviewsOverviewDto): OverviewMod
 
   // --- Banner / disclosure chips -------------------------------------------------------------------------
   const chips = ["Authorized scope preview", monthReady ? (month.source === "explicit" ? `${month.label} · selected` : `${month.label} · latest review month`) : "No review months yet"];
-  if (disclosure.headsTruncated) chips.push(`Showing the first ${disclosure.headsRead} reviews of the month`);
+  if (disclosure.headsTruncated) chips.push(`Counts cover the first ${disclosure.headsRead} reviews read - the month has more`);
   if (disclosure.assignmentScanTruncated) chips.push(`Needs review found in the most recent ${disclosure.assignmentsScanned} Assignments`);
   if (counts.summaryUnavailableReviews > 0) chips.push(`${plural(counts.summaryUnavailableReviews, "review")} without a stored summary`);
 

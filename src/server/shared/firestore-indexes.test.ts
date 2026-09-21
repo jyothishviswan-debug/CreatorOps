@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 
+import { planAssignmentListQuery } from "@/server/assignments/firestore";
 import type { ScopeGrant } from "@/server/authz/types";
 import { planCampaignListQuery } from "@/server/campaigns/firestore";
 import { planPartnerListQuery } from "@/server/partners/firestore";
@@ -345,5 +346,49 @@ describe("firestore.indexes.json - Partner Reviews", () => {
     const mine = indexesFile.indexes.filter((index) => index.collectionGroup === "partnerReviews");
     expect(mine).toHaveLength(5);
     for (const index of mine) expect(index.fields[index.fields.length - 1]).toEqual(periodKeyDesc);
+  });
+});
+
+// Step 13C (production query/index audit): the Partner Reviews Needs Review candidate scan (review-scan.ts's
+// scanScopedAssignmentCandidates) reads Assignments through the accepted listAssignmentDocs planner - optionally
+// narrowed to ONE Partner (`partnerRef`) - newest first. Those shapes are equality/array filters + an orderBy on a
+// DIFFERENT field (createdAt), which Firestore production always serves from a composite index; the emulator never
+// enforces that. Derived from the REAL planner output, never from a comment.
+describe("firestore.indexes.json - Assignments (Partner Reviews Needs Review candidate scan)", () => {
+  const grants: ScopeGrant[] = [self(), region("Kerala"), team("t1")];
+
+  it("Assignments: the scope branches (SELF/REGION/TEAM) and the single-Partner GLOBAL read each map to a certified index", () => {
+    const scoped = planAssignmentListQuery({ actorUid: "actor-uid", grants, hasGlobal: false }).plan;
+    for (const name of ["self", "region", "team"]) expect(hasIndexForBranch("assignments", firestoreBranch(scoped, name))).toBe(true);
+
+    const globalPartner = planAssignmentListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: true, partnerRef: "partner-1" }).plan;
+    expect(hasIndexForBranch("assignments", firestoreBranch(globalPartner, "main"))).toBe(true);
+  });
+
+  it("Assignments: the un-narrowed GLOBAL read pushes no filter and needs no composite index (a single-field createdAt order)", () => {
+    const branch = firestoreBranch(planAssignmentListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: true }).plan, "main");
+    expect(branch.pushedFilters).toEqual([]);
+    expect(branch.orderField).toBe("createdAt");
+  });
+
+  // Firestore serves `a == x AND b == y ORDER BY c` by merging the single-equality composites (a, c) and (b, c) - so
+  // the SELF/REGION/TEAM branches narrowed to one Partner need no dedicated 3-field composite. This asserts the building
+  // blocks; that the production backend actually merges them is "production verification pending" (see the audit).
+  it("Assignments: a Partner-narrowed SELF/REGION/TEAM branch has every leading filter as a certified single-equality createdAt-desc composite (index-merge building blocks)", () => {
+    const plan = planAssignmentListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, partnerRef: "partner-1" }).plan;
+    for (const name of ["self", "region", "team"]) {
+      const branch = firestoreBranch(plan, name);
+      expect(branch.pushedFilters.some((f) => f.field === "partnerRef" && f.op === "==")).toBe(true);
+      for (const leading of planFieldsToIndexFields(branch.pushedFilters)) expect(hasIndex("assignments", [leading, createdAtDesc])).toBe(true);
+    }
+  });
+
+  it("Assignments: every assignments index in the file is one the candidate scan can produce (no speculative extras)", () => {
+    const mine = indexesFile.indexes.filter((index) => index.collectionGroup === "assignments");
+    expect(mine).toHaveLength(4);
+    for (const index of mine) {
+      expect(index.fields).toHaveLength(2);
+      expect(index.fields[1]).toEqual(createdAtDesc);
+    }
   });
 });

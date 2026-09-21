@@ -18,9 +18,19 @@ import { generateReview, loadWorkspacePage } from "./api-client";
 import { COMMERCIAL_EVIDENCE_LABEL, DISABLED_BUTTON_STYLE, dateOnly, EVENT_LABELS, formatCount, FRESHNESS_LABELS, freshnessTone, LIFECYCLE_LABELS, lifecycleTone, relativeTime, SIGNAL_LABELS, TARGET_MONITORING_LABEL } from "./format";
 import { ReviewMonthSelect } from "./ReviewMonthSelect";
 import { ReviewPartnerFilter } from "./ReviewPartnerFilter";
+import { workspaceCountCopy, workspaceEmptyCopy } from "./workspace-copy";
 import type { WorkspaceQueryState } from "./workspace-query";
 
 const PAGE_SIZE = 10;
+
+// A dash for a value that does not exist yet (a Partner-month with no review generated) - announced as unavailable, never a bare "—".
+function NoReviewDash() {
+  return (
+    <span role="img" aria-label="Unavailable - no review generated yet">
+      —
+    </span>
+  );
+}
 
 const EVALUATION_LABELS: Record<string, string> = { met: "Met", below_requirement: "Below requirement", exceeded: "Exceeded", unavailable: "Unavailable" };
 
@@ -96,6 +106,10 @@ export function PartnerReviewsWorkspace({ initial, state }: { initial: PartnerRe
   const anyFilterActive = Boolean(state.partnerRef || state.region.length > 0 || state.signal);
   const sourceLabel = month.resolved === null ? "No review months yet" : month.source === "explicit" ? "Selected month" : month.source === "latest_review" ? "Latest review month" : "Latest month with Assignments";
   const { disclosure } = initial;
+  // Step 13C: a truncated read is an INCOMPLETE list - the count and the empty state say so (never an exact-looking total).
+  const bound = { headsRead: disclosure.headsRead, headsTruncated: disclosure.headsTruncated };
+  const countCopy = workspaceCountCopy({ total: initial.totalInBoundedSet, ...bound });
+  const emptyCopy = workspaceEmptyCopy({ mode, anyFilterActive, monthLabel: month.label, ...bound });
 
   return (
     <section className="panel">
@@ -146,8 +160,7 @@ export function PartnerReviewsWorkspace({ initial, state }: { initial: PartnerRe
         {mode === "drafts" && "Reviews with an open Draft or In Review version, by Partner name."}
         {mode === "finalized" && "Reviews with a current finalized version, by Partner name. Superseded versions stay reachable from each review's Version History."}
         {mode === "signal" && "Reviews matching the selected Needs Attention signal, by Partner name. Freshness is as of the last recorded check - never live."}
-        {initial.totalInBoundedSet > 0 && ` ${initial.totalInBoundedSet} in this view.`}
-        {disclosure.headsTruncated && ` Only the first ${disclosure.headsRead} reviews of the month were read.`}
+        {countCopy && ` ${countCopy}`}
       </p>
 
       {initial.notices.map((notice) => (
@@ -170,8 +183,8 @@ export function PartnerReviewsWorkspace({ initial, state }: { initial: PartnerRe
         <EmptyState title="No review months yet" description="Reviews appear here once a Partner-month has a review or in-period Assignments in your authorized scope." icon="calendar" />
       ) : pageRows.length === 0 ? (
         <EmptyState
-          title={anyFilterActive ? "No matching reviews" : mode === "needs-review" ? "Nothing needs review" : mode === "drafts" ? "No drafts or reviews in progress" : "No finalized reviews"}
-          description={anyFilterActive ? "Try another Partner, region or month, or clear the filters." : `Nothing to show for ${month.label} in your authorized scope.`}
+          title={emptyCopy.title}
+          description={emptyCopy.description}
           icon={anyFilterActive ? "search" : "check"}
           action={
             anyFilterActive ? (
@@ -285,10 +298,10 @@ function WorkspaceRow({ row, generated, canGenerate, busy, anyBusy, error, onGen
             {summary.completeness.incompleteReasonCount > 0 && <small style={{ display: "block" }}>Evidence incomplete</small>}
           </span>
         ) : (
-          <span>—</span>
+          <NoReviewDash />
         )}
       </td>
-      <td>{summary && row.kind === "review" ? <Pill tone={summary.performance.state === "available" ? "default" : "gray"}>{summary.performance.state === "available" ? "Available" : "Missing"}</Pill> : <span>—</span>}</td>
+      <td>{summary && row.kind === "review" ? <Pill tone={summary.performance.state === "available" ? "default" : "gray"}>{summary.performance.state === "available" ? "Available" : "Missing"}</Pill> : <NoReviewDash />}</td>
       <td>
         {summary && row.kind === "review" ? (
           <>
@@ -315,7 +328,7 @@ function WorkspaceRow({ row, generated, canGenerate, busy, anyBusy, error, onGen
             )}
           </>
         ) : (
-          <span>—</span>
+          <NoReviewDash />
         )}
       </td>
       <td>
@@ -330,7 +343,9 @@ function WorkspaceRow({ row, generated, canGenerate, busy, anyBusy, error, onGen
             <small style={{ display: "block" }}>{relativeTime(row.lastEvent.at)}</small>
           </span>
         ) : (
-          <span>—</span>
+          <span role="img" aria-label="No activity recorded yet">
+            —
+          </span>
         )}
       </td>
       <td>

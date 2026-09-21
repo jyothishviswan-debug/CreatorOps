@@ -41,9 +41,10 @@ export async function getPartnerReviewsOverview(actor: ActorContext | null, requ
   if (months.resolved) {
     const scan = await scanHeads(scope, { periodKey: months.resolved, ceiling: HEAD_SCAN_CEILING });
     headsTruncated = scan.truncated;
+    // "Reviews read" is the bounded read itself (what a truncation notice must quote), not the live-verified subset.
+    headsRead = scan.heads.length;
     const live = await verifyLiveScope(scope, scan.heads.map((head) => head.partnerRef));
     const heads = scan.heads.filter((head) => live.has(head.partnerRef));
-    headsRead = heads.length;
     const displays = await resolveDisplays(heads);
     rows = heads.map((head) => buildReviewRow(head, displays.get(head.reviewRef), live.get(head.partnerRef)?.displayName ?? null));
   }

@@ -96,7 +96,11 @@ export function parseSearchQuery(raw: RawParam): string {
   return (firstOf(raw) ?? "").trim().slice(0, MAX_SEARCH_QUERY_LENGTH);
 }
 
-export const MAX_REGION_FILTERS = 10;
+// The Region filter is applied IN MEMORY to the bounded head set (never pushed to Firestore), so it has no
+// array-contains-any style value limit. The cap only bounds a hostile URL; it must stay above the whole canonical
+// State/UT list (35) plus a few free-text "Other" regions, otherwise ticking a zone (East Zone = 13) or "all"
+// would be silently cut short and the closed control could never read "All regions".
+export const MAX_REGION_FILTERS = 60;
 
 export function parseRegionParam(raw: RawParam): string[] {
   const list = Array.isArray(raw) ? raw : raw ? [raw] : [];

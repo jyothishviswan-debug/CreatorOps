@@ -57,6 +57,7 @@ export function createFixtures(tag: string) {
   const hiddenRegion = `${tag}-hidden`;
   const cleanup: FirebaseFirestore.DocumentReference[] = [];
   const reviewRefs = new Set<string>();
+  const partnerRefs: string[] = [];
   const grantIds: string[] = [];
   let counter = 0;
   const now = () => new Date().toISOString();
@@ -121,6 +122,7 @@ export function createFixtures(tag: string) {
     const ref = partnersCollection().doc(uid);
     await ref.set(partner);
     cleanup.push(ref);
+    partnerRefs.push(uid);
     return partner;
   }
 
@@ -370,6 +372,12 @@ export function createFixtures(tag: string) {
 
   async function cleanupAll() {
     await Promise.all(cleanup.splice(0).map((ref) => ref.delete()));
+    // A review generated THROUGH THE UI (e.g. the "Generate Review" button) is unknown to this helper by ref: sweep
+    // every head of every fixture Partner (single-field equality) so nothing this spec caused outlives it.
+    for (const partnerRef of partnerRefs.splice(0)) {
+      const heads = await partnerReviewsCollection().where("partnerRef", "==", partnerRef).get();
+      for (const head of heads.docs) reviewRefs.add(head.id);
+    }
     for (const reviewRef of reviewRefs) {
       const head = partnerReviewsCollection().doc(reviewRef);
       for (const sub of [PARTNER_REVIEWS_COLLECTIONS.versions, PARTNER_REVIEWS_COLLECTIONS.events]) {

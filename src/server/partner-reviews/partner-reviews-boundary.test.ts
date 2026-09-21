@@ -198,3 +198,52 @@ describe("commercial policy seam boundary (Step 13A.1 revised)", () => {
     expect(code).not.toMatch(/resolveActorSourceAccess|redactVersionForActor/);
   });
 });
+
+// Step 13C section 7: the best-effort `freshnessHint` on the review head is projection/cache metadata only. Static
+// half of the certification (the behavioural half is freshness-hint.emulator.test.ts): who may mention it at all,
+// and that no decision path (authorization, lifecycle, finalize / refresh / revision) ever READS it.
+describe("freshnessHint is projection metadata only (Step 13C section 7)", () => {
+  const nonTestFiles = readdirSync(moduleDir).filter((n) => n.endsWith(".ts") && !n.endsWith(".test.ts"));
+  const mentions = (file: string) => /freshnessHint/.test(codeOnly(readModule(file)));
+
+  it("only the projection writer, the two mutation services (which reset it), the list/history read models, the schema and the list DTO mention it - no gate, permission, source-access, handoff, client DTO or route", () => {
+    expect(nonTestFiles.filter(mentions).sort()).toEqual([
+      "freshness-hint.ts",
+      "overview-aggregate.ts",
+      "partner-review-history-service.ts",
+      "partner-review-lifecycle-service.ts",
+      "partner-review-service.ts",
+      "review-rows.ts",
+      "types.ts",
+      "ui-dto.ts",
+    ]);
+    // Nothing else under src/server or src/app (authz, routes, other domains) touches it either.
+    const srcDir = path.resolve(moduleDir, "../..");
+    const walk = (dir: string): string[] => readdirSync(dir, { withFileTypes: true }).flatMap((entry) => (entry.isDirectory() ? walk(path.join(dir, entry.name)) : /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name) ? [path.join(dir, entry.name)] : []));
+    const outside = [...walk(path.join(srcDir, "server")), ...walk(path.join(srcDir, "app"))].filter((file) => !file.startsWith(moduleDir) && /freshnessHint/.test(codeOnly(readFileSync(file, "utf8"))));
+    expect(outside).toEqual([]);
+  });
+
+  it("the lifecycle and per-review services never READ the hint: every mention is an assignment of null (a mutation resetting the projection), so finalize / refresh / revision / submit cannot be steered by it", () => {
+    for (const file of ["partner-review-lifecycle-service.ts", "partner-review-service.ts"]) {
+      const code = codeOnly(readModule(file));
+      const reads = code.split("\n").filter((line) => /freshnessHint/.test(line) && !/(freshnessHint: null,|\.freshnessHint = null;)/.test(line));
+      expect({ file, reads }).toEqual({ file, reads: [] });
+    }
+  });
+
+  it("the read models that consume the hint (list rows, history, overview aggregate) are pure projections: no authorization, lifecycle, collector or write call", () => {
+    for (const file of ["review-rows.ts", "overview-aggregate.ts", "partner-review-history-service.ts"]) {
+      const code = codeOnly(readModule(file));
+      expect({ file, hit: /canPerformAction|requirePartnerReviewsAccess|runTransaction|getAdminFirestore|\.update\(|\.create\(|collectPartnerEvidence|evaluateFreshness|partner-review-lifecycle-service/.exec(code)?.[0] ?? null }).toEqual({ file, hit: null });
+    }
+  });
+
+  it("the projection writer is one guarded transaction touching only the freshnessHint field of the head: docVersion-checked, never a whole-document set, never a version or event write", () => {
+    const code = codeOnly(readModule("freshness-hint.ts"));
+    expect(code).toMatch(/runTransaction/);
+    expect(code).toMatch(/stored\?\.docVersion !== head\.docVersion/);
+    expect(code.match(/tx\.update\(headRef, \{ freshnessHint: /g)).toHaveLength(1);
+    expect(code).not.toMatch(/\.set\(|\.create\(|\.delete\(|partnerReviewVersionsCollection|partnerReviewEventsCollection|docVersion:|updatedAt:/);
+  });
+});

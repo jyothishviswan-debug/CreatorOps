@@ -1,5 +1,6 @@
 import { test, expect } from "@playwright/test";
 
+import { DISCOVERY_REGIONS } from "@/server/discovery/types";
 import { partnersCollection } from "@/server/partners/firestore";
 import { partnerReviewsCollection } from "@/server/partner-reviews/firestore";
 import { reviewRefFor } from "@/server/partner-reviews/period";
@@ -284,4 +285,29 @@ test("the Region filter stays one compact line however many regions are selected
   await expect(page.getByRole("group", { name: "Region filter" }).getByLabel("Select all", { exact: true })).toHaveCount(0);
   const overflow = await noDocumentOverflow(page);
   expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
+});
+
+test("Region: ticking a whole zone keeps every state (no silent cut), and choosing every State/UT reads 'All regions' and filters nothing", async ({ page }) => {
+  await page.goto(`/partner-reviews/workspace?month=${MONTH}&filter=drafts`);
+  const region = page.getByRole("group", { name: "Region filter" });
+  const trigger = region.getByRole("button").first();
+  await trigger.click();
+  await region.getByLabel("EAST ZONE", { exact: true }).click(); // (a controlled input: its state follows the URL, so click + poll rather than check()) // 13 states - more than the old silent cap of 10
+  await expect.poll(() => new URL(page.url()).searchParams.getAll("region").length).toBe(13);
+  await expect(trigger).toHaveText(/\+11$/);
+  expect((await trigger.boundingBox())!.height).toBeLessThan(45);
+
+  // Every State/UT by URL: "All regions" on one compact line, and it is NO region filter (the private-region fixture Partners are still listed).
+  const every = DISCOVERY_REGIONS.map((r) => `region=${encodeURIComponent(r)}`).join("&");
+  await page.goto(`/partner-reviews/workspace?month=${MONTH}&filter=drafts&${every}`);
+  const allTrigger = page.getByRole("group", { name: "Region filter" }).getByRole("button").first();
+  await expect(allTrigger).toHaveText("All regions");
+  expect((await allTrigger.boundingBox())!.height).toBeLessThan(45);
+  await expect(page.getByText(DRAFT_NAMES[0]!)).toBeVisible();
+  for (const width of [390, 375]) {
+    await page.setViewportSize({ width, height: 800 });
+    expect((await allTrigger.boundingBox())!.height, `All regions is one line at ${width}`).toBeLessThan(45);
+    const overflow = await noDocumentOverflow(page);
+    expect(overflow.scrollWidth).toBeLessThanOrEqual(overflow.innerWidth);
+  }
 });

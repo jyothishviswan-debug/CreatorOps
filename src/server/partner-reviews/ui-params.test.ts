@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 
+import { DISCOVERY_REGIONS, REGION_ZONES } from "@/server/discovery/types";
+
 import { derivePeriod } from "./period";
 import {
   isMonthKey,
@@ -19,6 +21,7 @@ import {
   previousMonth,
   reviewHref,
   workspaceHref,
+  MAX_REGION_FILTERS,
 } from "./ui-params";
 
 describe("month parameter", () => {
@@ -74,10 +77,17 @@ describe("workspace parameters", () => {
     expect(parseSearchQuery("  ann  ")).toBe("ann");
     expect(parseSearchQuery("x".repeat(500))).toHaveLength(80);
     expect(parseRegionParam(["Kerala", "Kerala", " ", "Goa"])).toEqual(["Kerala", "Goa"]);
-    expect(parseRegionParam(Array.from({ length: 40 }, (_, i) => `R${i}`))).toHaveLength(10);
+    expect(parseRegionParam(Array.from({ length: 100 }, (_, i) => `R${i}`))).toHaveLength(MAX_REGION_FILTERS);
     expect(parseRegionParam("Kerala")).toEqual(["Kerala"]);
     expect(parsePartnerRefParam("partner-abc")).toBe("partner-abc");
     for (const bad of ["a/b", "a b", "", undefined]) expect(parsePartnerRefParam(bad as never)).toBeUndefined();
+  });
+
+  it("a whole zone or every State/UT survives parsing (ticking East Zone = 13 states is not cut to 10); only a hostile URL is bounded", () => {
+    expect(MAX_REGION_FILTERS).toBeGreaterThan(DISCOVERY_REGIONS.length);
+    expect(parseRegionParam([...REGION_ZONES["East Zone"]])).toEqual([...REGION_ZONES["East Zone"]]);
+    expect(parseRegionParam([...DISCOVERY_REGIONS])).toEqual([...DISCOVERY_REGIONS]);
+    expect(parseRegionParam([...DISCOVERY_REGIONS, "Custom Land"])).toEqual([...DISCOVERY_REGIONS, "Custom Land"]);
   });
 
   it("limit is a positive integer capped at 20, defaulting to 10", () => {

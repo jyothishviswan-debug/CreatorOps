@@ -8,10 +8,12 @@
 // Assignments, Content and Analytics records under unique past months (2011-2016, never the months other
 // files use); nothing asserts a whole-collection size; every fixture (incl. review heads with their versions
 // and events subcollections and the synthetic scope grants) is deleted afterwards.
+import { DISCOVERY_REGIONS } from "@/server/discovery/types";
 import { randomUUID } from "node:crypto";
 
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { workspaceCountCopy, workspaceEmptyCopy } from "@/features/partner-reviews/workspace-copy";
 import { analyticsContentSourceRecordsCollection } from "@/server/analytics/firestore";
 import { analyticsContentSourceRecordDocSchema } from "@/server/analytics/types";
 import { assignmentsCollection } from "@/server/assignments/firestore";
@@ -45,6 +47,7 @@ import { getReviewActionPermissions } from "./partner-review-permissions";
 import { generatePartnerReviewDraft, getPartnerReview, getPartnerReviewVersion, inspectPartnerReviewFreshness, refreshPartnerReviewEvidence } from "./partner-review-service";
 import { getPartnerReviewsWorkspace, searchReviewPartners, type WorkspaceQuery } from "./partner-review-workspace-service";
 import { derivePeriod, reviewRefFor } from "./period";
+import { HEAD_SCAN_CEILING } from "./review-scan";
 import { buildHeadDisplay, computeReviewListSummary } from "./review-list-summary";
 import { partnerReviewHeadDocSchema, partnerReviewVersionDocSchema, type PartnerReviewHeadDoc } from "./types";
 import type { ReviewListRowDto } from "./ui-dto";
@@ -758,6 +761,13 @@ describe("Workspace service", () => {
 
     const byRegion = await workspace(mgr, { month, filter: "drafts", region: [`${R_IN}-b`] });
     expect(byRegion.rows.map((r) => r.partnerRef)).toEqual([two.partnerRef]);
+
+    // "All regions" (every canonical State/UT chosen) is NO region filter: the private, non-canonical fixture regions are still listed.
+    const everyRegion = await workspace(mgr, { month, filter: "drafts", region: [...DISCOVERY_REGIONS] });
+    expect(new Set(everyRegion.rows.map((r) => r.partnerRef))).toEqual(new Set([one.partnerRef, two.partnerRef]));
+    // One State/UT short of everything is a real narrowing again (neither private-region Partner is in it).
+    const almostEvery = await workspace(mgr, { month, filter: "drafts", region: DISCOVERY_REGIONS.slice(1) });
+    expect(almostEvery.rows).toEqual([]);
   });
 
   it("Partner search is scope-first: an out-of-scope Partner never appears for a scoped actor", async () => {
@@ -796,6 +806,166 @@ describe("Workspace service", () => {
     const data = await workspace(nobody, {});
     expect(data.month).toMatchObject({ resolved: null, source: "none" });
     expect(data.rows).toEqual([]);
+  });
+});
+
+// ======================================================================================================================
+// Step 13C: the Workspace's bounded head read (HEAD_SCAN_CEILING = 500 in production). A test-only `headCeiling` option lets a
+// handful of fixtures prove the truncation behaviour: the DTO says the list is INCOMPLETE, paging stays deterministic and complete
+// inside the bounded set, all three filters agree, and a review beyond the bound is never presented as absent-with-certainty.
+describe("Workspace bounded head read (truncation)", () => {
+  const MONTH = "2004-11";
+
+  async function boundedWorkspace(actor: ActorContext, headCeiling: number, over: Partial<WorkspaceQuery> = {}) {
+    const result = await getPartnerReviewsWorkspace(actor, query({ month: parseMonthParam(MONTH), ...over }), { headCeiling });
+    if (!result.ok) throw new Error(`workspace failed: ${result.code}`);
+    return result.data;
+  }
+
+  // Every page of one (filter, ceiling, limit) walk, in order.
+  async function walk(actor: ActorContext, headCeiling: number, over: Partial<WorkspaceQuery>, limit: number) {
+    const refs: string[] = [];
+    const sizes: number[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 20; page += 1) {
+      const data = await boundedWorkspace(actor, headCeiling, { ...over, limit, cursor });
+      sizes.push(data.rows.length);
+      refs.push(...data.rows.map((row) => row.reviewRef!));
+      if (!data.nextCursor) return { refs, sizes };
+      cursor = data.nextCursor;
+    }
+    throw new Error("pagination did not terminate");
+  }
+
+  // 6 reviews in a private month: open drafts (two behind upstream), one In Review (behind upstream) and three finalized.
+  async function seedSix(prefix: string) {
+    const specs: { status: "DRAFT" | "IN_REVIEW" | "FINALIZED"; hint?: "refresh_available" }[] = [
+      { status: "DRAFT" },
+      { status: "DRAFT", hint: "refresh_available" },
+      { status: "IN_REVIEW", hint: "refresh_available" },
+      { status: "FINALIZED" },
+      { status: "FINALIZED" },
+      { status: "DRAFT", hint: "refresh_available" },
+    ];
+    const seeded: { partner: PartnerDoc; reviewRef: string }[] = [];
+    for (const [i, spec] of specs.entries()) {
+      const partner = await seedPartner({ displayName: `${prefix} ${String(i).padStart(2, "0")} ${runId}` });
+      const { reviewRef } = await seedDirectReview(partner, MONTH, spec);
+      seeded.push({ partner, reviewRef });
+    }
+    return seeded;
+  }
+
+  it("with 6 reviews and a ceiling of 3: the DTO is truncated and incomplete, rows never exceed the bounded set, and paging is deterministic and complete for all three filters", async () => {
+    const mgr = await syntheticActor("partnership_manager");
+    const seeded = await seedSix("TR");
+    const all = new Set(seeded.map((s) => s.reviewRef));
+
+    // Control: a large ceiling reads everything and reports NOT truncated.
+    const controlDrafts = await boundedWorkspace(mgr, 500, { filter: "drafts", limit: 20 });
+    expect(controlDrafts.disclosure).toMatchObject({ headsRead: 6, headsTruncated: false });
+    expect(controlDrafts.totalInBoundedSet).toBe(4);
+    const control = {
+      "needs-review": await boundedWorkspace(mgr, 500, { filter: "needs-review", limit: 20 }),
+      drafts: controlDrafts,
+      finalized: await boundedWorkspace(mgr, 500, { filter: "finalized", limit: 20 }),
+    };
+    expect(control.finalized.totalInBoundedSet).toBe(2);
+    expect(control["needs-review"].totalInBoundedSet).toBe(3);
+    for (const dto of Object.values(control)) expect(workspaceCountCopy({ total: dto.totalInBoundedSet, ...dto.disclosure })).not.toContain("incomplete");
+
+    // The bounded read: exactly 3 of the 6 reviews, the same 3 on every call, and every filter is applied INSIDE those 3.
+    const readSet = new Set<string>();
+    for (const filter of ["drafts", "finalized"] as const) {
+      const data = await boundedWorkspace(mgr, 3, { filter, limit: 20 });
+      expect(data.disclosure).toMatchObject({ headsRead: 3, headsTruncated: true });
+      data.rows.forEach((row) => readSet.add(row.reviewRef!));
+    }
+    expect(readSet.size).toBe(3);
+    for (const ref of readSet) expect(all.has(ref)).toBe(true);
+    const unread = [...all].filter((ref) => !readSet.has(ref));
+    expect(unread).toHaveLength(3);
+
+    for (const filter of ["needs-review", "drafts", "finalized"] as const) {
+      const fullRefs = control[filter].rows.map((row) => row.reviewRef!);
+      // Bounded list = the full list restricted to the reviews read (same relative order, nothing else).
+      const bounded = await boundedWorkspace(mgr, 3, { filter, limit: 20 });
+      const expected = fullRefs.filter((ref) => readSet.has(ref));
+      expect(bounded.rows.map((row) => row.reviewRef)).toEqual(expected);
+      expect(bounded.totalInBoundedSet).toBe(expected.length);
+      expect(bounded.rows.length).toBeLessThanOrEqual(3);
+      expect(bounded.disclosure).toMatchObject({ headsRead: 3, headsTruncated: true });
+      // Incomplete, in words - never the exact-looking "N in this view."
+      const copy = workspaceCountCopy({ total: bounded.totalInBoundedSet, ...bounded.disclosure })!;
+      expect(copy).toContain("incomplete");
+      expect(copy).toContain("first 3 reviews read");
+      expect(copy).not.toBe(`${bounded.totalInBoundedSet} in this view.`);
+
+      // Paging across the bounded set: no duplicates, no gaps, stable order, exact page sizes, identical to the one-page list.
+      for (const limit of [1, 2]) {
+        const paged = await walk(mgr, 3, { filter }, limit);
+        expect(paged.refs).toEqual(expected);
+        expect(new Set(paged.refs).size).toBe(paged.refs.length);
+        expect(paged.sizes.slice(0, -1).every((size) => size === limit)).toBe(true);
+        expect(paged.sizes.reduce((a, b) => a + b, 0)).toBe(expected.length);
+      }
+      // Repeating a page returns the same page and cursor (deterministic).
+      const first = await boundedWorkspace(mgr, 3, { filter, limit: 1 });
+      const again = await boundedWorkspace(mgr, 3, { filter, limit: 1 });
+      expect(again.rows.map((row) => row.reviewRef)).toEqual(first.rows.map((row) => row.reviewRef));
+      expect(again.nextCursor).toBe(first.nextCursor);
+    }
+
+    // Region narrows the reviews already read: it never changes which reviews are read, so the read is still truncated at 3.
+    const regional = await boundedWorkspace(mgr, 3, { filter: "drafts", region: [R_IN], limit: 20 });
+    expect(regional.disclosure).toMatchObject({ headsRead: 3, headsTruncated: true });
+  });
+
+  it("a review beyond the bound is never presented as absent-with-certainty: the DTO says incomplete, an empty result reads 'none found in the reviews read', and a Partner filter reaches it", async () => {
+    const mgr = await syntheticActor("partnership_manager");
+    // 4 open drafts (nothing finalized): with a ceiling of 3, the Finalized filter finds nothing among the 3 read - and that is NOT "none".
+    const seeded: { partner: PartnerDoc; reviewRef: string }[] = [];
+    for (let i = 0; i < 4; i += 1) {
+      const partner = await seedPartner({ displayName: `BB ${i} ${runId}` });
+      seeded.push({ partner, reviewRef: (await seedDirectReview(partner, MONTH, { status: "DRAFT" })).reviewRef });
+    }
+    const drafts3 = await boundedWorkspace(mgr, 3, { filter: "drafts", limit: 20 });
+    expect(drafts3.disclosure).toMatchObject({ headsRead: 3, headsTruncated: true });
+    expect(drafts3.rows).toHaveLength(3);
+    const read = new Set(drafts3.rows.map((row) => row.reviewRef));
+    const beyond = seeded.find((s) => !read.has(s.reviewRef))!;
+    expect(beyond).toBeDefined();
+    // The review beyond the bound is not listed - and the DTO says the list is incomplete instead of implying it does not exist.
+    expect(drafts3.rows.some((row) => row.reviewRef === beyond.reviewRef)).toBe(false);
+    expect(workspaceCountCopy({ total: drafts3.totalInBoundedSet, ...drafts3.disclosure })).toContain("incomplete");
+
+    const finalized3 = await boundedWorkspace(mgr, 3, { filter: "finalized", limit: 20 });
+    expect(finalized3.rows).toEqual([]);
+    expect(finalized3.nextCursor).toBeNull();
+    expect(finalized3.totalInBoundedSet).toBe(0);
+    expect(finalized3.disclosure).toMatchObject({ headsRead: 3, headsTruncated: true });
+    const empty = workspaceEmptyCopy({ mode: finalized3.mode, anyFilterActive: false, monthLabel: finalized3.month.label, ...finalized3.disclosure });
+    expect(empty.title).toBe("None found in the reviews read");
+    expect(empty.description).toContain("incomplete");
+    expect(workspaceCountCopy({ total: 0, ...finalized3.disclosure })).toContain("None found in the first 3 reviews read.");
+
+    // Narrowing by Partner is the way past the bound: that read is a single review, complete, and finds the review beyond the bound.
+    const narrowed = await boundedWorkspace(mgr, 3, { filter: "drafts", partnerRef: beyond.partner.partnerRef, limit: 20 });
+    expect(narrowed.rows.map((row) => row.reviewRef)).toEqual([beyond.reviewRef]);
+    expect(narrowed.disclosure).toMatchObject({ headsRead: 1, headsTruncated: false });
+
+    // No false alarm at the boundary: a ceiling equal to the number of reviews is NOT truncated; one below it is.
+    const exact = await boundedWorkspace(mgr, 4, { filter: "drafts", limit: 20 });
+    expect(exact.disclosure).toMatchObject({ headsRead: 4, headsTruncated: false });
+    expect(exact.rows).toHaveLength(4);
+    expect(workspaceCountCopy({ total: exact.totalInBoundedSet, ...exact.disclosure })).toBe("4 in this view.");
+    const oneShort = await boundedWorkspace(mgr, 3, { filter: "drafts", limit: 20 });
+    expect(oneShort.disclosure.headsTruncated).toBe(true);
+
+    // The production default is unchanged: without the option the ceiling is HEAD_SCAN_CEILING, so 4 reviews are all read.
+    const production = await workspace(mgr, { month: parseMonthParam(MONTH), filter: "drafts", limit: 20 });
+    expect(production.disclosure).toMatchObject({ headsRead: 4, headsTruncated: false });
+    expect(HEAD_SCAN_CEILING).toBe(500);
   });
 });
 

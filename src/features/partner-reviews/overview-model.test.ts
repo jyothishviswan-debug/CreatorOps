@@ -199,3 +199,28 @@ describe("no blended score / rating / rank / tier anywhere in the model", () => 
     expect(text).not.toMatch(/Creator|Productivity|Deliverable/);
   });
 });
+
+describe("Overview bounded-read honesty (Step 13C)", () => {
+  const truncatedDto = () => dto([rowFixture(), rowFixture()], 1, { disclosure: { headsRead: 2, headsTruncated: true, assignmentsScanned: 5, assignmentScanTruncated: false, scanLimit: 500 } });
+
+  it("a truncated read never shows the Monthly reviews KPI as an exact month total", () => {
+    const model = buildOverviewModel(truncatedDto());
+    expect(model.kpis[0]).toMatchObject({ label: "Monthly reviews", value: "2+", hint: "March 2019 · first 2 read" });
+    expect(model.kpis[3]!.hint).toBe("of the first 2 monthly reviews read");
+    expect(model.chips).toContain("Counts cover the first 2 reviews read - the month has more");
+  });
+
+  it("a truncated read keeps the frozen composition (4 KPIs, 3 + 4 panels, same spans)", () => {
+    const model = buildOverviewModel(truncatedDto());
+    expect(model.kpis).toHaveLength(4);
+    expect(model.topPanels.map((panel) => [panel.title, panel.span])).toEqual([["Production Summary", 4], ["Submission Timeliness", 4], ["Performance Evidence", 4]]);
+    expect(model.bottomPanels.map((panel) => [panel.title, panel.span])).toEqual([["Review Lifecycle", 3], ["Needs Attention", 3], ["Recent Activity", 3], ["Quick Actions", 3]]);
+  });
+
+  it("an untruncated read is unchanged: an exact count, no bound chip", () => {
+    const model = buildOverviewModel(dto([rowFixture(), rowFixture()]));
+    expect(model.kpis[0]).toMatchObject({ value: "2", hint: "March 2019" });
+    expect(model.kpis[3]!.hint).toBe("of 2 monthly reviews");
+    expect(model.chips.some((chip) => chip.startsWith("Counts cover"))).toBe(false);
+  });
+});

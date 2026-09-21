@@ -1,3 +1,5 @@
+import { getAdminFirestore } from "@/server/firebase/admin";
+
 import { partnerReviewsCollection } from "./firestore";
 import type { PartnerReviewFreshness, PartnerReviewHeadDoc, PartnerReviewVersionDoc } from "./types";
 
@@ -19,6 +21,12 @@ import type { PartnerReviewFreshness, PartnerReviewHeadDoc, PartnerReviewVersion
 //   - it is a single-field update() of `freshnessHint` - it never touches
 //     docVersion, updatedAt or any other field, so it can never make a client's
 //     optimistic expectedDocVersion stale;
+//   - the update runs in a transaction that RE-READS the head and writes only if
+//     the head is still the very revision (docVersion) the freshness was computed
+//     against and does not already record this state. Every lifecycle mutation
+//     bumps the head's docVersion, so a slow reader that loaded the head before a
+//     mutation can never stamp its now-outdated verdict onto the mutated head, and
+//     concurrent readers of an unchanged head write at most once;
 //   - failure is non-fatal: the caller's read/mutation result never depends on it;
 //   - it is a HINT, never live and never authorization truth.
 export async function recordFreshnessHint(head: PartnerReviewHeadDoc, version: PartnerReviewVersionDoc, freshness: PartnerReviewFreshness): Promise<void> {
@@ -26,9 +34,18 @@ export async function recordFreshnessHint(head: PartnerReviewHeadDoc, version: P
   if (version.version !== (head.openVersion ?? head.currentFinalizedVersion ?? head.latestVersion)) return;
   if (head.freshnessHint && head.freshnessHint.state === freshness.state) return;
   try {
-    await partnerReviewsCollection()
-      .doc(head.reviewRef)
-      .update({ freshnessHint: { state: freshness.state, checkedAt: new Date().toISOString() } });
+    const headRef = partnerReviewsCollection().doc(head.reviewRef);
+    await getAdminFirestore().runTransaction(async (tx) => {
+      const snap = await tx.get(headRef);
+      if (!snap.exists) return;
+      const stored = snap.data() as { docVersion?: unknown; freshnessHint?: { state?: unknown } | null } | undefined;
+      // The head moved on since this freshness was computed (a lifecycle mutation bumped docVersion): the verdict
+      // describes a superseded head, so it is dropped rather than recorded.
+      if (stored?.docVersion !== head.docVersion) return;
+      // Another reader already recorded this very state: nothing to write.
+      if (stored.freshnessHint?.state === freshness.state) return;
+      tx.update(headRef, { freshnessHint: { state: freshness.state, checkedAt: new Date().toISOString() } });
+    });
   } catch {
     // Best-effort by design: a hint that could not be written is simply absent/older.
   }
