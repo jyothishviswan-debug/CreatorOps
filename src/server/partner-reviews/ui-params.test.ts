@@ -22,6 +22,8 @@ import {
   reviewHref,
   workspaceHref,
   MAX_REGION_FILTERS,
+  partnerHistoryBackToWorkspaceHref,
+  workspaceFilterForReviewRow,
 } from "./ui-params";
 
 describe("month parameter", () => {
@@ -123,5 +125,26 @@ describe("href builders", () => {
     expect(reviewHref("pr_abc", { tab: "overview" })).toBe("/partner-reviews/pr_abc");
     expect(partnerHistoryHref("p 1", { month: "2019-03", tab: "commercial" })).toBe("/partner-reviews/partner/p%201?month=2019-03&tab=commercial");
     expect(partnerHistoryHref("p1", { tab: "trend" })).toBe("/partner-reviews/partner/p1");
+  });
+});
+
+describe("Partner history -> Workspace: the back link opens the filter that lists the review", () => {
+  const review = (lifecycle: string, currentFinalizedVersion: number | null) => ({ kind: "review" as const, lifecycle, currentFinalizedVersion });
+
+  it("Draft / In Review -> drafts (including an open revision over a finalized version); Finalized -> finalized; none / candidate -> the default Needs Review (no filter)", () => {
+    expect(workspaceFilterForReviewRow(review("DRAFT", null))).toBe("drafts");
+    expect(workspaceFilterForReviewRow(review("IN_REVIEW", null))).toBe("drafts");
+    expect(workspaceFilterForReviewRow(review("DRAFT", 1))).toBe("drafts"); // open revision: the Workspace lists it under drafts
+    expect(workspaceFilterForReviewRow(review("FINALIZED", 2))).toBe("finalized");
+    expect(workspaceFilterForReviewRow(null)).toBeUndefined();
+    expect(workspaceFilterForReviewRow({ kind: "candidate", lifecycle: "NEEDS_REVIEW", currentFinalizedVersion: null })).toBeUndefined();
+    expect(workspaceFilterForReviewRow(review("FINALIZED", null))).toBeUndefined();
+  });
+
+  it("keeps the Partner and the month, uses only the existing Workspace URL contract", () => {
+    expect(partnerHistoryBackToWorkspaceHref({ partnerRef: "p1", month: "2019-03", row: review("DRAFT", null) })).toBe("/partner-reviews/workspace?filter=drafts&month=2019-03&partnerRef=p1");
+    expect(partnerHistoryBackToWorkspaceHref({ partnerRef: "p1", month: "2019-03", row: review("FINALIZED", 1) })).toBe("/partner-reviews/workspace?filter=finalized&month=2019-03&partnerRef=p1");
+    expect(partnerHistoryBackToWorkspaceHref({ partnerRef: "p1", month: "2019-03", row: null })).toBe("/partner-reviews/workspace?month=2019-03&partnerRef=p1");
+    expect(partnerHistoryBackToWorkspaceHref({ partnerRef: "p1", month: null, row: null })).toBe("/partner-reviews/workspace?partnerRef=p1");
   });
 });

@@ -15,7 +15,7 @@ import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import type { PartnerHistoryDto } from "@/server/partner-reviews/partner-review-history-service";
 import type { PartnerHistoryMonthRowDto } from "@/server/partner-reviews/partner-history-model";
-import { HISTORY_TABS, HISTORY_TAB_LABELS, monthLabel, partnerHistoryHref, reviewHref, workspaceHref, type HistoryTab } from "@/server/partner-reviews/ui-params";
+import { HISTORY_TABS, HISTORY_TAB_LABELS, monthLabel, partnerHistoryBackToWorkspaceHref, partnerHistoryHref, reviewHref, type HistoryTab } from "@/server/partner-reviews/ui-params";
 
 import { generateReview } from "./api-client";
 import { COMMERCIAL_EVIDENCE_LABEL, dateOnly, DISABLED_BUTTON_STYLE, formatCount, FRESHNESS_LABELS, freshnessTone, LIFECYCLE_LABELS, lifecycleTone, platformLabel, TARGET_MONITORING_LABEL } from "./format";
@@ -110,7 +110,7 @@ export function PartnerHistoryView({ view, initialTab, until, trendCharts }: { v
           <p>Monthly productivity history</p>
         </div>
         <div className="actions">
-          <Link href={workspaceHref({ month: selected?.periodKey ?? undefined, partnerRef: partner.partnerRef })} className="btn">
+          <Link href={partnerHistoryBackToWorkspaceHref({ partnerRef: partner.partnerRef, month: selected?.periodKey ?? null, row: selectedRow })} className="btn">
             Back to workspace
           </Link>
         </div>

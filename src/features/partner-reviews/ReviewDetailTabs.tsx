@@ -625,7 +625,7 @@ export function VersionHistorySection({
                   <th scope="col">Generated</th>
                   <th scope="col">Submitted</th>
                   <th scope="col">Finalized</th>
-                  <th scope="col">Currency</th>
+                  <th scope="col">Review version status</th>
                   <th scope="col">
                     <span className="sr">Action</span>
                   </th>

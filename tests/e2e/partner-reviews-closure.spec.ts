@@ -41,6 +41,9 @@ let refBusy = "";
 let refTwoVersions = "";
 let historyPartnerRef = "";
 let historyReviewRef = "";
+let candidatePartnerRef = "";
+let finalizedPartnerRef = "";
+let openRevisionPartnerRef = "";
 
 test.describe.configure({ mode: "serial" });
 
@@ -52,7 +55,7 @@ test.beforeAll(async () => {
     const partner = await fx.seedPartner({ displayName: name });
     await fx.seedDirectReview(partner, MONTH, { status: "DRAFT" });
   }
-  await fx.seedRich({ month: MONTH, displayName: NAME.candidate });
+  candidatePartnerRef = (await fx.seedRich({ month: MONTH, displayName: NAME.candidate })).partner.partnerRef;
 
   // Two In Review reviews (Head finalizes): one for the open/close/focus checks, one finalized from the keyboard alone.
   const one = await fx.seedRich({ month: MONTH, displayName: NAME.dialogOne });
@@ -62,6 +65,7 @@ test.beforeAll(async () => {
 
   // Finalized, then upstream changes => "Revision available" (the Create revision dialog).
   const rev = await fx.seedRich({ month: MONTH, displayName: NAME.revisionDialog, threadStatus: "APPROVED" });
+  finalizedPartnerRef = rev.partner.partnerRef;
   refRevisionDialog = (await fx.generateFinalized(rev.partner.partnerRef, MONTH)).reviewRef;
   await fx.seedAnalytics(rev.partner.partnerRef, { contentRef: null, likes: 9, month: MONTH });
 
@@ -71,6 +75,7 @@ test.beforeAll(async () => {
 
   // Finalized v1 + an open Draft revision v2 (Version History has a "View version 1" button while v2 is being edited).
   const two2 = await fx.seedRich({ month: MONTH, displayName: NAME.twoVersions, threadStatus: "APPROVED" });
+  openRevisionPartnerRef = two2.partner.partnerRef;
   const finalized = await fx.generateFinalized(two2.partner.partnerRef, MONTH);
   refTwoVersions = finalized.reviewRef;
   await fx.seedAnalytics(two2.partner.partnerRef, { contentRef: null, likes: 5, month: MONTH });
@@ -159,27 +164,55 @@ for (const width of VIEWPORTS) {
   });
 }
 
-// ---- Partner-wise page -> Workspace link -----------------------------------------------------------------------------------------
-test("Partner history 'Back to workspace' opens the Workspace narrowed to THIS Partner and the selected month", async ({ page }) => {
+// ---- Partner-wise page -> Workspace link (Step 13C.1: context-preserving) -----------------------------------------------------------
+// The back link carries the Partner and the month and opens the EXISTING Workspace filter that lists the review:
+// Draft / In Review (also an open revision over a finalized version) -> Drafts / In Review; finalized -> Finalized / History;
+// no review yet (a Needs Review candidate) -> the default Needs Review view. No new state, no browser-side filtering.
+const backCases = () => [
+  { label: "a Draft", partnerRef: historyPartnerRef, name: NAME.history, filter: "drafts", activeButton: "Drafts / In Review" },
+  { label: "an open revision over a finalized version", partnerRef: openRevisionPartnerRef, name: NAME.twoVersions, filter: "drafts", activeButton: "Drafts / In Review" },
+  { label: "a finalized review", partnerRef: finalizedPartnerRef, name: NAME.revisionDialog, filter: "finalized", activeButton: "Finalized / History" },
+  { label: "no review yet (a Needs Review candidate)", partnerRef: candidatePartnerRef, name: NAME.candidate, filter: null, activeButton: "Needs Review" },
+];
+
+for (const index of [0, 1, 2, 3]) {
+  test(`Partner history 'Back to workspace' keeps the Partner + month and opens the filter that lists the review (case ${index + 1})`, async ({ page }) => {
+    const item = backCases()[index]!;
+    await page.goto(`/partner-reviews/partner/${item.partnerRef}?month=${MONTH}`);
+    await expect(page.locator("h1")).toHaveText(item.name);
+    const link = page.getByRole("link", { name: "Back to workspace" });
+    const url = new URL((await link.getAttribute("href"))!, "http://localhost");
+    expect(url.pathname, item.label).toBe("/partner-reviews/workspace");
+    expect(url.searchParams.get("month")).toBe(MONTH);
+    expect(url.searchParams.get("partnerRef")).toBe(item.partnerRef);
+    expect(url.searchParams.get("filter"), `${item.label}: filter`).toBe(item.filter);
+    expect([...url.searchParams.keys()].sort(), "only the existing Workspace URL contract").toEqual(item.filter ? ["filter", "month", "partnerRef"] : ["month", "partnerRef"]);
+
+    await link.click();
+    await expect(page).toHaveURL(new RegExp(`/partner-reviews/workspace\\?.*partnerRef=${item.partnerRef}`));
+    await expect(page.getByTestId("partner-chip")).toContainText(item.name);
+    // The destination is the view that actually contains this Partner's month (never an empty default for a Partner who has a review).
+    await expect(page.locator('.segment[aria-label="Review filter"]').getByRole("button", { name: item.activeButton })).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("table tbody tr")).toHaveCount(1);
+    await expect(page.locator("table tbody tr")).toContainText(item.name);
+    if (item.filter !== null) await expect(page.getByRole("link", { name: /^Open review for/ })).toBeVisible();
+    else await expect(page.getByRole("button", { name: /Generate Review/ })).toBeVisible();
+  });
+}
+
+test("Partner history 'Back to workspace' for a Partner with a review still opens that review's own Review Detail from the row", async ({ page }) => {
   await page.goto(`/partner-reviews/partner/${historyPartnerRef}?month=${MONTH}`);
-  await expect(page.locator("h1")).toHaveText(NAME.history);
-  const link = page.getByRole("link", { name: "Back to workspace" });
-  const href = (await link.getAttribute("href"))!;
-  const url = new URL(href, "http://localhost");
-  expect(url.pathname).toBe("/partner-reviews/workspace");
-  expect(url.searchParams.get("month")).toBe(MONTH);
-  expect(url.searchParams.get("partnerRef")).toBe(historyPartnerRef);
-  await link.click();
-  await expect(page).toHaveURL(new RegExp(`/partner-reviews/workspace\\?.*partnerRef=${historyPartnerRef}`));
-  await expect(page.getByTestId("partner-chip")).toContainText(NAME.history);
-  // (The link carries no filter, so the Workspace opens on its default Needs Review view, which has nothing for a Partner that already
-  // has a Draft. The Partner filter and the month survive a filter change:)
-  await page.locator('.segment[aria-label="Review filter"]').getByRole("button", { name: "Drafts / In Review" }).click();
-  await expect(page).toHaveURL(new RegExp(`partnerRef=${historyPartnerRef}`));
-  await expect(page.locator("table tbody tr")).toHaveCount(1);
-  await expect(page.locator("table tbody tr")).toContainText(NAME.history);
-  // ...and the row's own link goes to the right Review Detail.
+  await page.getByRole("link", { name: "Back to workspace" }).click();
   await expect(page.getByRole("link", { name: /^Open review for/ })).toHaveAttribute("href", `/partner-reviews/${historyReviewRef}`);
+});
+
+// ---- Version History column heading (Step 13C.1) ----------------------------------------------------------------------------------------
+test("Version History labels the currentness column 'Review version status' - never 'Currency'", async ({ page }) => {
+  await page.goto(`/partner-reviews/${refTwoVersions}?tab=history`);
+  const headers = page.locator("table thead th");
+  await expect(headers.filter({ hasText: /^Review version status$/ })).toHaveCount(1);
+  await expect(headers.filter({ hasText: /currency/i })).toHaveCount(0);
+  await expect(page.locator("main, #main").getByText(/^Currency$/)).toHaveCount(0);
 });
 
 // ---- Dialogs: keyboard accessibility ------------------------------------------------------------------------------------------

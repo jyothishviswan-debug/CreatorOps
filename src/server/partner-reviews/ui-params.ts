@@ -177,6 +177,22 @@ export function workspaceHref(state: WorkspaceHrefState = {}): string {
   return `/partner-reviews/workspace${qs({ filter: state.filter, month: state.month, partnerRef: state.partnerRef, region: state.region, signal: state.signal })}`;
 }
 
+// The Workspace filter under which a Partner-month's review is LISTED - the very predicates the Workspace applies
+// (drafts = an open Draft / In Review version, finalized = a current finalized version; anything else, i.e. no review
+// yet or a Needs Review candidate, belongs to the default Needs Review view, so no filter is carried). Pure: it only
+// picks an existing Workspace filter, it never creates a state and never filters in the browser.
+export function workspaceFilterForReviewRow(row: { kind: "review" | "candidate"; lifecycle: string; currentFinalizedVersion: number | null } | null): WorkspaceFilter | undefined {
+  if (!row || row.kind !== "review") return undefined;
+  if (row.lifecycle === "DRAFT" || row.lifecycle === "IN_REVIEW") return "drafts";
+  if (row.currentFinalizedVersion !== null) return "finalized";
+  return undefined;
+}
+
+// Partner history -> Workspace: keep the Partner and the month, and open the filter that actually lists this review.
+export function partnerHistoryBackToWorkspaceHref(input: { partnerRef: string; month: string | null; row: Parameters<typeof workspaceFilterForReviewRow>[0] }): string {
+  return workspaceHref({ filter: workspaceFilterForReviewRow(input.row), month: input.month, partnerRef: input.partnerRef });
+}
+
 export function overviewHref(month?: string | null): string {
   return `/partner-reviews${qs({ month })}`;
 }
