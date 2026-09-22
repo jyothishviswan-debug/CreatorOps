@@ -27,8 +27,11 @@ function terms(fixedMinor: number, cycle: "MONTHLY" | "QUARTERLY" = "MONTHLY"): 
       servicesMandated: null,
       incentive: null,
       lfcSfc: null,
+      contentObligations: [],
+      monetisationTerms: null,
     },
     performanceTargets: [],
+    performanceEvaluationClause: null,
     admin: { onboardingProcessCompleted: null, remarks: null },
     agreementType: "FIXED_ONLY",
   };

@@ -158,7 +158,7 @@ describe("grouping and counting", () => {
   it("groups by intake section, preserving registry order inside each", () => {
     const groups = groupFieldViewModels(models);
     expect(groups.commercial_terms.map((m) => m.fieldKey).slice(0, 7)).toEqual(["agreementNumber", "signedDate", "effectiveDate", "terminationDate", "renewalTerms", "noticeTerms", "terminationTerms"]);
-    expect(groups.performance_targets.map((m) => m.fieldKey)).toEqual(["performanceTargets"]);
+    expect(groups.performance_targets.map((m) => m.fieldKey)).toEqual(["performanceTargets", "performanceEvaluationClause"]);
     expect(groups.additional_details.map((m) => m.fieldKey)).toEqual(["onboardingProcessCompleted", "remarks", "agreementType"]);
     expect(Object.values(groups).flat()).toHaveLength(models.length);
   });

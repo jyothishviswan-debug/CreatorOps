@@ -9,6 +9,7 @@ import {
   agreementTypeSchema,
   commercialTermsSchema,
   contactSnapshotSchema,
+  contentObligationsSchema,
   contractTermsTextSchema,
   deriveAgreementType,
   fixedComponentSchema,
@@ -16,6 +17,7 @@ import {
   incentiveSchema,
   lfcSfcSchema,
   MAX_AGREEMENT_PLATFORMS,
+  MAX_CLAUSE_TEXT_LENGTH,
   performanceTargetsSchema,
   platformTermsSchema,
   confirmedAgreementTermsSchema,
@@ -82,8 +84,12 @@ export const AGREEMENT_FIELD_KEYS = [
   "servicesMandated",
   "incentive",
   "lfcSfc",
+  // FINAL_EXECUTION additive commercial fields
+  "contentObligations",
+  "monetisationTerms",
   // warning-only targets
   "performanceTargets",
+  "performanceEvaluationClause",
   // admin / manual / derived
   "onboardingProcessCompleted",
   "remarks",
@@ -243,11 +249,14 @@ const DEFS: AgreementFieldDef[] = [
   def("invoiceDueTerms", "commercial", "Invoice due terms", "text", "terms", terms("commercial", "invoiceDueTerms"), COMMERCIAL_OPTIONS),
   def("paymentDueTerms", "commercial", "Payment due terms", "text", "terms", terms("commercial", "paymentDueTerms"), COMMERCIAL_OPTIONS),
   def("servicesMandated", "commercial", "Services mandated", "text", "terms", terms("commercial", "servicesMandated"), COMMERCIAL_OPTIONS),
-  def("incentive", "commercial", "Incentive slabs", "object", "terms", terms("commercial", "incentive"), { ...COMMERCIAL_OPTIONS, notApplicableValue: { applicable: false, slabs: [] } }),
+  def("incentive", "commercial", "Incentive slabs", "object", "terms", terms("commercial", "incentive"), { ...COMMERCIAL_OPTIONS, notApplicableValue: { applicable: false, narrative: null, slabs: [] } }),
   def("lfcSfc", "commercial", "LFC / SFC rule (explicit only)", "object", "terms", terms("commercial", "lfcSfc"), COMMERCIAL_OPTIONS),
+  def("contentObligations", "commercial", "Content obligations", "array", "terms", terms("commercial", "contentObligations"), { notApplicableValue: [] }),
+  def("monetisationTerms", "commercial", "Monetisation / revenue terms", "text", "terms", terms("commercial", "monetisationTerms"), COMMERCIAL_OPTIONS),
 
   // --- warning-only targets (never payment-affecting) ---
   def("performanceTargets", "targets", "Performance targets (warning-only)", "array", "terms", terms("performanceTargets"), { explicitDecisionRequired: true, notApplicableValue: [] }),
+  def("performanceEvaluationClause", "targets", "Performance evaluation clause", "text", "terms", terms("performanceEvaluationClause"), { notApplicableValue: null }),
 
   // --- admin / manual / derived ---
   def("onboardingProcessCompleted", "admin", "Onboarding process completed", "boolean", "terms", terms("admin", "onboardingProcessCompleted"), { extractable: false }),
@@ -321,7 +330,10 @@ export const AGREEMENT_FIELD_VALUE_SCHEMAS: Record<AgreementFieldKey, z.ZodType>
   servicesMandated: commercialShape.servicesMandated.unwrap(),
   incentive: incentiveSchema,
   lfcSfc: lfcSfcSchema,
+  contentObligations: contentObligationsSchema,
+  monetisationTerms: commercialShape.monetisationTerms.unwrap(),
   performanceTargets: performanceTargetsSchema,
+  performanceEvaluationClause: z.string().trim().min(1).max(MAX_CLAUSE_TEXT_LENGTH),
   onboardingProcessCompleted: z.boolean(),
   remarks: adminShape.remarks.unwrap(),
   agreementType: agreementTypeSchema,
@@ -464,6 +476,8 @@ export function assembleConfirmedAgreement(input: AssembleConfirmedAgreementInpu
     servicesMandated: pick("servicesMandated"),
     incentive: pick("incentive"),
     lfcSfc: pick("lfcSfc"),
+    contentObligations: list("contentObligations"),
+    monetisationTerms: pick("monetisationTerms"),
   };
   const commercialCheck = commercialTermsSchema.safeParse(commercial);
   const agreementType = commercialCheck.success ? deriveAgreementType({ commercial: commercialCheck.data }) : "UNSPECIFIED";
@@ -475,6 +489,7 @@ export function assembleConfirmedAgreement(input: AssembleConfirmedAgreementInpu
     platform: { platforms: list("platforms"), collaboratorPageLink: pick("collaboratorPageLink"), collaboratorPageName: pick("collaboratorPageName") },
     commercial,
     performanceTargets: list("performanceTargets"),
+    performanceEvaluationClause: pick("performanceEvaluationClause"),
     admin: { onboardingProcessCompleted: pick("onboardingProcessCompleted"), remarks: pick("remarks") },
     agreementType,
   };

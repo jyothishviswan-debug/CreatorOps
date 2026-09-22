@@ -9,10 +9,11 @@ export type FieldDecisionSeed = { fieldKey: AgreementFieldKey; decision: Agreeme
 
 export const SAMPLE_INCENTIVE = {
   applicable: true,
+  narrative: null,
   slabs: [{ slabRef: "slab-1", metricId: "views", lowerBound: 100_000, upperBound: 500_000, unit: "views", amountMinor: 250_000, description: null }],
 };
 
-export const SAMPLE_TARGETS = [{ targetRef: "target-1", metricId: "followerGrowth", targetValue: 1000, unit: "followers", comparison: "at_least", affectsPayment: false }];
+export const SAMPLE_TARGETS = [{ targetRef: "target-1", metricId: "followerGrowth", targetValue: 1000, unit: "followers", comparison: "at_least", period: null, anchor: null, affectsPayment: false }];
 
 export const READY_DECISIONS: FieldDecisionSeed[] = [
   { fieldKey: "counterpartyName", decision: "CORRECTED", value: "Acme Talent Private Limited" },
@@ -32,5 +33,6 @@ export const READY_DECISIONS: FieldDecisionSeed[] = [
   { fieldKey: "servicesMandated", decision: "CORRECTED", value: "Creation and posting of short-form video content" },
   { fieldKey: "incentive", decision: "CORRECTED", value: SAMPLE_INCENTIVE },
   { fieldKey: "lfcSfc", decision: "CORRECTED", value: { byFormat: { reel: "SFC" } } },
+  { fieldKey: "monetisationTerms", decision: "NOT_APPLICABLE" },
   { fieldKey: "performanceTargets", decision: "CORRECTED", value: SAMPLE_TARGETS },
 ];

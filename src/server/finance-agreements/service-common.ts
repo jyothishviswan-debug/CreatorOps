@@ -89,6 +89,7 @@ export function newDraftVersionDoc(input: NewDraftVersionInput): AgreementVersio
     status: "DRAFT",
     docVersion: 1,
     counterparty: input.counterparty,
+    parties: [],
     sourceMode: input.sourceMode,
     source: { contractArtifactRef: null, extractionRunRef: null, parserVersion: null },
     document: null,

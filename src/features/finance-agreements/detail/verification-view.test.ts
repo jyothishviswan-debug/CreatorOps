@@ -11,8 +11,9 @@ const TERMS: ConfirmedAgreementTerms = {
   dates: { signedDate: null, effectiveFrom: "2026-09-01", effectiveTo: null },
   contractTerms: { renewalTerms: null, noticeTerms: null, terminationTerms: null },
   platform: { platforms: ["instagram"], collaboratorPageLink: null, collaboratorPageName: null },
-  commercial: { currency: "INR", paymentCycle: "MONTHLY", fixedComponent: { applicable: true, amountMinor: 3500000 }, monthlyRequiredQualifyingContentCount: null, qualifyingUnit: null, accountTransferFee: null, advancePayment: null, invoiceRequired: null, invoiceDueTerms: null, paymentDueTerms: null, servicesMandated: null, incentive: null, lfcSfc: null },
+  commercial: { currency: "INR", paymentCycle: "MONTHLY", fixedComponent: { applicable: true, amountMinor: 3500000 }, monthlyRequiredQualifyingContentCount: null, qualifyingUnit: null, accountTransferFee: null, advancePayment: null, invoiceRequired: null, invoiceDueTerms: null, paymentDueTerms: null, servicesMandated: null, incentive: null, lfcSfc: null, contentObligations: [], monetisationTerms: null },
   performanceTargets: [],
+  performanceEvaluationClause: null,
   admin: { onboardingProcessCompleted: null, remarks: null },
   agreementType: "FIXED_ONLY",
 };

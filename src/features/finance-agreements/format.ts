@@ -93,6 +93,7 @@ export const counterpartyTypeLabel = (type: CounterpartyType): string => COUNTER
 export const EVENT_KIND_LABELS: Record<AgreementEventKind, string> = {
   created: "Agreement created",
   field_decided: "Field decided",
+  parties_updated: "Agreement parties updated",
   extraction_attached: "Extraction attached",
   confirmed: "Version confirmed",
   activated: "Version activated",

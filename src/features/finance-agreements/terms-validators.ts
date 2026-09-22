@@ -37,6 +37,8 @@ export const TEXT_FIELD_LIMITS = {
   noticeTerms: 10_000,
   terminationTerms: 10_000,
   servicesMandated: 10_000,
+  monetisationTerms: 10_000,
+  performanceEvaluationClause: 10_000,
   invoiceDueTerms: 2000,
   paymentDueTerms: 2000,
   remarks: 2000,
@@ -181,9 +183,14 @@ function parseBound(text: string, label: string): ValidationResult<number> {
   return Number.isFinite(value) ? okResult(value) : fail(`${label}: enter a smaller number.`);
 }
 
-export function buildIncentive(input: { applicable: boolean; slabs: readonly IncentiveSlabDraft[] }): ValidationResult<Incentive> {
-  if (!input.applicable) return okResult({ applicable: false, slabs: [] });
-  if (input.slabs.length === 0) return fail("Add at least one slab, or mark the incentive not applicable.");
+// FINAL_EXECUTION #16: an applicable incentive needs a narrative OR structured slabs (never forced to invent slabs
+// out of a discretionary clause). `narrativeText` is trimmed; an empty string means "no narrative".
+export function buildIncentive(input: { applicable: boolean; narrativeText?: string; slabs: readonly IncentiveSlabDraft[] }): ValidationResult<Incentive> {
+  if (!input.applicable) return okResult({ applicable: false, narrative: null, slabs: [] });
+  const narrative = (input.narrativeText ?? "").trim();
+  if (narrative.length > 2000) return fail("The incentive narrative can be at most 2000 characters.");
+  if (input.slabs.length === 0 && narrative.length === 0) return fail("Add a narrative or at least one slab, or mark the incentive not applicable.");
+  if (input.slabs.length === 0) return okResult({ applicable: true, narrative, slabs: [] });
   if (input.slabs.length > MAX_INCENTIVE_SLABS) return fail(`At most ${MAX_INCENTIVE_SLABS} slabs.`);
 
   const errors: string[] = [];
@@ -220,7 +227,7 @@ export function buildIncentive(input: { applicable: boolean; slabs: readonly Inc
     if (slabErrors.length > 0) errors.push(...slabErrors);
     else if (lower.ok && amount.ok) slabs.push({ slabRef, metricId, lowerBound: lower.value, upperBound: upper, unit, amountMinor: amount.amountMinor, description: description.length > 0 ? description : null });
   });
-  return errors.length > 0 ? fail(...errors) : okResult({ applicable: true, slabs });
+  return errors.length > 0 ? fail(...errors) : okResult({ applicable: true, narrative: narrative.length > 0 ? narrative : null, slabs });
 }
 
 // --- LFC / SFC (only when the Agreement states the rule explicitly) ------------------------------------------------------------------------------
@@ -245,7 +252,9 @@ export function buildLfcSfc(input: { ruleRef?: string; rows: readonly LfcSfcRowD
 }
 
 // --- Performance targets (warning-only) -----------------------------------------------------------------------------------------------------------
-export type PerformanceTargetDraft = { targetRef?: string; metricId: string; targetValueText: string; unit: string };
+// FINAL_EXECUTION #18: periodText/anchorText carry the CONTRACT's own wording verbatim (never invented) - an empty
+// string means the contract does not state one ("Period not specified"), not any assumed cadence.
+export type PerformanceTargetDraft = { targetRef?: string; metricId: string; targetValueText: string; unit: string; periodText?: string; anchorText?: string };
 
 // `affectsPayment` is ALWAYS false and `comparison` is always "at_least": neither can be set by the caller.
 export function buildPerformanceTargets(rows: readonly PerformanceTargetDraft[]): ValidationResult<PerformanceTarget[]> {
@@ -267,8 +276,12 @@ export function buildPerformanceTargets(rows: readonly PerformanceTargetDraft[])
     if (targetRef.length > 200) rowErrors.push(`Target ${n}: the reference can be at most 200 characters.`);
     if (seen.has(targetRef)) rowErrors.push(`Target ${n}: target references must be unique.`);
     seen.add(targetRef);
+    const period = (row.periodText ?? "").trim();
+    const anchor = (row.anchorText ?? "").trim();
+    if (period.length > 200) rowErrors.push(`Target ${n}: the period can be at most 200 characters.`);
+    if (anchor.length > 200) rowErrors.push(`Target ${n}: the anchor can be at most 200 characters.`);
     if (rowErrors.length > 0) errors.push(...rowErrors);
-    else targets.push({ targetRef, metricId, targetValue, unit, comparison: "at_least", affectsPayment: false });
+    else targets.push({ targetRef, metricId, targetValue, unit, comparison: "at_least", period: period.length > 0 ? period : null, anchor: anchor.length > 0 ? anchor : null, affectsPayment: false });
   });
   return errors.length > 0 ? fail(...errors) : okResult(targets);
 }

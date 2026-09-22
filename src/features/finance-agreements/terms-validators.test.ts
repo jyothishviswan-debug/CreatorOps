@@ -151,7 +151,7 @@ describe("incentive slabs", () => {
   const slab = (over: Partial<IncentiveSlabDraft> = {}): IncentiveSlabDraft => ({ metricId: "views", lowerBoundText: "100000", upperBoundText: "500000", unit: "views", amountText: "5000", description: "", ...over });
 
   it("not applicable => no slabs", () => {
-    expect(ok(buildIncentive({ applicable: false, slabs: [slab()] }))).toEqual({ applicable: false, slabs: [] });
+    expect(ok(buildIncentive({ applicable: false, slabs: [slab()] }))).toEqual({ applicable: false, narrative: null, slabs: [] });
   });
   it("applicable needs at least one slab", () => {
     expect(errors(buildIncentive({ applicable: true, slabs: [] }))[0]).toMatch(/at least one slab/);
@@ -197,8 +197,8 @@ describe("performance targets are warning-only", () => {
     ];
     const result = ok(buildPerformanceTargets(rows));
     expect(result).toEqual([
-      { targetRef: "target-1", metricId: "views", targetValue: 100_000, unit: "views", comparison: "at_least", affectsPayment: false },
-      { targetRef: "growth", metricId: "followerGrowth", targetValue: 2.5, unit: "%", comparison: "at_least", affectsPayment: false },
+      { targetRef: "target-1", metricId: "views", targetValue: 100_000, unit: "views", comparison: "at_least", period: null, anchor: null, affectsPayment: false },
+      { targetRef: "growth", metricId: "followerGrowth", targetValue: 2.5, unit: "%", comparison: "at_least", period: null, anchor: null, affectsPayment: false },
     ]);
     expect(result.every((target) => target.affectsPayment === false)).toBe(true);
     expect(serverAccepts("performanceTargets", result)).toBe(true);

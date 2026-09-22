@@ -13,6 +13,7 @@ import { txCreateAgreementVersion, txGetAgreementHead, txGetAgreementVersion, tx
 import { authorizeAgreementCommand, buildAgreementDetailDto, newDraftVersionDoc, scopeFieldsOf } from "./service-common";
 import {
   activateAgreementVersionInputSchema,
+  agreementPartyPrimaryAmbiguity,
   createAgreementRevisionInputSchema,
   endAgreementInputSchema,
   financeAgreementsConflictResult,
@@ -82,6 +83,9 @@ export async function activateAgreementVersion(actor: ActorContext | null, rawIn
     if (head.docVersion !== input.expectedDocVersion) return { kind: "stale" };
     if (target.confirmation === null || target.terms === null || target.effective === null || !target.effective.effectiveFrom) return conflict("Only a confirmed version with an effective date can be activated. Confirm it first.");
     if (head.openVersion !== target.version || target.status !== "DRAFT" || !canTransitionLifecycle(target.status, "ACTIVE", transitions)) return conflict(`Version ${target.version} is not the open confirmed version and cannot be activated.`);
+    // FINAL_EXECUTION #10: more than one party could be the primary Finance counterparty/payee - never guessed, activation is
+    // blocked until a human resolves the ambiguity (marks exactly one PAYEE, or removes/re-roles the extra PRIMARY_COUNTERPARTY).
+    if (agreementPartyPrimaryAmbiguity(target.parties).ambiguous) return conflict("More than one Agreement party could be the primary counterparty or payee. Choose exactly one before activating.");
     // Step 14B.1: a version that has its OWN signed Agreement file needs that original stored in Drive first. A manual-only
     // version, and a revision without a new signed file, have no document of their own and are not blocked.
     if (target.source.contractArtifactRef !== null && target.document?.status !== "STORED") return { kind: "not_ready", message: describeDocumentNotStored(target.document) };

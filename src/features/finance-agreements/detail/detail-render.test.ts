@@ -52,8 +52,11 @@ const TERMS: ConfirmedAgreementTerms = {
     servicesMandated: null,
     incentive: null,
     lfcSfc: null,
+    contentObligations: [],
+    monetisationTerms: null,
   },
-  performanceTargets: [{ targetRef: "t1", metricId: "followerGrowth", targetValue: 5000, unit: "followers", comparison: "at_least", affectsPayment: false }],
+  performanceTargets: [{ targetRef: "t1", metricId: "followerGrowth", targetValue: 5000, unit: "followers", comparison: "at_least", period: null, anchor: null, affectsPayment: false }],
+  performanceEvaluationClause: null,
   admin: { onboardingProcessCompleted: null, remarks: null },
   agreementType: "FIXED_PLUS_REQUIRED_CONTENT",
 };
@@ -88,6 +91,7 @@ const summary = (over: Partial<AgreementVersionSummaryDto> & { version: number }
 const doc = (sum: AgreementVersionSummaryDto, over: Partial<AgreementVersionDto> = {}): AgreementVersionDto => ({
   ...sum,
   counterparty: { type: "PARTNER", ref: "p_1", partnerAccountRefs: [], platformScope: ["instagram"] },
+  parties: [],
   source: { contractArtifactRef: null, extractionRunRef: null, parserVersion: null },
   draft: {},
   terms: sum.confirmed ? TERMS : null,
@@ -101,6 +105,7 @@ const head = (over: Partial<AgreementHeadDto>): AgreementHeadDto => ({
   agreementRef: REF,
   counterparty: { type: "PARTNER", ref: "p_1", partnerAccountRefs: [], platformScope: ["instagram"] },
   counterpartyDisplayName: "Asha Rao",
+  priorAgreementRef: null,
   status: "ACTIVE",
   latestVersion: 1,
   openVersion: null,

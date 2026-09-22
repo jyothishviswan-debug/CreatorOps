@@ -48,6 +48,7 @@ import {
   financeAgreementsNotReadyResult,
   financeAgreementsStaleResult,
   financeAgreementsUnauthorizedResult,
+  setAgreementPartiesInputSchema,
   type AgreementHeadDoc,
   type AgreementVersionDoc,
   type CounterpartyType,
@@ -358,6 +359,37 @@ export async function decideField(actor: ActorContext | null, rawInput: unknown,
 }
 
 export type AttachExtractionOutcome = { agreement: AgreementDetailDto; attachedCount: number; keptDecisionCount: number; skippedCount: number };
+
+type SetPartiesTxResult = { kind: "ok"; head: AgreementHeadDoc; version: AgreementVersionDoc } | EditFailure;
+
+// FINAL_EXECUTION #10: replaces the OPEN, unconfirmed version's whole `parties` array (validated shape only -
+// whether a mapped Partner/Vendor ref actually exists is the caller's concern, exactly like decideField never
+// re-validates a Partner/Vendor ref it is handed). Never touches `counterparty`, reconciliation, KYC or terms.
+export async function setAgreementParties(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<FinanceAgreementsServiceResult<AgreementDetailDto>> {
+  const command = await authorizeAgreementCommand(actor, "manage_agreements", setAgreementPartiesInputSchema, rawInput);
+  if (!command.ok) return command.error;
+  const { input, authorized } = command;
+
+  const result = await getAdminFirestore().runTransaction<SetPartiesTxResult>(async (tx) => {
+    const head = await txGetAgreementHead(tx, input.agreementRef);
+    const version = await txGetAgreementVersion(tx, input.agreementRef, input.version);
+    const failure = checkEditable(head, version, input.expectedDocVersion);
+    if (failure) return failure;
+    if (!head || !version) return { kind: "not_found" };
+
+    const now = new Date().toISOString();
+    const next: AgreementVersionDoc = { ...version, parties: input.parties, docVersion: version.docVersion + 1, updatedAt: now, updatedByUserRef: actor!.userRef };
+    const displayed = await txResolveDisplayVersions(tx, head, [next]);
+    const nextHead = withHeadDisplay(head, { counterpartyName: authorized.displayName, ...displayed, projectedAt: now, touchedBy: { actorUserRef: actor!.userRef } });
+    txSetAgreementVersion(tx, next);
+    txSetAgreementHead(tx, nextHead);
+    appendAgreementEvent(tx, { agreementRef: input.agreementRef, kind: "parties_updated", version: version.version, actorUserRef: actor!.userRef, metadata: { partyCount: input.parties.length }, requestId, createdAt: now });
+    return { kind: "ok", head: nextHead, version: next };
+  });
+
+  if (result.kind !== "ok") return editFailureResult(result);
+  return { ok: true, data: await buildAgreementDetailDto(actor!, result.head, authorized.displayName, result.version) };
+}
 
 type AttachTxResult = { kind: "ok"; head: AgreementHeadDoc; version: AgreementVersionDoc; attachedCount: number; keptDecisionCount: number; skippedCount: number } | EditFailure;
 

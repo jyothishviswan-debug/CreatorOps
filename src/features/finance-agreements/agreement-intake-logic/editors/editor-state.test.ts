@@ -95,7 +95,7 @@ describe("incentive slabs", () => {
   const slab = { metricId: "views", lowerBoundText: "1000", upperBoundText: "5000", unit: "views", amountText: "2500", description: "" };
   it("builds slabs with exact minor units and refs, and needs at least one", () => {
     const result = value("incentive", { kind: "incentive", slabs: [slab] });
-    expect(result).toEqual({ ok: true, value: { applicable: true, slabs: [{ slabRef: "slab-1", metricId: "views", lowerBound: 1000, upperBound: 5000, unit: "views", amountMinor: 250000, description: null }] } });
+    expect(result).toEqual({ ok: true, value: { applicable: true, narrative: null, slabs: [{ slabRef: "slab-1", metricId: "views", lowerBound: 1000, upperBound: 5000, unit: "views", amountMinor: 250000, description: null }] } });
     expect(value("incentive", { kind: "incentive", slabs: [] }).ok).toBe(false);
   });
   it("reports bounds and blanks per slab", () => {
@@ -107,7 +107,7 @@ describe("incentive slabs", () => {
     }
   });
   it("round-trips a stored value into the editor and back", () => {
-    const stored = { applicable: true, slabs: [{ slabRef: "s1", metricId: "reach", lowerBound: 0, upperBound: null, unit: "accounts", amountMinor: 100050, description: "Base" }] };
+    const stored = { applicable: true, narrative: null, slabs: [{ slabRef: "s1", metricId: "reach", lowerBound: 0, upperBound: null, unit: "accounts", amountMinor: 100050, description: "Base" }] };
     const state = initialEditorState("incentive", "incentive", stored);
     expect(state).toEqual({ kind: "incentive", slabs: [{ slabRef: "s1", metricId: "reach", lowerBoundText: "0", upperBoundText: "", unit: "accounts", amountText: "1000.50", description: "Base" }] });
     expect(value("incentive", state)).toEqual({ ok: true, value: stored });
@@ -129,11 +129,11 @@ describe("LFC / SFC (explicit rules only)", () => {
 describe("performance targets (monitoring only, never payment)", () => {
   it("builds targets that ALWAYS carry affectsPayment:false and comparison at_least", () => {
     const result = value("performanceTargets", { kind: "targets", rows: [{ metricId: "followerGrowth", targetValueText: "1,000", unit: "followers" }] });
-    expect(result).toEqual({ ok: true, value: [{ targetRef: "target-1", metricId: "followerGrowth", targetValue: 1000, unit: "followers", comparison: "at_least", affectsPayment: false }] });
+    expect(result).toEqual({ ok: true, value: [{ targetRef: "target-1", metricId: "followerGrowth", targetValue: 1000, unit: "followers", comparison: "at_least", period: null, anchor: null, affectsPayment: false }] });
   });
   it("the editor state has no way to carry affectsPayment", () => {
     expect(Object.keys(blankTarget()).sort()).toEqual(["metricId", "targetValueText", "unit"]);
-    const stored = [{ targetRef: "t1", metricId: "views", targetValue: 100000, unit: "views", comparison: "at_least", affectsPayment: false }];
+    const stored = [{ targetRef: "t1", metricId: "views", targetValue: 100000, unit: "views", comparison: "at_least", period: null, anchor: null, affectsPayment: false }];
     const state = initialEditorState("performanceTargets", "performanceTargets", stored);
     expect(JSON.stringify(state)).not.toContain("affectsPayment");
     expect(value("performanceTargets", state)).toEqual({ ok: true, value: stored });

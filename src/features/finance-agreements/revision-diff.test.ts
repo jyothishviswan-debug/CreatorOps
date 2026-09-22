@@ -28,11 +28,13 @@ function makeTerms(over: { fixedMinor?: number | null; cycle?: ConfirmedAgreemen
       paymentDueTerms: null,
       servicesMandated: null,
       incentive: over.incentiveSlabs
-        ? { applicable: true, slabs: Array.from({ length: over.incentiveSlabs }, (_, i) => ({ slabRef: `s${i}`, metricId: "views", lowerBound: i * 100, upperBound: null, unit: "views", amountMinor: 1000, description: null })) }
+        ? { applicable: true, narrative: null, slabs: Array.from({ length: over.incentiveSlabs }, (_, i) => ({ slabRef: `s${i}`, metricId: "views", lowerBound: i * 100, upperBound: null, unit: "views", amountMinor: 1000, description: null })) }
         : null,
       lfcSfc: null,
+      monetisationTerms: null,
     },
     performanceTargets: [],
+    performanceEvaluationClause: null,
     admin: { onboardingProcessCompleted: null, remarks: over.remarks ?? null },
     agreementType: "UNSPECIFIED" as ConfirmedAgreementTerms["agreementType"],
   };

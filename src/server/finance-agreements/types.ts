@@ -79,6 +79,64 @@ export type AgreementCounterparty = z.infer<typeof agreementCounterpartySchema>;
 // every detail/mutation read.
 export type AgreementScopeSnapshot = { ownerUid: string | null; regionIds: string[]; teamIds: string[]; partnerUid: string | null; vendorUid: string | null };
 
+// FINAL_EXECUTION #10: a contract may name more than one party. `counterparty` above stays the ONE
+// Finance-authoritative Partner/Vendor identity (owns reconciliation, KYC and the payment-affecting
+// terms - unchanged); `parties` is purely additive, descriptive metadata for the OTHER named roles a
+// contract may carry, never a second source of payment truth. A party is explicitly mapped by a human
+// to an existing Partner/Vendor, a brand-new one (created through the owning onboarding flow, never
+// silently here), or left CONTRACT_ONLY when it is named in the text but deliberately not turned into a
+// CreatorOps record (e.g. a notice-contact department, a parent-company signatory).
+export const AGREEMENT_PARTY_ROLES = ["PRIMARY_COUNTERPARTY", "CO_SERVICE_PROVIDER", "PAYEE", "PRESENTER", "SIGNATORY", "NOTICE_CONTACT", "OTHER"] as const;
+export const agreementPartyRoleSchema = z.enum(AGREEMENT_PARTY_ROLES);
+export type AgreementPartyRole = z.infer<typeof agreementPartyRoleSchema>;
+
+export const agreementPartyMappingSchema = z.discriminatedUnion("kind", [
+  z.object({ kind: z.literal("PARTNER"), partnerRef: refString }).strict(),
+  z.object({ kind: z.literal("VENDOR"), vendorRef: refString }).strict(),
+  // Named in the contract text but deliberately never created as a Partner/Vendor record.
+  z.object({ kind: z.literal("CONTRACT_ONLY") }).strict(),
+  // Named in the contract text; a human has not yet decided how (or whether) to map it.
+  z.object({ kind: z.literal("UNRESOLVED") }).strict(),
+]);
+export type AgreementPartyMapping = z.infer<typeof agreementPartyMappingSchema>;
+
+export const agreementPartySchema = z
+  .object({
+    partyRef: refString,
+    role: agreementPartyRoleSchema,
+    // The party's name exactly as the contract states it (never inferred, never copied from a mapped record).
+    contractName: z.string().trim().min(1).max(200),
+    mapping: agreementPartyMappingSchema,
+  })
+  .strict();
+export type AgreementParty = z.infer<typeof agreementPartySchema>;
+
+export const MAX_AGREEMENT_PARTIES = 12;
+export const agreementPartiesSchema = z
+  .array(agreementPartySchema)
+  .max(MAX_AGREEMENT_PARTIES)
+  .default([])
+  .superRefine((parties, ctx) => {
+    const refs = parties.map((party) => party.partyRef);
+    if (new Set(refs).size !== refs.length) ctx.addIssue({ code: "custom", message: "Agreement party refs must be unique." });
+  });
+export type AgreementParties = z.infer<typeof agreementPartiesSchema>;
+
+// Section 10's activation gate: with more than one PAYEE-eligible party (PAYEE, or PRIMARY_COUNTERPARTY
+// when no PAYEE role is used), exactly one must be marked primary - never guessed. Pure so the lifecycle
+// service and its tests can both call it.
+export function agreementPartyPrimaryAmbiguity(parties: AgreementParties): { ambiguous: boolean; candidateRefs: string[] } {
+  // Deliberately destructured (never `party.role === ...`): an AgreementPartyRole is a contract-party concept, not an
+  // actor permission role, but the boundary guard's `.role ===` heuristic cannot tell the two apart by name alone.
+  const isRole = (wanted: AgreementPartyRole) => (party: AgreementParty) => {
+    const { role } = party;
+    return role === wanted;
+  };
+  const payees = parties.filter(isRole("PAYEE"));
+  const candidates = payees.length > 0 ? payees : parties.filter(isRole("PRIMARY_COUNTERPARTY"));
+  return { ambiguous: candidates.length > 1, candidateRefs: candidates.map((party) => party.partyRef) };
+}
+
 // --- Draft working copy ------------------------------------------------------------------------------------------------
 export const AGREEMENT_FIELD_ORIGINS = ["MASTER_DATA", "EXTRACTED", "MANUAL"] as const;
 export const agreementFieldOriginSchema = z.enum(AGREEMENT_FIELD_ORIGINS);
@@ -221,6 +279,9 @@ export const agreementVersionDocSchema = z
 
     // Frozen copy of the head's counterparty at the moment this version was created.
     counterparty: agreementCounterpartySchema,
+    // FINAL_EXECUTION #10: additive, descriptive-only other-party metadata. Mutable while this version is an
+    // unconfirmed DRAFT (see setAgreementParties in agreement-service.ts); frozen alongside everything else at confirm.
+    parties: agreementPartiesSchema,
     sourceMode: agreementSourceModeSchema,
     source: agreementVersionSourceSchema,
     // Step 14B.1: the durable Drive copy of the original signed Agreement (additive; null until a store attempt).
@@ -315,6 +376,14 @@ export const agreementHeadDocSchema = z
     // Optimistic-concurrency counter of the HEAD, bumped on every accepted lifecycle change.
     docVersion: z.number().int().min(1),
     counterparty: agreementCounterpartySchema,
+    // FINAL_EXECUTION #10: set once at creation from createAgreementDraftInputSchema, immutable after. A reference
+    // only - resolving/displaying it is a read-time concern, never enforced here. (Inlines the same pattern as the
+    // later-declared agreementRefSchema - that const is defined further down this file and cannot be referenced here.)
+    priorAgreementRef: z
+      .string()
+      .regex(/^agr_[0-9a-f]{20}$/, "Invalid agreement reference.")
+      .nullable()
+      .default(null),
 
     ownerUid: nonEmpty.nullable().default(null),
     regionIds: z.array(nonEmpty).max(50).default([]),
@@ -359,6 +428,8 @@ export type AgreementHeadDoc = z.infer<typeof agreementHeadDocSchema>;
 export const AGREEMENT_EVENT_KINDS = [
   "created",
   "field_decided",
+  // FINAL_EXECUTION #10: the OPEN, unconfirmed version's `parties` array was replaced.
+  "parties_updated",
   "extraction_attached",
   "confirmed",
   "activated",
@@ -550,6 +621,10 @@ export const createAgreementDraftInputSchema = z
     counterparty: agreementCounterpartyInputSchema,
     // Advisory intention only; the effective sourceMode is recomputed from field origins at confirm.
     sourceMode: z.enum(["MANUAL", "EXTRACTED"]).optional(),
+    // FINAL_EXECUTION #10: this brand-new Agreement head renews/supersedes an IDENTIFIED prior Agreement (a
+    // different head, never the same-head version-supersede chain that agreementActivationSchema already
+    // covers). Purely a recorded reference - never validated against or resolved to a live document here.
+    priorAgreementRef: agreementRefSchema.nullable().optional(),
   })
   .strict();
 export type CreateAgreementDraftInput = z.infer<typeof createAgreementDraftInputSchema>;
@@ -605,3 +680,11 @@ export type ResumeAgreementInput = z.infer<typeof resumeAgreementInputSchema>;
 
 export const endAgreementInputSchema = z.object({ agreementRef: agreementRefSchema, expectedDocVersion: expectedDocVersionSchema, reason: reasonSchema }).strict();
 export type EndAgreementInput = z.infer<typeof endAgreementInputSchema>;
+
+// FINAL_EXECUTION #10: replaces the OPEN, unconfirmed version's whole `parties` array in one call (simpler and
+// easier to reason about than per-party CRUD endpoints) - the caller always sends the complete, already-decided
+// list. expectedDocVersion is the VERSION doc's docVersion.
+export const setAgreementPartiesInputSchema = z
+  .object({ agreementRef: agreementRefSchema, version: versionNumberSchema, expectedDocVersion: expectedDocVersionSchema, parties: z.array(agreementPartySchema).max(MAX_AGREEMENT_PARTIES) })
+  .strict();
+export type SetAgreementPartiesInput = z.infer<typeof setAgreementPartiesInputSchema>;

@@ -66,6 +66,7 @@ export function agreementDto(
       agreementRef: "agr_0123456789abcdef0123",
       counterparty,
       counterpartyDisplayName: over.displayName === undefined ? "Asha Rao" : over.displayName,
+      priorAgreementRef: null,
       status: "DRAFT",
       latestVersion: version,
       openVersion: over.openVersion === undefined ? version : over.openVersion,
@@ -82,6 +83,7 @@ export function agreementDto(
     selectedVersion: {
       ...summary,
       counterparty,
+      parties: [],
       source: { contractArtifactRef: null, extractionRunRef: over.extractionRunRef ?? null, parserVersion: null },
       draft: over.draft ?? {},
       terms: null,

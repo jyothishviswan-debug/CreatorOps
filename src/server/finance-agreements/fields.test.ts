@@ -25,7 +25,8 @@ const SPEC_FIELD_KEYS = [
   "agreementNumber", "signedDate", "effectiveDate", "terminationDate", "renewalTerms", "noticeTerms", "terminationTerms",
   "currency", "paymentCycle", "fixedComponent", "monthlyRequiredQualifyingContentCount", "qualifyingUnit", "accountTransferFee",
   "advancePayment", "invoiceRequired", "invoiceDueTerms", "paymentDueTerms", "servicesMandated", "incentive", "lfcSfc",
-  "performanceTargets",
+  "contentObligations", "monetisationTerms",
+  "performanceTargets", "performanceEvaluationClause",
   "onboardingProcessCompleted", "remarks", "agreementType",
 ] as const;
 
@@ -207,7 +208,7 @@ describe("assembleConfirmedAgreement", () => {
     expect(result.ok).toBe(true);
     if (result.ok) {
       expect(result.terms.commercial.fixedComponent).toEqual({ applicable: false, amountMinor: null });
-      expect(result.terms.commercial.incentive).toEqual({ applicable: false, slabs: [] });
+      expect(result.terms.commercial.incentive).toEqual({ applicable: false, narrative: null, slabs: [] });
     }
   });
 

@@ -23,11 +23,14 @@ function terms(overrides: { commercial?: Partial<ConfirmedAgreementTerms["commer
       invoiceDueTerms: "Within 7 days.",
       paymentDueTerms: null,
       servicesMandated: "Line one.\nLine two.",
-      incentive: { applicable: false, slabs: [] },
+      incentive: { applicable: false, narrative: null, slabs: [] },
       lfcSfc: null,
+      contentObligations: [],
+      monetisationTerms: null,
       ...overrides.commercial,
     },
     performanceTargets: overrides.performanceTargets ?? [],
+    performanceEvaluationClause: null,
     admin: { onboardingProcessCompleted: true, remarks: null },
     agreementType: overrides.agreementType ?? "FIXED_PLUS_REQUIRED_CONTENT",
   };
@@ -107,7 +110,7 @@ describe("incentive slabs", () => {
   });
 
   it("slab rows exist only for an applicable incentive", () => {
-    const applicable = buildTermsView(terms({ commercial: { incentive: { applicable: true, slabs: [SLAB] }, monthlyRequiredQualifyingContentCount: null, qualifyingUnit: null }, agreementType: "FIXED_PLUS_INCENTIVE" }), CONTACT);
+    const applicable = buildTermsView(terms({ commercial: { incentive: { applicable: true, narrative: null, slabs: [SLAB] }, monthlyRequiredQualifyingContentCount: null, qualifyingUnit: null }, agreementType: "FIXED_PLUS_INCENTIVE" }), CONTACT);
     expect(applicable.slabs).toHaveLength(1);
     expect(byKey(applicable.commercial, "incentive").value).toBe("1 slab");
     expect(buildTermsView(terms(), CONTACT).slabs).toEqual([]);
@@ -116,7 +119,7 @@ describe("incentive slabs", () => {
 });
 
 describe("performance targets (warning only)", () => {
-  const TARGET = { targetRef: "t1", metricId: "followerGrowth", targetValue: 5000, unit: "followers", comparison: "at_least" as const, affectsPayment: false as const };
+  const TARGET = { targetRef: "t1", metricId: "followerGrowth", targetValue: 5000, unit: "followers", comparison: "at_least" as const, period: null, anchor: null, affectsPayment: false as const };
 
   it("every target reads 'Monitoring only · does not affect payment' and lives outside the payment rows", () => {
     const view = buildTermsView(terms({ performanceTargets: [TARGET, { ...TARGET, targetRef: "t2", metricId: "reach", targetValue: 90000, unit: "accounts" }] }), CONTACT);

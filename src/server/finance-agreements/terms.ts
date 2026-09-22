@@ -94,12 +94,15 @@ export const incentiveSlabSchema = z
   });
 export type IncentiveSlab = z.infer<typeof incentiveSlabSchema>;
 
+// FINAL_EXECUTION #16: "Incentive / additional payment applicable?" is Yes/No. A Yes needs SOME detail - either a
+// free-text narrative (discretionary incentive language with no structured slab schedule) or structured slabs, or
+// both; it is never required to force slabs out of a narrative-only clause. A No carries neither.
 export const incentiveSchema = z
-  .object({ applicable: z.boolean(), slabs: z.array(incentiveSlabSchema).max(MAX_INCENTIVE_SLABS) })
+  .object({ applicable: z.boolean(), narrative: shortText(2000).nullable().default(null), slabs: z.array(incentiveSlabSchema).max(MAX_INCENTIVE_SLABS) })
   .strict()
   .superRefine((value, ctx) => {
-    if (value.applicable && value.slabs.length === 0) ctx.addIssue({ code: "custom", path: ["slabs"], message: "An applicable incentive needs at least one slab." });
-    if (!value.applicable && value.slabs.length > 0) ctx.addIssue({ code: "custom", path: ["slabs"], message: "A non-applicable incentive carries no slabs." });
+    if (value.applicable && value.slabs.length === 0 && value.narrative === null) ctx.addIssue({ code: "custom", path: ["slabs"], message: "An applicable incentive needs a narrative or at least one slab." });
+    if (!value.applicable && (value.slabs.length > 0 || value.narrative !== null)) ctx.addIssue({ code: "custom", path: ["applicable"], message: "A non-applicable incentive carries no narrative or slabs." });
     const refs = value.slabs.map((slab) => slab.slabRef);
     if (new Set(refs).size !== refs.length) ctx.addIssue({ code: "custom", path: ["slabs"], message: "Incentive slab refs must be unique." });
   });
@@ -129,6 +132,11 @@ export const performanceTargetSchema = z
     targetValue: z.number().finite(),
     unit: shortText(60),
     comparison: z.literal("at_least"),
+    // FINAL_EXECUTION #18: the contract's own period wording (e.g. "Every 30 days"), never invented - null means
+    // the contract states no period ("Period not specified"), not "monthly" or any other assumed cadence.
+    period: shortText(200).nullable().default(null),
+    // The contract's stated anchor for that period, when given (e.g. "Effective date").
+    anchor: shortText(200).nullable().default(null),
     affectsPayment: z.literal(false),
   })
   .strict();
@@ -140,6 +148,35 @@ export const performanceTargetsSchema = z
   .superRefine((targets, ctx) => {
     const refs = targets.map((target) => target.targetRef);
     if (new Set(refs).size !== refs.length) ctx.addIssue({ code: "custom", message: "Performance target refs must be unique." });
+  });
+
+// FINAL_EXECUTION #15: a repeatable content-obligation row (e.g. "Total qualifying content: 105, Monthly, Approved
+// Content" alongside "Long-format: 85, Monthly, Needs mapping"). Additive alongside the single-scalar
+// monthlyRequiredQualifyingContentCount/qualifyingUnit pair above (kept for the simple, single-obligation case and
+// for back-compat) - a contract with several distinct obligations uses this array instead. `operationalMapping` is
+// the same closed CreatorOps operational vocabulary as `qualifyingUnit` (e.g. "Approved Content"); null means the
+// contract's own wording ("Reel", "Audio Visual Content", ...) has not yet been explicitly mapped by a human -
+// displayed as "Needs mapping", never silently converted.
+export const MAX_CONTENT_OBLIGATIONS = 20;
+export const contentObligationSchema = z
+  .object({
+    obligationRef: shortText(100),
+    // The contract's own label for this obligation, e.g. "Long-format content".
+    label: shortText(200),
+    quantity: z.number().int().min(0).max(100_000),
+    // The contract's own period wording (e.g. "Monthly"); null = not stated.
+    period: shortText(60).nullable(),
+    operationalMapping: shortText(100).nullable(),
+  })
+  .strict();
+export type ContentObligation = z.infer<typeof contentObligationSchema>;
+
+export const contentObligationsSchema = z
+  .array(contentObligationSchema)
+  .max(MAX_CONTENT_OBLIGATIONS)
+  .superRefine((rows, ctx) => {
+    const refs = rows.map((row) => row.obligationRef);
+    if (new Set(refs).size !== refs.length) ctx.addIssue({ code: "custom", message: "Content obligation refs must be unique." });
   });
 
 // --- Agreement type (derived, never trusted from an extractor) ---------------------------------------------------------
@@ -163,22 +200,25 @@ export type AgreementTypeInput = {
     fixedComponent: { applicable: boolean } | null;
     incentive: { applicable: boolean; slabs: readonly unknown[] } | null;
     monthlyRequiredQualifyingContentCount: number | null;
+    // FINAL_EXECUTION #15: optional so existing narrower callers (that never had repeatable obligation rows) keep
+    // typechecking unchanged; when present, a non-empty array counts toward "required" exactly like the scalar count.
+    contentObligations?: readonly { quantity: number }[];
   };
 };
 
 // RULE (the only source of an Agreement's type - an extractor's guess is never read):
 //   fixed     = fixedComponent.applicable === true
 //   incentive = incentive.applicable === true AND at least one slab
-//   required  = monthlyRequiredQualifyingContentCount is a number > 0
+//   required  = monthlyRequiredQualifyingContentCount is a number > 0, OR at least one content obligation row exists
 // The 8 combinations map 1:1 to the AGREEMENT_TYPES; no component present =>
 // UNSPECIFIED. advancePayment / accountTransferFee / invoice terms are
-// modifiers, never part of the structural type. lfcSfc and performance targets
-// do not change the type either.
+// modifiers, never part of the structural type. lfcSfc, monetisationTerms and
+// performance targets do not change the type either.
 export function deriveAgreementType(terms: AgreementTypeInput): AgreementType {
-  const { fixedComponent, incentive, monthlyRequiredQualifyingContentCount } = terms.commercial;
+  const { fixedComponent, incentive, monthlyRequiredQualifyingContentCount, contentObligations } = terms.commercial;
   const fixed = fixedComponent?.applicable === true;
   const hasIncentive = incentive?.applicable === true && incentive.slabs.length > 0;
-  const required = typeof monthlyRequiredQualifyingContentCount === "number" && monthlyRequiredQualifyingContentCount > 0;
+  const required = (typeof monthlyRequiredQualifyingContentCount === "number" && monthlyRequiredQualifyingContentCount > 0) || (contentObligations?.length ?? 0) > 0;
 
   if (fixed && !hasIncentive && !required) return "FIXED_ONLY";
   if (fixed && hasIncentive && !required) return "FIXED_PLUS_INCENTIVE";
@@ -200,6 +240,8 @@ export const commercialTermsSchema = z
     // The old "Fixed deliverable units" label maps here. NO Deliverable entity exists.
     monthlyRequiredQualifyingContentCount: z.number().int().min(0).max(100_000).nullable(),
     qualifyingUnit: shortText(100).nullable(),
+    // FINAL_EXECUTION #15: repeatable obligation rows, additive alongside the single-scalar pair above.
+    contentObligations: contentObligationsSchema.default([]),
     accountTransferFee: accountTransferFeeSchema.nullable(),
     advancePayment: advancePaymentSchema.nullable(),
     invoiceRequired: z.boolean().nullable(),
@@ -209,6 +251,9 @@ export const commercialTermsSchema = z
     servicesMandated: shortText(MAX_CLAUSE_TEXT_LENGTH).nullable(),
     incentive: incentiveSchema.nullable(),
     lfcSfc: lfcSfcSchema.nullable(),
+    // FINAL_EXECUTION #17: ad-revenue-share / monetisation terms, kept separate from fixedComponent and incentive -
+    // never merged with either. No money calculation happens anywhere in this module.
+    monetisationTerms: shortText(MAX_CLAUSE_TEXT_LENGTH).nullable(),
   })
   .strict();
 export type CommercialTerms = z.infer<typeof commercialTermsSchema>;
@@ -274,6 +319,10 @@ export const confirmedAgreementTermsSchema = z
     platform: platformTermsSchema,
     commercial: commercialTermsSchema,
     performanceTargets: performanceTargetsSchema,
+    // FINAL_EXECUTION #18: set only when the contract has evaluation language with NO numeric target ("performance
+    // will be periodically reviewed..."); a numeric target is never invented to fill this in, and this is never set
+    // alongside a populated performanceTargets - the two are alternatives for the same clause.
+    performanceEvaluationClause: shortText(MAX_CLAUSE_TEXT_LENGTH).nullable(),
     admin: adminTermsSchema,
     // Derived from the confirmed commercial structure by deriveAgreementType;
     // the check below rejects any stored value that disagrees with the rule.

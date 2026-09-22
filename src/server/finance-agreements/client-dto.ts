@@ -13,6 +13,7 @@ import type {
   AgreementFieldProvenanceEntry,
   AgreementHeadDoc,
   AgreementHeadStatus,
+  AgreementParty,
   AgreementSourceMode,
   AgreementType,
   AgreementVersionDoc,
@@ -50,6 +51,8 @@ export type AgreementHeadDto = {
   agreementRef: string;
   counterparty: AgreementCounterpartyDto;
   counterpartyDisplayName: string | null;
+  // FINAL_EXECUTION #10: set once at creation, immutable. A reference only - the browser resolves display separately.
+  priorAgreementRef: string | null;
   status: AgreementHeadStatus;
   latestVersion: number;
   openVersion: number | null;
@@ -161,6 +164,9 @@ export type AgreementDraftEntryDto = {
 
 export type AgreementVersionDto = AgreementVersionSummaryDto & {
   counterparty: AgreementCounterpartyDto;
+  // FINAL_EXECUTION #10: other named Agreement parties (additive, descriptive only - counterparty above stays the
+  // one Finance-authoritative identity). Mutable pre-confirm, frozen with everything else at confirm.
+  parties: AgreementParty[];
   source: AgreementVersionSource;
   draft: Partial<Record<AgreementFieldKey, AgreementDraftEntryDto>>;
   terms: ConfirmedAgreementTerms | null;
@@ -217,6 +223,7 @@ export function toAgreementHeadDto(head: AgreementHeadDoc, counterpartyDisplayNa
     agreementRef: head.agreementRef,
     counterparty: toAgreementCounterpartyDto(head.counterparty),
     counterpartyDisplayName,
+    priorAgreementRef: head.priorAgreementRef,
     status: head.status,
     latestVersion: head.latestVersion,
     openVersion: head.openVersion,
@@ -321,6 +328,7 @@ export function toAgreementVersionDto(doc: AgreementVersionDoc, options: { ident
   return {
     ...toAgreementVersionSummaryDto(doc, { contractDetailVisible: options.contractDetailVisible }),
     counterparty: toAgreementCounterpartyDto(doc.counterparty),
+    parties: doc.parties.map((party): AgreementParty => ({ ...party })),
     source: { contractArtifactRef: doc.source.contractArtifactRef, extractionRunRef: doc.source.extractionRunRef, parserVersion: doc.source.parserVersion },
     draft,
     terms: doc.terms,

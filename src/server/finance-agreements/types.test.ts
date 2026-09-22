@@ -7,6 +7,9 @@ import {
   agreementCounterpartyInputSchema,
   agreementDraftSchema,
   agreementHeadDocSchema,
+  agreementPartyPrimaryAmbiguity,
+  agreementPartySchema,
+  agreementPartiesSchema,
   agreementVersionDocSchema,
   attachExtractionInputSchema,
   confirmAgreementVersionInputSchema,
@@ -20,8 +23,10 @@ import {
   extractionRunDocSchema,
   performanceTargetSchema,
   resumeAgreementInputSchema,
+  setAgreementPartiesInputSchema,
   storeAgreementDocumentInputSchema,
   suspendAgreementInputSchema,
+  type AgreementParty,
   type ConfirmedAgreementTerms,
 } from "./types";
 
@@ -49,8 +54,11 @@ function baseTerms(over: Partial<ConfirmedAgreementTerms> = {}): ConfirmedAgreem
       servicesMandated: null,
       incentive: null,
       lfcSfc: null,
+      contentObligations: [],
+      monetisationTerms: null,
     },
     performanceTargets: [],
+    performanceEvaluationClause: null,
     admin: { onboardingProcessCompleted: null, remarks: null },
     agreementType: "UNSPECIFIED",
     ...over,
@@ -115,7 +123,7 @@ describe("ConfirmedAgreementTerms", () => {
 });
 
 describe("performance targets are warning-only (affectsPayment is ALWAYS false)", () => {
-  const target = { targetRef: "t1", metricId: "views", targetValue: 5000, unit: "views", comparison: "at_least" as const };
+  const target = { targetRef: "t1", metricId: "views", targetValue: 5000, unit: "views", comparison: "at_least" as const, period: null, anchor: null };
 
   it("parses with affectsPayment:false", () => {
     expect(performanceTargetSchema.parse({ ...target, affectsPayment: false }).affectsPayment).toBe(false);
@@ -381,5 +389,89 @@ describe("deterministic ids", () => {
     const refs = new Set(Array.from({ length: 50 }, () => generateAgreementRef()));
     expect(refs.size).toBe(50);
     for (const ref of refs) expect(ref).toMatch(/^agr_[0-9a-f]{20}$/);
+  });
+});
+
+describe("FINAL_EXECUTION #10: Agreement parties (additive, descriptive only)", () => {
+  const party = (over: Partial<AgreementParty> = {}): AgreementParty => ({ partyRef: "pty_1", role: "PRESENTER", contractName: "Anchor Studio LLP", mapping: { kind: "CONTRACT_ONLY" }, ...over });
+
+  it("accepts every role and every mapping kind", () => {
+    for (const role of ["PRIMARY_COUNTERPARTY", "CO_SERVICE_PROVIDER", "PAYEE", "PRESENTER", "SIGNATORY", "NOTICE_CONTACT", "OTHER"] as const) {
+      expect(agreementPartySchema.safeParse(party({ role })).success).toBe(true);
+    }
+    expect(agreementPartySchema.safeParse(party({ mapping: { kind: "PARTNER", partnerRef: "p_1" } })).success).toBe(true);
+    expect(agreementPartySchema.safeParse(party({ mapping: { kind: "VENDOR", vendorRef: "v_1" } })).success).toBe(true);
+    expect(agreementPartySchema.safeParse(party({ mapping: { kind: "CONTRACT_ONLY" } })).success).toBe(true);
+    expect(agreementPartySchema.safeParse(party({ mapping: { kind: "UNRESOLVED" } })).success).toBe(true);
+  });
+
+  it("rejects an unknown role, an unknown mapping kind, and a mapping carrying the wrong ref", () => {
+    expect(agreementPartySchema.safeParse(party({ role: "OWNER" as never })).success).toBe(false);
+    expect(agreementPartySchema.safeParse({ ...party(), mapping: { kind: "PARTNER", vendorRef: "v_1" } }).success).toBe(false);
+    expect(agreementPartySchema.safeParse({ ...party(), mapping: { kind: "SOMETHING_ELSE" } }).success).toBe(false);
+  });
+
+  it("party refs must be unique within one array, and the array is bounded", () => {
+    expect(agreementPartiesSchema.safeParse([party(), party({ partyRef: "pty_2" })]).success).toBe(true);
+    expect(agreementPartiesSchema.safeParse([party(), party()]).success).toBe(false);
+    expect(agreementPartiesSchema.safeParse(Array.from({ length: 13 }, (_, i) => party({ partyRef: `pty_${i}` }))).success).toBe(false);
+  });
+
+  it("agreementPartyPrimaryAmbiguity: never ambiguous with zero or one PAYEE/PRIMARY_COUNTERPARTY party", () => {
+    expect(agreementPartyPrimaryAmbiguity([]).ambiguous).toBe(false);
+    expect(agreementPartyPrimaryAmbiguity([party({ role: "PAYEE" })]).ambiguous).toBe(false);
+    expect(agreementPartyPrimaryAmbiguity([party({ role: "PRIMARY_COUNTERPARTY" })]).ambiguous).toBe(false);
+    // a PRESENTER / SIGNATORY / NOTICE_CONTACT / OTHER never counts, however many there are
+    expect(agreementPartyPrimaryAmbiguity([party({ partyRef: "a", role: "SIGNATORY" }), party({ partyRef: "b", role: "NOTICE_CONTACT" })]).ambiguous).toBe(false);
+  });
+
+  it("agreementPartyPrimaryAmbiguity: ambiguous with two PAYEEs; PAYEE takes precedence over PRIMARY_COUNTERPARTY", () => {
+    const twoPayees = agreementPartyPrimaryAmbiguity([party({ partyRef: "a", role: "PAYEE" }), party({ partyRef: "b", role: "PAYEE" })]);
+    expect(twoPayees).toEqual({ ambiguous: true, candidateRefs: ["a", "b"] });
+    // two PRIMARY_COUNTERPARTY parties, no PAYEE role used at all: also ambiguous
+    expect(agreementPartyPrimaryAmbiguity([party({ partyRef: "a", role: "PRIMARY_COUNTERPARTY" }), party({ partyRef: "b", role: "PRIMARY_COUNTERPARTY" })]).ambiguous).toBe(true);
+    // one PAYEE + several PRIMARY_COUNTERPARTY: PAYEE alone decides it (never ambiguous - only PAYEE parties are counted once any exist)
+    expect(agreementPartyPrimaryAmbiguity([party({ partyRef: "a", role: "PAYEE" }), party({ partyRef: "b", role: "PRIMARY_COUNTERPARTY" }), party({ partyRef: "c", role: "PRIMARY_COUNTERPARTY" })]).ambiguous).toBe(false);
+  });
+
+  it("setAgreementPartiesInputSchema accepts a full replacement list, agreementRef + version + expectedDocVersion required", () => {
+    const parsed = setAgreementPartiesInputSchema.safeParse({ agreementRef: AGR, version: 1, expectedDocVersion: 1, parties: [party()] });
+    expect(parsed.success).toBe(true);
+    expect(setAgreementPartiesInputSchema.safeParse({ agreementRef: AGR, version: 1, parties: [] }).success).toBe(false);
+  });
+
+  it("createAgreementDraftInputSchema accepts an optional priorAgreementRef naming a DIFFERENT Agreement", () => {
+    const partner = { type: "PARTNER" as const, partnerRef: "p1" };
+    expect(createAgreementDraftInputSchema.safeParse({ clientRequestId: "req-12345678", counterparty: partner }).success).toBe(true);
+    expect(createAgreementDraftInputSchema.safeParse({ clientRequestId: "req-12345678", counterparty: partner, priorAgreementRef: null }).success).toBe(true);
+    expect(createAgreementDraftInputSchema.safeParse({ clientRequestId: "req-12345678", counterparty: partner, priorAgreementRef: AGR }).success).toBe(true);
+    expect(createAgreementDraftInputSchema.safeParse({ clientRequestId: "req-12345678", counterparty: partner, priorAgreementRef: "not-a-ref" }).success).toBe(false);
+  });
+
+  it("agreementVersionDocSchema defaults parties to [] and accepts a populated list", () => {
+    const version = agreementVersionDocSchema.safeParse({
+      agreementRef: AGR,
+      version: 1,
+      status: "DRAFT",
+      docVersion: 1,
+      counterparty: { type: "PARTNER", partnerRef: "p1" },
+      sourceMode: "MANUAL",
+      source: {},
+      draft: {},
+      createdAt: NOW,
+      createdByUserRef: "u1",
+      updatedAt: NOW,
+      updatedByUserRef: "u1",
+    });
+    expect(version.success).toBe(true);
+    if (version.success) expect(version.data.parties).toEqual([]);
+  });
+
+  it("agreementHeadDocSchema defaults priorAgreementRef to null and accepts a set reference", () => {
+    const base = { agreementRef: AGR, docVersion: 1, counterparty: { type: "PARTNER" as const, partnerRef: "p1" }, partnerUid: "u1", status: "DRAFT" as const, latestVersion: 1, createdAt: NOW, createdByUserRef: "u1", updatedAt: NOW, updatedByUserRef: "u1" };
+    const withoutRef = agreementHeadDocSchema.safeParse(base);
+    expect(withoutRef.success).toBe(true);
+    if (withoutRef.success) expect(withoutRef.data.priorAgreementRef).toBeNull();
+    expect(agreementHeadDocSchema.safeParse({ ...base, priorAgreementRef: "agr_00000000000000000001" }).success).toBe(true);
   });
 });

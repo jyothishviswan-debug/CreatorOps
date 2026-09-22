@@ -111,6 +111,8 @@ export const AGREEMENT_EVENT_METADATA_ALLOWLIST: Readonly<Record<string, ValueCh
   blockerCount: isCount,
   platformCount: isCount,
   accountCount: isCount,
+  // FINAL_EXECUTION #10: how many other Agreement parties are now recorded - never their names/roles/mappings.
+  partyCount: isCount,
   // opaque refs and the parser version
   artifactRef: isOpaqueRef,
   runRef: isOpaqueRef,
