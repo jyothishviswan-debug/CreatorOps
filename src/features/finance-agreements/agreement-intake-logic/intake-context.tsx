@@ -23,7 +23,7 @@ import type { AttachExtractionOutcome } from "@/server/finance-agreements/agreem
 import type { AgreementKycStatusDto } from "@/server/finance-agreements/kyc-status-service";
 import type { AgreementReconciliationDto } from "@/server/finance-agreements/reconciliation-service";
 import type { ApplyExtractedKycOutcome, UpdateCounterpartyContactOutcome } from "@/server/finance-agreements/master-data-commands";
-import type { AgreementCounterpartyInput, CounterpartyType } from "@/server/finance-agreements/types";
+import type { AgreementCounterpartyInput, AgreementParty, CounterpartyType } from "@/server/finance-agreements/types";
 import type { CounterpartyPreviewDto, FinanceAgreementPermissionsDto } from "@/server/finance-agreements/workspace-dto";
 
 import * as api from "../api-client";
@@ -84,6 +84,8 @@ export const INTAKE_BUSY = {
   master: "master-data",
   applyKyc: "apply-kyc",
   detail: "detail",
+  // FINAL_EXECUTION #10: replacing the whole `parties` array.
+  parties: "set-parties",
   // Step 14B.1 (agreement-led onboarding of a NEW Partner / Vendor): the wizard's three writes share the same one-at-a-time lock.
   onboardPreview: ONBOARDING_BUSY.preview,
   onboardDuplicates: ONBOARDING_BUSY.duplicates,
@@ -115,6 +117,8 @@ export type StartDraftInput = {
   recordPlatformsField: string[] | null;
   // Optional: the display name to show until the server head is read again.
   displayName?: string | null;
+  // FINAL_EXECUTION #10: this brand-new Agreement renews/supersedes an IDENTIFIED prior Agreement.
+  priorAgreementRef?: string | null;
 };
 
 export type IntakeContextValue = {
@@ -216,6 +220,8 @@ export type IntakeContextValue = {
   confirmAgreement: () => Promise<FinanceApiResult<AgreementDetailDto>>;
   // Activates the confirmed open version (only offered when flags.canActivate). Uses the HEAD's docVersion.
   activateAgreement: () => Promise<FinanceApiResult<AgreementDetailDto>>;
+  // FINAL_EXECUTION #10: replaces the OPEN, unconfirmed version's whole `parties` array with the full given list.
+  setParties: (parties: AgreementParty[]) => Promise<FinanceApiResult<AgreementDetailDto>>;
 
   // ---- Step 14B.1: new Partner / Vendor from the Agreement (ADDED; nothing above changed) ----
   // Section 1's mode choice, the wizard's state machine and its actions (see onboarding/use-onboarding.ts). `onboarding.active` = the wizard shows.
@@ -511,7 +517,7 @@ export function IntakeProvider({ permissions, initial, children }: IntakeProvide
         async () => {
           // ONE id per mount + counterparty: a retry (network error, 409 then fix) reuses it so it can never create a second Agreement.
           requestIdRef.current = clientRequestIdFor(requestIdRef.current, counterpartyInputKey(input.counterparty));
-          const created = await api.createAgreementDraft({ clientRequestId: requestIdRef.current.id, counterparty: input.counterparty, sourceMode: "MANUAL" });
+          const created = await api.createAgreementDraft({ clientRequestId: requestIdRef.current.id, counterparty: input.counterparty, sourceMode: "MANUAL", priorAgreementRef: input.priorAgreementRef ?? null });
           if (!created.ok) {
             // A create failure is never a "reload the latest version" conflict: there is no version yet. The same id is kept for a retry.
             if (!created.aborted) {
@@ -755,6 +761,25 @@ export function IntakeProvider({ permissions, initial, children }: IntakeProvide
     [notify, reportFailure, runExclusive, setAgreement],
   );
 
+  // FINAL_EXECUTION #10: replaces the OPEN, unconfirmed version's whole `parties` array.
+  const setParties = useCallback(
+    (parties: AgreementParty[]) =>
+      runExclusive<FinanceApiResult<AgreementDetailDto>>(
+        INTAKE_BUSY.parties,
+        async () => {
+          const current = agreementRef.current;
+          const selected = current?.selectedVersion ?? null;
+          if (!current || !selected) return noDraft();
+          const result = await api.setAgreementParties(current.head.agreementRef, { version: selected.version, expectedDocVersion: selected.docVersion, parties });
+          if (result.ok) setAgreement(result.data);
+          else reportFailure("parties", result);
+          return result;
+        },
+        REFUSED,
+      ),
+    [reportFailure, runExclusive, setAgreement],
+  );
+
   const scrollToAnchor = useCallback((anchorId: string) => scrollToAnchorImpl(anchorId), []);
   const goToBlocker = useCallback((blocker: Pick<ConfirmBlockerView, "anchorId">) => void scrollToAnchorImpl(blocker.anchorId), []);
   const isBusy = useCallback((key?: string) => (key === undefined ? busyKey !== null : busyKey === key), [busyKey]);
@@ -819,6 +844,7 @@ export function IntakeProvider({ permissions, initial, children }: IntakeProvide
     applyExtractedKyc,
     confirmAgreement,
     activateAgreement,
+    setParties,
     onboarding,
     extractAndAttachFromFile,
     onboardingHandoff,

@@ -32,7 +32,7 @@ import type { OnboardingRequest } from "@/server/finance-agreements/onboarding-i
 import type { ApplyExtractedKycOutcome, KycComponent, MasterDataMode, UpdateCounterpartyContactOutcome } from "@/server/finance-agreements/master-data-commands";
 import type { AgreementKycStatusDto } from "@/server/finance-agreements/kyc-status-service";
 import type { AgreementReconciliationDto } from "@/server/finance-agreements/reconciliation-service";
-import type { AgreementCounterpartyInput, CounterpartyType } from "@/server/finance-agreements/types";
+import type { AgreementCounterpartyInput, AgreementParty, CounterpartyType } from "@/server/finance-agreements/types";
 import type { AgreementWorkspaceDto, AgreementWorkspaceDiscrepancyFilter, AgreementWorkspaceLifecycleFilter, AgreementWorkspacePeriodFilter, CounterpartyPreviewDto, FinanceAgreementPermissionsDto } from "@/server/finance-agreements/workspace-dto";
 
 // --- Result shapes ------------------------------------------------------------------------------------------------------------------
@@ -157,6 +157,8 @@ export type CreateAgreementInput = {
   clientRequestId: string;
   counterparty: AgreementCounterpartyInput;
   sourceMode?: "MANUAL" | "EXTRACTED";
+  // FINAL_EXECUTION #10: this brand-new Agreement head renews/supersedes an IDENTIFIED prior Agreement.
+  priorAgreementRef?: string | null;
 };
 
 // 201 (status) = created, 200 = the same clientRequestId had already created it (idempotent retry). The body is the AgreementDetailDto.
@@ -201,6 +203,11 @@ export function decideField(agreementRef: string, input: DecideFieldInput, optio
 // 409 + blockers (kind "not_ready") when the version is not ready; each blocker names its field.
 export function confirmAgreementVersion(agreementRef: string, input: { version: number; expectedDocVersion: number }, options?: FinanceRequestOptions): Promise<FinanceApiResult<AgreementDetailDto>> {
   return postJson(agreementPath(agreementRef, "/confirm"), input, options);
+}
+
+// FINAL_EXECUTION #10: replaces the OPEN, unconfirmed version's whole `parties` array in one call.
+export function setAgreementParties(agreementRef: string, input: { version: number; expectedDocVersion: number; parties: AgreementParty[] }, options?: FinanceRequestOptions): Promise<FinanceApiResult<AgreementDetailDto>> {
+  return postJson(agreementPath(agreementRef, "/parties"), input, options);
 }
 
 // --- Original signed Agreement document (Step 14B.1) ------------------------------------------------------------------------------------------

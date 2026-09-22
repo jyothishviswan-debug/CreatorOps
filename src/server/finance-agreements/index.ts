@@ -16,6 +16,7 @@ export {
   listAgreementsForCounterparty,
   listAgreementVersions,
   MAX_COUNTERPARTY_AGREEMENTS,
+  setAgreementParties,
   type AttachExtractionOutcome,
   type CreateAgreementDraftOutcome,
   type ReconciliationDraftFields,

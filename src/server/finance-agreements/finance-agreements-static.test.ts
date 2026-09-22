@@ -115,6 +115,7 @@ describe("routes: thin, and exactly the documented surface", () => {
     "agreements/[agreementRef]/reconciliation/route.ts": ["GET"],
     "agreements/[agreementRef]/fields/route.ts": ["POST"],
     "agreements/[agreementRef]/master-data/route.ts": ["POST"],
+    "agreements/[agreementRef]/parties/route.ts": ["POST"],
     "agreements/[agreementRef]/kyc/route.ts": ["POST"],
     "agreements/[agreementRef]/kyc-status/route.ts": ["GET"],
     "agreements/[agreementRef]/confirm/route.ts": ["POST"],
@@ -139,7 +140,7 @@ describe("routes: thin, and exactly the documented surface", () => {
     "onboarding/preview/route.ts": ["POST"],
   };
 
-  it("the route tree is exactly the 28 documented route files (no payables / invoices / payments / delete / campaign route exists)", () => {
+  it("the route tree is exactly the 29 documented route files (no payables / invoices / payments / delete / campaign route exists)", () => {
     const actual = routeFiles.map((file) => path.relative(routesDir, file).split(path.sep).join("/")).sort();
     expect(actual).toEqual(Object.keys(EXPECTED).sort());
     expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "onboarding", "permissions"]);
