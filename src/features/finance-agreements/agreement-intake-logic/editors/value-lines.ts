@@ -1,7 +1,7 @@
 import type { AgreementFieldKey } from "@/server/finance-agreements/fields";
-import type { IncentiveSlab, PerformanceTarget } from "@/server/finance-agreements/terms";
+import type { ContentObligation, IncentiveSlab, PerformanceTarget } from "@/server/finance-agreements/terms";
 
-import { formatFieldValue, incentiveSlabSummary, performanceTargetSummary } from "../../field-values";
+import { contentObligationSummary, formatFieldValue, incentiveSlabSummary, performanceTargetSummary } from "../../field-values";
 import { NO_VALUE_TEXT } from "../../format";
 
 // Step 14B (intake): a candidate value (an extracted proposal, a current draft value) as short, wrapped display LINES (pure).
@@ -16,11 +16,17 @@ function titleCase(text: string): string {
 export function valueLines(fieldKey: AgreementFieldKey, value: unknown, context: { currency?: string | null } = {}): string[] {
   if (value === null || value === undefined) return [NO_VALUE_TEXT];
   const currency = context.currency ?? null;
-  if (fieldKey === "incentive" && isRecord(value) && value.applicable === true && Array.isArray(value.slabs) && value.slabs.length > 0) {
-    return (value.slabs as IncentiveSlab[]).map((slab) => incentiveSlabSummary(slab, currency));
+  if (fieldKey === "incentive" && isRecord(value) && value.applicable === true) {
+    const lines = Array.isArray(value.slabs) ? (value.slabs as IncentiveSlab[]).map((slab) => incentiveSlabSummary(slab, currency)) : [];
+    // A narrative-only incentive (no structured slabs) shows the narrative text itself.
+    if (lines.length === 0 && typeof value.narrative === "string" && value.narrative.trim().length > 0) return [value.narrative];
+    if (lines.length > 0) return lines;
   }
   if (fieldKey === "performanceTargets" && Array.isArray(value) && value.length > 0) {
     return (value as PerformanceTarget[]).map((target) => performanceTargetSummary(target));
+  }
+  if (fieldKey === "contentObligations" && Array.isArray(value) && value.length > 0) {
+    return (value as ContentObligation[]).map((row) => contentObligationSummary(row));
   }
   if (fieldKey === "lfcSfc" && isRecord(value) && isRecord(value.byFormat)) {
     // Display only: the Agreement's own format wording (often a full lowercase clause phrase, e.g. "long format audio

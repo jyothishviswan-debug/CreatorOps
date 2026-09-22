@@ -86,13 +86,25 @@ export type FieldEditorKind =
   | "advancePayment"
   | "incentive"
   | "lfcSfc"
+  | "contentObligations"
   | "performanceTargets"
   // identity VALUE: an acknowledgement only, never a value editor
   | "acknowledge"
   // system-supplied (agreementType, partnerRef, partnerAccountRefs, the KYC statuses): read-only
   | "computed";
 
-const LONG_TEXT_FIELDS: ReadonlySet<AgreementFieldKey> = new Set<AgreementFieldKey>(["renewalTerms", "noticeTerms", "terminationTerms", "invoiceDueTerms", "paymentDueTerms", "servicesMandated", "remarks"]);
+const LONG_TEXT_FIELDS: ReadonlySet<AgreementFieldKey> = new Set<AgreementFieldKey>([
+  "renewalTerms",
+  "noticeTerms",
+  "terminationTerms",
+  "invoiceDueTerms",
+  "paymentDueTerms",
+  "servicesMandated",
+  "remarks",
+  // FINAL_EXECUTION additive commercial / targets clause-text fields.
+  "monetisationTerms",
+  "performanceEvaluationClause",
+]);
 const SPECIAL_EDITORS: Partial<Record<AgreementFieldKey, FieldEditorKind>> = {
   currency: "currency",
   paymentCycle: "paymentCycle",
@@ -106,6 +118,7 @@ const SPECIAL_EDITORS: Partial<Record<AgreementFieldKey, FieldEditorKind>> = {
   advancePayment: "advancePayment",
   incentive: "incentive",
   lfcSfc: "lfcSfc",
+  contentObligations: "contentObligations",
   performanceTargets: "performanceTargets",
   signedDate: "date",
   effectiveDate: "date",

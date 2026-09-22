@@ -95,7 +95,7 @@ describe("the grouped summary", () => {
     const groups = buildReviewGroups(input({ draft: { performanceTargets: decided([{ targetRef: "t", metricId: "views", targetValue: 100, unit: "views", comparison: "at_least", affectsPayment: false }]) } }));
     expect(group(groups, "targets").chip?.label).toBe("Monitoring only · does not affect payment");
     // Step 14C.3: a known metric id is shown with its human label ("Views"), never the raw camelCase/lowercase id.
-    expect(group(groups, "targets").rows[0]!.text).toBe("Views: at least 100 views");
+    expect(group(groups, "targets").rows[0]!.text).toBe("Views: at least 100 views · Period not specified");
     expect(group(groups, "terms").rows.some((row) => row.label.toLowerCase().includes("target"))).toBe(false);
   });
 

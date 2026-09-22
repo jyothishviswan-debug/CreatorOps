@@ -1,5 +1,21 @@
 import { checkFieldDecisionValue, deriveAgreementType, type AgreementFieldDecisionKind, type AgreementFieldKey } from "@/server/finance-agreements/fields";
-import { MAX_AGREEMENT_PLATFORMS, MAX_INCENTIVE_SLABS, MAX_LFC_SFC_FORMATS, MAX_PERFORMANCE_TARGETS, PAYMENT_CYCLES, type AccountTransferFee, type AdvancePayment, type AgreementType, type FixedComponent, type Incentive, type IncentiveSlab, type LfcSfc, type PerformanceTarget } from "@/server/finance-agreements/terms";
+import {
+  MAX_AGREEMENT_PLATFORMS,
+  MAX_CONTENT_OBLIGATIONS,
+  MAX_INCENTIVE_SLABS,
+  MAX_LFC_SFC_FORMATS,
+  MAX_PERFORMANCE_TARGETS,
+  PAYMENT_CYCLES,
+  type AccountTransferFee,
+  type AdvancePayment,
+  type AgreementType,
+  type ContentObligation,
+  type FixedComponent,
+  type Incentive,
+  type IncentiveSlab,
+  type LfcSfc,
+  type PerformanceTarget,
+} from "@/server/finance-agreements/terms";
 import { normalizePlatformIdentifier } from "@/server/shared/platform";
 
 import { fieldLabel, isSupportedQualifyingUnit, isUtcDate, parseMoneyInputToMinor } from "./format";
@@ -284,6 +300,38 @@ export function buildPerformanceTargets(rows: readonly PerformanceTargetDraft[])
     else targets.push({ targetRef, metricId, targetValue, unit, comparison: "at_least", period: period.length > 0 ? period : null, anchor: anchor.length > 0 ? anchor : null, affectsPayment: false });
   });
   return errors.length > 0 ? fail(...errors) : okResult(targets);
+}
+
+// --- Content obligations (FINAL_EXECUTION #15: repeatable, additive alongside the single scalar count/unit pair) --------------------------------
+// `operationalMappingText` empty = "Needs mapping" (never silently mapped); `periodText` empty = the contract does not state one.
+export type ContentObligationDraft = { obligationRef?: string; label: string; quantityText: string; periodText?: string; operationalMappingText?: string };
+export const blankObligation = (): ContentObligationDraft => ({ label: "", quantityText: "" });
+
+export function buildContentObligations(rows: readonly ContentObligationDraft[]): ValidationResult<ContentObligation[]> {
+  if (rows.length > MAX_CONTENT_OBLIGATIONS) return fail(`At most ${MAX_CONTENT_OBLIGATIONS} content obligations.`);
+  const errors: string[] = [];
+  const obligations: ContentObligation[] = [];
+  const seen = new Set<string>();
+  rows.forEach((row, index) => {
+    const n = index + 1;
+    const label = row.label.trim();
+    const rowErrors: string[] = [];
+    if (label.length === 0 || label.length > 200) rowErrors.push(`Obligation ${n}: enter a label (up to 200 characters).`);
+    const quantityText = row.quantityText.replace(/,/g, "").trim();
+    const quantity = Number(quantityText);
+    if (quantityText.length === 0 || !/^\d+$/.test(quantityText) || !Number.isFinite(quantity) || quantity < 0 || quantity > 100_000) rowErrors.push(`Obligation ${n}: enter the quantity as a whole number.`);
+    const obligationRef = (row.obligationRef ?? "").trim() || `obligation-${n}`;
+    if (obligationRef.length > 100) rowErrors.push(`Obligation ${n}: the reference can be at most 100 characters.`);
+    if (seen.has(obligationRef)) rowErrors.push(`Obligation ${n}: obligation references must be unique.`);
+    seen.add(obligationRef);
+    const period = (row.periodText ?? "").trim();
+    const operationalMapping = (row.operationalMappingText ?? "").trim();
+    if (period.length > 60) rowErrors.push(`Obligation ${n}: the period can be at most 60 characters.`);
+    if (operationalMapping.length > 100) rowErrors.push(`Obligation ${n}: the operational mapping can be at most 100 characters.`);
+    if (rowErrors.length > 0) errors.push(...rowErrors);
+    else obligations.push({ obligationRef, label, quantity, period: period.length > 0 ? period : null, operationalMapping: operationalMapping.length > 0 ? operationalMapping : null });
+  });
+  return errors.length > 0 ? fail(...errors) : okResult(obligations);
 }
 
 // --- Cross-field rules of the assembled commercial terms (terms.ts superRefine) --------------------------------------------------------------------

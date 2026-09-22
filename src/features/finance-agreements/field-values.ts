@@ -1,5 +1,5 @@
 import { AGREEMENT_FIELD_BY_KEY, type AgreementFieldKey } from "@/server/finance-agreements/fields";
-import type { ConfirmedAgreementTerms, ContactSnapshot, IncentiveSlab, PerformanceTarget } from "@/server/finance-agreements/terms";
+import type { ConfirmedAgreementTerms, ContactSnapshot, ContentObligation, IncentiveSlab, PerformanceTarget } from "@/server/finance-agreements/terms";
 
 import {
   NO_VALUE_TEXT,
@@ -72,8 +72,16 @@ export function incentiveSlabSummary(slab: IncentiveSlab, currency: string | nul
 
 // A target's metric id is a raw registry/analytics id (e.g. "followerGrowth") - never shown as typed; targetMetricLabel()
 // turns a known one into its human label ("Follower growth") and otherwise falls back to the id as written.
+// FINAL_EXECUTION #18: the contract's own period wording is shown as written; a target with no stated period reads
+// "Period not specified" - never a guessed/invented cadence such as "monthly".
 export function performanceTargetSummary(target: PerformanceTarget): string {
-  return `${targetMetricLabel(target.metricId)}: at least ${target.targetValue} ${target.unit}`;
+  return `${targetMetricLabel(target.metricId)}: at least ${target.targetValue} ${target.unit} · ${target.period ?? "Period not specified"}`;
+}
+
+// FINAL_EXECUTION #15: a repeatable content-obligation row. A missing operational mapping reads "Needs mapping" -
+// the contract's own wording is never silently converted to a CreatorOps operational unit.
+export function contentObligationSummary(row: ContentObligation): string {
+  return `${row.label}: ${row.quantity}${row.period ? ` · ${row.period}` : ""} · ${row.operationalMapping ?? "Needs mapping"}`;
 }
 
 // A short, safe text for any registry field's value (a draft entry's value or a confirmed term). Identity VALUE fields

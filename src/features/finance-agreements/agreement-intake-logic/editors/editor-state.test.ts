@@ -94,12 +94,12 @@ describe("money editors (rupees <-> integer minor units, no floats)", () => {
 describe("incentive slabs", () => {
   const slab = { metricId: "views", lowerBoundText: "1000", upperBoundText: "5000", unit: "views", amountText: "2500", description: "" };
   it("builds slabs with exact minor units and refs, and needs at least one", () => {
-    const result = value("incentive", { kind: "incentive", slabs: [slab] });
+    const result = value("incentive", { kind: "incentive", narrativeText: "", slabs: [slab] });
     expect(result).toEqual({ ok: true, value: { applicable: true, narrative: null, slabs: [{ slabRef: "slab-1", metricId: "views", lowerBound: 1000, upperBound: 5000, unit: "views", amountMinor: 250000, description: null }] } });
-    expect(value("incentive", { kind: "incentive", slabs: [] }).ok).toBe(false);
+    expect(value("incentive", { kind: "incentive", narrativeText: "", slabs: [] }).ok).toBe(false);
   });
   it("reports bounds and blanks per slab", () => {
-    const bad = value("incentive", { kind: "incentive", slabs: [{ ...slab, upperBoundText: "500" }, { ...blankSlab() }] });
+    const bad = value("incentive", { kind: "incentive", narrativeText: "", slabs: [{ ...slab, upperBoundText: "500" }, { ...blankSlab() }] });
     expect(bad.ok).toBe(false);
     if (!bad.ok) {
       expect(bad.errors.some((message) => message.includes("Slab 1") && message.includes("upper bound"))).toBe(true);
@@ -109,7 +109,7 @@ describe("incentive slabs", () => {
   it("round-trips a stored value into the editor and back", () => {
     const stored = { applicable: true, narrative: null, slabs: [{ slabRef: "s1", metricId: "reach", lowerBound: 0, upperBound: null, unit: "accounts", amountMinor: 100050, description: "Base" }] };
     const state = initialEditorState("incentive", "incentive", stored);
-    expect(state).toEqual({ kind: "incentive", slabs: [{ slabRef: "s1", metricId: "reach", lowerBoundText: "0", upperBoundText: "", unit: "accounts", amountText: "1000.50", description: "Base" }] });
+    expect(state).toEqual({ kind: "incentive", narrativeText: "", slabs: [{ slabRef: "s1", metricId: "reach", lowerBoundText: "0", upperBoundText: "", unit: "accounts", amountText: "1000.50", description: "Base" }] });
     expect(value("incentive", state)).toEqual({ ok: true, value: stored });
   });
 });
@@ -149,7 +149,7 @@ describe("blank detection", () => {
     expect(isEditorStateBlank({ kind: "text", text: "  " })).toBe(true);
     expect(isEditorStateBlank({ kind: "boolean", value: null })).toBe(true);
     expect(isEditorStateBlank({ kind: "money", draft: { applicable: true, amountText: "", details: "" } })).toBe(true);
-    expect(isEditorStateBlank({ kind: "incentive", slabs: [] })).toBe(true);
+    expect(isEditorStateBlank({ kind: "incentive", narrativeText: "", slabs: [] })).toBe(true);
     expect(isEditorStateBlank({ kind: "targets", rows: [blankTarget()] })).toBe(false);
     expect(isEditorStateBlank({ kind: "text", text: "x" })).toBe(false);
   });
@@ -163,7 +163,8 @@ describe("value lines", () => {
     // incentive slabs and performance targets.
     const slabs = { applicable: true, slabs: [{ slabRef: "a", metricId: "views", lowerBound: 0, upperBound: 10, unit: "views", amountMinor: 100000, description: null }, { slabRef: "b", metricId: "views", lowerBound: 10, upperBound: null, unit: "views", amountMinor: 200000, description: null }] };
     expect(valueLines("incentive", slabs, { currency: "INR" })).toEqual(["Views: 0–10 views → ₹1,000", "Views: 10+ views → ₹2,000"]);
-    expect(valueLines("performanceTargets", [{ targetRef: "t", metricId: "reach", targetValue: 5, unit: "accounts", comparison: "at_least", affectsPayment: false }])).toEqual(["Reach: at least 5 accounts"]);
+    expect(valueLines("performanceTargets", [{ targetRef: "t", metricId: "reach", targetValue: 5, unit: "accounts", comparison: "at_least", affectsPayment: false }])).toEqual(["Reach: at least 5 accounts · Period not specified"]);
+    expect(valueLines("performanceTargets", [{ targetRef: "t", metricId: "reach", targetValue: 5, unit: "accounts", comparison: "at_least", period: "Every 30 days", affectsPayment: false }])).toEqual(["Reach: at least 5 accounts · Every 30 days"]);
     expect(valueLines("lfcSfc", { byFormat: { Reel: "SFC", Video: "LFC" } })).toEqual(["Reel: SFC", "Video: LFC"]);
     expect(valueLines("qualifyingUnit", "reel")).toEqual(["reel"]);
     expect(valueLines("qualifyingUnit", "approved_content_thread")).toEqual(["Approved Content"]);

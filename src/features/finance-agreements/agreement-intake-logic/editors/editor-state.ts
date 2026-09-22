@@ -6,6 +6,7 @@ import {
   TEXT_FIELD_LIMITS,
   buildAccountTransferFee,
   buildAdvancePayment,
+  buildContentObligations,
   buildFixedComponent,
   buildIncentive,
   buildLfcSfc,
@@ -18,6 +19,7 @@ import {
   validateQualifyingCount,
   validateQualifyingUnit,
   validateTextField,
+  type ContentObligationDraft,
   type IncentiveSlabDraft,
   type LfcSfcRowDraft,
   type MoneyComponentDraft,
@@ -38,9 +40,10 @@ export type FieldEditorState =
   | { kind: "boolean"; value: boolean | null }
   | { kind: "platforms"; text: string }
   | { kind: "money"; draft: MoneyComponentDraft }
-  | { kind: "incentive"; slabs: IncentiveSlabDraft[] }
+  | { kind: "incentive"; narrativeText: string; slabs: IncentiveSlabDraft[] }
   | { kind: "lfcSfc"; ruleRef: string; rows: LfcSfcRowDraft[] }
-  | { kind: "targets"; rows: PerformanceTargetDraft[] };
+  | { kind: "targets"; rows: PerformanceTargetDraft[] }
+  | { kind: "obligations"; rows: ContentObligationDraft[] };
 
 const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 const asText = (value: unknown): string => (typeof value === "string" ? value : "");
@@ -52,12 +55,13 @@ export const MONEY_EDITORS: ReadonlySet<FieldEditorKind> = new Set<FieldEditorKi
 
 // Does an editor exist that can produce a value for this field? (identity values, computed fields and unknown kinds: no.)
 export function hasValueEditor(kind: FieldEditorKind): boolean {
-  return TEXT_LIKE_EDITORS.has(kind) || MONEY_EDITORS.has(kind) || kind === "boolean" || kind === "platforms" || kind === "incentive" || kind === "lfcSfc" || kind === "performanceTargets";
+  return TEXT_LIKE_EDITORS.has(kind) || MONEY_EDITORS.has(kind) || kind === "boolean" || kind === "platforms" || kind === "incentive" || kind === "lfcSfc" || kind === "performanceTargets" || kind === "contentObligations";
 }
 
 export const blankSlab = (): IncentiveSlabDraft => ({ metricId: "", lowerBoundText: "", upperBoundText: "", unit: "", amountText: "", description: "" });
 export const blankLfcSfcRow = (): LfcSfcRowDraft => ({ format: "", kind: "LFC" });
 export const blankTarget = (): PerformanceTargetDraft => ({ metricId: "", targetValueText: "", unit: "" });
+export { blankObligation } from "../../terms-validators";
 
 // --- value -> editor state -------------------------------------------------------------------------------------------------------------------
 function moneyDraftFrom(value: unknown): MoneyComponentDraft {
@@ -77,9 +81,11 @@ export function initialEditorState(fieldKey: AgreementFieldKey, kind: FieldEdito
     case "platforms":
       return { kind: "platforms", text: Array.isArray(value) ? value.filter((item): item is string => typeof item === "string").join(", ") : "" };
     case "incentive": {
-      const slabs = isRecord(value) && Array.isArray(value.slabs) ? value.slabs : [];
+      const record = isRecord(value) ? value : {};
+      const slabs = Array.isArray(record.slabs) ? record.slabs : [];
       return {
         kind: "incentive",
+        narrativeText: asText(record.narrative),
         slabs: slabs.filter(isRecord).map((slab) => ({
           slabRef: asText(slab.slabRef),
           metricId: asText(slab.metricId),
@@ -109,6 +115,21 @@ export function initialEditorState(fieldKey: AgreementFieldKey, kind: FieldEdito
           metricId: asText(target.metricId),
           targetValueText: numberText(target.targetValue),
           unit: asText(target.unit),
+          periodText: asText(target.period),
+          anchorText: asText(target.anchor),
+        })),
+      };
+    }
+    case "contentObligations": {
+      const rows = Array.isArray(value) ? value : [];
+      return {
+        kind: "obligations",
+        rows: rows.filter(isRecord).map((row) => ({
+          obligationRef: asText(row.obligationRef),
+          label: asText(row.label),
+          quantityText: numberText(row.quantity),
+          periodText: asText(row.period),
+          operationalMappingText: asText(row.operationalMapping),
         })),
       };
     }
@@ -173,13 +194,16 @@ export function editorStateToValue(fieldKey: AgreementFieldKey, kind: FieldEdito
             : buildAdvancePayment({ ...state.draft, applicable: true });
       break;
     case "incentive":
-      built = buildIncentive({ applicable: true, slabs: state.slabs });
+      built = buildIncentive({ applicable: true, narrativeText: state.narrativeText, slabs: state.slabs });
       break;
     case "lfcSfc":
       built = buildLfcSfc({ ruleRef: state.ruleRef, rows: state.rows });
       break;
     case "targets":
       built = buildPerformanceTargets(state.rows);
+      break;
+    case "obligations":
+      built = buildContentObligations(state.rows);
       break;
   }
   if (!built.ok) return built;
@@ -198,10 +222,12 @@ export function isEditorStateBlank(state: FieldEditorState): boolean {
     case "money":
       return state.draft.amountText.trim().length === 0 && (state.draft.details ?? "").trim().length === 0;
     case "incentive":
-      return state.slabs.length === 0;
+      return state.slabs.length === 0 && state.narrativeText.trim().length === 0;
     case "lfcSfc":
       return state.rows.length === 0;
     case "targets":
+      return state.rows.length === 0;
+    case "obligations":
       return state.rows.length === 0;
   }
 }
