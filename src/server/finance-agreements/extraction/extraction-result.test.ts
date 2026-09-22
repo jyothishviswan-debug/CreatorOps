@@ -46,7 +46,12 @@ describe("classifyExtraction", () => {
 
   it("is MANUAL_REVIEW_REQUIRED (few_fields) when fewer than the minimum proposals exist", () => {
     expect(MIN_FIELDS_FOR_PARTIAL).toBe(3);
-    const fields = proposals("Collaborator Name: Acme Studio", "Effective Date: 1 April 2025");
+    // DELIBERATE CHANGE: a document with no incentive/bonus/slab language now always gains a LOW-confidence
+    // "no_incentive_language_found" suggestion (see incentive-target-rules.ts), so a 2-line fixture without that
+    // wording no longer stays at 2 fields. One line (1 real field + the incentive suggestion = 2) keeps this test's
+    // premise - "fewer than the minimum" - meaningful; classifyExtraction's commercial_structure check was updated
+    // alongside it so that suggestion alone never counts as a found commercial structure.
+    const fields = proposals("Collaborator Name: Acme Studio");
     expect(fields).toHaveLength(2);
     expect(classifyExtraction(okPdf, fields)).toMatchObject({ status: "MANUAL_REVIEW_REQUIRED", reasons: ["few_fields", "missing_core_fields"] });
     expect(classifyExtraction(okPdf, [])).toMatchObject({ status: "MANUAL_REVIEW_REQUIRED", reasons: ["few_fields", "missing_core_fields"], fieldCount: 0 });

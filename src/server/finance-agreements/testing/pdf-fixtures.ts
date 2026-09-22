@@ -5,6 +5,12 @@
 // Limits (deliberate): Helvetica / WinAnsi only. Characters above U+00FF (for
 // example the rupee sign) cannot be encoded by the standard font and are
 // written as "?" - use "Rs." in synthetic contract text.
+//
+// A line is drawn at 11pt starting 40pt from the left edge and is NEVER wrapped - unlike a real PDF (already wrapped
+// by whatever produced it). A line whose RENDERED width runs past the page's own right edge loses its tail on the
+// extraction round trip (Helvetica is proportional, so this is about drawn width, not a fixed character count - a
+// digit/parenthesis/capital-heavy line clips well under 100 characters). Keep each input line comfortably short
+// (under ~90 characters is a safe margin) if it must be read back whole.
 
 const PAGE_WIDTH = 595;
 const PAGE_HEIGHT = 842;

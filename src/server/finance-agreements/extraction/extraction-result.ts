@@ -49,6 +49,16 @@ function hasAmount(fields: readonly ExtractedFieldProposal[]): boolean {
   });
 }
 
+// A field counts toward the commercial-structure core requirement only when it actually found something. The
+// incentive rule may propose a LOW-confidence {applicable:false} "no incentive language found" SUGGESTION for a
+// document that says nothing about incentives at all (see incentive-target-rules.ts) - that suggestion is not
+// evidence of a commercial structure, so it must never by itself satisfy this requirement.
+function satisfiesCommercialCore(field: ExtractedFieldProposal | undefined): boolean {
+  if (!field) return false;
+  if (field.fieldKey === "incentive") return field.normalizedValue.applicable;
+  return true;
+}
+
 export function classifyExtraction(pdfResult: PdfTextResult, fields: readonly ExtractedFieldProposal[], warnings: readonly ExtractionWarning[] = []): ExtractionClassification {
   // A PDF that could not be read yields NO usable proposals, whatever `fields` holds:
   // never partial garbage from a failed parse.
@@ -59,7 +69,7 @@ export function classifyExtraction(pdfResult: PdfTextResult, fields: readonly Ex
   const missingCore: string[] = [];
 
   for (const key of CORE_REQUIRED_FIELDS) if (!present.has(key)) missingCore.push(key);
-  if (!CORE_COMMERCIAL_ANY_OF.some((key) => present.has(key))) missingCore.push("commercial_structure");
+  if (!CORE_COMMERCIAL_ANY_OF.some((key) => satisfiesCommercialCore(present.get(key)))) missingCore.push("commercial_structure");
   if (hasAmount(fields) && !present.has("currency")) missingCore.push("currency");
 
   if (fields.length < MIN_FIELDS_FOR_PARTIAL) {

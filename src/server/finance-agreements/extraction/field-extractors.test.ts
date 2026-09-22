@@ -150,7 +150,10 @@ describe("contact / identity rules", () => {
   });
 
   it("takes a PIN from a PIN label, never from a bare 6-digit number", () => {
-    expect(field(run(["PIN Code: 400 001"]), "pinCode")).toBeUndefined(); // spaced digits are not a strict 6-digit PIN
+    // DELIBERATE CHANGE: a conventional Indian PIN carries a space after the 3rd digit ("144 005", seen in real
+    // contracts) - a LABEL-anchored spaced PIN is now accepted (and the space normalized away); only an UNLABELED
+    // bare number stays rejected, and a labeled but unspaced PIN is unaffected.
+    expect(field(run(["PIN Code: 400 001"]), "pinCode")).toMatchObject({ normalizedValue: "400001", confidence: "MEDIUM" });
     expect(field(run(["Pincode: 400001"]), "pinCode")).toMatchObject({ normalizedValue: "400001", confidence: "MEDIUM" });
     expect(field(run(["Reference 400001 in the ledger"]), "pinCode")).toBeUndefined();
     expect(field(run(["PIN: 012345"]), "pinCode")).toBeUndefined();

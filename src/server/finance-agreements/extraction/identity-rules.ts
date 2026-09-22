@@ -1,4 +1,6 @@
+import type { ExtractedFieldKey } from "./extraction-types";
 import { findIndianMobiles, findStates, verhoeffIsValid } from "./parsers";
+import { declaredAddressOf, findForRoleLines, findPartyDeclarations, inZoneOfRole, partyZones, type PartyDeclaration } from "./party-roles";
 import { addFieldWarning, emit, findProposal, pickAndEmit, warn, type RuleContext } from "./rule-context";
 import { cleanValueText, finderCandidates, isPlaceholder, labelLines, labeledFinder, regexFinder, type Candidate, type DocText } from "./text-utils";
 
@@ -6,6 +8,14 @@ import { cleanValueText, finderCandidates, isPlaceholder, labelLines, labeledFin
 // identity fields. Contact/address facts appear for BOTH parties of a contract,
 // so they are capped at MEDIUM; identity values are restricted (their values and
 // snippets never leave the restricted record - see extraction-result.ts).
+
+// When the WINNING candidate carries explicit role evidence ("role_attributed" - see party-roles.ts), the generic
+// "verify_party_attribution" downgrade (added unconditionally by pickAndEmit's extraWarnings, before it is known
+// which candidate wins) is no longer the right note to leave on the proposal - drop it in favour of the stronger one.
+function preferRoleAttribution(ctx: RuleContext, fieldKey: ExtractedFieldKey): void {
+  const proposal = findProposal(ctx, fieldKey);
+  if (proposal?.warnings.includes("role_attributed")) proposal.warnings = proposal.warnings.filter((w) => w !== "verify_party_attribution");
+}
 
 // Text after a name label stops at the next inline label ("... PAN: X") or a
 // "(hereinafter ...)" recital.
@@ -30,23 +40,55 @@ function nameCandidates(doc: DocText, labelSource: string): Candidate<string>[] 
 
 const COUNTERPARTY_LABEL = String.raw`(?:collaborator|partner|vendor|creator|influencer|service\s+provider|page\s+owner|channel\s+owner)(?:'s)?\s+(?:legal\s+|full\s+|registered\s+)?name|name\s+of\s+(?:the\s+)?(?:collaborator|partner|vendor|creator|influencer|service\s+provider|second\s+party|party\s+b|firm|agency)|legal\s+name|registered\s+name|(?:agency|firm)\s+name|second\s+party|party\s+b`;
 
+// A party-declaration-style candidate ("2nd Party: NAME S/o FATHER, ...") for the party whose role resolves to the
+// counterparty - an ADDITIVE source alongside the label-based nameCandidates above (see party-roles.ts).
+function declaredNameCandidates(declarations: readonly PartyDeclaration[]): Candidate<string>[] {
+  return declarations
+    .filter((d) => d.side === "counterparty")
+    .map((d) => ({ value: d.name, key: d.name.toLowerCase(), page: d.page, index: d.index, length: d.length, labeled: true, warnings: ["role_attributed"] }));
+}
+
 export function extractCounterpartyName(ctx: RuleContext): void {
-  pickAndEmit(ctx, "counterpartyName", nameCandidates(ctx.doc, COUNTERPARTY_LABEL), { labeledConfidence: "MEDIUM", unlabeledConfidence: null, cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
+  const declarations = findPartyDeclarations(ctx.doc);
+  const candidates = [...nameCandidates(ctx.doc, COUNTERPARTY_LABEL), ...declaredNameCandidates(declarations)];
+  pickAndEmit(ctx, "counterpartyName", candidates, { labeledConfidence: "MEDIUM", unlabeledConfidence: null, cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
+  preferRoleAttribution(ctx, "counterpartyName");
 }
 
 export function extractContactNumber(ctx: RuleContext): void {
+  const zones = partyZones(ctx.doc);
+  const notOperator = <V,>(c: Candidate<V>) => !inZoneOfRole(zones, "operator", c.page, c.index);
   const finder = (region: string) => findIndianMobiles(region).map((m) => ({ value: m.e164, key: m.e164, index: m.index, length: m.length }));
-  const labeled = labeledFinder(ctx.doc, String.raw`(?:mobile|phone|contact|cell|tel(?:ephone)?|whatsapp|mob)(?:\s*(?:no|number|num))?`, finder, { window: 60, nextLine: true });
+  const labeled = labeledFinder(ctx.doc, String.raw`(?:mobile|phone|contact|cell|tel(?:ephone)?|whatsapp|mob)(?:\s*(?:no|number|num))?`, finder, { window: 60, nextLine: true }).filter(notOperator);
   // Unlabeled numbers only count with an explicit +91/91 country prefix.
-  const prefixed = finderCandidates(ctx.doc, (region) => findIndianMobiles(region).filter((m) => m.prefixed).map((m) => ({ value: m.e164, key: m.e164, index: m.index, length: m.length })));
+  const prefixed = finderCandidates(ctx.doc, (region) => findIndianMobiles(region).filter((m) => m.prefixed).map((m) => ({ value: m.e164, key: m.e164, index: m.index, length: m.length }))).filter(notOperator);
   pickAndEmit(ctx, "contactNumber", [...labeled, ...prefixed], { labeledConfidence: "MEDIUM", unlabeledConfidence: "LOW", cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
 }
 
 const EMAIL_FINDER = regexFinder(/[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}/g, (m) => ({ value: m[0].toLowerCase(), key: m[0].toLowerCase() }));
 
 export function extractEmail(ctx: RuleContext): void {
-  const labeled = labeledFinder(ctx.doc, String.raw`e-?mail(?:\s*(?:id|address))?|mail\s*id`, EMAIL_FINDER, { window: 90, nextLine: true });
-  pickAndEmit(ctx, "emailAddress", [...labeled, ...finderCandidates(ctx.doc, EMAIL_FINDER)], { labeledConfidence: "MEDIUM", unlabeledConfidence: "LOW", cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
+  const roleLines = findForRoleLines(ctx.doc);
+  const zones = partyZones(ctx.doc);
+  const notOperator = <V,>(c: Candidate<V>) => !inZoneOfRole(zones, "operator", c.page, c.index);
+
+  // An explicit "For the <counterparty role>:" notice label is stronger evidence than a generic "Email:" label, and
+  // settles the attribution outright - the Client's own "For the Client: ..." email(s) are never a competing value.
+  const declared: Candidate<string>[] = [];
+  for (const line of roleLines) {
+    if (line.side !== "counterparty") continue;
+    const found = EMAIL_FINDER(line.text)[0];
+    if (!found) continue;
+    declared.push({ value: found.value, key: found.key, page: line.page, index: line.index, length: line.length, labeled: true, warnings: ["role_attributed"] });
+  }
+  if (declared.length > 0) {
+    pickAndEmit(ctx, "emailAddress", declared, { labeledConfidence: "HIGH", unlabeledConfidence: null });
+    return;
+  }
+
+  const labeled = labeledFinder(ctx.doc, String.raw`e-?mail(?:\s*(?:id|address))?|mail\s*id`, EMAIL_FINDER, { window: 90, nextLine: true }).filter(notOperator);
+  const unlabeled = finderCandidates(ctx.doc, EMAIL_FINDER).filter(notOperator);
+  pickAndEmit(ctx, "emailAddress", [...labeled, ...unlabeled], { labeledConfidence: "MEDIUM", unlabeledConfidence: "LOW", cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
 }
 
 // --- Address / PIN / state ------------------------------------------------------------
@@ -82,15 +124,35 @@ function derivedPin(text: string): string | null {
 }
 
 export function extractAddressPinState(ctx: RuleContext): void {
-  const blocks = addressBlocks(ctx.doc);
-  const addressCandidates: Candidate<string>[] = blocks.map((b) => ({ value: b.text, key: b.text.toLowerCase(), page: b.page, index: b.index, length: b.length, labeled: true }));
-  const chosenAddress = pickAndEmit(ctx, "address", addressCandidates, { labeledConfidence: "MEDIUM", unlabeledConfidence: null, cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
+  const zones = partyZones(ctx.doc);
+  const notOperator = <V,>(c: Candidate<V>) => !inZoneOfRole(zones, "operator", c.page, c.index);
+  const declaredAddresses = findPartyDeclarations(ctx.doc)
+    .filter((d) => d.side === "counterparty")
+    .map(declaredAddressOf)
+    .filter((d): d is NonNullable<typeof d> => d !== null);
 
-  // PIN: label-anchored first; else only the trailing PIN of the chosen address block.
-  const pinFinder = regexFinder(/(?<!\d)([1-9]\d{5})(?!\d)/g, (m) => ({ value: m[1]!, key: m[1]! }));
-  const labeledPins = labeledFinder(ctx.doc, String.raw`pin(?:\s*code)?|postal\s+code|zip(?:\s*code)?`, pinFinder, { window: 40, nextLine: true });
+  const blocks = addressBlocks(ctx.doc);
+  const addressCandidates: Candidate<string>[] = [
+    ...blocks.map((b) => ({ value: b.text, key: b.text.toLowerCase(), page: b.page, index: b.index, length: b.length, labeled: true })).filter(notOperator),
+    ...declaredAddresses.map((d) => ({ value: d.text, key: d.text.toLowerCase(), page: d.page, index: d.index, length: d.length, labeled: true, warnings: ["role_attributed"] })),
+  ];
+  const chosenAddress = pickAndEmit(ctx, "address", addressCandidates, { labeledConfidence: "MEDIUM", unlabeledConfidence: null, cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
+  preferRoleAttribution(ctx, "address");
+  const chosenIsRoleAttributed = Boolean(chosenAddress && declaredAddresses.some((d) => d.page === chosenAddress.page && d.index === chosenAddress.index));
+
+  // PIN: label-anchored first (accepts the conventional Indian inner space, "144 005"); else the party declaration's
+  // own PIN (when the chosen address came from one); else the trailing PIN of the chosen address block.
+  const pinFinder = regexFinder(/(?<!\d)([1-9]\d{2})\s?(\d{3})(?!\d)/g, (m) => ({ value: `${m[1]}${m[2]}`, key: `${m[1]}${m[2]}` }));
+  const labeledPins = labeledFinder(ctx.doc, String.raw`pin(?:\s*code)?|postal\s+code|zip(?:\s*code)?`, pinFinder, { window: 40, nextLine: true }).filter(notOperator);
   const picked = pickAndEmit(ctx, "pinCode", labeledPins, { labeledConfidence: "MEDIUM", unlabeledConfidence: null, cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
-  if (!picked && chosenAddress) {
+  if (picked && inZoneOfRole(zones, "counterparty", picked.page, picked.index)) {
+    addFieldWarning(ctx, "pinCode", "role_attributed");
+    preferRoleAttribution(ctx, "pinCode");
+  }
+  if (!picked && chosenAddress && chosenIsRoleAttributed) {
+    const declared = declaredAddresses.find((d) => d.page === chosenAddress.page && d.index === chosenAddress.index);
+    if (declared) emit(ctx, "pinCode", declared.pin, { page: declared.pinPage, index: declared.pinIndex, length: declared.pinLength }, "MEDIUM", ["role_attributed"]);
+  } else if (!picked && chosenAddress) {
     const pin = derivedPin(chosenAddress.value);
     if (pin) emit(ctx, "pinCode", pin, chosenAddress, "LOW", ["derived_from_address", "verify_party_attribution"]);
   }
@@ -103,10 +165,10 @@ export function extractAddressPinState(ctx: RuleContext): void {
     if (states.length > 0) stateCandidates.push({ value: states[0]!, key: states[0]!, page: row.line.page, index: row.line.start, length: row.line.text.length, labeled: true });
     else if (!isPlaceholder(row.tail)) statePresentButNotCanonical = true;
   }
-  const pickedState = pickAndEmit(ctx, "state", stateCandidates, { labeledConfidence: "MEDIUM", unlabeledConfidence: null, cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
+  const pickedState = pickAndEmit(ctx, "state", stateCandidates.filter(notOperator), { labeledConfidence: "MEDIUM", unlabeledConfidence: null, cap: "MEDIUM", extraWarnings: ["verify_party_attribution"] });
   if (!pickedState && chosenAddress) {
     const inAddress = findStates(chosenAddress.value);
-    if (inAddress.length === 1) emit(ctx, "state", inAddress[0]!, chosenAddress, "LOW", ["derived_from_address", "verify_party_attribution"]);
+    if (inAddress.length === 1) emit(ctx, "state", inAddress[0]!, chosenAddress, chosenIsRoleAttributed ? "MEDIUM" : "LOW", chosenIsRoleAttributed ? ["derived_from_address", "role_attributed"] : ["derived_from_address", "verify_party_attribution"]);
   }
   if (!pickedState && statePresentButNotCanonical && !findProposal(ctx, "state")) warn(ctx, "state_not_in_canonical_list", "state");
 }
@@ -142,7 +204,17 @@ export function extractPan(ctx: RuleContext): void {
 
 export function extractPanHolderName(ctx: RuleContext): void {
   const label = String.raw`name\s+(?:as\s+per|on|in)\s+(?:the\s+)?pan(?:\s+card)?|pan\s+(?:card\s+)?holder(?:'?s)?(?:\s+name)?|name\s+of\s+(?:the\s+)?pan\s+(?:card\s+)?holder`;
-  pickAndEmit(ctx, "panHolderName", nameCandidates(ctx.doc, label), { labeledConfidence: "MEDIUM", unlabeledConfidence: null, cap: "MEDIUM" });
+  const picked = pickAndEmit(ctx, "panHolderName", nameCandidates(ctx.doc, label), { labeledConfidence: "MEDIUM", unlabeledConfidence: null, cap: "MEDIUM" });
+  if (picked) return;
+  // No explicit "Name as per PAN:" label: when the PAN itself sits inside the counterparty's own declaration block
+  // ("2nd Party: NAME ..., having PAN: ..."), the counterparty's declared name IS the PAN holder - a weaker (MEDIUM)
+  // inference than an explicit label, since the two could in principle differ.
+  const pan = findProposal(ctx, "panNumber");
+  if (!pan) return;
+  const declaration = findPartyDeclarations(ctx.doc)
+    .filter((d) => d.side === "counterparty")
+    .find((d) => PAN_FINDER(d.sentence.flat).some((found) => found.value === pan.normalizedValue));
+  if (declaration) emit(ctx, "panHolderName", declaration.name, { page: declaration.page, index: declaration.index, length: declaration.length }, "MEDIUM", ["holder_inferred_from_party_block"]);
 }
 
 const AADHAAR_FINDER = (region: string) => {

@@ -122,19 +122,24 @@ export function regexFinder<V>(valueRegex: RegExp, build: (match: RegExpExecArra
 // in a line (not only at line start). The window stops one label's search from
 // swallowing another label's value. `nextLine` lets a label that ends its line
 // take the value from the following line.
-export function labeledFinder<V>(doc: DocText, labelSource: string, finder: Finder<V>, options: { window?: number; nextLine?: boolean } = {}): Candidate<V>[] {
+//
+// `context` (default 0) lets the finder SEE that many extra characters beyond the window - used to read a
+// "(date in words)" parenthetical that follows a value - but a value only counts when it lies inside the window.
+export function labeledFinder<V>(doc: DocText, labelSource: string, finder: Finder<V>, options: { window?: number; nextLine?: boolean; context?: number } = {}): Candidate<V>[] {
   const window = options.window ?? 70;
+  const context = options.context ?? 0;
+  const inWindow = (found: FoundValue<V>) => found.index + found.length <= window;
   const labelRegex = new RegExp(`(?:^|[\\s,;|(])(?:${labelSource})\\b\\s*(?:\\([^)]{0,40}\\))?\\s*[:\\uFF1A=\\-\\u2013\\u2014]?\\s*`, "gi");
   const out: Candidate<V>[] = [];
   for (const line of doc.lines) {
     for (const label of line.text.matchAll(labelRegex)) {
       const from = label.index! + label[0].length;
-      let found = finder(line.text.slice(from, from + window))[0];
+      let found = finder(line.text.slice(from, from + window + context)).find(inWindow);
       let base = { line, offset: from };
       if (!found && options.nextLine && from >= line.text.length) {
         const next = doc.lines[line.lineIndex + 1];
         if (next && next.page === line.page && next.text) {
-          found = finder(next.text.slice(0, window))[0];
+          found = finder(next.text.slice(0, window + context)).find(inWindow);
           base = { line: next, offset: 0 };
         }
       }
@@ -187,4 +192,78 @@ const PLACEHOLDER = /^(?:n\/?a|nil|none|not applicable|not available|na|tbd|to b
 export function isPlaceholder(text: string): boolean {
   const cleaned = text.replace(/[\s_.*]+/g, (run) => (run.replace(/\s/g, "").length ? run : " ")).trim();
   return cleaned.length === 0 || PLACEHOLDER.test(cleaned) || /^[_.\s]{3,}$/.test(text);
+}
+
+// --- Sentences (page-level, line-wrap tolerant) -------------------------------------------------------------------
+
+// A contract sentence routinely wraps over several PDF lines, so a rule that must read a whole clause ("The Fee shall be
+// contingent upon <wrap> the submission of ...") cannot work line by line. A Sentence is a run of one page's text between
+// sentence boundaries; `flat` is its whitespace-collapsed text and `map[i]` the offset of flat[i] in the RAW page text, so
+// a hit found in `flat` still points at the right place for the page number and the snippet.
+export type Sentence = { page: number; index: number; length: number; flat: string; map: Int32Array };
+
+const MAX_SENTENCE_CHARS = 1600;
+const ABBREVIATION_BEFORE = /(?:\b(?:Rs|No|Nos|Pvt|Ltd|Inc|Co|Mr|Ms|Mrs|Dr|St|Sr|Jr|Vs|Viz|Approx|Dept|Ref)|\bi\.e|\be\.g)\.$/i;
+// A boundary is ". "/"; " before a capital/quote/digit, a blank line, or a numbered clause marker at a line start.
+const SENTENCE_BOUNDARY = /(?<=[.;])[ \t\r\n]+(?=[A-Z(“"‘\d])|\n[ \t\r]*\n|\n(?=[ \t]*\d{1,2}(?:\.\d{1,3})+\.?[ \t]+[A-Z])/g;
+
+function buildSentence(page: number, pageText: string, start: number, end: number): Sentence | null {
+  const raw = pageText.slice(start, end);
+  const chars: string[] = [];
+  const map: number[] = [];
+  let lastWasSpace = true;
+  for (let i = 0; i < raw.length; i++) {
+    const ch = raw[i]!;
+    if (/\s/.test(ch)) {
+      if (!lastWasSpace) {
+        chars.push(" ");
+        map.push(start + i);
+      }
+      lastWasSpace = true;
+    } else {
+      chars.push(ch);
+      map.push(start + i);
+      lastWasSpace = false;
+    }
+  }
+  while (chars.length > 0 && chars[chars.length - 1] === " ") {
+    chars.pop();
+    map.pop();
+  }
+  if (chars.length < 4) return null;
+  return { page, index: map[0]!, length: map[map.length - 1]! - map[0]! + 1, flat: chars.join(""), map: Int32Array.from(map) };
+}
+
+const SENTENCE_CACHE = new WeakMap<DocText, Sentence[]>();
+
+export function sentencesOf(doc: DocText): Sentence[] {
+  const cached = SENTENCE_CACHE.get(doc);
+  if (cached) return cached;
+  const out: Sentence[] = [];
+  doc.pages.forEach((pageText, pageIndex) => {
+    let start = 0;
+    const push = (end: number) => {
+      // Hard cap: an unpunctuated wall of text is cut, never scanned as one unbounded sentence.
+      for (let from = start; from < end; from += MAX_SENTENCE_CHARS) {
+        const sentence = buildSentence(pageIndex + 1, pageText, from, Math.min(end, from + MAX_SENTENCE_CHARS));
+        if (sentence) out.push(sentence);
+      }
+    };
+    for (const boundary of pageText.matchAll(SENTENCE_BOUNDARY)) {
+      const at = boundary.index!;
+      if (ABBREVIATION_BEFORE.test(pageText.slice(Math.max(0, at - 8), at))) continue;
+      push(at);
+      start = at + boundary[0].length;
+    }
+    push(pageText.length);
+  });
+  SENTENCE_CACHE.set(doc, out);
+  return out;
+}
+
+// The RAW-page location of flat[flatIndex .. flatIndex + flatLength).
+export function sentenceHit(sentence: Sentence, flatIndex: number, flatLength: number): { page: number; index: number; length: number } {
+  const from = sentence.map[Math.min(flatIndex, sentence.map.length - 1)]!;
+  const last = sentence.map[Math.min(flatIndex + Math.max(flatLength, 1) - 1, sentence.map.length - 1)]!;
+  return { page: sentence.page, index: from, length: Math.max(1, last - from + 1) };
 }

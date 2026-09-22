@@ -84,6 +84,10 @@ function slabsAfter(doc: DocText, start: DocLine, tail: string): ExtractedIncent
   return parsed.map((slab, index) => ({ slabRef: `slab_${index + 1}`, metricId: slab.metricId, lowerBound: slab.lowerBound, upperBound: slab.upperBound, unit: slab.unit, amountMinor: slab.amountMinor, description: slab.description }));
 }
 
+// A much wider net than INCENTIVE_LABEL (which requires the word to lead a line) - ANY mention anywhere in the
+// document, in whatever sentence, of incentive/bonus/slab/commission/additional-payment language.
+const ANY_INCENTIVE_LANGUAGE = /\bincentive|\bbonus|\bslab|\bcommission|\badditional\s+payment|\badditional\s+payout/i;
+
 export function extractIncentive(ctx: RuleContext): void {
   const rows = labelLines(ctx.doc, INCENTIVE_LABEL, { requireSeparator: false, allowEmptyTail: true });
   let unparsedPage: number | null = null;
@@ -103,7 +107,27 @@ export function extractIncentive(ctx: RuleContext): void {
   // An incentive clause exists but no slab could be read unambiguously: the
   // registry needs at least one slab for an applicable incentive, so nothing is
   // proposed - the reviewer is told to enter it.
-  if (unparsedPage !== null) warn(ctx, "incentive_slabs_not_parsed", "incentive", unparsedPage);
+  if (unparsedPage !== null) {
+    warn(ctx, "incentive_slabs_not_parsed", "incentive", unparsedPage);
+    return;
+  }
+  // No LABELED incentive/bonus/slab clause exists. The wide net below still catches a passing, unlabeled mention
+  // (e.g. a Bank Details clause reading "...will get Fee and Incentives credited as per clause 5.1..." - real
+  // contracts do this) - that is NOT a confirmed absence, so it must never quietly become "not applicable". Two
+  // outcomes only:
+  //   - the word never appears anywhere: a LOW-confidence "not applicable" SUGGESTION (never a fact, the reviewer
+  //     still decides) - so a genuinely silent contract does not leave the incentive question looking unexamined;
+  //   - the word appears somewhere with no clause the rule above could find: WARN ONLY (no field value either
+  //     way - proposing "not applicable" here could hide a real incentive clause phrased unusually; the field
+  //     staying unproposed is itself the honest state, exactly like `incentive_slabs_not_parsed` above).
+  const hasText = ctx.doc.lines.some((line) => line.text.length > 0);
+  if (!hasText) return;
+  const mentionedPage = ctx.doc.pages.findIndex((page) => ANY_INCENTIVE_LANGUAGE.test(page));
+  if (mentionedPage < 0) {
+    emit(ctx, "incentive", { applicable: false, slabs: [] }, { page: 1, index: 0, length: 1 }, "LOW", ["no_incentive_language_found"]);
+    return;
+  }
+  warn(ctx, "incentive_mentioned_but_no_clause_found", "incentive", mentionedPage + 1);
 }
 
 // --- Warning-only performance targets --------------------------------------------------------
@@ -151,17 +175,87 @@ function targetsIn(line: DocLine): RawTarget[] {
   return found;
 }
 
+// --- Targets laid out as a TABLE (a "Sl. No. | Engagement Metrics | Targets" style clause) -----------------------
+//
+// Once the PDF is flattened, a table row's metric name ("Subscribers/followers on the Designated Social Media
+// Channel") and its value ("A minimum of 5,000 (five thousand), every 30th day...") land on DIFFERENT lines - the
+// per-line scan above, which needs both on one line, cannot see across that gap. Scoped to a clause plainly headed
+// as growth/performance/engagement targets (or KPIs/benchmarks/goals) so it never fires on an unrelated "minimum
+// of" elsewhere; within that clause, ONLY a value explicitly qualified "minimum of / at least / not less than"
+// counts - the clause's own cadence wording ("every 30th day") is never mistaken for the target itself, because it
+// is never preceded by that qualifier.
+const TARGET_TABLE_HEADING = String.raw`(?:growth|performance|engagement)\s+targets?|targets?|kpis?|benchmarks?|goals?`;
+const TARGET_TABLE_HEADING_LINE = new RegExp(String.raw`^\s*(\d{1,2}(?:\.\d{1,3}){1,3})\.?\s+(?:${TARGET_TABLE_HEADING})\s*(?:[:.\-–—]\s*|$)(?<rest>.*)$`, "i");
+const TABLE_METRIC_ANCHOR = /\b(subscribers?|followers?|viewership|views?|reach|impressions?|engagement(?:\s+rate)?|likes?|comments?)\b/gi;
+const TABLE_TARGET_VALUE = new RegExp(String.raw`(?:minimum\s+of|at\s+least|not\s+less\s+than|no\s+less\s+than)\s*${NUM}${SUF}`, "i");
+const TABLE_WINDOW_CHARS = 220;
+const MAX_TABLE_CLAUSE_LINES = 40;
+
+// A bespoke clause-boundary walk, deliberately NOT the shared `numberedSubClauseBlocks`/`clauseBlocks` helpers: a
+// table's own row numbers ("1. Subscribers/followers...", "2. Viewership...") are single-segment markers that both
+// of those helpers correctly treat as the start of a new clause for their own (unrelated) callers - which is
+// exactly what would stop this walk BEFORE it ever reaches the rows it needs to read. This walk instead only stops
+// at a marker with the SAME "N.M[.P]" depth as the heading's own marker (a true sibling clause, e.g. "3.7" after
+// "3.6") - a bare "1."/"2." row number never matches that and is read straight through - or a hard line bound.
+function targetTableBlocks(doc: DocText): { text: string; page: number; index: number; length: number }[] {
+  const blocks: { text: string; page: number; index: number; length: number }[] = [];
+  for (const line of doc.lines) {
+    const heading = TARGET_TABLE_HEADING_LINE.exec(line.text);
+    if (!heading) continue;
+    const depth = heading[1]!.split(".").length;
+    const rest = (heading.groups?.rest ?? "").trim();
+    const parts: string[] = rest ? [rest] : [];
+    let last: DocLine = line;
+    for (let i = line.lineIndex + 1; i < doc.lines.length && parts.length < MAX_TABLE_CLAUSE_LINES; i++) {
+      const next = doc.lines[i]!;
+      if (next.page !== line.page) break;
+      if (!next.text) {
+        if (parts.length > 0) break;
+        continue;
+      }
+      const marker = /^\s*(\d{1,2}(?:\.\d{1,3}){1,3})\.?\s+\S/.exec(next.text);
+      if (marker && marker[1]!.split(".").length >= depth) break; // a real sibling/next clause, not a table row number
+      parts.push(next.text);
+      last = next;
+    }
+    const text = cleanValueText(parts.join(" "));
+    if (text.length >= 8) blocks.push({ text, page: line.page, index: line.start, length: last.start + last.text.length - line.start });
+  }
+  return blocks;
+}
+
+function tableRowTargets(doc: DocText): RawTarget[] {
+  const found: RawTarget[] = [];
+  for (const block of targetTableBlocks(doc)) {
+    const anchors = [...block.text.matchAll(TABLE_METRIC_ANCHOR)];
+    for (let i = 0; i < anchors.length; i++) {
+      const anchor = anchors[i]!;
+      const windowStart = anchor.index! + anchor[0].length;
+      const windowEnd = Math.min(block.text.length, anchors[i + 1]?.index ?? block.text.length, windowStart + TABLE_WINDOW_CHARS);
+      const window = block.text.slice(windowStart, windowEnd);
+      const m = TABLE_TARGET_VALUE.exec(window);
+      if (!m) continue;
+      if (findAmounts(window.slice(0, m.index)).some((amount) => amount.currencyMarker)) continue; // money before the number = pay wording, not a target
+      const value = parseMetricNumber(`${m[1]}${m[2] ? `.${m[2]}` : ""}`, m[3]);
+      if (value === null) continue;
+      const { metricId, baseUnit } = metricIdFor(anchor[1]!);
+      found.push({ metricId, targetValue: value, unit: baseUnit, index: block.index, length: block.length, page: block.page, strong: true });
+    }
+  }
+  return found;
+}
+
 export function extractPerformanceTargets(ctx: RuleContext): void {
   const seen = new Set<string>();
   const targets: RawTarget[] = [];
-  for (const line of ctx.doc.lines) {
-    for (const target of targetsIn(line)) {
-      const key = `${target.metricId}|${target.targetValue}|${target.unit}`;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      targets.push(target);
-    }
-  }
+  const record = (target: RawTarget) => {
+    const key = `${target.metricId}|${target.targetValue}|${target.unit}`;
+    if (seen.has(key)) return;
+    seen.add(key);
+    targets.push(target);
+  };
+  for (const line of ctx.doc.lines) for (const target of targetsIn(line)) record(target);
+  for (const target of tableRowTargets(ctx.doc)) record(target);
   if (targets.length === 0) return;
   const MAX_TARGETS = 12;
   const kept = targets.slice(0, MAX_TARGETS);

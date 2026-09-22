@@ -128,6 +128,80 @@ export function findDates(text: string): FoundDate[] {
   return kept;
 }
 
+// --- Dates written in WORDS -----------------------------------------------------------
+
+// Contracts often repeat the numeric date in words - "10.09.2026 (Tenth September, Two Thousand Twenty Six)". Reading the
+// words lets the extractor CROSS-CHECK the numeric reading (and so the DD.MM / MM.DD ambiguity). Only the shapes below are
+// understood; anything else is null and the numeric reading simply stands unverified.
+const WORD_UNITS: Record<string, number> = {
+  one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10, eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
+  first: 1, second: 2, third: 3, fourth: 4, fifth: 5, sixth: 6, seventh: 7, eighth: 8, ninth: 9, tenth: 10, eleventh: 11, twelfth: 12, thirteenth: 13, fourteenth: 14, fifteenth: 15, sixteenth: 16, seventeenth: 17, eighteenth: 18, nineteenth: 19,
+};
+const WORD_TENS: Record<string, number> = { twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90, twentieth: 20, thirtieth: 30 };
+const FILLER_WORDS = new Set(["and", "of", "the", "day", "dated"]);
+
+// "Twenty Six" / "Two Thousand Twenty Six" / "Nineteen Hundred" -> integer, or null when a token is not a number word.
+function numberFromWords(tokens: string[]): number | null {
+  if (tokens.length === 0) return null;
+  let total = 0;
+  let current = 0;
+  for (const token of tokens) {
+    if (token in WORD_UNITS) current += WORD_UNITS[token]!;
+    else if (token in WORD_TENS) current += WORD_TENS[token]!;
+    else if (token === "hundred") current = (current || 1) * 100;
+    else if (token === "thousand") {
+      total += (current || 1) * 1000;
+      current = 0;
+    } else return null;
+  }
+  return total + current;
+}
+
+// Years: "Two Thousand Twenty Six", or the two-pair form "Twenty Twenty Six" / "Nineteen Ninety Nine".
+function yearFromWords(tokens: string[]): number | null {
+  if (tokens.includes("thousand") || tokens.includes("hundred")) return numberFromWords(tokens);
+  for (let split = 1; split < tokens.length; split++) {
+    const high = numberFromWords(tokens.slice(0, split));
+    const low = numberFromWords(tokens.slice(split));
+    if (high !== null && low !== null && high >= 19 && high <= 21 && low >= 0 && low <= 99) return high * 100 + low;
+  }
+  return null;
+}
+
+export function parseDateWords(text: string): string | null {
+  const tokens = text
+    .toLowerCase()
+    .replace(/[^a-z\s-]/g, " ")
+    .split(/[\s-]+/)
+    .filter((token) => token && !FILLER_WORDS.has(token));
+  const monthIndex = tokens.findIndex((token) => token in MONTHS);
+  if (monthIndex < 0) return null;
+  const month = MONTHS[tokens[monthIndex]!]!;
+  const before = tokens.slice(0, monthIndex);
+  const after = tokens.slice(monthIndex + 1);
+  // Day first ("Tenth September, Two Thousand Twenty Six") or month first ("September Tenth, ...").
+  let dayTokens: string[];
+  let yearTokens: string[];
+  if (before.length > 0) {
+    dayTokens = before;
+    yearTokens = after;
+  } else {
+    // "Twenty First" is two tokens, "Tenth" one.
+    const dayLength = after.length > 1 && after[0]! in WORD_TENS && after[1]! in WORD_UNITS ? 2 : 1;
+    dayTokens = after.slice(0, dayLength);
+    yearTokens = after.slice(dayLength);
+  }
+  const day = numberFromWords(dayTokens);
+  const year = yearFromWords(yearTokens);
+  if (day === null || year === null) return null;
+  return toIso(year, month, day);
+}
+
+// The content of a "(...)" that follows a date: a date in words, or a second numeric/spelled-month date.
+export function dateFromParenthetical(inner: string): string | null {
+  return parseDateWords(inner) ?? findDates(inner)[0]?.iso ?? null;
+}
+
 // --- Indian mobile numbers -----------------------------------------------------------
 
 // 10 digits starting 6-9, optional +91 / 91 / 0 prefix, optional space/hyphen

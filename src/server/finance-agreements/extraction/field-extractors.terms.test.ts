@@ -174,6 +174,12 @@ describe("incentive, LFC/SFC and targets", () => {
     expect(field(run(["Incentive:", "10 to 20 widgets: Rs. 2,000"]), "incentive")).toBeUndefined();
   });
 
+  it("a bare, unlabeled mention of 'incentive' elsewhere (e.g. inside a Bank Details clause) is NEVER read as a confirmed absence - it warns, never silently vanishes and never claims 'not applicable'", () => {
+    const r = run(["Bank Details: The Service Provider will get Fee and Incentives credited as per clause 5.1 of the agreement.", "Account No.: 12345"]);
+    expect(field(r, "incentive")).toBeUndefined();
+    expect(r.warnings).toContainEqual({ code: "incentive_mentioned_but_no_clause_found", fieldKey: "incentive", page: 1 });
+  });
+
   it("reads LFC/SFC ONLY from an explicit format list, dropping formats claimed by both classes", () => {
     expect(field(run(["LFC: YouTube videos"]), "lfcSfc")?.normalizedValue).toEqual({ byFormat: { "youtube videos": "LFC" } });
     expect(field(run(["Short form content (SFC) includes reels and shorts."]), "lfcSfc")?.normalizedValue).toEqual({ byFormat: { reels: "SFC", shorts: "SFC" } });
@@ -182,6 +188,17 @@ describe("incentive, LFC/SFC and targets", () => {
     expect(field(conflict, "lfcSfc")?.normalizedValue).toEqual({ byFormat: { podcast: "LFC" } });
     expect(field(conflict, "lfcSfc")!.warnings).toContain("lfc_sfc_format_conflict_dropped");
     expect(field(run(["LFC: "]), "lfcSfc")).toBeUndefined();
+  });
+
+  it("without an LFC/SFC acronym, falls back to a quantity-qualified long/short-format split (never a bare mention, never a one-sided one)", () => {
+    const both = run(["The Monthly Posts shall consist of a minimum of 85 (eighty five) long format Audio Visual Content", "and a minimum of 20 (twenty) short format Audio Visual Content."]);
+    expect(field(both, "lfcSfc")?.normalizedValue).toEqual({ byFormat: { "long format audio visual content": "LFC", "short format audio visual content": "SFC" } });
+    expect(field(both, "lfcSfc")!.warnings).toContain("inferred_from_long_short_format_wording");
+    // A definitional list naming both words in passing, with NO quantity before either, is not a classification.
+    const definitionOnly = run(["Audio Visual Content includes reaction videos, long-format videos, short-format videos, drama content and podcasts."]);
+    expect(field(definitionOnly, "lfcSfc")).toBeUndefined();
+    // Only one side named (even with a quantity) is not a split either.
+    expect(field(run(["A minimum of 85 long format Audio Visual Content is required monthly."]), "lfcSfc")).toBeUndefined();
   });
 
   it("extracts every performance target as warning-only (affectsPayment:false), with metric ids and units", () => {
@@ -212,6 +229,38 @@ describe("incentive, LFC/SFC and targets", () => {
     expect(field(run(["Target: 10,000 views earns Rs. 2,000."]), "performanceTargets")).toBeUndefined();
     expect(field(run(["The reel got 10,000 views last month."]), "performanceTargets")).toBeUndefined();
     expect(field(run(["Minimum 12 reels per month"]), "performanceTargets")).toBeUndefined();
+  });
+
+  it("reads targets laid out as a TABLE (metric name and its 'minimum of N' value on different lines, under bare row numbers a real PDF flattens from a table)", () => {
+    const r = run([
+      "3.6. Growth Targets: The Service Provider shall achieve the growth targets as mentioned below within every 30th day.",
+      "The growth targets are as follows-",
+      "Sl. No. Engagement Metrics Targets",
+      "1. Subscribers/followers on the Designated Social Media Channel",
+      "A minimum of 5,000 (five thousand), every 30th (thirtieth) days, starting from the Effective Date of the Agreement.",
+      "2. Viewership across all the Monthly Posts",
+      "A minimum of 10,00,000 (ten lakh), every 30th (thirtieth) days, starting from the Effective Date of the Agreement.",
+      "3.7. Compliance with Third-Party Content Rights: The Service Provider affirms...",
+    ]);
+    const targets = field(r, "performanceTargets")!.normalizedValue;
+    // The clause's own cadence number ("30th") is never mistaken for a target - only the quantity explicitly led by "minimum of".
+    expect(targets.map((t) => [t.metricId, t.targetValue])).toEqual(
+      expect.arrayContaining([
+        ["followerGrowth", 5_000],
+        ["views", 1_000_000], // Indian digit grouping: 10,00,000
+      ]),
+    );
+    expect(targets.every((t) => t.affectsPayment === false)).toBe(true);
+    // The table's bare "1."/"2." row numbers never get mistaken for the next real clause and cut the table short;
+    // the real sibling clause "3.7" afterwards is untouched by this (its own text is not swept into the targets).
+    expect(field(r, "servicesMandated")).toBeUndefined();
+  });
+
+  it("the table reader needs BOTH a growth/performance/engagement-targets heading AND an explicit 'minimum of' qualifier - neither alone is enough", () => {
+    // A targets-style heading, but the row states a bare number with no "minimum of" qualifier.
+    expect(field(run(["3.6. Growth Targets:", "Subscribers on the Designated Social Media Channel: 5,000 within 30 days."]), "performanceTargets")).toBeUndefined();
+    // An explicit "minimum of" quantity, but no targets-style heading anywhere (just a Fee clause).
+    expect(field(run(["5.1. Fee: The Client shall pay a minimum of 5,000 (five thousand) INR as the monthly Fee."]), "performanceTargets")).toBeUndefined();
   });
 
   it("caps targets at the policy bound and says so", () => {
