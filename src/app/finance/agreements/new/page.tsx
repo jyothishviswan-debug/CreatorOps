@@ -1,9 +1,9 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { IntakeForm } from "@/features/finance-agreements/intake/IntakeForm";
-import { IntakeProvider } from "@/features/finance-agreements/intake/intake-context";
-import { parseIntakeSearchParams } from "@/features/finance-agreements/intake/intake-logic";
+import { AgreementFormPage } from "@/features/finance-agreements/agreement-form/AgreementFormPage";
+import { IntakeProvider } from "@/features/finance-agreements/agreement-intake-logic/intake-context";
+import { parseIntakeSearchParams } from "@/features/finance-agreements/agreement-intake-logic/intake-logic";
 import { resolveRequestActor } from "@/server/finance-agreements/http";
 import { AppShell } from "@/ui/AppShell";
 import { EmptyState } from "@/ui/States";
@@ -12,7 +12,8 @@ import { loadIntakePageState } from "./load-intake-state";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-// /finance/agreements/new - the staged Agreement intake (one page, ten sections).
+// /finance/agreements/new - the ONE canonical Agreement form (Step 14C.3: rebuilt from zero on the Foundation /
+// golden-master archetypes only, after removing the rejected v1 and v2 presentation layers).
 //   ?counterpartyType=&ref=     deep link from a Partner / Vendor page: preselects the counterparty
 //   ?agreementRef=&version=     RESUME a draft / revision (the URL Start draft replaces itself with)
 // Access is decided here, on the server, BEFORE anything renders: the proxy already gates /finance/**, and this page re-checks through the
@@ -46,7 +47,7 @@ export default async function NewAgreementPage({ searchParams }: { searchParams:
         </section>
       ) : (
         <IntakeProvider key={state.routeKey} permissions={state.permissions} initial={state.initial}>
-          <IntakeForm />
+          <AgreementFormPage />
         </IntakeProvider>
       )}
     </AppShell>

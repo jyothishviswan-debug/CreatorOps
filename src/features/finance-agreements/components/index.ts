@@ -1,9 +1,9 @@
-// Step 14B: the shared presentational components of the Finance Agreements UI. One import path for the
-// workspace, intake and detail screens.
+// Step 14B / 14C.3: the shared presentational components of the Finance Agreements UI. One import path for the
+// workspace, Agreement form and detail screens. ConfidenceBadge and FieldDecisionControls were removed in the
+// 14C.3 hard reset (a Confidence badge and a multi-button decision segment were rejected UI patterns) - the pure
+// decisionActionsFor/decisionStateChip rules they used stay, since field-view-model.ts still needs them.
 export { ChipList } from "./ChipList";
 export { Combobox, type ComboboxOption, type ComboboxProps, type ComboboxSearchResult } from "./Combobox";
-export { ConfidenceBadge } from "./ConfidenceBadge";
-export { FieldDecisionControls, type FieldDecisionControlsProps } from "./FieldDecisionControls";
 export { KeyValueRow } from "./KeyValueRow";
 export { MaskedValue } from "./MaskedValue";
 export { SourceBadge } from "./SourceBadge";

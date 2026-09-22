@@ -64,7 +64,7 @@ export const lifecycleTone = (status: LifecycleStatus): PillTone => LIFECYCLE_CH
 // Step 14C: a version / Agreement is a DRAFT until it is activated, but a CONFIRMED draft is a different thing from an editable one - its
 // terms are frozen and it only awaits activation. It is NEVER worded as a bare "Draft". A presentation rule only: the backend lifecycle
 // vocabulary (DRAFT / ACTIVE / SUSPENDED / ENDED / SUPERSEDED) is unchanged and no new state exists.
-export const CONFIRMED_AWAITING_ACTIVATION_LABEL = "Confirmed · awaiting activation";
+export const CONFIRMED_AWAITING_ACTIVATION_LABEL = "Activation pending";
 
 // The ONE place that words a lifecycle status. `confirmed` is meaningful only for DRAFT (an ACTIVE / ENDED / ... status is never re-worded).
 export function lifecycleDisplayChip(status: LifecycleStatus, confirmed: boolean): ChipSpec {
@@ -163,6 +163,67 @@ export const RECONCILIATION_REASON_LABELS: Record<ReconciliationReason, string> 
   identity_access_required: "You do not have access to compare restricted details.",
 };
 export const reconciliationReasonLabel = (reason: ReconciliationReason | null | undefined): string | null => (reason ? (RECONCILIATION_REASON_LABELS[reason] ?? null) : null);
+
+// --- Extraction warnings --------------------------------------------------------------------------------------------------------------------
+// The extraction engine's own warning codes (src/server/finance-agreements/extraction/*) are short, internal, snake_case identifiers meant for
+// developers and other rules, not for the person reviewing an Agreement - e.g. "verify_party_attribution", "inferred_from_long_short_format_wording".
+// Every code the engine currently emits is spelled out here in plain language; humanizeExtractionWarning() falls back to a readable rendering
+// of the code itself (never the raw snake_case) for any new code added to the engine without an entry here.
+export const EXTRACTION_WARNING_LABELS: Record<string, string> = {
+  role_attributed: "Assumed to belong to this party from how the Agreement names the parties - check it.",
+  derived_from_address: "Worked out from the address text, not stated as its own line.",
+  verify_party_attribution: "Check that this belongs to the right party before confirming.",
+  holder_inferred_from_party_block: "The account holder was assumed from the parties' names - check it.",
+  inferred_from_long_short_format_wording: "Worked out from long-form / short-form wording, not a stated LFC / SFC label.",
+  lfc_sfc_format_conflict_dropped: "One format was described inconsistently and was left out - check the Agreement text.",
+  incentive_mentioned_but_no_clause_found: "Incentives are mentioned in passing, but no clear incentive clause was found - check the Agreement.",
+  no_incentive_language_found: "No incentive wording was found in the Agreement.",
+  incentive_slabs_not_parsed: "The incentive slabs could not be read automatically - enter them from the Agreement.",
+  slab_boundaries_need_confirmation: "The slab boundaries could not be read with confidence - check them against the Agreement.",
+  day_month_order_assumed_dd_mm: "Assumed day-before-month order for this date - check it.",
+  date_words_mismatch: "The written-out date does not match the numeric date next to it - check the Agreement.",
+  end_before_effective: "This end date is before the effective date - check the Agreement.",
+  ambiguous_core_field: "More than one possible value was found - check it against the Agreement.",
+  ambiguous_value_omitted: "More than one possible value was found, so none was proposed - check the Agreement.",
+  multiple_distinct_values_found: "More than one different value was found for this - check the Agreement.",
+  other_similar_values_in_document: "Other similar values appear elsewhere in the Agreement - check this is the right one.",
+  multiple_amounts_on_line: "More than one amount appears on this line - check the right one was picked.",
+  multiple_currencies_mentioned: "More than one currency is mentioned - check the right one was picked.",
+  non_inr_currency_detected: "A currency other than INR was detected - check it.",
+  multiple_cycles_named: "More than one payment cycle is named - check the right one was picked.",
+  cycle_mapped_to_other: "This payment cycle did not match a supported option and was mapped to Other.",
+  qualifying_unit_missing: "No qualifying unit was found in the Agreement.",
+  unit_requires_mapping_to_supported_qualifying_unit: "This wording needs to be mapped to a supported qualifying unit before it can be used.",
+  no_amount_found: "No amount was found for this.",
+  zero_amount: "The amount found is zero - check the Agreement.",
+  no_label_found: "No label was found for this value in the Agreement.",
+  state_not_in_canonical_list: "This state is not in the standard list - check it.",
+  pan_gstin_mismatch: "The PAN does not match the first characters of the GSTIN - check both.",
+  aadhaar_checksum_invalid: "This Aadhaar number failed its checksum check - check it.",
+  clause_may_continue_on_next_page: "This clause may continue on the next page - check the full Agreement text.",
+  clause_truncated: "This clause was cut short when read - check the full Agreement text.",
+  targets_truncated: "Only some of the targets in this Agreement could be read - check the full Agreement text.",
+  text_truncated: "The extracted text was cut short - check the full Agreement text.",
+  too_many_pages: "This Agreement has more pages than could be fully scanned.",
+  few_fields: "Very few values could be found in this Agreement.",
+  missing_core_fields: "Some of the Agreement's core details could not be found.",
+  value_withheld_contains_restricted_data: "This value was withheld because it contains restricted identity data.",
+  extractor_rule_error: "One of the reading rules failed on this Agreement - some values may be missing.",
+};
+
+// Plain language for one extraction warning code; an unrecognized code is rendered as its own words rather than raw snake_case.
+export function humanizeExtractionWarning(code: string): string {
+  const known = EXTRACTION_WARNING_LABELS[code];
+  if (known) return known;
+  const words = code.trim().replace(/[_-]+/g, " ").trim();
+  if (words.length === 0) return code;
+  return words.charAt(0).toUpperCase() + words.slice(1);
+}
+
+// A field's warning codes as one or more plain-language sentences, ready to display.
+export function humanizeExtractionWarnings(codes: readonly string[]): string {
+  return codes.map(humanizeExtractionWarning).join(" ");
+}
 
 // --- KYC ----------------------------------------------------------------------------------------------------------------------------------------
 export const KYC_STATE_CHIPS: Record<AgreementKycState, ChipSpec> = {

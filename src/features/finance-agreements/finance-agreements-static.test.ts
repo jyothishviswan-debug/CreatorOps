@@ -95,4 +95,41 @@ describe("the Finance Agreements feature folder (static)", () => {
     expect(names.filter((name) => /delete|remove|discard/i.test(name))).toEqual([]);
     for (const file of FILES) expect(read(file), rel(file)).not.toMatch(/method:\s*["']DELETE["']/);
   });
+
+  // Step 14C.3 (hard reset guard): the rejected v1 ("intake" as a presentation tree) and v2 ("intake-v2") Agreement UI were
+  // deleted. This guard fails if either is ever reintroduced, or if the canonical Agreement form ever imports from them -
+  // agreement-form/ (the canonical presentation) may import only agreement-intake-logic/ (pure logic + hooks, no JSX) and
+  // the other neutral finance-agreements modules.
+  describe("14C.3 hard reset: no rejected UI reference", () => {
+    it("the rejected presentation directories do not exist", () => {
+      expect(() => statSync(path.join(ROOT, "intake"))).toThrow();
+      expect(() => statSync(path.join(ROOT, "intake-v2"))).toThrow();
+    });
+
+    it("no file in this feature folder imports an intake-v2 path, or the old intake presentation tree", () => {
+      const FORBIDDEN_IMPORT = /from\s+["'][^"']*\/intake-v2\/[^"']*["']|from\s+["'][^"']*\/intake\/(?!.*agreement-intake-logic)[A-Za-z]/;
+      const offenders: string[] = [];
+      for (const file of FILES) {
+        const text = read(file);
+        if (FORBIDDEN_IMPORT.test(text)) offenders.push(rel(file));
+      }
+      expect(offenders).toEqual([]);
+    });
+
+    it("the canonical agreement-form/ presentation never imports a JSX component from anywhere but agreement-form/ itself, @/ui, or a type/hook from agreement-intake-logic/", () => {
+      const formDir = path.join(ROOT, "agreement-form");
+      const formFiles = listSources(formDir);
+      expect(formFiles.length).toBeGreaterThan(5);
+      // A same-feature-folder relative import that reaches back INTO agreement-form/ from outside it would defeat the
+      // point of this guard; every import here must be a relative path that never contains "/intake/" or "intake-v2".
+      for (const file of formFiles) {
+        const text = read(file);
+        expect(text, rel(file)).not.toMatch(/\/intake-v2\//);
+        // A bare "/intake/" segment is only ever allowed as part of "agreement-intake-logic/".
+        const matches = [...text.matchAll(/["'][^"']*\/intake\/[^"']*["']/g)].map((m) => m[0]);
+        const bad = matches.filter((m) => !m.includes("agreement-intake-logic"));
+        expect(bad, rel(file)).toEqual([]);
+      }
+    });
+  });
 });

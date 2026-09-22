@@ -17,9 +17,10 @@
 //   activate / revise / suspend / resume / end                          -> the HEAD's `docVersion`
 //   master-data command                                                 -> `expectedCounterpartyVersion` (the Partner / Vendor's own version)
 // Every successful mutation returns the new AgreementDetailDto (or its outcome wrapper): ALWAYS replace client state with it.
-import { addPartnerRestrictedIdentityLinkEvidence, uploadPartnerRestrictedIdentityEvidence, type PartnersApiResult } from "@/features/partners/api-client";
-import { addVendorRestrictedIdentityLinkEvidence, uploadVendorRestrictedIdentityEvidence, type VendorsApiResult } from "@/features/vendors/api-client";
-import type { AddPartnerRestrictedIdentityLinkEvidenceInput } from "@/server/partners/restricted-identity-service";
+import { addPartnerRestrictedIdentityLinkEvidence, savePartnerRestrictedIdentity, uploadPartnerRestrictedIdentityEvidence, type PartnersApiResult } from "@/features/partners/api-client";
+import { addVendorRestrictedIdentityLinkEvidence, saveVendorRestrictedIdentity, uploadVendorRestrictedIdentityEvidence, type VendorsApiResult } from "@/features/vendors/api-client";
+import type { AddPartnerRestrictedIdentityLinkEvidenceInput, PartnerRestrictedIdentityDto, SavePartnerRestrictedIdentityInput } from "@/server/partners/restricted-identity-service";
+import type { SaveVendorRestrictedIdentityInput } from "@/server/vendors/restricted-identity-service";
 import type { RestrictedFinancialIdentityEvidence } from "@/server/shared/restricted-financial-identity";
 import type { AgreementDocumentStatusResultDto, StoreAgreementDocumentOutcome } from "@/server/finance-agreements/agreement-document-service";
 import type { AttachExtractionOutcome } from "@/server/finance-agreements/agreement-service";
@@ -410,6 +411,26 @@ export async function uploadKycEvidenceFile(input: { counterpartyType: Counterpa
     if (input.counterpartyType === "PARTNER") return fromOwning(await uploadPartnerRestrictedIdentityEvidence(input.ref, { docType: input.docType, file: input.file, expectedVersion: input.expectedVersion }));
     if (input.docType === "aadhaar") return VENDOR_AADHAAR_REFUSAL;
     return fromOwning(await uploadVendorRestrictedIdentityEvidence(input.ref, { docType: input.docType, file: input.file, expectedVersion: input.expectedVersion }));
+  } catch {
+    return networkResult();
+  }
+}
+
+// --- KYC restricted identity fields, written directly on the OWNING record ------------------------------------------------------------------
+// Same "Finance keeps no copy of its own" discipline as the evidence functions above: this writes to the Partner's or Vendor's own
+// restrictedFinancialIdentities document through its existing endpoint, so a person can type PAN / Aadhaar / bank / GST straight from the
+// KYC dialog on the Agreement page instead of leaving it (the version to send is read the same way evidence-adding already does, via
+// readIdentityRecordVersion). The save is a partial patch server-side (an omitted field's existing value is kept untouched), so the dialog
+// only ever sends the ONE component it is scoped to, plus that version, never the whole record.
+export type KycIdentityDto = PartnerRestrictedIdentityDto;
+export type SaveKycIdentityInput = SavePartnerRestrictedIdentityInput & SaveVendorRestrictedIdentityInput;
+
+export async function saveKycRestrictedIdentity(input: { counterpartyType: CounterpartyType; ref: string; value: SaveKycIdentityInput }, options?: FinanceRequestOptions): Promise<FinanceApiResult<KycIdentityDto>> {
+  if (options?.signal?.aborted) return abortedResult();
+  try {
+    if (input.counterpartyType === "PARTNER") return fromOwning(await savePartnerRestrictedIdentity(input.ref, input.value));
+    if (input.value.aadhaar !== undefined) return VENDOR_AADHAAR_REFUSAL;
+    return fromOwning(await saveVendorRestrictedIdentity(input.ref, input.value));
   } catch {
     return networkResult();
   }

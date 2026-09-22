@@ -101,9 +101,9 @@ describe("toWorkspaceRowView", () => {
     expect(view.primary.ariaLabel).toContain(REF);
   });
 
-  it("Step 14C: a DRAFT Agreement whose open version is confirmed reads 'Confirmed · awaiting activation' (never 'Draft'); the lifecycle filter vocabulary is untouched", () => {
+  it("Step 14C: a DRAFT Agreement whose open version is confirmed reads 'Activation pending' (never 'Draft'); the lifecycle filter vocabulary is untouched", () => {
     const view = toWorkspaceRowView(row({ lifecycle: "DRAFT", awaitingActivation: true, openVersion: 1, currentVersion: 1, primaryAction: { kind: "REVIEW", version: 1 } }));
-    expect(view.lifecycle).toEqual({ label: "Confirmed · awaiting activation", tone: "blue" });
+    expect(view.lifecycle).toEqual({ label: "Activation pending", tone: "blue" });
     expect(view.primary.label).toBe("Review");
     // an ACTIVE Agreement is never re-worded, even if a revision is awaiting activation (awaitingActivation is false there by definition)
     expect(toWorkspaceRowView(row({ lifecycle: "ACTIVE", awaitingActivation: false, openVersion: 2, currentVersion: 1 })).lifecycle.label).toBe("Active");

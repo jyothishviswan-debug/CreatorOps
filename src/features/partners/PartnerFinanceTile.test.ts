@@ -38,11 +38,11 @@ describe("PartnerFinanceTile", () => {
     expect(html).toContain("Open Finance Agreements");
   });
 
-  it("Step 14C: a confirmed-but-not-active version reads 'Confirmed · awaiting activation', never 'Draft' (an unconfirmed draft still reads 'Draft')", () => {
+  it("Step 14C: a confirmed-but-not-active version reads 'Activation pending', never 'Draft' (an unconfirmed draft still reads 'Draft')", () => {
     const awaiting = { ...entry(1, stored()), lifecycle: "DRAFT" as const, headStatus: "DRAFT" as const, confirmed: true };
     const html = renderToStaticMarkup(createElement(PartnerFinanceTile, { label: "Finance", partnerRef: "p_1", agreementDocuments: projection([awaiting]) }));
     expect(html).toContain("Agreement version 1");
-    expect(html).toContain("Confirmed · awaiting activation");
+    expect(html).toContain("Activation pending");
     expect(html).not.toMatch(/\bDraft\b/);
     const draft = { ...awaiting, confirmed: false };
     expect(renderToStaticMarkup(createElement(PartnerFinanceTile, { label: "Finance", partnerRef: "p_1", agreementDocuments: projection([draft]) }))).toMatch(/\bDraft\b/);

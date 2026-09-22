@@ -38,6 +38,8 @@ import {
   formatPlatformName,
   formatUtcDate,
   groupIndianDigits,
+  humanizeExtractionWarning,
+  humanizeExtractionWarnings,
   isSupportedQualifyingUnit,
   isUtcDate,
   minorToInputText,
@@ -62,6 +64,28 @@ describe("copy constants (binding wording)", () => {
   });
 });
 
+describe("humanizeExtractionWarning (backend codes -> reviewer-facing text)", () => {
+  it("never returns the raw snake_case code for a mapped warning", () => {
+    expect(humanizeExtractionWarning("verify_party_attribution")).toBe("Check that this belongs to the right party before confirming.");
+    expect(humanizeExtractionWarning("derived_from_address")).not.toContain("_");
+    expect(humanizeExtractionWarning("role_attributed")).not.toContain("_");
+  });
+  it("falls back to a readable rendering (never raw snake_case) for an unmapped code", () => {
+    const result = humanizeExtractionWarning("some_new_extraction_code");
+    expect(result).toBe("Some new extraction code");
+    expect(result).not.toContain("_");
+  });
+  it("leaves an empty code untouched rather than returning an empty string", () => {
+    expect(humanizeExtractionWarning("")).toBe("");
+  });
+  it("joins several codes into one readable string", () => {
+    expect(humanizeExtractionWarnings(["role_attributed", "verify_party_attribution"])).toBe(
+      "Assumed to belong to this party from how the Agreement names the parties - check it. Check that this belongs to the right party before confirming.",
+    );
+    expect(humanizeExtractionWarnings([])).toBe("");
+  });
+});
+
 describe("status chips (text always present, total over every enum)", () => {
   it("covers every lifecycle status with non-empty text", () => {
     expect(Object.keys(LIFECYCLE_CHIPS).sort()).toEqual(["ACTIVE", "DRAFT", "ENDED", "SUPERSEDED", "SUSPENDED"]);
@@ -69,12 +93,12 @@ describe("status chips (text always present, total over every enum)", () => {
   });
   it("distinguishes a confirmed-not-active draft from an editable one", () => {
     expect(versionStatusChip({ status: "DRAFT", confirmed: false }).label).toBe("Draft");
-    expect(versionStatusChip({ status: "DRAFT", confirmed: true }).label).toBe("Confirmed · awaiting activation");
+    expect(versionStatusChip({ status: "DRAFT", confirmed: true }).label).toBe("Activation pending");
     expect(versionStatusChip({ status: "ACTIVE", confirmed: true }).label).toBe("Active");
   });
-  it("Step 14C: lifecycleDisplayChip words a confirmed-but-not-active DRAFT as 'Confirmed · awaiting activation' and never re-words any other status", () => {
-    expect(CONFIRMED_AWAITING_ACTIVATION_LABEL).toBe("Confirmed · awaiting activation");
-    expect(lifecycleDisplayChip("DRAFT", true)).toEqual({ label: "Confirmed · awaiting activation", tone: "blue" });
+  it("Step 14C: lifecycleDisplayChip words a confirmed-but-not-active DRAFT as 'Activation pending' and never re-words any other status", () => {
+    expect(CONFIRMED_AWAITING_ACTIVATION_LABEL).toBe("Activation pending");
+    expect(lifecycleDisplayChip("DRAFT", true)).toEqual({ label: "Activation pending", tone: "blue" });
     expect(lifecycleDisplayChip("DRAFT", false)).toEqual(LIFECYCLE_CHIPS.DRAFT);
     expect(lifecycleDisplayLabel("DRAFT", false)).toBe("Draft");
     for (const status of ["ACTIVE", "SUSPENDED", "ENDED", "SUPERSEDED"] as const) {

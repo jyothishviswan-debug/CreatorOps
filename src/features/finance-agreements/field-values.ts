@@ -10,6 +10,7 @@ import {
   paymentCycleLabel,
 } from "./format";
 import { mapQualifyingUnit } from "./qualifying-unit";
+import { targetMetricLabel } from "./target-metrics";
 
 // Step 14B: reading and displaying field VALUES (pure). Draft entries and confirmed terms share the registry's
 // `path` addressing; these helpers are the one place that knows how to turn a stored value into text.
@@ -66,11 +67,13 @@ function componentText(value: unknown, currency: string | null): string {
 
 export function incentiveSlabSummary(slab: IncentiveSlab, currency: string | null): string {
   const range = slab.upperBound === null ? `${slab.lowerBound}+` : `${slab.lowerBound}–${slab.upperBound}`;
-  return `${slab.metricId}: ${range} ${slab.unit} → ${money(slab.amountMinor, currency)}`;
+  return `${targetMetricLabel(slab.metricId)}: ${range} ${slab.unit} → ${money(slab.amountMinor, currency)}`;
 }
 
+// A target's metric id is a raw registry/analytics id (e.g. "followerGrowth") - never shown as typed; targetMetricLabel()
+// turns a known one into its human label ("Follower growth") and otherwise falls back to the id as written.
 export function performanceTargetSummary(target: PerformanceTarget): string {
-  return `${target.metricId}: at least ${target.targetValue} ${target.unit}`;
+  return `${targetMetricLabel(target.metricId)}: at least ${target.targetValue} ${target.unit}`;
 }
 
 // A short, safe text for any registry field's value (a draft entry's value or a confirmed term). Identity VALUE fields

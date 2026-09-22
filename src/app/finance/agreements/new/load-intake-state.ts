@@ -22,8 +22,8 @@ import {
 } from "@/server/finance-agreements";
 import type { FinanceAgreementPermissionsDto } from "@/server/finance-agreements/workspace-dto";
 
-import type { IntakeProviderProps } from "@/features/finance-agreements/intake/intake-context";
-import { findPriorConfirmedVersion, intakeRouteKey, type IntakeUrlParams } from "@/features/finance-agreements/intake/intake-logic";
+import type { IntakeProviderProps } from "@/features/finance-agreements/agreement-intake-logic/intake-context";
+import { findPriorConfirmedVersion, intakeRouteKey, type IntakeUrlParams } from "@/features/finance-agreements/agreement-intake-logic/intake-logic";
 
 export type IntakePageState =
   | { kind: "denied" }

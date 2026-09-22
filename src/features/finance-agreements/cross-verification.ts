@@ -10,7 +10,7 @@ import { isIdentityField, maskIdentityValue } from "./identity-mask";
 
 // Step 14B: the reconciliation DTO -> cross-verification rows and the actions a person may take on each (pure).
 //
-//   CreatorOps value | Agreement value | Status | Confirmed value / action
+//   CreatorOps value | Agreement value | Status | Your decision
 //
 // The server decides WHICH actions are allowed (`allowedActions` - it knows the version's state and the actor's rights
 // in the owning module); this module maps them onto the UI's wording and onto the concrete request each one sends:
@@ -141,7 +141,8 @@ function agreementNoteOf(field: FieldReconciliationDto): string | null {
   if (!source) return null;
   const parts = [source.origin === "MASTER_DATA" ? "CreatorOps master data" : source.origin === "MANUAL" ? "Manual" : "Agreement"];
   if (source.page) parts.push(`page ${source.page}`);
-  if (source.origin === "EXTRACTED" && source.confidence) parts.push(`Confidence: ${source.confidence.charAt(0)}${source.confidence.slice(1).toLowerCase()}`);
+  // HIGH is the ordinary case for a proposed value and says nothing worth a caption; only a lower confidence earns one.
+  if (source.origin === "EXTRACTED" && source.confidence && source.confidence !== "HIGH") parts.push(`Confidence: ${source.confidence.charAt(0)}${source.confidence.slice(1).toLowerCase()}`);
   return parts.join(" · ");
 }
 
