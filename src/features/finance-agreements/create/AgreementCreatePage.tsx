@@ -44,6 +44,25 @@ const HEADER_SUBTITLE: Record<AgreementCreateStep, string> = {
 export function AgreementCreatePage({ title }: { title: string }) {
   const { flags, hasDraft, notices, conflict, reloadLatest, saveDraft, isBusy, notify } = useIntake();
   const [step, setStep] = useState<AgreementCreateStep>(1);
+  // "Continue" (and jumping a step via the progress strip) used to just switch the rendered step, never flushing
+  // the buffered field decisions a person made on the step they are leaving - unlike "Save as draft", right next
+  // to it, which does. A decision buffered with setLocalEdit (every Not applicable/Unavailable link, every typed
+  // correction) stayed local-only forever unless that exact button was clicked: Confirm's own summary reads
+  // buffered edits merged with the server draft and so looked fully decided, while the readiness gate that enables
+  // "Create Agreement" reads the server draft alone and stayed blocked - with no visible reason why, and the
+  // decisions themselves silently gone the moment the tab closed.
+  // goToStep AWAITS the flush before switching steps (rather than firing it and switching immediately): a step
+  // that mounts fires its own effects straight away - Review & Verify auto-confirms every matched field via
+  // decideField, Terms & Targets buffers every prefilled field - and each decideField write carries the CURRENT
+  // docVersion as its optimistic-concurrency precondition. Switching steps first would let the new step's writes
+  // start racing the previous step's still-in-flight flush over that same precondition, so only one would survive
+  // - the same failure mode the auto-confirm hook itself had to be fixed for.
+  const goToStep = (next: AgreementCreateStep) => {
+    void saveDraft().then((outcome) => {
+      if (!outcome.ok) notify("error", outcome.message);
+      setStep(next);
+    });
+  };
 
   if (!flags.canManage) {
     return (
@@ -71,7 +90,7 @@ export function AgreementCreatePage({ title }: { title: string }) {
           ) : (
             <>
               {step > 1 && (
-                <button type="button" className="btn" onClick={() => setStep((step - 1) as AgreementCreateStep)}>
+                <button type="button" className="btn" disabled={isBusy()} onClick={() => goToStep((step - 1) as AgreementCreateStep)}>
                   Back
                 </button>
               )}
@@ -79,7 +98,7 @@ export function AgreementCreatePage({ title }: { title: string }) {
                 Save as draft
               </button>
               {step < 5 && (
-                <button type="button" className="btn primary" onClick={() => setStep((step + 1) as AgreementCreateStep)}>
+                <button type="button" className="btn primary" disabled={isBusy()} onClick={() => goToStep((step + 1) as AgreementCreateStep)}>
                   Continue
                 </button>
               )}
@@ -104,12 +123,12 @@ export function AgreementCreatePage({ title }: { title: string }) {
         <PartySourceChoice />
       ) : (
         <>
-          <AgreementProgress step={step} onStepClick={setStep} canJumpTo={() => true} />
+          <AgreementProgress step={step} onStepClick={goToStep} canJumpTo={() => true} />
           {step === 1 && <UploadExtractStep />}
           {step === 2 && <VerificationStep />}
           {step === 3 && <PartiesKycStep />}
           {step === 4 && <TermsTargetsStep />}
-          {step === 5 && <ConfirmStep onGoToStep={setStep} />}
+          {step === 5 && <ConfirmStep onGoToStep={goToStep} />}
         </>
       )}
 
