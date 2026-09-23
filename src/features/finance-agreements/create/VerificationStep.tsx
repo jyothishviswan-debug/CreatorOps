@@ -29,6 +29,8 @@ export function VerificationStep() {
   const rows = reconciliation ? buildCrossVerificationRows(reconciliation, { canManage: permissions.canManage }) : [];
   const groups = groupCrossVerificationRows(rows);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
+  const [activeKey, setActiveKey] = useState<string | null>(null);
+  const active = groups.find((g) => g.key === activeKey) ?? groups[0] ?? null;
 
   const legend = legendOf(rows);
 
@@ -51,9 +53,22 @@ export function VerificationStep() {
       </div>
       <div className="panelbody">
         {groups.length === 0 && <p className="muted">No reconciliation data yet - upload and extract the Agreement first.</p>}
-        {groups.map((group) => (
-          <VerificationGroupSection key={group.key} group={group} expanded={expanded[group.key] ?? false} onExpand={() => setExpanded((s) => ({ ...s, [group.key]: true }))} />
-        ))}
+        {groups.length > 0 && (
+          <div className="tabsbar" style={{ marginBottom: 16 }}>
+            <div className="tabs" role="tablist">
+              {groups.map((group) => {
+                const attentionCount = group.rows.filter((r) => r.state === "MISMATCH" || r.state === "MISSING_IN_CREATOROPS" || r.needsResolution).length;
+                return (
+                  <button key={group.key} type="button" role="tab" aria-selected={active?.key === group.key} className={`tab${active?.key === group.key ? " active" : ""}`} onClick={() => setActiveKey(group.key)}>
+                    {group.title}
+                    {attentionCount > 0 ? ` (${attentionCount})` : ""}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        )}
+        {active && <VerificationGroupSection group={active} expanded={expanded[active.key] ?? false} onExpand={() => setExpanded((s) => ({ ...s, [active.key]: true }))} />}
       </div>
     </section>
   );
@@ -65,8 +80,10 @@ function VerificationGroupSection({ group, expanded, onExpand }: { group: CrossV
   const visible = expanded ? group.rows : attention;
 
   return (
-    <div style={{ marginBottom: 26 }}>
-      <h3>{group.title}</h3>
+    <div>
+      <p className="muted" style={{ fontSize: 11, marginBottom: 8 }}>
+        {group.description}
+      </p>
 
       <div className={styles.verifyTable}>
         <div className="tablewrap" style={{ marginTop: 8 }}>

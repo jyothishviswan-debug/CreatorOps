@@ -46,7 +46,7 @@ export function PartiesKycStep() {
               <p>{counterparty.displayName} is the primary Finance-authoritative counterparty. Add any other named party from the contract text below.</p>
             </div>
             <div className="panelbody">
-              <PartiesTable parties={version.parties} onSave={(parties) => void setParties(parties).then((r) => notify(r.ok ? "success" : "error", r.ok ? "Agreement parties saved." : r.message))} busy={isBusy()} />
+              <PartiesTable primaryPartyName={counterparty.displayName} parties={version.parties} onSave={(parties) => void setParties(parties).then((r) => notify(r.ok ? "success" : "error", r.ok ? "Agreement parties saved." : r.message))} busy={isBusy()} />
               {ambiguous && (
                 <p className="scopebox" style={{ marginTop: 12, color: "var(--red)" }}>
                   More than one party could be the primary counterparty or payee. Mark exactly one Payee (or, if none, exactly one Primary counterparty) before this Agreement can be activated.
@@ -136,7 +136,7 @@ export function PartiesKycStep() {
   );
 }
 
-function PartiesTable({ parties, onSave, busy }: { parties: AgreementParty[]; onSave: (parties: AgreementParty[]) => void; busy: boolean }) {
+function PartiesTable({ primaryPartyName, parties, onSave, busy }: { primaryPartyName: string; parties: AgreementParty[]; onSave: (parties: AgreementParty[]) => void; busy: boolean }) {
   const [rows, setRows] = useState<AgreementParty[]>(parties);
 
   return (
@@ -151,6 +151,16 @@ function PartiesTable({ parties, onSave, busy }: { parties: AgreementParty[]; on
           </tr>
         </thead>
         <tbody>
+          <tr>
+            <td>
+              <span className="pill orange">{ROLE_LABEL.PRIMARY_COUNTERPARTY}</span>
+            </td>
+            <td>
+              <b>{primaryPartyName}</b>
+            </td>
+            <td className="muted">Linked Partner/Vendor</td>
+            <td />
+          </tr>
           {rows.length === 0 && (
             <tr>
               <td colSpan={4} className="muted">

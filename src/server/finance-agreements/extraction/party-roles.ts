@@ -11,9 +11,17 @@ import { cleanValueText, sentenceHit, sentencesOf, type DocLine, type DocText, t
 export type PartySide = "operator" | "counterparty";
 
 // The operator is CreatorOps' own counterpart in the agreement (never CreatorOps itself - a THIRD party to every one
-// of these contracts); the counterparty is the other side, whatever noun the contract gives it.
+// of these contracts); the counterparty is the other side, whatever noun the contract gives it. A tripartite (or
+// larger) Agreement numbers every counterparty-side signatory - "2nd Party", "3rd Party", "4th Party" - so this
+// must recognize all of them, not just the first: a real Tripartite Agreement between one Client and two Service
+// Providers ("2nd Party" and "3rd Party") previously had its 3rd Party's declaration sentence entirely invisible
+// to findPartyDeclarations (the regex only matched "2nd Party"), silently dropping that person's name/address/PAN/
+// Aadhaar rather than flagging the ambiguity. Recognizing every ordinal here does not, by itself, make
+// counterpartyName (a single-value field) hold two names - pickAndEmit still picks one and downgrades confidence
+// to LOW with a "multiple_distinct_values_found" warning when it sees more than one labeled candidate - but that
+// warning is the honest signal a silently-dropped 3rd Party never produced at all.
 export const OPERATOR_ROLE_WORDS = String.raw`1st\s+Party|First\s+Party|Client|Company|Principal`;
-export const COUNTERPARTY_ROLE_WORDS = String.raw`2nd\s+Party|Second\s+Party|Service\s+Provider|Collaborator|Vendor|Consultant|Contractor|Partner|Influencer|Talent`;
+export const COUNTERPARTY_ROLE_WORDS = String.raw`2nd\s+Party|Second\s+Party|3rd\s+Party|Third\s+Party|4th\s+Party|Fourth\s+Party|Service\s+Provider|Collaborator|Vendor|Consultant|Contractor|Partner|Influencer|Talent`;
 
 const OPERATOR_WORD_RE = new RegExp(String.raw`^(?:${OPERATOR_ROLE_WORDS})$`, "i");
 const COUNTERPARTY_WORD_RE = new RegExp(String.raw`^(?:${COUNTERPARTY_ROLE_WORDS})$`, "i");
