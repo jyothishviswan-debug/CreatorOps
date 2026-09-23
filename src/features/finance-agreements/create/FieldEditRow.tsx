@@ -84,7 +84,7 @@ function OptOutLinks({ fieldKey, canOptOut }: { fieldKey: AgreementFieldKey; can
   const { setLocalEdit, decideField, isBusy } = useIntake();
   if (!canOptOut) return null;
   return (
-    <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+    <div style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}>
       <button type="button" className={styles.optOutBtn} disabled={isBusy()} onClick={() => setLocalEdit(fieldKey, undefined, "NOT_APPLICABLE")}>
         Not applicable
       </button>
