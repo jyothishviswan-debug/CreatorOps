@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canTransitionLifecycle, CONTENT_LIFECYCLE_TRANSITIONS, FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS, PARTNER_REVIEW_LIFECYCLE_TRANSITIONS } from "./lifecycle";
+import { canTransitionLifecycle, CONTENT_LIFECYCLE_TRANSITIONS, FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS, INVOICE_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS, PARTNER_REVIEW_LIFECYCLE_TRANSITIONS } from "./lifecycle";
 
 describe("canTransitionLifecycle", () => {
   it("allows a transition from a listed predecessor state", () => {
@@ -166,5 +166,39 @@ describe("FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS", () => {
     expect(canTransitionLifecycle("DRAFT", "ENDED", T)).toBe(false);
     expect(canTransitionLifecycle("ACTIVE", "ACTIVE", T)).toBe(false);
     expect(canTransitionLifecycle("ACTIVE", "CONFIRMED", T)).toBe(false);
+  });
+});
+
+// Step 16A: Finance Invoice lifecycle. DRAFT -> SUBMITTED -> APPROVED|REJECTED; REJECTED can reopen
+// back to a new DRAFT version under the same head; VOID is reasoned and terminal.
+describe("INVOICE_LIFECYCLE_TRANSITIONS", () => {
+  const T = INVOICE_LIFECYCLE_TRANSITIONS;
+
+  it("DRAFT -> SUBMITTED -> APPROVED|REJECTED", () => {
+    expect(canTransitionLifecycle("DRAFT", "SUBMITTED", T)).toBe(true);
+    expect(canTransitionLifecycle("SUBMITTED", "APPROVED", T)).toBe(true);
+    expect(canTransitionLifecycle("SUBMITTED", "REJECTED", T)).toBe(true);
+  });
+
+  it("REJECTED reopens back to a new DRAFT version under the same head", () => {
+    expect(canTransitionLifecycle("REJECTED", "DRAFT", T)).toBe(true);
+  });
+
+  it("APPROVED is reachable only from SUBMITTED, never directly from DRAFT or REJECTED", () => {
+    expect(canTransitionLifecycle("DRAFT", "APPROVED", T)).toBe(false);
+    expect(canTransitionLifecycle("REJECTED", "APPROVED", T)).toBe(false);
+  });
+
+  it("VOID is reachable from DRAFT/SUBMITTED/REJECTED/APPROVED and is terminal", () => {
+    for (const from of ["DRAFT", "SUBMITTED", "REJECTED", "APPROVED"]) expect(canTransitionLifecycle(from, "VOID", T)).toBe(true);
+    for (const state of Object.keys(T)) expect(canTransitionLifecycle("VOID", state, T)).toBe(false);
+  });
+
+  it("no shortcut skips SUBMITTED, and DRAFT has no other predecessor besides REJECTED", () => {
+    expect(canTransitionLifecycle("DRAFT", "REJECTED", T)).toBe(false);
+    for (const state of Object.keys(T)) {
+      if (state === "REJECTED") continue;
+      expect(canTransitionLifecycle(state, "DRAFT", T)).toBe(false);
+    }
   });
 });

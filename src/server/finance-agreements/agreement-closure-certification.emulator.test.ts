@@ -497,31 +497,47 @@ const productionSrc = allSrc.filter((file) => /\.(ts|tsx)$/.test(file) && !isTes
 
 // Step 15A: Payables now EXIST - they are the next module of the canonical Finance flow
 // (Agreement -> Payable -> Invoice -> approval -> Payment(s)), with their own module, routes and
-// static guards (src/server/finance-payables/finance-payables-static.test.ts). What this block
-// still certifies, unchanged and in full, is that INVOICES and PAYMENTS do not exist anywhere, and
-// that everything Payable-shaped lives in exactly the two places that are allowed to own it.
-describe("no Invoice / Payment implementation exists anywhere in src (Payables landed in Step 15A)", () => {
-  // Invoices and Payments remain the two fixture-only placeholder pages (still not implemented).
-  // Payables itself was UI-skeleton-only through Step 15A; Step 15B built its real UI, so its page is
-  // no longer a placeholder - see the PAYABLE_OWNERS update below.
+// static guards (src/server/finance-payables/finance-payables-static.test.ts).
+// Step 16A: Invoices now EXIST too, the same way - their own module, routes and static guards
+// (src/server/finance-invoices/finance-invoices-static.test.ts). What this block still certifies,
+// unchanged and in full, is that PAYMENTS do not exist anywhere, that Invoice UI does not exist yet
+// (backend-only stage), and that everything Payable- or Invoice-shaped lives in exactly the places
+// that are allowed to own it.
+describe("no Payment implementation exists anywhere in src (Payables landed in Step 15A, Invoices landed in Step 16A)", () => {
+  // Payments remains the one fixture-only placeholder page (still not implemented). Invoices' own
+  // placeholder page also still exists - Step 16A is backend-only and deliberately builds no
+  // Invoice UI (no Invoice Overview page, nothing under src/app/finance/invoices/ beyond the
+  // existing placeholder, nothing under src/features/finance-invoices/).
   const PLACEHOLDERS = ["src/app/finance/invoices/page.tsx", "src/app/finance/payments/page.tsx"];
   // The only places a Payable-named path may live: the Payables module, its API routes, and (as of
   // Step 15B) its real UI - the three canonical routes under src/app/finance/payables/** and the
   // feature code under src/features/finance-payables/**.
   const PAYABLE_OWNERS = [/^src\/app\/finance\/payables\//, /^src\/features\/finance-payables\//, /^src\/server\/finance-payables\//, /^src\/app\/api\/finance\/payables\//];
+  // The only places an Invoice-named path may live: the Invoices module and its API routes (no UI
+  // yet - Step 16A is backend-only, see PLACEHOLDERS above).
+  const INVOICE_OWNERS = [/^src\/server\/finance-invoices\//, /^src\/app\/api\/finance\/invoices\//];
 
-  it("the only paths in src named invoice / payment / settlement are the two Finance placeholder pages, and every payable-named path belongs to the Payables module, its routes or the placeholder page", () => {
-    const named = allSrc.map(relative).filter((file) => /(invoice|payment|settlement)/i.test(file));
-    expect(named.sort()).toEqual(["src/app/finance/invoices/page.tsx", "src/app/finance/payments/page.tsx"]);
-    // no Invoices / Payments API route exists
-    expect(allSrc.map(relative).filter((file) => file.startsWith("src/app/api/") && /(invoice|payment|settlement)/i.test(file))).toEqual([]);
+  it("the only paths in src named payment / settlement are the Payments placeholder page, and every payable-/invoice-named path belongs to its own module, its routes or its placeholder page", () => {
+    const paymentNamed = allSrc.map(relative).filter((file) => /(payment|settlement)/i.test(file));
+    expect(paymentNamed.sort()).toEqual(["src/app/finance/payments/page.tsx"]);
+    // no Payments API route exists
+    expect(allSrc.map(relative).filter((file) => file.startsWith("src/app/api/") && /(payment|settlement)/i.test(file))).toEqual([]);
 
+    // A payable-named path belongs to the Payables module itself, OR (Step 16A) to the Invoices
+    // module - an Invoice legitimately pins and reads a Payable, so a file like
+    // src/server/finance-invoices/payable-source.ts is expected and is still owned by Invoices, not
+    // Payables (its own static guard - finance-invoices-static.test.ts - separately proves it never
+    // writes Payable data).
     const payableNamed = allSrc.map(relative).filter((file) => /payable/i.test(file));
     expect(payableNamed.length).toBeGreaterThan(10);
-    for (const file of payableNamed) expect(PAYABLE_OWNERS.some((owner) => owner.test(file)), file).toBe(true);
+    for (const file of payableNamed) expect(PAYABLE_OWNERS.some((owner) => owner.test(file)) || INVOICE_OWNERS.some((owner) => owner.test(file)), file).toBe(true);
+
+    const invoiceNamed = allSrc.map(relative).filter((file) => /invoice/i.test(file) && file !== "src/app/finance/invoices/page.tsx");
+    expect(invoiceNamed.length).toBeGreaterThan(10);
+    for (const file of invoiceNamed) expect(INVOICE_OWNERS.some((owner) => owner.test(file)), file).toBe(true);
   });
 
-  it("the three placeholder pages are FIXTURE pages: they import only the shared shell / view / static fixtures - no server module, no fetch, no server action, no Firestore", () => {
+  it("the two placeholder pages are FIXTURE pages: they import only the shared shell / view / static fixtures - no server module, no fetch, no server action, no Firestore", () => {
     for (const file of PLACEHOLDERS) {
       const source = codeOf(readFileSync(path.join(repoRoot, file), "utf8"));
       const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);
@@ -535,46 +551,64 @@ describe("no Invoice / Payment implementation exists anywhere in src (Payables l
     }
   });
 
-  it("no server / API / library code names an Invoice / Payment / settlement collection, model, service function or Firestore path, and Payable vocabulary appears only inside the Payables module and its routes", () => {
+  it("no server / API / library code names a Payment / settlement collection, model, service function or Firestore path, and Payable / Invoice vocabulary appears only inside their own module and routes", () => {
     const serverSide = productionSrc.filter((file) => /^src\/(server|lib|app\/api)\//.test(relative(file)));
     expect(serverSide.length).toBeGreaterThan(300);
     for (const file of serverSide) {
       const source = codeOf(readFileSync(file, "utf8"));
       // a bare string literal equal to one of the words is how a collection / path / key would be declared
-      expect(source, relative(file)).not.toMatch(/["'`](invoices?|payments?|settlements?)["'`]/i);
-      expect(source, relative(file)).not.toMatch(/\b(create|record|approve|settle|mark|issue|submit|generate)(Invoice|Payment|Settlement)s?\b/);
-      expect(source, relative(file)).not.toMatch(/\.(collection|collectionGroup)\(\s*["'`][^"'`]*(invoice|payment|settlement)/i);
+      expect(source, relative(file)).not.toMatch(/["'`](payments?|settlements?)["'`]/i);
+      expect(source, relative(file)).not.toMatch(/\b(create|record|approve|settle|mark|issue|submit|generate)(Payment|Settlement)s?\b/);
+      expect(source, relative(file)).not.toMatch(/\.(collection|collectionGroup)\(\s*["'`][^"'`]*(payment|settlement)/i);
 
       // Outside the Payables module and its routes, the Payable vocabulary is still forbidden -
       // no other module may declare a Payable collection or a Payable service function.
-      if (PAYABLE_OWNERS.some((owner) => owner.test(relative(file)))) continue;
-      expect(source, relative(file)).not.toMatch(/["'`]payables?["'`]/i);
-      expect(source, relative(file)).not.toMatch(/\b(create|record|approve|settle|mark|issue|submit|generate)Payables?\b/);
-      expect(source, relative(file)).not.toMatch(/\.(collection|collectionGroup)\(\s*["'`][^"'`]*payable/i);
+      if (!PAYABLE_OWNERS.some((owner) => owner.test(relative(file)))) {
+        expect(source, relative(file)).not.toMatch(/["'`]payables?["'`]/i);
+        expect(source, relative(file)).not.toMatch(/\b(create|record|approve|settle|mark|issue|submit|generate)Payables?\b/);
+        expect(source, relative(file)).not.toMatch(/\.(collection|collectionGroup)\(\s*["'`][^"'`]*payable/i);
+      }
+      // Outside the Invoices module and its routes, the Invoice vocabulary is still forbidden - no
+      // other module may declare an Invoice collection or an Invoice service function. The two
+      // Finance placeholder pages import nothing server-side (proven separately above) so they never
+      // reach this server/lib/api-scoped file set at all.
+      if (!INVOICE_OWNERS.some((owner) => owner.test(relative(file)))) {
+        expect(source, relative(file)).not.toMatch(/["'`]invoices?["'`]/i);
+        expect(source, relative(file)).not.toMatch(/\b(create|record|approve|reject|reopen|void|submit)Invoices?\b/);
+        expect(source, relative(file)).not.toMatch(/\.(collection|collectionGroup)\(\s*["'`][^"'`]*invoice/i);
+      }
     }
-    // Firestore configuration carries no Invoice / Payment / settlement collection, and exactly one
-    // Payable-shaped collection group: the Payables head collection.
+    // Firestore configuration carries no Payment / settlement collection, exactly one Payable-shaped
+    // collection group (the Payables head collection) and exactly the Invoices module's own two
+    // collection groups (the Invoices head collection and its number-claim collection).
     for (const config of ["firestore.indexes.json", "firestore.rules"]) {
       const text = readFileSync(path.join(repoRoot, config), "utf8");
-      expect(text, config).not.toMatch(/invoice|payment|settlement/i);
+      expect(text, config).not.toMatch(/payment|settlement/i);
     }
     const indexes = JSON.parse(readFileSync(path.join(repoRoot, "firestore.indexes.json"), "utf8")) as { indexes: Array<{ collectionGroup: string }> };
     expect([...new Set(indexes.indexes.map((index) => index.collectionGroup).filter((name) => /payable/i.test(name)))]).toEqual(["financePayables"]);
+    expect([...new Set(indexes.indexes.map((index) => index.collectionGroup).filter((name) => /invoice/i.test(name)))]).toEqual(["financeInvoices"]);
     expect(readFileSync(path.join(repoRoot, "firestore.rules"), "utf8")).not.toMatch(/payable/i);
+    expect(readFileSync(path.join(repoRoot, "firestore.rules"), "utf8")).not.toMatch(/invoice/i);
   });
 
-  it("Payable permissions are consumed ONLY by the Payables module and its routes, and no Invoice / Payment permission is consumed anywhere", () => {
+  it("Payable and Invoice permissions are each consumed ONLY by their own module and routes, and no Payment permission is consumed anywhere", () => {
     const CATALOG = ["src/server/authz/actions.ts", "src/server/authz/module-actions.ts", "src/server/authz/seed-access-data.ts"];
     const production = allSrc.filter((file) => /\.(ts|tsx)$/.test(file) && !isTestFile(file));
 
-    // Invoices / Payments: still catalog-only, exactly as Step 14A closed it.
-    const invoicePaymentUsers = production.filter((file) => /\b(manage|record)_(invoices|payments)\b/.test(readFileSync(file, "utf8"))).map(relative).sort();
-    expect(invoicePaymentUsers).toEqual(CATALOG);
+    // Payments: still catalog-only, exactly as Step 14A closed it.
+    const paymentUsers = production.filter((file) => /\brecord_payments\b/.test(readFileSync(file, "utf8"))).map(relative).sort();
+    expect(paymentUsers).toEqual(CATALOG);
 
     // Payables: the catalog plus the Payables module / routes, and nothing else.
     const payableUsers = production.filter((file) => /\b(manage|approve|adjust|void)_payables\b/.test(readFileSync(file, "utf8"))).map(relative).sort();
     expect(payableUsers.length).toBeGreaterThan(CATALOG.length);
     for (const file of payableUsers) expect(CATALOG.includes(file) || PAYABLE_OWNERS.some((owner) => owner.test(file)), file).toBe(true);
+
+    // Invoices: the catalog plus the Invoices module / routes, and nothing else.
+    const invoiceUsers = production.filter((file) => /\b(manage_invoices|approve_invoices|void_invoices|override_invoice_mismatch)\b/.test(readFileSync(file, "utf8"))).map(relative).sort();
+    expect(invoiceUsers.length).toBeGreaterThan(CATALOG.length);
+    for (const file of invoiceUsers) expect(CATALOG.includes(file) || INVOICE_OWNERS.some((owner) => owner.test(file)), file).toBe(true);
   });
 
   it("the Finance Agreement module itself carries no money calculation: no proration, tax, settlement or payout function is exported from it", () => {

@@ -118,6 +118,15 @@ export const ACTIONS = [
   "adjust_payables",
   "void_payables",
   "manage_invoices",
+  // Step 16A: the Invoice governance-weight actions, deliberately their own ids rather than folded
+  // into manage_invoices - same "granular rather than one generic manage" discipline as Payables'
+  // own approve_payables/adjust_payables/void_payables split. A Manager may prepare/submit an
+  // Invoice draft (manage_invoices) without being trusted to approve/reject it (approve_invoices),
+  // void it (void_invoices), or accept a legitimate Invoice/Payable amount mismatch on it
+  // (override_invoice_mismatch - the narrowest of the three, Partnership Head/Super Admin only).
+  "approve_invoices",
+  "void_invoices",
+  "override_invoice_mismatch",
   "record_payments",
   // Operations
   "manage_tasks",

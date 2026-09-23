@@ -109,16 +109,31 @@ describe("a Payable can never mutate a Partner Review or an Agreement", () => {
   });
 });
 
-describe("no Invoice or Payment implementation is introduced", () => {
-  it("no Payables file imports an invoice/payment module and no such collection is opened", () => {
+// Step 16A: Finance Invoices now exists as its own sibling module under /api/finance/invoices/**,
+// with its own static guards (src/server/finance-invoices/finance-invoices-static.test.ts) proving
+// it consumes a Payable only through Payables' own public, read-only contract and never mutates
+// Payable history. The guards below stay in full force for what they always meant: Payables ITSELF
+// never implements Invoice or Payment business logic, never imports an invoice/payment module, and
+// Payments still have no implementation anywhere in the codebase.
+describe("Payables itself never implements Invoice or Payment business logic", () => {
+  it("no Payables file imports a payment module (or, other than the public Finance Invoices barrel, an invoice module) and no invoice/payment collection is opened here", () => {
     for (const [name, source] of raw) {
-      for (const spec of importsOf(source)) expect(spec, `${name} imports ${spec}`).not.toMatch(/(^|\/)(invoices?|payments?)(\/|$)/i);
+      for (const spec of importsOf(source)) {
+        expect(spec, `${name} imports ${spec}`).not.toMatch(/(^|\/)payments?(\/|$)/i);
+        if (/(^|\/)invoices?(\/|$)/i.test(spec)) expect(spec, `${name} imports ${spec}`).toBe("@/server/finance-invoices");
+      }
     }
     for (const [name, source] of code) expect(source, name).not.toMatch(/collection\(\s*["'`](invoices?|payments?|invoiceLines?|settlements?)\b/i);
   });
 
-  it("no Invoice or Payment API route exists", () => {
-    for (const dir of ["invoices", "payments"]) expect(existsSync(path.join(path.dirname(routesDir), dir)), dir).toBe(false);
+  it("no Payables file itself imports Finance Invoices at all (the dependency runs the other way: Invoices reads Payables, never the reverse)", () => {
+    for (const [name, source] of raw) {
+      for (const spec of importsOf(source)) expect(spec, `${name} imports ${spec}`).not.toMatch(/finance-invoices/);
+    }
+  });
+
+  it("no Payment API route exists anywhere; Invoices now has its own route tree, which is Finance Invoices' own concern, not Payables'", () => {
+    expect(existsSync(path.join(path.dirname(routesDir), "payments"))).toBe(false);
   });
 
   it("READY_FOR_INVOICE is a payable state, never an approval - nothing here models an approval workflow", () => {

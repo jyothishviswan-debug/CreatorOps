@@ -158,6 +158,25 @@ export const PAYABLE_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
   VOID: ["DRAFT", "READY_FOR_INVOICE"],
 };
 
+// Step 16A: the canonical Finance Invoice lifecycle. Keyed by target state -> allowed predecessor
+// states, same convention as every map above. DRAFT is reachable from REJECTED because reopening a
+// rejected Invoice creates a revised DRAFT version under the SAME canonical head (the rejected
+// version is retained in history, never overwritten) - the same "reopen" shape as Payables' own
+// DRAFT <- READY_FOR_INVOICE edge. APPROVED is reachable only from SUBMITTED and is otherwise
+// terminal for ordinary processing (nothing here lists it as a further predecessor - a correction
+// after approval is explicitly out of this phase's scope, see Step 16A section 12). VOID is
+// reasoned and terminal - nothing lists it as an allowed predecessor of anything, and it is
+// reachable from every non-approved, non-void state (DRAFT/SUBMITTED/REJECTED) plus APPROVED itself
+// (an approved Invoice can still be voided before any Payment exists - Payments do not exist yet in
+// this phase). There is no hard delete anywhere in the module.
+export const INVOICE_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  DRAFT: ["REJECTED"],
+  SUBMITTED: ["DRAFT"],
+  APPROVED: ["SUBMITTED"],
+  REJECTED: ["SUBMITTED"],
+  VOID: ["DRAFT", "SUBMITTED", "REJECTED", "APPROVED"],
+};
+
 export function canTransitionLifecycle(currentState: string, nextState: string, transitions: LifecycleTransitionMap): boolean {
   const allowedFrom = transitions[nextState];
   if (!allowedFrom) return false;

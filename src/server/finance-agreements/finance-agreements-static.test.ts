@@ -67,8 +67,13 @@ const moduleFiles = walk(moduleDir).filter((file) => !file.includes(`${path.sep}
 // apply in full to every Agreements file: the Agreements module must not reach into Payables, and
 // nothing in this list stops being checked - it is only the Payables routes' own file set that is
 // no longer treated as Agreements code.
+// Step 16A: same treatment for Finance Invoices - /api/finance/invoices/** now owns its own static
+// guards in src/server/finance-invoices/finance-invoices-static.test.ts, so its routes are excluded
+// from this AGREEMENTS-scoped scan the same way Payables' own were in Step 15A. The "no Payment"
+// guard below still applies in full to every Agreements file.
 const PAYABLES_ROUTE_PREFIX = path.join(routesDir, "payables") + path.sep;
-const routeFiles = walk(routesDir).filter((file) => !file.startsWith(PAYABLES_ROUTE_PREFIX));
+const INVOICES_ROUTE_PREFIX = path.join(routesDir, "invoices") + path.sep;
+const routeFiles = walk(routesDir).filter((file) => !file.startsWith(PAYABLES_ROUTE_PREFIX) && !file.startsWith(INVOICES_ROUTE_PREFIX));
 const productionFiles = [...moduleFiles, ...routeFiles];
 const code = new Map(productionFiles.map((file) => [rel(file), codeOnly(read(file))] as const));
 
@@ -149,13 +154,14 @@ describe("routes: thin, and exactly the documented surface", () => {
     "onboarding/preview/route.ts": ["POST"],
   };
 
-  it("the Agreements route tree is exactly the 29 documented route files (no invoices / payments / delete / campaign route exists)", () => {
+  it("the Agreements route tree is exactly the 29 documented route files (no payments / delete / campaign route exists)", () => {
     const actual = routeFiles.map((file) => path.relative(routesDir, file).split(path.sep).join("/")).sort();
     expect(actual).toEqual(Object.keys(EXPECTED).sort());
     // Step 15A added the "payables" sibling under the shared /api/finance namespace (its own module,
-    // its own guards). Invoices and Payments deliberately still have no route surface at all.
-    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "onboarding", "payables", "permissions"]);
-    expect(readdirSync(routesDir)).not.toContain("invoices");
+    // its own guards). Step 16A added the "invoices" sibling the same way (its own module, its own
+    // guards in src/server/finance-invoices/finance-invoices-static.test.ts). Payments deliberately
+    // still has no route surface at all.
+    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "invoices", "onboarding", "payables", "permissions"]);
     expect(readdirSync(routesDir)).not.toContain("payments");
   });
 

@@ -94,7 +94,23 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // the "finance_amounts" sensitive CATEGORY (see SENSITIVE_GRANTS,
       // explicit product confirmation) - it sees the exact amounts of the
       // Payables it prepares, it just cannot finalize/adjust/void them.
-      finance: featureGrant(true, { manage_agreements: true, manage_payables: true, approve_payables: false, adjust_payables: false, void_payables: false, manage_invoices: true, record_payments: true }),
+      // Step 16A: the same day-to-day-but-not-governance split extends to the three new Invoice
+      // actions - Manager may prepare, revise and submit an Invoice draft (manage_invoices) but may
+      // neither approve/reject it (approve_invoices), void it (void_invoices), nor accept a
+      // legitimate amount mismatch on it (override_invoice_mismatch). Manager DOES hold
+      // finance_amounts (see SENSITIVE_GRANTS below), same as for Payables.
+      finance: featureGrant(true, {
+        manage_agreements: true,
+        manage_payables: true,
+        approve_payables: false,
+        adjust_payables: false,
+        void_payables: false,
+        manage_invoices: true,
+        approve_invoices: false,
+        void_invoices: false,
+        override_invoice_mismatch: false,
+        record_payments: true,
+      }),
       // Step 6A: both relationship-owner roles get the full Discovery
       // evidence-recording surface (manage_kyc included - see
       // SENSITIVE_GRANTS below for why that alone isn't enough to read
@@ -219,7 +235,22 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // Step 15A: also the only role (besides Super Admin) trusted with the two governance-weight
       // Payable actions - the manual financial adjustment and the void - matching approve_payables'
       // own head-only shape.
-      finance: featureGrant(true, { manage_agreements: true, activate_agreements: true, manage_payables: true, approve_payables: true, adjust_payables: true, void_payables: true, manage_invoices: true, record_payments: true }),
+      // Step 16A: the only role (besides Super Admin) trusted with the three governance-weight
+      // Invoice actions - approve/reject, void, and mismatch override - matching approve_payables'/
+      // adjust_payables'/void_payables' own head-only shape.
+      finance: featureGrant(true, {
+        manage_agreements: true,
+        activate_agreements: true,
+        manage_payables: true,
+        approve_payables: true,
+        adjust_payables: true,
+        void_payables: true,
+        manage_invoices: true,
+        approve_invoices: true,
+        void_invoices: true,
+        override_invoice_mismatch: true,
+        record_payments: true,
+      }),
       discovery: featureGrant(true, {
         create: true,
         edit: true,
