@@ -12,7 +12,7 @@ import { FieldRow } from "./FieldRow";
 import { SectionCard } from "./SectionCard";
 
 export function TargetsReviewPanel() {
-  const { hasDraft, fields, version, counterparty, extraction, extractionAttached, unresolvedCount, unresolvedFields, kyc, localEdits, fieldModels, flags, saveDraft, confirmAgreement, activateAgreement, confirmBlockers, isBusy, scrollToAnchor, notify } = useIntake();
+  const { hasDraft, fields, version, counterparty, artifact, extraction, extractionAttached, unresolvedCount, unresolvedFields, kyc, localEdits, fieldModels, flags, saveDraft, confirmAgreement, activateAgreement, confirmBlockers, isBusy, scrollToAnchor, notify } = useIntake();
   if (!hasDraft || !version) return null;
 
   const targetKeys = fields.performance_targets.map((m) => m.fieldKey);
@@ -22,7 +22,7 @@ export function TargetsReviewPanel() {
     version: { confirmed: version.confirmed, sourceMode: version.sourceMode },
     resolve,
     models: fieldModels,
-    artifact: null,
+    artifact,
     extractionStatus: extraction?.run.status ?? null,
     extractionAttached,
     unresolvedCount,
