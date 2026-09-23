@@ -63,16 +63,7 @@ export function AgreementCreatePage() {
           {step === 2 && <VerificationStep />}
           {step === 3 && <PartiesKycStep />}
           {step === 4 && <TermsTargetsStep />}
-          {step === 5 && (
-            <ConfirmStep
-              onGoToStep={(anchorId) => {
-                const target = document.getElementById(anchorId);
-                if (target?.closest('[data-step="2"]')) setStep(2);
-                else if (target?.closest('[data-step="3"]')) setStep(3);
-                else setStep(4);
-              }}
-            />
-          )}
+          {step === 5 && <ConfirmStep onGoToStep={setStep} />}
           {step > 1 && (
             <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18 }}>
               <button type="button" className="btn" onClick={() => setStep((step - 1) as AgreementCreateStep)}>

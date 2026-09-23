@@ -3,12 +3,17 @@
 // EXECUTE_HARD_RESET Section 22: Step 5 - Confirm. A concise review summary, not another full form. Actions
 // follow the Foundation button hierarchy: Save Draft / Confirm Agreement / Activate Agreement (never enabled
 // with blockers remaining).
+import { Icon } from "@/ui/icons";
+
 import { commercialIssues } from "../agreement-intake-logic/editors/commercial-logic";
 import { useIntake } from "../agreement-intake-logic/intake-context";
 import { buildReadiness, buildReviewGroups, draftResolver, frozenResolver } from "../agreement-intake-logic/review-summary";
 import { fieldLabel } from "../format";
 
-export function ConfirmStep({ onGoToStep }: { onGoToStep: (anchorId: string) => void }) {
+import { groupReadinessByStep } from "./agreement-create-adapter";
+import type { AgreementCreateStep } from "./agreement-create-view";
+
+export function ConfirmStep({ onGoToStep }: { onGoToStep: (step: AgreementCreateStep) => void }) {
   const {
     hasDraft,
     version,
@@ -45,6 +50,7 @@ export function ConfirmStep({ onGoToStep }: { onGoToStep: (anchorId: string) => 
     fieldLabel,
   });
   const readiness = buildReadiness({ unresolved: unresolvedFields, localEdits, commercialIssues: commercialIssues(resolve) });
+  const readinessByStep = groupReadinessByStep(readiness);
 
   return (
     <section className="panel">
@@ -75,15 +81,23 @@ export function ConfirmStep({ onGoToStep }: { onGoToStep: (anchorId: string) => 
             <b>
               {readiness.length} item{readiness.length === 1 ? "" : "s"} need attention before this Agreement can be confirmed.
             </b>
-            <ul style={{ marginTop: 8 }}>
-              {readiness.map((item) => (
-                <li key={item.anchorId}>
-                  <button type="button" className="btn ghost" onClick={() => onGoToStep(item.anchorId)}>
-                    {item.message}
-                  </button>
-                </li>
+            <div style={{ marginTop: 4 }}>
+              {readinessByStep.map((group) => (
+                <button key={group.step} type="button" className="attention" onClick={() => onGoToStep(group.step)}>
+                  <span className="alerttile">
+                    <Icon name="alert" />
+                  </span>
+                  <span className="grow">
+                    <strong>{group.title}</strong>
+                    <small>
+                      {group.items.length} item{group.items.length === 1 ? "" : "s"} need{group.items.length === 1 ? "s" : ""} a decision
+                    </small>
+                  </span>
+                  <span className="count">{group.items.length}</span>
+                  <span className="arrow">→</span>
+                </button>
               ))}
-            </ul>
+            </div>
           </div>
         )}
 

@@ -10,19 +10,21 @@ import type { FieldViewModel } from "../field-view-model";
 import { valueLines } from "../agreement-intake-logic/editors/value-lines";
 import type { IntakeCounterparty } from "../agreement-intake-logic/intake-context";
 
-import type {
-  AccountScopeView,
-  AgreementDocumentView,
-  AgreementPartyRoleView,
-  AgreementPartyView,
-  ContentObligationView,
-  DocumentStorageState,
-  ExtractedFieldView,
-  ExtractionUiState,
-  IncentiveView,
-  KeyClauseView,
-  PerformanceTargetView,
-  ReviewTabKey,
+import {
+  AGREEMENT_CREATE_STEPS,
+  type AccountScopeView,
+  type AgreementCreateStep,
+  type AgreementDocumentView,
+  type AgreementPartyRoleView,
+  type AgreementPartyView,
+  type ContentObligationView,
+  type DocumentStorageState,
+  type ExtractedFieldView,
+  type ExtractionUiState,
+  type IncentiveView,
+  type KeyClauseView,
+  type PerformanceTargetView,
+  type ReviewTabKey,
 } from "./agreement-create-view";
 
 // --- Review tab grouping (Section 9's tabs - a different taxonomy from the old IntakeSectionId groups) -------------------------------------
@@ -41,6 +43,37 @@ export function reviewTabOf(fieldKey: string): ReviewTabKey {
   if (CONTENT_FIELD_KEYS.has(fieldKey)) return "content";
   if (TARGETS_FIELD_KEYS.has(fieldKey)) return "targets";
   return "other";
+}
+
+// --- Readiness (Confirm step) grouped by wizard step, not by review tab: the Confirm step's "needs attention"
+// list should send someone to the STEP that holds the field, and Step 2 (Review & Verify) shows contact/platform
+// fields that the review-tab grouping above lumps in with Parties & KYC. A dedicated map keeps the two concerns
+// (tab layout on Step 1's Summary vs. step navigation from Step 5) independent.
+const STEP2_CONTACT_FIELD_KEYS = new Set(["counterpartyName", "contactNumber", "emailAddress", "state", "address", "pinCode", "platforms", "collaboratorPageLink", "collaboratorPageName"]);
+const STEP3_PARTIES_KYC_FIELD_KEYS = new Set(["gstin", "aadhaarNumber", "aadhaarStatus", "panNumber", "panHolderName", "bankAccountNumber", "ifsc", "aadhaarDocumentStatus", "panDocumentStatus", "gstCertificateStatus", "partnerRef", "partnerAccountRefs"]);
+
+export function readinessStepOf(fieldKey: string): AgreementCreateStep {
+  if (STEP2_CONTACT_FIELD_KEYS.has(fieldKey)) return 2;
+  if (STEP3_PARTIES_KYC_FIELD_KEYS.has(fieldKey)) return 3;
+  // Dates/terms, commercial, targets and admin fields all live on Step 4 (Terms & Targets); an unrecognized key
+  // defaults there too rather than silently dropping the item.
+  return 4;
+}
+
+export type ReadinessStepGroup = { step: AgreementCreateStep; title: string; items: ReadonlyArray<{ message: string; anchorId: string }> };
+
+// Groups flat readiness items (one per field, "X needs a decision.") into one row per wizard step, in step order,
+// so the Confirm step can show "Terms & Targets - 12 items" instead of 12 near-identical sentences.
+export function groupReadinessByStep(items: ReadonlyArray<{ message: string; anchorId: string }>): ReadinessStepGroup[] {
+  const byStep = new Map<AgreementCreateStep, Array<{ message: string; anchorId: string }>>();
+  for (const item of items) {
+    const fieldKey = item.anchorId.replace(/^field-/, "");
+    const step = readinessStepOf(fieldKey);
+    const bucket = byStep.get(step);
+    if (bucket) bucket.push(item);
+    else byStep.set(step, [item]);
+  }
+  return AGREEMENT_CREATE_STEPS.filter((s) => byStep.has(s.step)).map((s) => ({ step: s.step, title: s.title, items: byStep.get(s.step)! }));
 }
 
 // --- Extraction state -----------------------------------------------------------------------------------------------------------------
