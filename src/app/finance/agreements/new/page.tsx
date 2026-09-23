@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 
-import { AgreementFormPage } from "@/features/finance-agreements/agreement-form/AgreementFormPage";
+import { AgreementCreatePage } from "@/features/finance-agreements/create/AgreementCreatePage";
 import { IntakeProvider } from "@/features/finance-agreements/agreement-intake-logic/intake-context";
 import { parseIntakeSearchParams } from "@/features/finance-agreements/agreement-intake-logic/intake-logic";
 import { resolveRequestActor } from "@/server/finance-agreements/http";
@@ -12,8 +12,9 @@ import { loadIntakePageState } from "./load-intake-state";
 
 type SearchParams = Record<string, string | string[] | undefined>;
 
-// /finance/agreements/new - the ONE canonical Agreement form (Step 14C.3: rebuilt from zero on the Foundation /
-// golden-master archetypes only, after removing the rejected v1 and v2 presentation layers).
+// /finance/agreements/new - the ONE canonical Agreement form (EXECUTE_HARD_RESET: rebuilt from zero as a
+// two-pane extraction workspace on the Foundation/golden-master archetypes only, after removing every earlier
+// Agreement-intake presentation layer).
 //   ?counterpartyType=&ref=     deep link from a Partner / Vendor page: preselects the counterparty
 //   ?agreementRef=&version=     RESUME a draft / revision (the URL Start draft replaces itself with)
 // Access is decided here, on the server, BEFORE anything renders: the proxy already gates /finance/**, and this page re-checks through the
@@ -30,9 +31,9 @@ export default async function NewAgreementPage({ searchParams }: { searchParams:
     <AppShell>
       <div className="head">
         <div>
-          <div className="eyebrow">FINANCE / NEW AGREEMENT</div>
+          <div className="eyebrow">FINANCE / AGREEMENTS / NEW AGREEMENT</div>
           <h1>{state.kind === "ready" ? state.title : "New Agreement"}</h1>
-          <p>Choose who the Agreement is with, add the contract, then review and confirm every term.</p>
+          <p>Upload a signed Agreement to extract details. Review, verify and confirm before creating the Agreement.</p>
         </div>
         <div className="actions">
           <Link href="/finance/agreements" className="btn">
@@ -47,7 +48,7 @@ export default async function NewAgreementPage({ searchParams }: { searchParams:
         </section>
       ) : (
         <IntakeProvider key={state.routeKey} permissions={state.permissions} initial={state.initial}>
-          <AgreementFormPage />
+          <AgreementCreatePage />
         </IntakeProvider>
       )}
     </AppShell>

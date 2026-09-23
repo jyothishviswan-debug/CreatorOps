@@ -1,0 +1,145 @@
+/* EXECUTE_HARD_RESET Section 23: a new CSS module, built from scratch (never the deleted Agreement UI's CSS).
+   Reuses Foundation's own custom-property tokens (--orange/--ink/--muted/--line/--canvas/--radius/--green/
+   --blue/--purple/--red are already defined globally on :root in src/ui/foundation.css) instead of duplicating
+   them under new names. */
+
+.page {
+  width: 100%;
+  min-width: 0;
+}
+
+.headerRow {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 18px;
+}
+
+.extractGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 5fr) minmax(0, 7fr);
+  gap: 16px;
+  align-items: start;
+}
+
+.mobileStep {
+  display: none;
+}
+
+.fileRow {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  align-items: center;
+}
+
+.preview {
+  width: 100%;
+  height: 680px;
+  overflow: hidden;
+  border-top: 1px solid var(--line);
+  background: var(--canvas);
+  display: grid;
+  place-items: center;
+}
+
+.preview iframe {
+  width: 100%;
+  height: 100%;
+  border: 0;
+}
+
+.infoGrid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px 14px;
+}
+
+.infoField {
+  min-width: 0;
+}
+
+.valueBox {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.clauseRow {
+  display: grid;
+  grid-template-columns: minmax(150px, 0.34fr) minmax(0, 1fr);
+  gap: 16px;
+  padding: 11px 0;
+  border-top: 1px solid var(--line);
+}
+
+.clauseRow:first-child {
+  border-top: 0;
+}
+
+.clauseValue {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 1200px) {
+  .infoGrid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1050px) {
+  .extractGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .preview {
+    height: 560px;
+  }
+}
+
+@media (max-width: 760px) {
+  .headerRow {
+    flex-direction: column;
+  }
+
+  .workflowFull {
+    display: none;
+  }
+
+  .mobileStep {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 13px 16px;
+    border: 1px solid var(--line);
+    border-radius: 10px;
+    background: #fff;
+    margin-bottom: 18px;
+  }
+
+  .infoGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .clauseRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .preview {
+    height: 420px;
+  }
+}
+
+@media (max-width: 430px) {
+  .infoGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .preview {
+    height: 360px;
+  }
+}

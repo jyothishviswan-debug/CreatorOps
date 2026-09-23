@@ -1,21 +1,36 @@
 "use client";
 
-// FINAL_EXECUTION Panel 5 - Performance Targets & Final Review. Targets stay separate from payment-affecting
-// terms (Section 18); the review is a concise summary, not another full form (Section 19); actions follow the
-// Foundation button hierarchy (Section 16): Save Draft / Confirm Agreement / Activate Agreement.
+// EXECUTE_HARD_RESET Section 22: Step 5 - Confirm. A concise review summary, not another full form. Actions
+// follow the Foundation button hierarchy: Save Draft / Confirm Agreement / Activate Agreement (never enabled
+// with blockers remaining).
 import { commercialIssues } from "../agreement-intake-logic/editors/commercial-logic";
 import { useIntake } from "../agreement-intake-logic/intake-context";
-import { draftResolver, frozenResolver, buildReadiness, buildReviewGroups } from "../agreement-intake-logic/review-summary";
+import { buildReadiness, buildReviewGroups, draftResolver, frozenResolver } from "../agreement-intake-logic/review-summary";
 import { fieldLabel } from "../format";
 
-import { FieldRow } from "./FieldRow";
-import { SectionCard } from "./SectionCard";
-
-export function TargetsReviewPanel() {
-  const { hasDraft, fields, version, counterparty, artifact, extraction, extractionAttached, unresolvedCount, unresolvedFields, kyc, localEdits, fieldModels, flags, saveDraft, confirmAgreement, activateAgreement, confirmBlockers, isBusy, scrollToAnchor, notify } = useIntake();
+export function ConfirmStep({ onGoToStep }: { onGoToStep: (anchorId: string) => void }) {
+  const {
+    hasDraft,
+    version,
+    counterparty,
+    artifact,
+    extraction,
+    extractionAttached,
+    unresolvedCount,
+    unresolvedFields,
+    kyc,
+    localEdits,
+    fieldModels,
+    flags,
+    saveDraft,
+    confirmAgreement,
+    activateAgreement,
+    confirmBlockers,
+    isBusy,
+    notify,
+  } = useIntake();
   if (!hasDraft || !version) return null;
 
-  const targetKeys = fields.performance_targets.map((m) => m.fieldKey);
   const resolve = version.confirmed ? frozenResolver(version) : draftResolver(fieldModels, localEdits);
   const groups = buildReviewGroups({
     counterparty,
@@ -32,18 +47,12 @@ export function TargetsReviewPanel() {
   const readiness = buildReadiness({ unresolved: unresolvedFields, localEdits, commercialIssues: commercialIssues(resolve) });
 
   return (
-    <>
-      <SectionCard title="Performance Targets" description="Warning-only - kept separate from payment-affecting terms.">
-        <div className="grid">
-          {targetKeys.map((key) => (
-            <div key={key} className="s12">
-              <FieldRow fieldKey={key} />
-            </div>
-          ))}
-        </div>
-      </SectionCard>
-
-      <SectionCard title="Review" description="A concise summary before confirming.">
+    <section className="panel">
+      <div className="panelhead">
+        <h2>Confirm</h2>
+        <p>A concise summary before confirming.</p>
+      </div>
+      <div className="panelbody">
         {groups.map((group) => (
           <div key={group.key} style={{ marginBottom: 16 }}>
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
@@ -63,11 +72,13 @@ export function TargetsReviewPanel() {
 
         {readiness.length > 0 && (
           <div className="scopebox">
-            <b>{readiness.length} item{readiness.length === 1 ? "" : "s"} need attention before this Agreement can be confirmed.</b>
+            <b>
+              {readiness.length} item{readiness.length === 1 ? "" : "s"} need attention before this Agreement can be confirmed.
+            </b>
             <ul style={{ marginTop: 8 }}>
               {readiness.map((item) => (
                 <li key={item.anchorId}>
-                  <button type="button" className="btn ghost" onClick={() => scrollToAnchor(item.anchorId)}>
+                  <button type="button" className="btn ghost" onClick={() => onGoToStep(item.anchorId)}>
                     {item.message}
                   </button>
                 </li>
@@ -102,7 +113,7 @@ export function TargetsReviewPanel() {
             </button>
           )}
         </div>
-      </SectionCard>
-    </>
+      </div>
+    </section>
   );
 }

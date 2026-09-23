@@ -1,12 +1,10 @@
 "use client";
 
-// FINAL_EXECUTION: one field's display + inline editor, generic across every DECIDED registry field. Review by
-// exception (Section 20): every card renders compact by default - a proposed value shows as text plus one-click
-// actions ("Use extracted" decides it with no typed value at all); the editor opens only when the person clicks
-// "Enter value", or always for a field that genuinely cannot be resolved by a button (an unmapped qualifying
-// unit). Auto-opening the editor for every PENDING field (the previous behaviour) made card height depend on
-// whether THAT SPECIFIC field happened to carry a proposal, producing wildly uneven, "fluctuating" rows when a
-// tall open editor sat next to an untouched short card.
+// EXECUTE_HARD_RESET: one registry field's display + inline editor, generic across every DECIDED field. Compact
+// by default - a proposed value shows as text plus one-click actions; the editor opens only on "Enter value" or
+// for a field that cannot be resolved by a button at all (an unmapped qualifying unit). Carries forward the fix
+// already proven live in the previous rebuild: auto-opening every PENDING field's editor produced uneven,
+// "fluctuating" card heights when a tall open editor sat beside an untouched short card.
 import { useState } from "react";
 
 import type { AgreementFieldKey } from "@/server/finance-agreements/fields";
@@ -19,7 +17,7 @@ import { decisionActionsFor } from "../components";
 import { editorKindFor, type FieldViewModel } from "../field-view-model";
 import { NEEDS_MAPPING_LABEL } from "../format";
 
-export function FieldRow({ fieldKey }: { fieldKey: AgreementFieldKey }) {
+export function FieldEditRow({ fieldKey }: { fieldKey: AgreementFieldKey }) {
   const { getField, localEdits, decideField, version, isBusy } = useIntake();
   const model = getField(fieldKey);
   const [editing, setEditing] = useState(false);
@@ -65,9 +63,7 @@ export function FieldRow({ fieldKey }: { fieldKey: AgreementFieldKey }) {
         )}
       </div>
 
-      {(editing || autoOpen) && (
-        <InlineEditor fieldKey={fieldKey} kind={kind} onDone={() => setEditing(false)} model={model} />
-      )}
+      {(editing || autoOpen) && <InlineEditor fieldKey={fieldKey} kind={kind} onDone={() => setEditing(false)} model={model} />}
 
       <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
         {actions.map((action) =>
@@ -76,13 +72,7 @@ export function FieldRow({ fieldKey }: { fieldKey: AgreementFieldKey }) {
               {action.label}
             </button>
           ) : (
-            <button
-              key={action.kind}
-              type="button"
-              className={`btn${action.pressed ? " primary" : ""}`}
-              disabled={busy}
-              onClick={() => void decideField({ fieldKey, decision: action.decision })}
-            >
+            <button key={action.kind} type="button" className={`btn${action.pressed ? " primary" : ""}`} disabled={busy} onClick={() => void decideField({ fieldKey, decision: action.decision })}>
               {action.label}
             </button>
           ),
@@ -92,8 +82,6 @@ export function FieldRow({ fieldKey }: { fieldKey: AgreementFieldKey }) {
   );
 }
 
-// A separate, always-fully-mounted-or-unmounted child so useFieldEditor (a hook) is never called conditionally
-// within FieldRow's own render.
 function InlineEditor({ fieldKey, kind, onDone, model }: { fieldKey: AgreementFieldKey; kind: ReturnType<typeof editorKindFor>; onDone: () => void; model: FieldViewModel }) {
   const handle = useFieldEditor({ fieldKey, kind });
   const { state, errors, ready, update, saveNow, discard } = handle;
