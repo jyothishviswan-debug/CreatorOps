@@ -226,9 +226,9 @@ describe("data safety: no restricted identity value, no raw Agreement text, no s
 });
 
 describe("no approved Overview page is touched or referenced (section 21 UI freeze)", () => {
-  // The Payables stage is backend-only: it introduces no UI at all. This guard makes that a
-  // permanent property rather than a one-off review note - nothing in the Payables module or its
-  // routes may import, render or otherwise reach an approved Overview surface.
+  // Nothing in the Payables module, its routes, or (as of Step 15B) its UI may import, render or
+  // otherwise reach an approved Overview surface. This guard makes that a permanent property rather
+  // than a one-off review note.
   const OVERVIEW_SURFACES = [/@\/ui\/Overview/, /@\/ui\/overview\.css/, /OverviewPage/, /OverviewTab/, /overview-model/, /overview-aggregate/, /overview-metrics/, /overview-service/];
 
   it("no Payables server file or route imports or names an Overview surface", () => {
@@ -241,16 +241,27 @@ describe("no approved Overview page is touched or referenced (section 21 UI free
     }
   });
 
-  // The pre-existing UI-skeleton page at /finance/payables predates this backend stage and is
-  // deliberately left exactly as it was: it still renders its own fixture workspace and is NOT
-  // wired to any Payables service. This stage is backend-only, and this assertion is what keeps
-  // that true - the UI authority for a future Payables screen is the Core / Golden Master HTML and
-  // /foundation, never whatever the skeleton happens to show today.
-  it("no component anywhere is wired to the Payables backend - this stage introduced no UI", () => {
+  // Step 15B built the Payables UI (src/features/finance-payables/** plus the three
+  // src/app/finance/payables/** routes). This guard keeps the wiring CONTAINED: every component that
+  // imports the Payables backend lives under one of those two trees - and none of them references an
+  // Overview surface (the file-content check above already proves this at the source level; this one
+  // proves it structurally, so a future Payables component can never sneak Overview wiring in through
+  // a path the first check doesn't scan).
+  it("every component wired to the Payables backend lives under the Payables UI, and none of it touches an approved Overview surface", () => {
     const componentFiles = [...walk(appDir, (name) => name.endsWith(".tsx")), ...walk(path.join(srcDir, "features"), (name) => name.endsWith(".tsx")), ...walk(path.join(srcDir, "ui"), (name) => name.endsWith(".tsx"))];
     expect(componentFiles.length).toBeGreaterThan(20);
     const wired = componentFiles.filter((file) => importsOf(readFileSync(file, "utf8")).some((spec) => spec.startsWith("@/server/finance-payables")));
-    expect(wired).toEqual([]);
-    expect(existsSync(path.join(srcDir, "features", "finance-payables"))).toBe(false);
+    expect(wired.length).toBeGreaterThan(0);
+
+    const payablesAppDir = path.join(appDir, "finance", "payables");
+    const payablesFeatureDir = path.join(srcDir, "features", "finance-payables");
+    for (const file of wired) {
+      const contained = file.startsWith(payablesAppDir + path.sep) || file.startsWith(payablesFeatureDir + path.sep);
+      expect(contained, `${file} is wired to the Payables backend but lives outside the Payables UI`).toBe(true);
+      const source = readFileSync(file, "utf8");
+      for (const pattern of OVERVIEW_SURFACES) expect(pattern.test(source), `${path.basename(file)} references ${pattern}`).toBe(false);
+    }
+
+    expect(existsSync(payablesFeatureDir)).toBe(true);
   });
 });

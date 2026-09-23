@@ -501,10 +501,14 @@ const productionSrc = allSrc.filter((file) => /\.(ts|tsx)$/.test(file) && !isTes
 // still certifies, unchanged and in full, is that INVOICES and PAYMENTS do not exist anywhere, and
 // that everything Payable-shaped lives in exactly the two places that are allowed to own it.
 describe("no Invoice / Payment implementation exists anywhere in src (Payables landed in Step 15A)", () => {
-  const PLACEHOLDERS = ["src/app/finance/invoices/page.tsx", "src/app/finance/payables/page.tsx", "src/app/finance/payments/page.tsx"];
-  // The only places a Payable-named path may live: the pre-existing UI-skeleton page (still a
-  // fixture page - Step 15A wired no UI at all), the Payables module, and its API routes.
-  const PAYABLE_OWNERS = [/^src\/app\/finance\/payables\/page\.tsx$/, /^src\/server\/finance-payables\//, /^src\/app\/api\/finance\/payables\//];
+  // Invoices and Payments remain the two fixture-only placeholder pages (still not implemented).
+  // Payables itself was UI-skeleton-only through Step 15A; Step 15B built its real UI, so its page is
+  // no longer a placeholder - see the PAYABLE_OWNERS update below.
+  const PLACEHOLDERS = ["src/app/finance/invoices/page.tsx", "src/app/finance/payments/page.tsx"];
+  // The only places a Payable-named path may live: the Payables module, its API routes, and (as of
+  // Step 15B) its real UI - the three canonical routes under src/app/finance/payables/** and the
+  // feature code under src/features/finance-payables/**.
+  const PAYABLE_OWNERS = [/^src\/app\/finance\/payables\//, /^src\/features\/finance-payables\//, /^src\/server\/finance-payables\//, /^src\/app\/api\/finance\/payables\//];
 
   it("the only paths in src named invoice / payment / settlement are the two Finance placeholder pages, and every payable-named path belongs to the Payables module, its routes or the placeholder page", () => {
     const named = allSrc.map(relative).filter((file) => /(invoice|payment|settlement)/i.test(file));
