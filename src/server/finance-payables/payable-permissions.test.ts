@@ -23,26 +23,28 @@ import { derivePayablePermissions, NO_PAYABLE_PERMISSIONS, type PayablePermissio
 //   see exact Payable amounts               finance   (none)             finance_amounts
 //
 // SEED ROLE GRANTS (src/server/authz/seed-access-data.ts), conservative where no
-// product-authoritative grant existed:
+// product-authoritative grant existed - except finance_amounts for Manager, which is an explicit
+// product confirmation (Step 15A follow-up), not a conservative default:
 //
 //   role                  finance  manage_payables  approve_payables  adjust_payables  void_payables  finance_amounts
 //   -----------------------------------------------------------------------------------------------------------------
 //   viewer                no       no               no                no               no             no
 //   analyst               no       no               no                no               no             no
-//   partnership_manager   yes      YES              no                no               no             no
+//   partnership_manager   yes      YES              no                no               no             YES
 //   partnership_head      yes      YES              YES               YES              YES            YES
 //   super_admin           yes      YES              YES               YES              YES            YES
 //
-// The Manager row is the "day-to-day but not governance" split this codebase uses everywhere, plus
-// the action-vs-category independence Discovery's manage_kyc/discovery_kyc pair established: a
-// Manager operates the Payables workflow without ever seeing the exact figures.
+// The Manager row is the "day-to-day but not governance" split this codebase uses everywhere:
+// Manager operates and SEES the Payables workflow (including exact amounts) but cannot finalize,
+// void, or hand-adjust one - canAdjust still needs adjustPayables too (see the "BOTH" test below),
+// which Manager does not hold, so finance_amounts alone does not grant adjustment.
 
 const NONE: PayablePermissionInputs = { financeView: false, managePayables: false, approvePayables: false, adjustPayables: false, voidPayables: false, financeAmounts: false };
 
 const ROLE_INPUTS: Record<string, PayablePermissionInputs> = {
   viewer: NONE,
   analyst: NONE,
-  partnership_manager: { financeView: true, managePayables: true, approvePayables: false, adjustPayables: false, voidPayables: false, financeAmounts: false },
+  partnership_manager: { financeView: true, managePayables: true, approvePayables: false, adjustPayables: false, voidPayables: false, financeAmounts: true },
   partnership_head: { financeView: true, managePayables: true, approvePayables: true, adjustPayables: true, voidPayables: true, financeAmounts: true },
   super_admin: { financeView: true, managePayables: true, approvePayables: true, adjustPayables: true, voidPayables: true, financeAmounts: true },
 };
@@ -68,8 +70,8 @@ describe("the derived permission matrix", () => {
     }
   });
 
-  it("Manager may view and prepare a draft, but may not finalize, void, adjust, or see amounts", () => {
-    expect(derivePayablePermissions(ROLE_INPUTS.partnership_manager!)).toEqual({ canView: true, canManage: true, canApprove: false, canAdjust: false, canVoid: false, canViewAmounts: false });
+  it("Manager may view, prepare a draft, and see exact amounts, but may not finalize, void, or hand-adjust", () => {
+    expect(derivePayablePermissions(ROLE_INPUTS.partnership_manager!)).toEqual({ canView: true, canManage: true, canApprove: false, canAdjust: false, canVoid: false, canViewAmounts: true });
   });
 
   it("Head and Super Admin hold every capability", () => {

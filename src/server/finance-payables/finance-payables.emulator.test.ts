@@ -880,32 +880,41 @@ describe("data safety", () => {
     for (const forbidden of ["assignmentRef", "campaignRef", "contentRef", "sourceRecordRef", "postUrl"]) expect(serialized, forbidden).not.toContain(forbidden);
   });
 
-  it("a role without the finance_amounts category operates the workflow but never sees a figure", async () => {
+  it("finance_amounts is role-driven, not per-user-overridable, and Manager now holds it same as Head", async () => {
+    // Step 15A follow-up (explicit product confirmation): Manager was widened to hold
+    // finance_amounts. canAccessSensitive (src/server/authz/sensitive.ts) resolves purely from the
+    // actor's ROLE - there is no per-user override path for a sensitive category the way there is
+    // for a feature action (contrast the approve_payables override test above) - so with every
+    // role that can reach `finance` view/manage now also holding finance_amounts (viewer/analyst
+    // hold neither; manager/head/super_admin hold both), no real actor can exercise an
+    // amountsVisible:false read anymore. That redaction MECHANISM (every money field nulled, never
+    // zeroed, cascading through lines/snapshot/version/head) is still fully covered directly
+    // against the pure DTO mappers in client-dto.test.ts, independent of any actor.
     const headActor = await actorFor("partnership_head");
     const manager = await actorFor("partnership_manager");
     const { partner } = await partnerReadyForPayable();
     const created = must(await createFor(headActor, "PARTNER", partner.partnerRef), "create");
     const payableRef = created.payable.head.payableRef;
 
-    const visible = must(await getPayable(headActor, payableRef), "head read");
-    expect(visible.amountsVisible).toBe(true);
-    expect(visible.selectedVersion!.totalAmountMinorSigned).toBe(5_000_000);
+    const asHead = must(await getPayable(headActor, payableRef), "head read");
+    expect(asHead.amountsVisible).toBe(true);
+    expect(asHead.selectedVersion!.totalAmountMinorSigned).toBe(5_000_000);
 
-    const withheld = must(await getPayable(manager, payableRef), "manager read");
-    expect(withheld.amountsVisible).toBe(false);
-    expect(withheld.head.totalAmountMinorSigned).toBeNull();
-    expect(withheld.selectedVersion!.totalAmountMinorSigned).toBeNull();
-    for (const line of withheld.selectedVersion!.lines) expect(line.amountMinorSigned).toBeNull();
-    expect(withheld.selectedVersion!.snapshot.fixedComponent!.amountMinor).toBeNull();
-    // Withheld means null, never zero, and never the real figure by another name.
-    expect(JSON.stringify(withheld)).not.toContain("5000000");
-    // The non-money evidence is still fully readable - the workflow is operable without amounts.
-    expect(withheld.selectedVersion!.snapshot.qualifyingContent).toMatchObject({ requiredCount: 1, evaluation: "met" });
+    const asManager = must(await getPayable(manager, payableRef), "manager read");
+    expect(asManager.amountsVisible).toBe(true);
+    expect(asManager.selectedVersion!.totalAmountMinorSigned).toBe(5_000_000);
+    expect(asManager.selectedVersion!.snapshot.fixedComponent!.amountMinor).toBe(5_000_000);
 
+    // Manager sees the figure it prepares but still holds none of the CATEGORY-gated governance
+    // actions (adjust/void both require finance_amounts too, which is no longer a distinguishing
+    // signal - they remain denied on their own missing action grant). canApprove is intentionally
+    // not asserted here: it is a per-user-overridable feature ACTION (contrast finance_amounts,
+    // which is not), and the "moving to READY_FOR_INVOICE" test above grants this same seeded
+    // manager uid an explicit approve_payables override that persists for the rest of this file -
+    // that override, not this widening, is the correct place to assert canApprove's value.
     const workspace = must(await listPayablesWorkspace(manager, { counterpartyRef: partner.partnerRef }), "manager workspace");
-    expect(workspace.permissions).toMatchObject({ canView: true, canManage: true, canAdjust: false, canVoid: false, canViewAmounts: false });
-    expect(workspace.rows.map((row) => row.totalAmountMinorSigned)).toEqual([null]);
-    expect(workspace.notices.join(" ")).toMatch(/Amounts are hidden/);
+    expect(workspace.permissions).toMatchObject({ canView: true, canManage: true, canAdjust: false, canVoid: false, canViewAmounts: true });
+    expect(workspace.rows.map((row) => row.totalAmountMinorSigned)).toEqual([5_000_000]);
   });
 });
 

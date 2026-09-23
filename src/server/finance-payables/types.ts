@@ -240,7 +240,8 @@ export const PAYABLE_REVIEW_CODES = [
   "NARRATIVE_INCENTIVE",
   // An advance exists but the Agreement does not state how it applies to this period.
   "ADVANCE_APPLICATION_UNSPECIFIED",
-  // A transfer fee exists but the Agreement does not state how it applies to a payment.
+  // The Agreement ticks a transfer fee applicable but states no amount (a stated amount is
+  // deterministic - see amount-determination.ts's applyTransferFee).
   "TRANSFER_FEE_APPLICATION_UNSPECIFIED",
   // A structured incentive slab names a metric the pinned evidence does not measure.
   "INCENTIVE_METRIC_EVIDENCE_MISSING",

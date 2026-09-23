@@ -86,9 +86,10 @@ describe("seeded access-control data (real emulator)", () => {
     await expect(canAccessFeature(await actorFor("partnership_head"), "imports")).resolves.toBe(false);
   });
 
-  it("Partnership Head has sensitive finance_amounts access; Partnership Manager does not (sensitive-access allow/deny)", async () => {
+  it("Partnership Head and Partnership Manager both have sensitive finance_amounts access (Step 15A widening); Analyst does not (sensitive-access allow/deny)", async () => {
     await expect(canAccessSensitive(await actorFor("partnership_head"), "finance_amounts")).resolves.toBe(true);
-    await expect(canAccessSensitive(await actorFor("partnership_manager"), "finance_amounts")).resolves.toBe(false);
+    await expect(canAccessSensitive(await actorFor("partnership_manager"), "finance_amounts")).resolves.toBe(true);
+    await expect(canAccessSensitive(await actorFor("analyst"), "finance_amounts")).resolves.toBe(false);
   });
 
   it("Super Admin's own grant explicitly covers Administration (explicit, not a rank comparison)", async () => {

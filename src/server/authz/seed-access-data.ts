@@ -90,11 +90,10 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // Step 15A: the same day-to-day-but-not-governance split extends to
       // the two new Payable actions - Manager may prepare and revise a
       // DRAFT Payable but may neither change its money by hand
-      // (adjust_payables) nor void it (void_payables). Manager also does
-      // not hold the "finance_amounts" sensitive CATEGORY (see
-      // SENSITIVE_GRANTS), so it operates the workflow without seeing the
-      // exact amounts - the same action-vs-category independence Discovery's
-      // manage_kyc/discovery_kyc pair established.
+      // (adjust_payables) nor void it (void_payables). Manager DOES hold
+      // the "finance_amounts" sensitive CATEGORY (see SENSITIVE_GRANTS,
+      // explicit product confirmation) - it sees the exact amounts of the
+      // Payables it prepares, it just cannot finalize/adjust/void them.
       finance: featureGrant(true, { manage_agreements: true, manage_payables: true, approve_payables: false, adjust_payables: false, void_payables: false, manage_invoices: true, record_payments: true }),
       // Step 6A: both relationship-owner roles get the full Discovery
       // evidence-recording surface (manage_kyc included - see
@@ -325,9 +324,7 @@ function featuresOf(features: FeatureId[]): AccessGrantDoc["features"] {
   return Object.fromEntries(features.map((feature) => [feature, featureGrant(true)])) as AccessGrantDoc["features"];
 }
 
-// Sensitive Access is a distinct gate from Feature Access: Partnership
-// Manager can view Finance but is not granted the "finance_amounts"
-// sensitive category, unlike Partnership Head. Step 6A: the same
+// Sensitive Access is a distinct gate from Feature Access. Step 6A: the
 // non-monotonic shape for Discovery KYC - Partnership Manager has the
 // manage_kyc ACTION (can operate the KYC workflow) but not the
 // "discovery_kyc" sensitive CATEGORY (cannot see the actual restricted
@@ -335,7 +332,15 @@ function featuresOf(features: FeatureId[]): AccessGrantDoc["features"] {
 const SENSITIVE_GRANTS: Record<Role, string[]> = {
   viewer: [],
   analyst: [],
-  partnership_manager: [],
+  // Step 15A (explicit product confirmation): Partnership Manager DOES hold
+  // "finance_amounts" - unlike Discovery KYC/Partner-Vendor restricted-identity
+  // above, Finance amounts are not treated as a restricted-identity-grade
+  // secret for the role that already operates the day-to-day Payables
+  // workflow (manage_payables). Manager still lacks approve_payables/
+  // adjust_payables/void_payables (the governance ACTIONS, see
+  // partnership_manager's finance featureGrant above) - this only grants
+  // visibility of the amounts it is already trusted to prepare.
+  partnership_manager: ["finance_amounts"],
   // Step 7A: "payment_details" gates Partner restricted financial
   // identity, same non-monotonic shape as finance_amounts/discovery_kyc
   // - Partnership Manager has the manage_partner_restricted_identity

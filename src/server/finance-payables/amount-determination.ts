@@ -85,19 +85,35 @@ function applyDeliveryEvidence(builder: Builder, snapshot: PayableSourceSnapshot
 }
 
 // --- Account transfer fee ---------------------------------------------------------------------------------------------------
-// An amount alone is not enough: a fee is only deterministic when the Agreement states HOW it
-// applies to a payment (deducted from it, added to it, borne by whom). The confirmed-terms model
-// records the fee's amount and its free-text details but no machine-readable direction, so an
-// applicable transfer fee is always handed to Finance rather than assumed to be a deduction.
-function applyTransferFee(builder: Builder, snapshot: PayableSourceSnapshot, agreementSourceRef: string): void {
+// Same shape as the fixed component (section 7's own example of a safe deterministic case): the
+// Agreement ticks the fee applicable and states its amount, so the fee is added as its own
+// breakdown line - a separate TRANSFER_FEE category, never merged into BASE_FIXED, so a future
+// Invoice consuming this version's lines can show/handle it as its own item. Ticked applicable
+// with NO stated amount is the genuinely ambiguous case (there is no number to use) and is handed
+// to Finance rather than guessed.
+function applyTransferFee(builder: Builder, snapshot: PayableSourceSnapshot, payableRef: string, agreementSourceRef: string): void {
   const fee = snapshot.accountTransferFee;
   if (!fee || !fee.applicable) return;
-  addUnresolved(
-    builder,
-    "TRANSFER_FEE_APPLICATION_UNSPECIFIED",
-    "The Agreement states an account transfer fee but not how it applies to this payment. Finance must confirm the treatment as a manual adjustment.",
-    agreementSourceRef,
-  );
+  if (fee.amountMinor === null) {
+    addUnresolved(
+      builder,
+      "TRANSFER_FEE_APPLICATION_UNSPECIFIED",
+      "The Agreement ticks an account transfer fee as applicable but states no amount. Finance must confirm the amount as a manual adjustment.",
+      agreementSourceRef,
+    );
+    return;
+  }
+  builder.lines.push({
+    lineRef: deterministicPayableLineRef(payableRef, "TRANSFER_FEE", "agreement-transfer-fee"),
+    label: "Account transfer fee",
+    category: "TRANSFER_FEE",
+    amountMinorSigned: fee.amountMinor,
+    source: "AGREEMENT",
+    sourceRef: agreementSourceRef,
+    reason: fee.details ? `Account transfer fee stated by the confirmed Agreement terms: ${fee.details}` : "Account transfer fee stated by the confirmed Agreement terms.",
+    actor: null,
+    resolvesCode: null,
+  });
 }
 
 // --- Advance payment ---------------------------------------------------------------------------------------------------------
@@ -194,7 +210,7 @@ export function determinePayableAmount(snapshot: PayableSourceSnapshot, payableR
 
   applyFixedComponent(builder, snapshot, payableRef, agreementSourceRef);
   applyDeliveryEvidence(builder, snapshot, agreementSourceRef);
-  applyTransferFee(builder, snapshot, agreementSourceRef);
+  applyTransferFee(builder, snapshot, payableRef, agreementSourceRef);
   applyIncentive(builder, snapshot, payableRef, agreementSourceRef);
   applyAdvance(builder, snapshot, agreementSourceRef);
 

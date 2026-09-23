@@ -157,8 +157,18 @@ describe("unsupported/ambiguous advance and transfer fee => FINANCE_REVIEW_REQUI
     expect(totalOfLines(result.lines)).toBe(5_000_000);
   });
 
-  it("an applicable transfer fee is never assumed to be a deduction, even with an explicit amount", () => {
-    const result = determine(buildSnapshot({ accountTransferFee: { applicable: true, amountMinor: 50_000, details: null } }));
+  it("an applicable transfer fee ticked WITH a stated amount is added deterministically, same shape as the fixed component", () => {
+    const result = determine(buildSnapshot({ accountTransferFee: { applicable: true, amountMinor: 50_000, details: "Borne by the Service Provider." } }));
+    expect(result.state).toBe("DETERMINISTIC");
+    expect(result.unresolved).toEqual([]);
+    const line = result.lines.find((l) => l.category === "TRANSFER_FEE");
+    expect(line?.amountMinorSigned).toBe(50_000);
+    expect(line?.reason).toContain("Borne by the Service Provider.");
+    expect(totalOfLines(result.lines)).toBe(5_050_000);
+  });
+
+  it("an applicable transfer fee ticked WITHOUT a stated amount stays Finance-review (there is no number to use)", () => {
+    const result = determine(buildSnapshot({ accountTransferFee: { applicable: true, amountMinor: null, details: null } }));
     expect(result.state).toBe("FINANCE_REVIEW_REQUIRED");
     expect(result.unresolved.map((item) => item.code)).toEqual(["TRANSFER_FEE_APPLICATION_UNSPECIFIED"]);
     expect(result.lines.some((line) => line.category === "TRANSFER_FEE")).toBe(false);
@@ -203,13 +213,15 @@ describe("open review codes", () => {
   });
 
   it("a manual adjustment naming a review item closes it; one that names nothing does not", () => {
-    const result = determine(buildSnapshot({ accountTransferFee: { applicable: true, amountMinor: 50_000, details: null } }));
+    // Ticked applicable with NO stated amount - still the genuinely ambiguous case (a stated amount
+    // is now deterministic, see the describe block above).
+    const result = determine(buildSnapshot({ accountTransferFee: { applicable: true, amountMinor: null, details: null } }));
     expect(openReviewCodesOf(result.unresolved, [...result.lines, manual(null)])).toEqual(["TRANSFER_FEE_APPLICATION_UNSPECIFIED"]);
     expect(openReviewCodesOf(result.unresolved, [...result.lines, manual("TRANSFER_FEE_APPLICATION_UNSPECIFIED")])).toEqual([]);
   });
 
   it("the determination STATE is never changed by a manual adjustment - only what is still open is", () => {
-    const result = determine(buildSnapshot({ accountTransferFee: { applicable: true, amountMinor: 50_000, details: null } }));
+    const result = determine(buildSnapshot({ accountTransferFee: { applicable: true, amountMinor: null, details: null } }));
     expect(result.state).toBe("FINANCE_REVIEW_REQUIRED");
     expect(totalOfLines([...result.lines, manual("TRANSFER_FEE_APPLICATION_UNSPECIFIED")])).toBe(4_950_000);
   });
