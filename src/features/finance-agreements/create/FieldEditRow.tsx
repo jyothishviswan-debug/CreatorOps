@@ -195,7 +195,7 @@ function IncentiveEditor({ fieldKey }: { fieldKey: AgreementFieldKey }) {
     <div>
       <div className="field">
         <label>Narrative (discretionary incentive language)</label>
-        <textarea value={state.narrativeText} onChange={(e) => update({ kind: "incentive", narrativeText: e.target.value, slabs: state.slabs })} />
+        <textarea value={state.narrativeText} onChange={(e) => update({ kind: "incentive", narrativeText: e.target.value, slabs: state.slabs })} style={{ width: "100%" }} />
       </div>
       {state.slabs.length > 0 && (
         <table style={{ marginTop: 10 }}>
@@ -243,7 +243,11 @@ function ValueEditor({ fieldKey, kind, model, canOptOut }: { fieldKey: Agreement
 
   return (
     <div>
-      {state.kind === "text" && kind === "longText" && <textarea value={state.text} onChange={(e) => update({ kind: "text", text: e.target.value })} placeholder={model.label} />}
+      {state.kind === "text" && kind === "longText" && (
+        <div className="field">
+          <textarea value={state.text} onChange={(e) => update({ kind: "text", text: e.target.value })} placeholder={model.label} style={{ width: "100%" }} />
+        </div>
+      )}
       {state.kind === "text" && kind !== "longText" && <input value={state.text} onChange={(e) => update({ kind: "text", text: e.target.value })} placeholder={model.label} />}
       {state.kind === "platforms" && <input value={state.text} onChange={(e) => update({ kind: "platforms", text: e.target.value })} placeholder="instagram, youtube" />}
       {state.kind === "lfcSfc" && <LfcSfcEditor state={state} update={update} />}
