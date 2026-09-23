@@ -243,10 +243,28 @@ describe("no approved Overview page is touched or referenced (UI freeze)", () =>
     }
   });
 
-  it("no Invoice UI exists yet (this stage is backend-only) and nothing under src/ui or src/app wires to this backend", () => {
+  // Step 16B built the Invoices UI (src/features/finance-invoices/** plus the three
+  // src/app/finance/invoices/** routes). This guard keeps the wiring CONTAINED, exactly like
+  // Payables' own equivalent guard: every component that imports the Invoices backend lives under
+  // one of those two trees - and none of them references an Overview surface (the file-content
+  // check above already proves this at the source level; this one proves it structurally, so a
+  // future Invoices component can never sneak Overview wiring in through a path the first check
+  // doesn't scan).
+  it("every component wired to the Invoices backend lives under the Invoices UI, and none of it touches an approved Overview surface", () => {
     const componentFiles = [...walk(appDir, (name) => name.endsWith(".tsx")), ...walk(path.join(srcDir, "features"), (name) => name.endsWith(".tsx")).filter(() => existsSync(path.join(srcDir, "features"))), ...walk(path.join(srcDir, "ui"), (name) => name.endsWith(".tsx"))];
     const wired = componentFiles.filter((file) => importsOf(readFileSync(file, "utf8")).some((spec) => spec.startsWith("@/server/finance-invoices")));
-    expect(wired).toEqual([]);
+    expect(wired.length).toBeGreaterThan(0);
+
+    const invoicesAppDir = path.join(appDir, "finance", "invoices");
+    const invoicesFeatureDir = path.join(srcDir, "features", "finance-invoices");
+    for (const file of wired) {
+      const contained = file.startsWith(invoicesAppDir + path.sep) || file.startsWith(invoicesFeatureDir + path.sep);
+      expect(contained, `${file} is wired to the Invoices backend but lives outside the Invoices UI`).toBe(true);
+      const source = readFileSync(file, "utf8");
+      for (const pattern of OVERVIEW_SURFACES) expect(pattern.test(source), `${path.basename(file)} references ${pattern}`).toBe(false);
+    }
+
+    expect(existsSync(invoicesFeatureDir)).toBe(true);
   });
 
   it("the three Overview freeze files are untouched by this module (no reference anywhere)", () => {
@@ -257,7 +275,7 @@ describe("no approved Overview page is touched or referenced (UI freeze)", () =>
   });
 });
 
-describe("Agreement/Payable/Partner-Review UI is untouched (no Invoice UI exists in this stage)", () => {
+describe("Agreement/Payable/Partner-Review UI is untouched by the Invoices UI (Step 16B)", () => {
   it("no Payables or Agreements UI file imports anything from this module", () => {
     const payablesFeatureDir = path.join(srcDir, "features", "finance-payables");
     const payablesAppDir = path.join(appDir, "finance", "payables");
