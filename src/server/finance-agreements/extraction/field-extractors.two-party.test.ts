@@ -133,9 +133,20 @@ describe("two-party service agreement: full synthetic replica", () => {
     expect(notice.confidence).toBe("LOW"); // sentence-level, no "Notice Period" heading
   });
 
-  it("has no renewal or termination clause text (none is headed that way in this contract)", () => {
+  it("has no renewal clause text (none is headed that way in this contract)", () => {
     expect(field(fields, "renewalTerms")).toBeUndefined();
-    expect(field(fields, "terminationTerms")).toBeUndefined();
+  });
+
+  // "Termination for Convenience:"/"Termination for Default:" are standard legal drafting (see term-rules.ts'
+  // TERMINATION_HEADING comment) - this fixture's own page 4 has both, so terminationTerms is found, not missing.
+  // Two distinct termination sub-headings on the same page is a genuine ambiguity the extractor can't silently
+  // resolve on its own, hence LOW confidence and the multiple-values warning rather than picking one arbitrarily.
+  it("finds Section 7's termination clause via its 'Termination for <reason>:' sub-headings, flagging the ambiguity between 7.2 and 7.3", () => {
+    const termination = field(fields, "terminationTerms")!;
+    expect(termination.normalizedValue).toContain("Termination for Default");
+    expect(termination.normalizedValue).toContain("Notice Period");
+    expect(termination.confidence).toBe("LOW");
+    expect(termination.warnings).toContain("multiple_distinct_values_found");
   });
 
   it("reads currency and a MONTHLY payment cycle attached to the Fee (not the content cadence)", () => {

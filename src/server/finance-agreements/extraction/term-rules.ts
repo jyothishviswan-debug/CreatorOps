@@ -158,7 +158,14 @@ export const MAX_CLAUSE_CHARS = 2000;
 const MAX_CLAUSE_LINES = 40;
 
 const RENEWAL_HEADING = String.raw`(?:term\s+(?:and|&)\s+)?renewal(?:\s+(?:terms?|clause|of\s+(?:this\s+)?agreement))?|auto[-\s]?renewal`;
-const TERMINATION_HEADING = String.raw`termination(?:\s+(?:of\s+(?:this\s+)?agreement|clause|terms?))?|early\s+termination`;
+// "Termination for Convenience:" / "Termination for Default:" / "Termination for Cause:" are standard legal
+// drafting - not an edge case - yet the heading match requires whatever follows "Termination" to be immediately
+// followed by punctuation (clauseBlocks' own heading regex: "(?:headingSource)\s*(?:[:.-]|$)"), so without this
+// explicit "for <reason>" branch every one of these real, common headings silently fails to match and the whole
+// Section 7-style termination clause is dropped - confirmed empirically against a real contract using exactly
+// this pattern ("7.2. Termination for Convenience:", "7.3. Termination for Default:"), where terminationTerms
+// came back entirely missing despite the clause being right there.
+const TERMINATION_HEADING = String.raw`termination(?:\s+(?:of\s+(?:this\s+)?agreement|clause|terms?|for\s+(?:convenience|default|cause|breach|non[-\s]?payment|non[-\s]?performance)))?|early\s+termination`;
 const NOTICE_HEADING = String.raw`notice\s+period`;
 export const SERVICES_HEADING = String.raw`scope\s+of\s+(?:services|work)|services?(?:\s+mandated)?|mandated\s+services|services\s+to\s+be\s+(?:provided|rendered)|deliverables`;
 
