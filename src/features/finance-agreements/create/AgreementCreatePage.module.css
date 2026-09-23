@@ -126,6 +126,32 @@
   margin: 0;
 }
 
+/* The per-field opt-out links (Not applicable / Unavailable / View extraction log / Edit clause) were .btn.ghost
+   with padding collapsed to "2px 0" and minHeight 0 - ghost already drops the border and background, so with no
+   padding or min-height left either, all that remained was muted-gray text with zero visible button affordance.
+   A real bordered pill, same visual language as every other .btn on the page, just compact enough for a dense
+   field row - never squeeze a button down to bare text again to save vertical space. */
+.optOutBtn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #fff;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 550;
+  min-height: 0;
+  white-space: nowrap;
+}
+
+.optOutBtn:hover {
+  background: #f5f6f8;
+  border-color: #c7cdd4;
+  color: var(--ink);
+}
+
 /* A field's value read as a bordered box even in a read-only summary (Screen 1's Key Information), instead of
    plain text sitting on the panel background - closer to the reference's form-like density. */
 .valueField {

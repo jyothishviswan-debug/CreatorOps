@@ -4,6 +4,7 @@
 // never reach here (the adapter's dedupedWarnings already humanized them).
 import type { AgreementPartyView, ExtractedFieldView, ExtractionUiState, KeyClauseView } from "./agreement-create-view";
 import { ReviewTabs } from "./ReviewTabs";
+import styles from "./AgreementCreatePage.module.css";
 
 const BANNER: Record<ExtractionUiState, { title: string; copy: string; tone: "success" | "warning" | "error" | "info" } | null> = {
   idle: null,
@@ -46,7 +47,7 @@ export function ExtractionReviewPane({
           <b>{banner.title}</b>
           <p style={{ marginTop: 4 }}>{banner.copy}</p>
           {state !== "idle" && state !== "uploading" && state !== "extracting" && (
-            <button type="button" className="btn ghost" style={{ marginTop: 6, padding: "2px 0", height: "auto", minHeight: 0 }} onClick={onShowLog}>
+            <button type="button" className={styles.optOutBtn} style={{ marginTop: 6 }} onClick={onShowLog}>
               View extraction log
             </button>
           )}

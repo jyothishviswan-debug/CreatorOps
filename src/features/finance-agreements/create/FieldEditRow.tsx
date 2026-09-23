@@ -77,17 +77,18 @@ function FieldHeader({ model, row, pendingDecision }: { model: FieldViewModel; r
   );
 }
 
-// Two small text-link fallbacks, next to the control rather than a big button row - used by every editor kind
-// that may opt out of a value at all (requiredForConfirm !== "always").
+// Two small opt-out buttons, next to the control rather than a big button row - used by every editor kind that
+// may opt out of a value at all (requiredForConfirm !== "always"). Real bordered pills (styles.optOutBtn), not
+// .btn.ghost's borderless/transparent look shrunk to bare text - see that class's own comment.
 function OptOutLinks({ fieldKey, canOptOut }: { fieldKey: AgreementFieldKey; canOptOut: boolean }) {
   const { setLocalEdit, decideField, isBusy } = useIntake();
   if (!canOptOut) return null;
   return (
-    <div style={{ display: "flex", gap: 12, marginTop: 6 }}>
-      <button type="button" className="btn ghost" style={{ padding: "2px 0", minHeight: 0 }} disabled={isBusy()} onClick={() => setLocalEdit(fieldKey, undefined, "NOT_APPLICABLE")}>
+    <div style={{ display: "flex", gap: 8, marginTop: 6 }}>
+      <button type="button" className={styles.optOutBtn} disabled={isBusy()} onClick={() => setLocalEdit(fieldKey, undefined, "NOT_APPLICABLE")}>
         Not applicable
       </button>
-      <button type="button" className="btn ghost" style={{ padding: "2px 0", minHeight: 0 }} disabled={isBusy()} onClick={() => void decideField({ fieldKey, decision: "UNAVAILABLE" })}>
+      <button type="button" className={styles.optOutBtn} disabled={isBusy()} onClick={() => void decideField({ fieldKey, decision: "UNAVAILABLE" })}>
         Unavailable
       </button>
     </div>
@@ -179,7 +180,7 @@ function OptOutLinksExceptNotApplicable({ fieldKey, canOptOut }: { fieldKey: Agr
   const { decideField, isBusy } = useIntake();
   if (!canOptOut) return null;
   return (
-    <button type="button" className="btn ghost" style={{ padding: "2px 0", minHeight: 0, marginTop: 6 }} disabled={isBusy()} onClick={() => void decideField({ fieldKey, decision: "UNAVAILABLE" })}>
+    <button type="button" className={styles.optOutBtn} style={{ marginTop: 6 }} disabled={isBusy()} onClick={() => void decideField({ fieldKey, decision: "UNAVAILABLE" })}>
       Unavailable
     </button>
   );

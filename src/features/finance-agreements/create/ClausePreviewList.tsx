@@ -36,14 +36,13 @@ export function ClausePreviewList({ clauses, onEdit }: { clauses: readonly KeyCl
                   {clause.fullText && (
                     <button
                       type="button"
-                      className="btn ghost"
-                      style={{ padding: "2px 0", height: "auto", minHeight: 0 }}
+                      className={styles.optOutBtn}
                       onClick={() => setExpanded((prev) => (prev.has(clause.key) ? new Set([...prev].filter((k) => k !== clause.key)) : new Set([...prev, clause.key])))}
                     >
                       {isOpen ? "Show less" : "View full clause"}
                     </button>
                   )}
-                  <button type="button" className="btn ghost" style={{ padding: "2px 0", height: "auto", minHeight: 0 }} onClick={() => onEdit(clause.key)}>
+                  <button type="button" className={styles.optOutBtn} onClick={() => onEdit(clause.key)}>
                     Edit
                   </button>
                 </div>
