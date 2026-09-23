@@ -78,16 +78,6 @@ export function GlobalSidebar({ open }: { open: boolean }) {
             </div>
           );
         })}
-        {/* Dev-only preview link, not a real feature - never feature-gated, never routed through this app's own
-            build. Opens the visual-rewrite worktree, a separate `next dev` instance on its own port (see
-            VISUAL_REWRITE_REPORT.md), in a new tab so it never navigates away from the live session. */}
-        <div>
-          <div className="navgroup">PREVIEW</div>
-          <a href="http://localhost:3001" target="_blank" rel="noopener noreferrer" className="navitem">
-            <Icon name="eye" />
-            <span>v2</span>
-          </a>
-        </div>
       </nav>
       <div className="sidebarfoot">
         <span className="avatar">{initialsOf(roleLabel)}</span>
