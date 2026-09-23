@@ -101,9 +101,20 @@ export function SourceDocumentPane({
         {document?.previewUrl ? (
           <iframe title={`Preview of ${document.originalFileName}`} src={document.previewUrl} />
         ) : (
-          <p className="muted" style={{ fontSize: 12, padding: 16, textAlign: "center" }}>
-            {document ? "Reopen or replace the file in this session to preview it." : "No document yet."}
-          </p>
+          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", gap: 10, padding: 24, textAlign: "center" }}>
+            <span className="alerttile" style={{ width: 44, height: 44 }}>
+              <Icon name="file" />
+            </span>
+            <b style={{ fontSize: 13 }}>{document ? "Preview unavailable in this session" : "No document yet"}</b>
+            <p className="muted" style={{ fontSize: 12, maxWidth: 280 }}>
+              {document ? "The signed PDF is on file, but this browser session no longer holds it in memory. Replace the file to preview it again." : "Upload the signed PDF to extract its details."}
+            </p>
+            {document && canReplace && (
+              <button type="button" className="btn" disabled={busy} onClick={() => inputRef.current?.click()}>
+                Replace file
+              </button>
+            )}
+          </div>
         )}
       </div>
     </section>

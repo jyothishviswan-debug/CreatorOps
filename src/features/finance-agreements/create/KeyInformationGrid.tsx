@@ -2,21 +2,27 @@
 
 // EXECUTE_HARD_RESET Section 10: a dense responsive grid (4 wide desktop / 3 normal / 2 tablet / 1 mobile), never
 // one row per field. Unknown/not-extracted values show "—", never invented data.
+import { fieldLabel } from "../format";
+
 import type { AgreementPartyView, ExtractedFieldView } from "./agreement-create-view";
 import styles from "./AgreementCreatePage.module.css";
 
+// Administration first, then commercial, matching the approved reference's grouping; party/platform summary
+// comes last since Screen 3 (Parties & KYC) is where that is actually decided.
 const SUMMARY_KEYS = ["agreementType", "signedDate", "effectiveDate", "terminationDate", "paymentCycle", "fixedComponent", "currency", "accountTransferFee"] as const;
 
 export function KeyInformationGrid({ fields, primaryParty, platforms, onEditAll }: { fields: readonly ExtractedFieldView[]; primaryParty: AgreementPartyView | null; platforms: string[]; onEditAll: () => void }) {
   const byKey = new Map(fields.map((f) => [f.key, f]));
 
   const items: Array<{ label: string; value: string }> = [];
-  items.push({ label: "Primary counterparty", value: primaryParty?.name ?? "—" });
-  items.push({ label: "Platform(s)", value: platforms.length > 0 ? platforms.join(", ") : "—" });
   for (const key of SUMMARY_KEYS) {
     const field = byKey.get(key);
-    items.push({ label: field?.label ?? key, value: field?.displayValue ?? "—" });
+    // A field with no draft entry at all (never extracted, never decided) has no ExtractedFieldView - the label
+    // must still come from the registry, never the raw camelCase key.
+    items.push({ label: field?.label ?? fieldLabel(key), value: field?.displayValue ?? "—" });
   }
+  items.push({ label: "Primary counterparty", value: primaryParty?.name ?? "—" });
+  items.push({ label: "Platform(s)", value: platforms.length > 0 ? platforms.join(", ") : "—" });
 
   return (
     <section className="panel" style={{ marginBottom: 18 }}>
