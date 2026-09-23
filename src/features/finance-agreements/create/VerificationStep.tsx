@@ -70,7 +70,7 @@ function VerificationGroupSection({ group, expanded, onExpand }: { group: CrossV
 
       <div className={styles.verifyTable}>
         <div className="tablewrap" style={{ marginTop: 8 }}>
-          <table>
+          <table className="compact">
             <thead>
               <tr>
                 <th>Field</th>

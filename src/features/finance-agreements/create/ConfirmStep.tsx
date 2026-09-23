@@ -146,6 +146,18 @@ export function ConfirmStep({ onGoToStep }: { onGoToStep: (step: AgreementCreate
                     : "Confirmed terms are frozen."
                   : "The Agreement will be created in Draft status. You can review, edit or confirm it before activating."}
               </p>
+              <div className={styles.lifecycleList}>
+                {[
+                  { label: "Agreement created (Draft)", state: version.confirmed ? "done" : "current" },
+                  { label: "Confirmed", state: version.confirmed ? "done" : "upcoming" },
+                  { label: "Active", state: version.status === "ACTIVE" ? "done" : version.confirmed && flags.canActivate ? "current" : "upcoming" },
+                ].map((stage) => (
+                  <div key={stage.label} className={`${styles.lifecycleStep} ${styles[stage.state]}`}>
+                    <span className={styles.lifecycleDot} />
+                    {stage.label}
+                  </div>
+                ))}
+              </div>
             </div>
 
             {readiness.length > 0 && (

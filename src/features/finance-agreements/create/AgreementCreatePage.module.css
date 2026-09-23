@@ -100,6 +100,98 @@
   flex-wrap: wrap;
 }
 
+/* Polish pass: a compact, form-native Yes/No pair (real radio inputs, tinted with the brand accent) instead of
+   the bulkier .btn-styled toggle - denser and reads as a form control, not a button bar. */
+.radioRow {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+}
+
+.radioOption {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  user-select: none;
+}
+
+.radioOption input[type="radio"] {
+  width: 15px;
+  height: 15px;
+  accent-color: var(--orange);
+  cursor: pointer;
+  margin: 0;
+}
+
+/* A field's value read as a bordered box even in a read-only summary (Screen 1's Key Information), instead of
+   plain text sitting on the panel background - closer to the reference's form-like density. */
+.valueField {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  padding: 7px 10px;
+  background: #fbfbfc;
+  min-height: 34px;
+  display: flex;
+  align-items: center;
+  font-size: 12px;
+  font-weight: 550;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.valueField.empty {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+/* A compact vertical lifecycle list (Screen 5's "Workflow after creation"), real domain stages only. */
+.lifecycleList {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.lifecycleStep {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  font-size: 12px;
+}
+
+.lifecycleDot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid var(--line);
+  flex-shrink: 0;
+}
+
+.lifecycleStep.done .lifecycleDot {
+  background: var(--green);
+  border-color: var(--green);
+}
+
+.lifecycleStep.current .lifecycleDot {
+  background: var(--orange);
+  border-color: var(--orange);
+}
+
+.lifecycleStep.done {
+  color: var(--ink);
+}
+
+.lifecycleStep.current {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.lifecycleStep.upcoming {
+  color: var(--muted);
+}
+
 /* FINAL_BUILD_PROMPT Section 9: Screen 5's three logical columns, collapsing to two then one per Section 15's
    responsive rules ("Screen 5 three-column review becomes two/one columns cleanly"). */
 .confirmGrid {

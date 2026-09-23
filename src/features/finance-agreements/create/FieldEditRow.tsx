@@ -19,6 +19,8 @@ import { useIntake } from "../agreement-intake-logic/intake-context";
 import { editorKindFor, type FieldEditorKind, type FieldViewModel } from "../field-view-model";
 import { NEEDS_MAPPING_LABEL } from "../format";
 
+import styles from "./AgreementCreatePage.module.css";
+
 const MONEY_QUESTIONS: Partial<Record<AgreementFieldKey, string>> = {
   fixedComponent: "Is there a fixed component?",
   accountTransferFee: "Is there an account transfer fee?",
@@ -104,9 +106,9 @@ function BooleanEditor({ fieldKey, model, canOptOut }: { fieldKey: AgreementFiel
   const name = `bool-${fieldKey}`;
   return (
     <div>
-      <div className="actions" role="radiogroup" aria-label={model.label}>
+      <div className={styles.radioRow} role="radiogroup" aria-label={model.label}>
         {([true, false] as const).map((option) => (
-          <label key={String(option)} className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <label key={String(option)} className={styles.radioOption}>
             <input type="radio" name={name} checked={value === option} onChange={() => update({ kind: "boolean", value: option }, true)} />
             {option ? "Yes" : "No"}
           </label>
@@ -133,9 +135,9 @@ function ApplicableGatedEditor({ fieldKey, kind, model, canOptOut }: { fieldKey:
   return (
     <div>
       <p style={{ fontSize: 11, color: "var(--muted)", marginBottom: 6 }}>{question}</p>
-      <div className="actions" role="radiogroup" aria-label={question}>
+      <div className={styles.radioRow} role="radiogroup" aria-label={question}>
         {([true, false] as const).map((option) => (
-          <label key={String(option)} className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
+          <label key={String(option)} className={styles.radioOption}>
             <input
               type="radio"
               name={name}

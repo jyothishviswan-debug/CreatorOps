@@ -33,9 +33,7 @@ export function KeyInformationGrid({ fields, primaryParty, platforms, onEditAll 
               <small className="muted" style={{ display: "block", marginBottom: 3 }}>
                 {item.label}
               </small>
-              <div className={styles.valueBox} style={{ fontSize: 12, fontWeight: 550 }}>
-                {item.value}
-              </div>
+              <div className={`${styles.valueField} ${styles.valueBox}${item.value === "—" ? ` ${styles.empty}` : ""}`}>{item.value}</div>
             </div>
           ))}
         </div>
