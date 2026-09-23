@@ -25,41 +25,48 @@ const ROLE_LABEL: Record<AgreementPartyRole, string> = {
   OTHER: "Other contract party",
 };
 
-export function PartiesVerificationPanel() {
-  const { hasDraft, reconciliation, permissions, version, setParties, isBusy, notify } = useIntake();
+// A compact panel (typically a short or empty table) - laid out beside KycPanel in AgreementFormPage rather than
+// taking a full-width row by itself.
+export function AgreementPartiesPanel() {
+  const { hasDraft, version, setParties, isBusy, notify } = useIntake();
   if (!hasDraft || !version) return null;
-
-  const rows = reconciliation ? buildCrossVerificationRows(reconciliation, { canManage: permissions.canManage }) : [];
-  const groups = groupCrossVerificationRows(rows);
   const payeeCount = version.parties.filter((p) => p.role === "PAYEE").length;
   const primaryCount = version.parties.filter((p) => p.role === "PRIMARY_COUNTERPARTY").length;
   const ambiguous = payeeCount > 1 || (payeeCount === 0 && primaryCount > 1);
 
   return (
-    <>
-      <SectionCard title="Agreement Parties" description="The contract's other named parties - additive metadata alongside the one Finance-authoritative counterparty above.">
-        <PartiesTable parties={version.parties} onSave={(parties) => void setParties(parties).then((r) => notify(r.ok ? "success" : "error", r.ok ? "Agreement parties saved." : r.message))} busy={isBusy()} />
-        {ambiguous && (
-          <p className="scopebox" style={{ marginTop: 12, color: "var(--red)" }}>
-            More than one party could be the primary counterparty or payee. Mark exactly one Payee (or, if none, exactly one Primary counterparty) before this Agreement can be activated.
-          </p>
-        )}
-      </SectionCard>
+    <SectionCard title="Agreement Parties" description="The contract's other named parties - additive metadata alongside the one Finance-authoritative counterparty above.">
+      <PartiesTable parties={version.parties} onSave={(parties) => void setParties(parties).then((r) => notify(r.ok ? "success" : "error", r.ok ? "Agreement parties saved." : r.message))} busy={isBusy()} />
+      {ambiguous && (
+        <p className="scopebox" style={{ marginTop: 12, color: "var(--red)" }}>
+          More than one party could be the primary counterparty or payee. Mark exactly one Payee (or, if none, exactly one Primary counterparty) before this Agreement can be activated.
+        </p>
+      )}
+    </SectionCard>
+  );
+}
 
-      <SectionCard title="Parties, Accounts &amp; Verification" description="CreatorOps value | Agreement value | Status | Your decision - review by exception.">
-        {groups.length === 0 && <p className="muted">No reconciliation data yet - upload and extract the Agreement first.</p>}
-        {groups.map((group) => (
-          <div key={group.key} style={{ marginBottom: 18 }}>
-            <h3>{group.title}</h3>
-            <div className="recordgrid" style={{ padding: 0, marginTop: 8 }}>
-              {group.rows.map((row) => (
-                <VerificationRow key={row.fieldKey} row={row} />
-              ))}
-            </div>
+export function VerificationPanel() {
+  const { hasDraft, reconciliation, permissions, version } = useIntake();
+  if (!hasDraft || !version) return null;
+
+  const rows = reconciliation ? buildCrossVerificationRows(reconciliation, { canManage: permissions.canManage }) : [];
+  const groups = groupCrossVerificationRows(rows);
+
+  return (
+    <SectionCard title="Parties, Accounts &amp; Verification" description="CreatorOps value | Agreement value | Status | Your decision - review by exception.">
+      {groups.length === 0 && <p className="muted">No reconciliation data yet - upload and extract the Agreement first.</p>}
+      {groups.map((group) => (
+        <div key={group.key} style={{ marginBottom: 18 }}>
+          <h3>{group.title}</h3>
+          <div className="recordgrid" style={{ padding: 0, marginTop: 8 }}>
+            {group.rows.map((row) => (
+              <VerificationRow key={row.fieldKey} row={row} />
+            ))}
           </div>
-        ))}
-      </SectionCard>
-    </>
+        </div>
+      ))}
+    </SectionCard>
   );
 }
 

@@ -1,8 +1,12 @@
 "use client";
 
 // FINAL_EXECUTION: one field's display + inline editor, generic across every DECIDED registry field. Review by
-// exception (Section 20): resolved/HIGH-confidence fields render compact; only PENDING/needsMapping fields expand
-// their editor by default.
+// exception (Section 20): every card renders compact by default - a proposed value shows as text plus one-click
+// actions ("Use extracted" decides it with no typed value at all); the editor opens only when the person clicks
+// "Enter value", or always for a field that genuinely cannot be resolved by a button (an unmapped qualifying
+// unit). Auto-opening the editor for every PENDING field (the previous behaviour) made card height depend on
+// whether THAT SPECIFIC field happened to carry a proposal, producing wildly uneven, "fluctuating" rows when a
+// tall open editor sat next to an untouched short card.
 import { useState } from "react";
 
 import type { AgreementFieldKey } from "@/server/finance-agreements/fields";
@@ -26,7 +30,7 @@ export function FieldRow({ fieldKey }: { fieldKey: AgreementFieldKey }) {
   const actions = decisionActionsFor({ fieldKey, decision: model.decision, origin: model.origin, hasValue: model.hasValue });
   const busy = isBusy(`field:${fieldKey}`);
   const kind = editorKindFor(fieldKey);
-  const autoOpen = model.decision === "PENDING" || row.needsMapping;
+  const autoOpen = row.needsMapping;
 
   return (
     <div className="record" style={{ marginBottom: 10 }} id={`field-${fieldKey}`}>

@@ -8,7 +8,7 @@ import { Toast } from "@/ui/Dialog";
 import { useIntake } from "../agreement-intake-logic/intake-context";
 
 import { KycPanel } from "./KycPanel";
-import { PartiesVerificationPanel } from "./PartiesVerificationPanel";
+import { AgreementPartiesPanel, VerificationPanel } from "./PartiesVerificationPanel";
 import { PartySourcePanel } from "./PartySourcePanel";
 import { TargetsReviewPanel } from "./TargetsReviewPanel";
 import { TermsPanel } from "./TermsPanel";
@@ -38,8 +38,19 @@ export function AgreementFormPage() {
       )}
 
       <PartySourcePanel />
-      <PartiesVerificationPanel />
-      <KycPanel />
+
+      {/* Two compact panels (a short/empty parties table, a status matrix) side by side instead of each
+          taking a full-width row on its own. */}
+      <div className="grid">
+        <div className="s6">
+          <AgreementPartiesPanel />
+        </div>
+        <div className="s6">
+          <KycPanel />
+        </div>
+      </div>
+
+      <VerificationPanel />
       <TermsPanel />
       <TargetsReviewPanel />
 
