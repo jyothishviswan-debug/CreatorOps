@@ -9,7 +9,9 @@
 // the panel head (Section 6 asks for the column meaning to be visible, not guessed from colour alone). Mobile
 // (<=1050px) swaps the table for the same stacked comparison/decision cards used before (Section 6's own mobile
 // rule: never squeeze the table horizontally).
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+
+import type { AgreementFieldKey } from "@/server/finance-agreements/fields";
 
 import { buildCrossVerificationRows, type CrossVerificationAction, type CrossVerificationRow } from "../cross-verification";
 import { buildMasterDataRequest, correctedValueSeed, groupCrossVerificationRows, validateCorrectedText, type CrossVerificationGroup } from "../agreement-intake-logic/cross-verification-ui";
@@ -24,9 +26,43 @@ function legendOf(rows: readonly CrossVerificationRow[]): ChipSpec[] {
   return [...seen.values()];
 }
 
+// A MATCH row (CreatorOps and the Agreement already agree) is correctly left out of the attention count - there is
+// nothing for a person to decide. But the field's own decision still starts PENDING, and nothing else ever moves it
+// to ACCEPTED: unlike Terms & Targets (see acceptPrefilledFields there), this screen sends every decision straight to
+// the server via decideField rather than buffering locally, so a matched field that no one ever opens "Show all
+// extracted fields" for stays PENDING forever - silently blocking Confirm Agreement with no visible reason why. This
+// mirrors that same fix for this screen: auto-confirm every unconfirmed MATCH row once, the same ACCEPTED decision
+// its own (otherwise hidden) "Confirm" action would send - a person who does open and change one overrides it the
+// normal way, since decideField for an already-ACCEPTED field is a no-op-equivalent re-save.
+function useAutoConfirmMatches(rows: readonly CrossVerificationRow[]) {
+  const { decideField } = useIntake();
+  const sent = useRef(new Set<AgreementFieldKey>());
+  const running = useRef(false);
+  useEffect(() => {
+    if (running.current) return;
+    // decideField writes with the CURRENT docVersion as an optimistic-concurrency precondition (see intake-context's
+    // writeDecision) - firing every row's call at once would have them all race on the SAME pre-write docVersion, so
+    // only the first survives and the rest fail as a stale-version conflict. Collect the currently-pending batch and
+    // await each call in turn inside one continuous run, so every write reads the docVersion the one before it
+    // actually produced, rather than depending on a re-render to reach the next row (a render that is not guaranteed
+    // to happen promptly, or at all, once nothing else about the visible rows changes).
+    const pending = rows.filter((row) => row.state === "MATCH" && !row.confirmed && !sent.current.has(row.fieldKey) && row.actions.some((a) => a.kind === "CONFIRM"));
+    if (pending.length === 0) return;
+    running.current = true;
+    void (async () => {
+      for (const row of pending) {
+        sent.current.add(row.fieldKey);
+        await decideField({ fieldKey: row.fieldKey, decision: "ACCEPTED" });
+      }
+      running.current = false;
+    })();
+  }, [rows, decideField]);
+}
+
 export function VerificationStep() {
   const { reconciliation, permissions } = useIntake();
   const rows = reconciliation ? buildCrossVerificationRows(reconciliation, { canManage: permissions.canManage }) : [];
+  useAutoConfirmMatches(rows);
   const groups = groupCrossVerificationRows(rows);
   const [expanded, setExpanded] = useState<Record<string, boolean>>({});
   const [activeKey, setActiveKey] = useState<string | null>(null);
