@@ -20,7 +20,11 @@ export function SecureKycDialog({ component, kind, onClose }: { component: KycCo
   if (!counterparty) return null;
 
   const identityField: AgreementFieldKey | null = component === "bank" ? null : ({ pan: "panNumber", aadhaar: "aadhaarNumber", gst: "gstin" } satisfies Record<Exclude<KycComponentKey, "bank">, AgreementFieldKey>)[component];
-  const identityDecision = identityField ? (version?.fieldProvenance?.[identityField]?.decision ?? null) : null;
+  // The per-field decision lives on the draft entry itself (version.draft[key].decision) - NOT on
+  // version.fieldProvenance, a different, unrelated DTO field that is null on every draft seen so far. Reading
+  // the wrong one meant identityDecision was always null, so "Apply from Agreement" could never become
+  // available no matter how the field was actually decided in Cross-verification.
+  const identityDecision = identityField ? (version?.draft?.[identityField]?.decision ?? null) : null;
   const option = evaluateApplyOption({
     component,
     counterpartyType: counterparty.type,
