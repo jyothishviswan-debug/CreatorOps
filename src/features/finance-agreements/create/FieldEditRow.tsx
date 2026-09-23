@@ -21,12 +21,6 @@ import { NEEDS_MAPPING_LABEL } from "../format";
 
 import styles from "./AgreementCreatePage.module.css";
 
-const MONEY_QUESTIONS: Partial<Record<AgreementFieldKey, string>> = {
-  fixedComponent: "Is there a fixed component?",
-  accountTransferFee: "Is there an account transfer fee?",
-  advancePayment: "Is there an advance payment?",
-};
-
 export function FieldEditRow({ fieldKey }: { fieldKey: AgreementFieldKey }) {
   const { getField, localEdits, version } = useIntake();
   const model = getField(fieldKey);
@@ -47,10 +41,12 @@ export function FieldEditRow({ fieldKey }: { fieldKey: AgreementFieldKey }) {
         </small>
       )}
       <div style={{ marginTop: 8 }}>
-        {MONEY_EDITORS.has(kind) || kind === "incentive" ? (
-          <ApplicableGatedEditor fieldKey={fieldKey} kind={kind} model={model} canOptOut={canOptOut} />
+        {kind === "incentive" ? (
+          <IncentiveGatedEditor fieldKey={fieldKey} model={model} canOptOut={canOptOut} />
         ) : kind === "boolean" ? (
           <BooleanEditor fieldKey={fieldKey} model={model} canOptOut={canOptOut} />
+        ) : MONEY_EDITORS.has(kind) ? (
+          <MoneyFieldEditor fieldKey={fieldKey} canOptOut={canOptOut} />
         ) : (
           <ValueEditor fieldKey={fieldKey} kind={kind} model={model} canOptOut={canOptOut} />
         )}
@@ -119,10 +115,11 @@ function BooleanEditor({ fieldKey, model, canOptOut }: { fieldKey: AgreementFiel
   );
 }
 
-// --- Money (fixedComponent / accountTransferFee / advancePayment) and incentive: gated behind its own
-// "Is there an amount / incentive?" Yes/No, matching Section 8's Incentive question exactly and reusing the same
-// pattern for the three money fields - only rendering the value form once the answer is Yes. -------------------
-function ApplicableGatedEditor({ fieldKey, kind, model, canOptOut }: { fieldKey: AgreementFieldKey; kind: FieldEditorKind; model: FieldViewModel; canOptOut: boolean }) {
+// --- Incentive: gated behind its own "Is there an incentive?" Yes/No, matching Section 8's spec exactly - only
+// rendering the narrative/slabs form once the answer is Yes. The three money fields (fixedComponent/
+// accountTransferFee/advancePayment) do NOT get this gate - Section 8's own Commercial Terms spec treats them as
+// plain dense-row fields, not a question-gated one; see MoneyFieldEditor below. --------------------------------
+function IncentiveGatedEditor({ fieldKey, model, canOptOut }: { fieldKey: AgreementFieldKey; model: FieldViewModel; canOptOut: boolean }) {
   const { setLocalEdit, localEdits, isBusy } = useIntake();
   const pending = localEdits[fieldKey];
   const decision = pending?.decision ?? model.decision;
@@ -130,7 +127,7 @@ function ApplicableGatedEditor({ fieldKey, kind, model, canOptOut }: { fieldKey:
   // proposed value, or a corrected value) reads as "Yes" so the value form is what a person sees by default.
   const [answer, setAnswer] = useState<boolean>(decision !== "NOT_APPLICABLE");
   const name = `applicable-${fieldKey}`;
-  const question = kind === "incentive" ? "Is there an incentive?" : MONEY_QUESTIONS[fieldKey as keyof typeof MONEY_QUESTIONS] || `Is there a ${model.label.toLowerCase()}?`;
+  const question = "Is there an incentive?";
 
   return (
     <div>
@@ -153,8 +150,25 @@ function ApplicableGatedEditor({ fieldKey, kind, model, canOptOut }: { fieldKey:
         ))}
       </div>
       {!answer && <small className="muted" style={{ display: "block", marginTop: 6 }}>Not applicable</small>}
-      {answer && <div style={{ marginTop: 10 }}>{kind === "incentive" ? <IncentiveEditor fieldKey={fieldKey} /> : <MoneyEditor fieldKey={fieldKey} />}</div>}
+      {answer && (
+        <div style={{ marginTop: 10 }}>
+          <IncentiveEditor fieldKey={fieldKey} />
+        </div>
+      )}
       {canOptOut && !answer ? null : <OptOutLinksExceptNotApplicable fieldKey={fieldKey} canOptOut={canOptOut} />}
+    </div>
+  );
+}
+
+// --- The three money fields: a plain dense Amount/Details row, pre-filled, always visible - no separate "Is
+// there a...?" gate. Section 8's own Commercial Terms spec lists these three fields (fixedComponent,
+// accountTransferFee, advancePayment) as ordinary dense-row fields, not a question-gated one.
+// "There is none" is the same Not applicable text-link every other optional field already uses. -------------
+function MoneyFieldEditor({ fieldKey, canOptOut }: { fieldKey: AgreementFieldKey; canOptOut: boolean }) {
+  return (
+    <div>
+      <MoneyEditor fieldKey={fieldKey} />
+      <OptOutLinks fieldKey={fieldKey} canOptOut={canOptOut} />
     </div>
   );
 }
