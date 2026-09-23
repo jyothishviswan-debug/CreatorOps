@@ -142,6 +142,22 @@ export const FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
   SUPERSEDED: ["ACTIVE", "SUSPENDED"],
 };
 
+// Step 15A: the canonical Finance Payable lifecycle. Keyed by target state -> allowed predecessor
+// states, same convention as every map above. Deliberately tiny and finance-specific: there is no
+// invoice-approval and no payment status here, and READY_FOR_INVOICE is NOT an "approved" state -
+// no approval workflow exists in Payables.
+//
+// DRAFT is reachable from READY_FOR_INVOICE because creating a REVISED payable version reopens the
+// payable for work: the version an Invoice would have consumed stays pinned in immutable history,
+// but it stops being the payable's ready version. VOID is reasoned and terminal - nothing lists it
+// as an allowed predecessor of anything, so nothing ever leaves it, and there is no hard delete
+// anywhere in the module.
+export const PAYABLE_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  DRAFT: ["READY_FOR_INVOICE"],
+  READY_FOR_INVOICE: ["DRAFT"],
+  VOID: ["DRAFT", "READY_FOR_INVOICE"],
+};
+
 export function canTransitionLifecycle(currentState: string, nextState: string, transitions: LifecycleTransitionMap): boolean {
   const allowedFrom = transitions[nextState];
   if (!allowedFrom) return false;

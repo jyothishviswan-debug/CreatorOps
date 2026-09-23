@@ -694,7 +694,10 @@ describe("status read, and Finance stores no identity data", () => {
     expect(withoutIds).not.toMatch(/\b\d{4}[ -]?\d{4}[ -]?\d{4}\b/);
     expect(text).not.toMatch(/"(panNumber|aadhaarNumber|accountNumber|ifsc|gstin|gstNumber|accountHolderName)"/);
 
+    // Step 15A: `financePayables` is now a legitimate Finance root owned by its own module, and other emulator test files
+    // (which run in parallel against the one emulator) may first-write it during this test. Onboarding itself still writes
+    // none of these - that is what the instrumented `docs` walk above proves - and Invoices / Payments still have no root at all.
     const collections = (await getAdminFirestore().listCollections()).map((collection) => collection.id);
-    expect(collections.filter((id) => /payable|invoice|payment|settlement/i.test(id))).toEqual([]);
+    expect(collections.filter((id) => /payable|invoice|payment|settlement/i.test(id) && id !== "financePayables")).toEqual([]);
   });
 });

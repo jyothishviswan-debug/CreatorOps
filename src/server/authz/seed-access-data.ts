@@ -87,7 +87,15 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // Non-monotonic on purpose - matches the module-specific action
       // catalog (module-actions.ts): can manage day-to-day finance
       // records but cannot approve payables, unlike Partnership Head.
-      finance: featureGrant(true, { manage_agreements: true, manage_payables: true, approve_payables: false, manage_invoices: true, record_payments: true }),
+      // Step 15A: the same day-to-day-but-not-governance split extends to
+      // the two new Payable actions - Manager may prepare and revise a
+      // DRAFT Payable but may neither change its money by hand
+      // (adjust_payables) nor void it (void_payables). Manager also does
+      // not hold the "finance_amounts" sensitive CATEGORY (see
+      // SENSITIVE_GRANTS), so it operates the workflow without seeing the
+      // exact amounts - the same action-vs-category independence Discovery's
+      // manage_kyc/discovery_kyc pair established.
+      finance: featureGrant(true, { manage_agreements: true, manage_payables: true, approve_payables: false, adjust_payables: false, void_payables: false, manage_invoices: true, record_payments: true }),
       // Step 6A: both relationship-owner roles get the full Discovery
       // evidence-recording surface (manage_kyc included - see
       // SENSITIVE_GRANTS below for why that alone isn't enough to read
@@ -209,7 +217,10 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // Step 14A: the only role (besides Super Admin) trusted with the
       // Agreement lifecycle (activate/revise/suspend/resume/end) - Manager
       // holds manage_agreements only (prepare/decide/confirm).
-      finance: featureGrant(true, { manage_agreements: true, activate_agreements: true, manage_payables: true, approve_payables: true, manage_invoices: true, record_payments: true }),
+      // Step 15A: also the only role (besides Super Admin) trusted with the two governance-weight
+      // Payable actions - the manual financial adjustment and the void - matching approve_payables'
+      // own head-only shape.
+      finance: featureGrant(true, { manage_agreements: true, activate_agreements: true, manage_payables: true, approve_payables: true, adjust_payables: true, void_payables: true, manage_invoices: true, record_payments: true }),
       discovery: featureGrant(true, {
         create: true,
         edit: true,

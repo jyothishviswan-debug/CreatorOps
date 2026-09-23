@@ -109,6 +109,8 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "activate_agreements", label: "Activate/revise/suspend/resume/end agreements" },
     { id: "manage_payables", label: "Manage payables" },
     { id: "approve_payables", label: "Approve payables" },
+    { id: "adjust_payables", label: "Add/remove manual payable adjustments" },
+    { id: "void_payables", label: "Void payables" },
     { id: "manage_invoices", label: "Manage invoices" },
     { id: "record_payments", label: "Record/manage payments" },
     { id: "export", label: "Export finance data" },

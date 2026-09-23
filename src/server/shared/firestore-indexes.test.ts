@@ -6,6 +6,7 @@ import { planAssignmentListQuery } from "@/server/assignments/firestore";
 import type { ScopeGrant } from "@/server/authz/types";
 import { planCampaignListQuery } from "@/server/campaigns/firestore";
 import { planAgreementHeadListQuery } from "@/server/finance-agreements/firestore";
+import { planPayableHeadListQuery } from "@/server/finance-payables/firestore";
 import { planPartnerListQuery } from "@/server/partners/firestore";
 import { planPartnerReviewListQuery } from "@/server/partner-reviews/firestore";
 import { planVendorListQuery } from "@/server/vendors/firestore";
@@ -555,6 +556,116 @@ describe("firestore.indexes.json - Finance Agreements workspace (Step 14B)", () 
       const vendors = planVendorListQuery({ actorUid: "actor-uid", grants, hasGlobal: false, displayNamePrefix }).plan;
       for (const name of ["self", "region", "team"]) expect(hasIndexForBranch("vendors", firestoreBranch(vendors, name)), `vendors ${name} ${displayNamePrefix ?? "-"}`).toBe(true);
     }
+  });
+});
+
+// Step 15A (production query/index audit): EVERY Firestore query introduced in
+// src/server/finance-payables. The emulator never enforces composite indexes, so this certifies by
+// SOURCE SCAN what each query needs, and pins the inventory (exact-count style - a new query must be
+// audited and added here deliberately):
+//
+//   #  collection                              filters                     orderBy          limit  index need                        covered by
+//   1  financePayables                         <scope branch> (see below)  updatedAt desc   N+1    scope x updatedAt composite       the five financePayables composites
+//   2  financePayables/{ref}/versions          (none)                      version desc     N+1    single-field order, no filter     automatic single-field index
+//   3  financePayables/{ref}/events            (none)                      createdAt desc   N+1    single-field order, no filter     automatic single-field index
+//
+// Every other read is a direct document get / transaction get (no query). The commercial evidence
+// Payables consume is read through the Partner Reviews and Finance Agreements SERVICES, so those
+// modules' own already-audited queries serve it - Payables issues none of its own against them.
+// "Production verification pending": that Firestore production serves #2/#3 from its automatic
+// single-field index is not something an emulator can prove.
+describe("firestore.indexes.json - Finance Payables (Step 15A query audit)", () => {
+  const payablesDir = path.resolve(import.meta.dirname, "../finance-payables");
+  const strip = (source: string) => source.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "").replace(/(\s)\/\/.*$/gm, "$1");
+
+  function sourceFiles(dir: string, into: string[] = []): string[] {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) sourceFiles(full, into);
+      else if (entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")) into.push(full);
+    }
+    return into;
+  }
+
+  const files = sourceFiles(payablesDir);
+
+  it("the scan sees the real query call sites (it is not vacuous)", () => {
+    expect(files.map((file) => path.basename(file))).toContain("firestore.ts");
+    expect(strip(readFileSync(path.join(payablesDir, "firestore.ts"), "utf8"))).toMatch(/orderBy\("version", "desc"\)/);
+  });
+
+  it("the only explicit Payables queries are the two single-field-order subcollection reads; every scoped head read goes through the audited planner", () => {
+    const summary: string[] = [];
+    let collectionGroupUses = 0;
+    const otherOperators: string[] = [];
+    for (const file of files) {
+      const source = strip(readFileSync(file, "utf8"));
+      collectionGroupUses += (source.match(/collectionGroup\s*\(/g) ?? []).length;
+      for (const operator of source.matchAll(/\.(startAt|endAt|endBefore|offset|select|count)\s*\(/g)) otherOperators.push(`${path.basename(file)}:${operator[1]}`);
+      for (const statement of source.matchAll(/await\s[^;]*?\.get\(\)/g)) {
+        const text = statement[0];
+        const wheres = [...text.matchAll(/\.where\(\s*([^,]+?)\s*,\s*"([^"]+)"/g)].map((m) => `${m[1]} ${m[2]}`);
+        const orderBys = [...text.matchAll(/\.orderBy\(\s*"([^"]+)"\s*(?:,\s*"([^"]+)")?/g)].map((m) => `${m[1]} ${m[2] ?? "asc"}`);
+        if (wheres.length === 0 && orderBys.length === 0) continue;
+        summary.push(`${path.basename(file)} where[${wheres.join(",")}] orderBy[${orderBys.join(",")}] limit:${/\.limit\(/.test(text)}`);
+      }
+    }
+    expect(summary.sort()).toEqual(["firestore.ts where[] orderBy[createdAt desc] limit:true", "firestore.ts where[] orderBy[version desc] limit:true"].sort());
+    expect(collectionGroupUses).toBe(0);
+    expect(otherOperators).toEqual([]);
+  });
+
+  it("every scope branch (self / region / team / partner-grant / explicit-vendor) maps to a certified financePayables index", () => {
+    const updatedAtDesc: IndexField = { fieldPath: "updatedAt", order: "DESCENDING" };
+    const partnerGrant: ScopeGrant = { type: "PARTNER", partnerId: "p-1", ...AUDIT };
+    const partnerRecordGrant: ScopeGrant = { type: "EXPLICIT_RECORD", resourceType: "partner", resourceId: "p-2", ...AUDIT };
+    const vendorGrant: ScopeGrant = { type: "EXPLICIT_RECORD", resourceType: "vendor", resourceId: "v-1", ...AUDIT };
+
+    const { plan } = planPayableHeadListQuery({ actorUid: "actor-uid", grants: [self(), region("Kerala"), team("t1"), partnerGrant, partnerRecordGrant, vendorGrant], hasGlobal: false });
+    expect(plan.branches.map((branch) => branch.name)).toEqual(["self", "region", "team", "partnerGrant", "vendorGrant"]);
+    for (const name of ["self", "region", "team"]) expect(hasIndexForBranch("financePayables", firestoreBranch(plan, name)), name).toBe(true);
+    expect(hasIndex("financePayables", [{ fieldPath: "partnerUid", order: "ASCENDING" }, updatedAtDesc])).toBe(true);
+    expect(hasIndex("financePayables", [{ fieldPath: "vendorUid", order: "ASCENDING" }, updatedAtDesc])).toBe(true);
+    expect(firestoreBranch(plan, "partnerGrant").pushedFilters).toEqual([{ field: "partnerUid", op: "in", value: ["p-1", "p-2"] }]);
+    expect(firestoreBranch(plan, "vendorGrant").pushedFilters).toEqual([{ field: "vendorUid", op: "in", value: ["v-1"] }]);
+  });
+
+  it("the GLOBAL branch pushes no filter and needs no composite index (a single-field updatedAt order)", () => {
+    const branch = firestoreBranch(planPayableHeadListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: true }).plan, "main");
+    expect(branch.pushedFilters).toEqual([]);
+    expect(branch.orderField).toBe("updatedAt");
+    expect(branch.orderDirection).toBe("desc");
+  });
+
+  it("an actor with no relevant grant plans no branch at all (no Firestore read)", () => {
+    expect(planPayableHeadListQuery({ actorUid: "actor-uid", grants: [], hasGlobal: false }).plan.branches).toEqual([]);
+  });
+
+  it("no branch pushes a business filter, two array-type filters or a documentId() in - the business filters stay in memory over the bounded set", () => {
+    const { plan } = planPayableHeadListQuery({ actorUid: "actor-uid", grants: [self(), region("Kerala"), team("t1")], hasGlobal: false });
+    for (const branch of plan.branches) {
+      if (branch.kind !== "firestore-query") continue;
+      expect(branch.pushedFilters.filter((f) => f.op === "array-contains" || f.op === "array-contains-any").length).toBeLessThanOrEqual(1);
+      expect(branch.pushedFilters.some((f) => f.field === "__name__")).toBe(false);
+      expect(branch.pushedFilters.some((f) => ["status", "counterpartyType", "counterpartyRef", "periodKey"].includes(f.field))).toBe(false);
+    }
+  });
+
+  it("every financePayables index in the file is one the planner can actually produce (exact count: 5, no speculative extras)", () => {
+    const updatedAtDesc: IndexField = { fieldPath: "updatedAt", order: "DESCENDING" };
+    const mine = indexesFile.indexes.filter((index) => index.collectionGroup === "financePayables");
+    expect(mine).toHaveLength(5);
+    for (const index of mine) {
+      expect(index.fields).toHaveLength(2);
+      expect(index.fields[1]).toEqual(updatedAtDesc);
+    }
+    expect(mine.map((index) => indexFieldKey(index.fields[0]!)).sort()).toEqual(["ownerUid:ASCENDING", "partnerUid:ASCENDING", "regionIds:CONTAINS", "teamIds:CONTAINS", "vendorUid:ASCENDING"]);
+  });
+
+  it("the Payable version and event subcollections carry no composite index and no field override", () => {
+    expect(indexesFile.indexes.filter((index) => ["financePayableVersions", "financePayableEvents", "financePayableClaims"].includes(index.collectionGroup))).toEqual([]);
+    const overrides = (JSON.parse(readFileSync(path.resolve(import.meta.dirname, "../../../firestore.indexes.json"), "utf8")).fieldOverrides ?? []) as Array<{ collectionGroup: string }>;
+    expect(overrides.filter((override) => override.collectionGroup.startsWith("financePayable"))).toEqual([]);
   });
 });
 

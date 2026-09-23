@@ -429,7 +429,7 @@ async function rawHeadWithoutHint(reviewRef: string): Promise<string> {
 const partnerNames = (rows: ReviewListRowDto[]) => rows.map((row) => row.partnerDisplayName);
 
 // ======================================================================================================================
-const FINANCE_AGREEMENT_ROOTS = /^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions)$/; // Step 14A: the Agreement foundation legitimately owns these roots (Partner Reviews writing them is proven by the write-instrumentation tests); anything else Finance-shaped is still a violation.
+const FINANCE_AGREEMENT_ROOTS = /^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions|Payables)$/; // Step 14A: the Agreement foundation legitimately owns these roots (Partner Reviews writing them is proven by the write-instrumentation tests); anything else Finance-shaped is still a violation. // Step 15A: financePayables joins the list - it is a legitimate Finance root that OTHER emulator test files (which run in parallel against the one emulator) may first-write during this test. // What this file actually proves is unchanged and still exact: the write-instrumentation assertions below show Partner Reviews itself writes NO Finance document of any kind, and financeInvoices / financePayments still have no legitimate root at all.
 
 describe("write-time list projections (summary / display / freshnessHint)", () => {
   it("generate writes a version summary and a head display block that match the canonical snapshot; freshnessHint is recorded without touching docVersion", async () => {

@@ -59,7 +59,16 @@ const read = (file: string) => readFileSync(file, "utf8");
 
 // Test-support fixtures (testing/) are not production code and stay out of the scans.
 const moduleFiles = walk(moduleDir).filter((file) => !file.includes(`${path.sep}testing${path.sep}`));
-const routeFiles = walk(routesDir);
+// Step 15A: /api/finance is a shared URL namespace, not a module boundary - Finance Payables now
+// owns /api/finance/payables/**, with its own static guards in
+// src/server/finance-payables/finance-payables-static.test.ts. This scan stays the AGREEMENTS route
+// surface, so the Payables sub-tree is excluded here rather than being (wrongly) held to the
+// Agreements module's own import rules. The "no Payables/Invoices/Payments" guards below still
+// apply in full to every Agreements file: the Agreements module must not reach into Payables, and
+// nothing in this list stops being checked - it is only the Payables routes' own file set that is
+// no longer treated as Agreements code.
+const PAYABLES_ROUTE_PREFIX = path.join(routesDir, "payables") + path.sep;
+const routeFiles = walk(routesDir).filter((file) => !file.startsWith(PAYABLES_ROUTE_PREFIX));
 const productionFiles = [...moduleFiles, ...routeFiles];
 const code = new Map(productionFiles.map((file) => [rel(file), codeOnly(read(file))] as const));
 
@@ -140,10 +149,14 @@ describe("routes: thin, and exactly the documented surface", () => {
     "onboarding/preview/route.ts": ["POST"],
   };
 
-  it("the route tree is exactly the 29 documented route files (no payables / invoices / payments / delete / campaign route exists)", () => {
+  it("the Agreements route tree is exactly the 29 documented route files (no invoices / payments / delete / campaign route exists)", () => {
     const actual = routeFiles.map((file) => path.relative(routesDir, file).split(path.sep).join("/")).sort();
     expect(actual).toEqual(Object.keys(EXPECTED).sort());
-    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "onboarding", "permissions"]);
+    // Step 15A added the "payables" sibling under the shared /api/finance namespace (its own module,
+    // its own guards). Invoices and Payments deliberately still have no route surface at all.
+    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "onboarding", "payables", "permissions"]);
+    expect(readdirSync(routesDir)).not.toContain("invoices");
+    expect(readdirSync(routesDir)).not.toContain("payments");
   });
 
   it("every route exports only the documented HTTP methods - never PUT / PATCH / DELETE", () => {

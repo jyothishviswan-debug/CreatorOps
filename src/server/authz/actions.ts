@@ -110,6 +110,13 @@ export const ACTIONS = [
   "activate_agreements",
   "manage_payables",
   "approve_payables",
+  // Step 15A: the two governance-weight Payable actions, deliberately their own ids rather than
+  // folded into manage_payables/approve_payables - same "granular rather than one generic manage"
+  // discipline as the Agreement lifecycle's own activate_agreements split. A Manager may prepare a
+  // draft Payable (manage_payables) without being trusted to change its money by hand
+  // (adjust_payables) or to void it (void_payables).
+  "adjust_payables",
+  "void_payables",
   "manage_invoices",
   "record_payments",
   // Operations
