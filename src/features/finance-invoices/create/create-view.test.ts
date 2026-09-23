@@ -61,7 +61,13 @@ const PIN = {
   reviewVersion: 1,
   commercialPeriod: { periodKey: "2026-03", periodStart: "2026-03-01", periodEnd: "2026-03-31" },
   payableCurrency: "INR",
-  payableExpectedTotalMinorSigned: 500000,
+  payableTotalAmountMinorSigned: 450000,
+  payableServiceBaseMinor: 500000,
+  payableGstMinor: 0,
+  payableGrossInvoiceExpectedMinor: 500000,
+  payableTdsMinor: 50000,
+  payableExpectedNetPaymentMinor: 450000,
+  payableCalculationRuleVersion: "MONTHLY_ANALYTICS_PRORATION_V1",
 };
 
 describe("selectedPayableSummary", () => {
@@ -73,7 +79,10 @@ describe("selectedPayableSummary", () => {
     expect(labels).toContain("Partner Review ref / version");
     expect(labels).not.toContain("PAN");
     expect(labels).not.toContain("Bank account");
-    expect(rows.find((row) => row.label === "Expected total")?.value).toBe("₹5,000");
+    expect(rows.find((row) => row.label === "Gross expected Invoice total")?.value).toBe("₹5,000");
+    expect(rows.find((row) => row.label === "Service base")?.value).toBe("₹5,000");
+    expect(rows.find((row) => row.label === "TDS")?.value).toBe("₹500");
+    expect(rows.find((row) => row.label === "Expected net payment")?.value).toBe("₹4,500");
   });
 });
 

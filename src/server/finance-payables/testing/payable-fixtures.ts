@@ -18,6 +18,7 @@ export function buildSnapshot(overrides: SnapshotOverrides = {}): PayableSourceS
     review: { reviewRef: "pr_0123456789abcdef0123", reviewVersion: 1, finalizedAt: "2024-04-02T00:00:00.000Z", sourceFingerprint: "a".repeat(64) },
     currency: "INR",
     qualifyingContent: { requiredCount: 8, qualifyingUnit: "approved_content_thread", actualQualifyingCount: 8, variance: 0, evaluation: "met", affectsPayment: true },
+    requiredContentWithoutEvidence: false,
     lfcSfc: null,
     contentObligations: [],
     fixedComponent: { applicable: true, amountMinor: 5_000_000 },
@@ -26,19 +27,25 @@ export function buildSnapshot(overrides: SnapshotOverrides = {}): PayableSourceS
     incentive: null,
     paymentTerms: { paymentCycle: "MONTHLY", invoiceRequired: true, invoiceDueTerms: "Invoice by the 5th of the following month", paymentDueTerms: "Payment within 30 days of invoice" },
     performanceTargets: [],
+    // Step 15C: the CreatorOps product TDS rule, matching source-evidence.ts's own default for a
+    // Partner-Review-sourced basis. GST has no confirmed source in this repo yet (see
+    // types.ts's snapshotTaxSchema doc comment) - always not-applicable unless a test overrides it.
+    tax: { tdsApplicable: true, tdsRateBps: 1000, tdsProvenance: "PLATFORM_PRODUCT_RULE_TDS_V1", gstApplicable: false, gstRateBps: null, gstProvenance: "NOT_CONFIGURED" },
     warnings: [],
     capturedAt: "2024-04-03T00:00:00.000Z",
     ...overrides,
   });
 }
 
-// The same shape with a Vendor, agreement-only source (no Partner Review evidence at all).
+// The same shape with a Vendor, agreement-only source (no Partner Review evidence at all). No TDS
+// product rule is extended to a Vendor basis without an explicit confirmed source (source-evidence.ts).
 export function buildVendorSnapshot(overrides: SnapshotOverrides = {}): PayableSourceSnapshot {
   return buildSnapshot({
     counterparty: { type: "VENDOR", ref: "vendor-fixture" },
     sourceType: "AGREEMENT_ONLY",
     review: null,
     qualifyingContent: null,
+    tax: { tdsApplicable: false, tdsRateBps: null, tdsProvenance: "NOT_APPLICABLE_AGREEMENT_ONLY_BASIS", gstApplicable: false, gstRateBps: null, gstProvenance: "NOT_CONFIGURED" },
     ...overrides,
   });
 }

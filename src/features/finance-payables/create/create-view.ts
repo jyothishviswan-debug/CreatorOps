@@ -84,6 +84,40 @@ export function breakdownTotalText(totalAmountMinorSigned: number | null, curren
   return formatSignedMoneyMinor(totalAmountMinorSigned, currency, { amountsVisible });
 }
 
+// --- Step 15C: the calculation summary block (spec section 17/22's "Review Amount" table) ------------------------------------------
+// Backend-authoritative: every figure here is read verbatim from the server's own totals, never
+// recomputed client-side. Shown on Create Stage 2 (Review amount) and the Detail Summary tab.
+export type CalculationSummaryRow = { label: string; value: string };
+
+export type CalculationTotals = {
+  serviceBaseMinor: number | null;
+  gstMinor: number | null;
+  grossInvoiceExpectedMinor: number | null;
+  tdsMinor: number | null;
+  expectedNetPaymentMinor: number | null;
+};
+
+export function calculationSummaryRows(input: { snapshot: PayableSnapshotDto | null; totals: CalculationTotals; currency: string | null; amountsVisible: boolean }): CalculationSummaryRow[] {
+  const { snapshot, totals, currency, amountsVisible } = input;
+  const money = (value: number | null) => formatSignedMoneyMinor(value, currency, { amountsVisible });
+  const rows: CalculationSummaryRow[] = [];
+
+  if (snapshot?.fixedComponent) rows.push({ label: "Agreement monthly amount", value: snapshot.fixedComponent.applicable ? money(snapshot.fixedComponent.amountMinor) : "Not applicable" });
+  if (snapshot?.qualifyingContent) {
+    const { requiredCount, actualQualifyingCount, qualifyingUnit } = snapshot.qualifyingContent;
+    const counted = Math.min(actualQualifyingCount, requiredCount);
+    rows.push({ label: "Required monthly deliverables", value: `${requiredCount} ${qualifyingUnit}` });
+    rows.push({ label: "Monthly Analytics delivered", value: `${actualQualifyingCount} ${qualifyingUnit}` });
+    rows.push({ label: "Counted for payable", value: actualQualifyingCount > counted ? `${actualQualifyingCount} delivered · ${counted} counted for payable` : `${counted} ${qualifyingUnit}` });
+  }
+  rows.push({ label: "Prorated service base", value: money(totals.serviceBaseMinor) });
+  rows.push({ label: "GST", value: money(totals.gstMinor) });
+  rows.push({ label: "Gross expected Invoice", value: money(totals.grossInvoiceExpectedMinor) });
+  rows.push({ label: "TDS", value: money(totals.tdsMinor) });
+  rows.push({ label: "Expected net payment", value: money(totals.expectedNetPaymentMinor) });
+  return rows;
+}
+
 // --- Source evidence side panel (Stage 2 / Detail) --------------------------------------------------------------------------------
 export type SourceEvidenceSection = { title: string; rows: SourceEvidenceSummaryRow[] };
 
@@ -101,18 +135,27 @@ export function agreementEvidenceSection(snapshot: PayableSnapshotDto): SourceEv
   return { title: "Agreement", rows };
 }
 
+// Step 15C: this Payable's ONE Monthly Analytics evidence source. This repo has no separate
+// "Monthly Analytics" collection (see source-evidence.ts's header comment) - the finalized Partner
+// Review version IS the canonical, immutable monthly-evidence record, so the Review ref/version
+// pinned here IS the Monthly Analytics evidence pin; the title says so explicitly rather than
+// implying a Content-derived count.
 export function reviewEvidenceSection(snapshot: PayableSnapshotDto): SourceEvidenceSection | null {
   if (!snapshot.review) return null;
   const rows: SourceEvidenceSummaryRow[] = [
-    { label: "Partner Review", value: `${snapshot.review.reviewRef} · v${snapshot.review.reviewVersion}` },
+    { label: "Partner Review (Monthly Analytics evidence)", value: `${snapshot.review.reviewRef} · v${snapshot.review.reviewVersion}` },
     { label: "Finalized", value: snapshot.review.finalizedAt },
   ];
   if (snapshot.qualifyingContent) {
-    rows.push({ label: "Qualifying content", value: `${snapshot.qualifyingContent.actualQualifyingCount} of ${snapshot.qualifyingContent.requiredCount} ${snapshot.qualifyingContent.qualifyingUnit}` });
+    rows.push({ label: "Qualifying deliverable count", value: `${snapshot.qualifyingContent.actualQualifyingCount} of ${snapshot.qualifyingContent.requiredCount} ${snapshot.qualifyingContent.qualifyingUnit}` });
     rows.push({ label: "Evaluation", value: evaluationLabel(snapshot.qualifyingContent.evaluation) });
+  } else if (snapshot.requiredContentWithoutEvidence) {
+    rows.push({ label: "Qualifying deliverable count", value: "Analytics evidence unavailable for this period" });
   }
-  if (snapshot.lfcSfc) rows.push({ label: "LFC / SFC", value: `${snapshot.lfcSfc.lfcCount} LFC · ${snapshot.lfcSfc.sfcCount} SFC` });
-  return { title: "Partner Review", rows };
+  if (snapshot.lfcSfc) {
+    rows.push({ label: "LFC / SFC (actual)", value: `${snapshot.lfcSfc.lfcCount} LFC · ${snapshot.lfcSfc.sfcCount} SFC${snapshot.lfcSfc.unclassifiedCount > 0 ? ` · ${snapshot.lfcSfc.unclassifiedCount} unclassified` : ""}` });
+  }
+  return { title: "Partner Review (Monthly Analytics)", rows };
 }
 
 function evaluationLabel(evaluation: "met" | "below_requirement" | "exceeded"): string {

@@ -36,9 +36,10 @@ export function ReconciliationStep({ version, loading, error, amountsVisible }: 
     );
   }
 
+  const declaredTaxTotal = version.taxLines.reduce<number | null>((sum, line) => (sum === null || line.amountMinor === null ? null : sum + line.amountMinor), version.taxLines.length > 0 ? 0 : null);
   const rows = reconciliationComparisonRows({
     pin: version.payablePin,
-    declared: { currency: version.currency, declaredTotalMinor: version.declaredTotalMinor, externalInvoiceNumber: version.externalInvoiceNumber },
+    declared: { currency: version.currency, declaredTotalMinor: version.declaredTotalMinor, externalInvoiceNumber: version.externalInvoiceNumber, subtotalMinor: version.subtotalMinor, taxTotalMinor: declaredTaxTotal },
     reconciliation: version.reconciliation,
     documentPresent: version.document !== null,
     amountsVisible,

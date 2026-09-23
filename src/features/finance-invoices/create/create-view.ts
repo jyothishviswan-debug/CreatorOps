@@ -66,7 +66,11 @@ export function selectedPayableSummary(preview: PreviewInvoiceEligibilityDto): S
   rows.push({ label: "Agreement ref / version", value: `${preview.pin.agreementRef} · v${preview.pin.agreementVersion}` });
   if (preview.pin.reviewRef !== null) rows.push({ label: "Partner Review ref / version", value: `${preview.pin.reviewRef} · v${preview.pin.reviewVersion}` });
   rows.push({ label: "Currency", value: preview.pin.payableCurrency });
-  rows.push({ label: "Expected total", value: formatSignedMoneyMinor(preview.pin.payableExpectedTotalMinorSigned, preview.pin.payableCurrency, { amountsVisible: preview.amountsVisible }) });
+  rows.push({ label: "Service base", value: formatSignedMoneyMinor(preview.pin.payableServiceBaseMinor, preview.pin.payableCurrency, { amountsVisible: preview.amountsVisible }) });
+  rows.push({ label: "GST", value: formatSignedMoneyMinor(preview.pin.payableGstMinor, preview.pin.payableCurrency, { amountsVisible: preview.amountsVisible }) });
+  rows.push({ label: "Gross expected Invoice total", value: formatSignedMoneyMinor(preview.pin.payableGrossInvoiceExpectedMinor, preview.pin.payableCurrency, { amountsVisible: preview.amountsVisible }) });
+  rows.push({ label: "TDS", value: formatSignedMoneyMinor(preview.pin.payableTdsMinor, preview.pin.payableCurrency, { amountsVisible: preview.amountsVisible }) });
+  rows.push({ label: "Expected net payment", value: formatSignedMoneyMinor(preview.pin.payableExpectedNetPaymentMinor, preview.pin.payableCurrency, { amountsVisible: preview.amountsVisible }) });
   rows.push({ label: "Determination state", value: preview.eligible ? "Ready for invoice" : "Blocked" });
   rows.push({ label: "Source revision state", value: "Current" });
   return rows;

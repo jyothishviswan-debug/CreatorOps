@@ -10,6 +10,8 @@ import {
   payableSourceSnapshotSchema,
   SNAPSHOT_SCHEMA_VERSION,
   SOURCE_TYPE_BY_COUNTERPARTY,
+  TDS_PRODUCT_PROVENANCE,
+  TDS_PRODUCT_RATE_BPS,
   type CommercialPeriod,
   type PayableBlockedCode,
   type PayableCounterpartyType,
@@ -144,7 +146,13 @@ export function buildPayableSourceSnapshot(input: SnapshotInput): PayableSourceS
   const deliverable = handoff?.paymentAffectingEvidence.monthlyDeliverable ?? null;
   const lfcSfc = handoff?.paymentAffectingEvidence.lfcSfc ?? null;
 
-  if (commercial.monthlyRequiredQualifyingContentCount !== null && deliverable === null) {
+  // Step 15C section 6: the ONE structured signal the amount-determination engine uses to tell
+  // "no monthly requirement exists" (proration doesn't apply, apply the fixed amount in full)
+  // apart from "a requirement exists but its evidence is missing" (proration cannot run blind).
+  const requiredContentWithoutEvidence =
+    (commercial.monthlyRequiredQualifyingContentCount !== null || commercial.contentObligations.length > 0) && deliverable === null;
+
+  if (requiredContentWithoutEvidence) {
     warnings.push("The Agreement states a qualifying-content requirement, but the pinned evidence does not report an evaluated delivery figure for this period.");
   }
   if (commercial.lfcSfc !== null && lfcSfc === null) {
@@ -153,6 +161,18 @@ export function buildPayableSourceSnapshot(input: SnapshotInput): PayableSourceS
   if (input.sourceType === "AGREEMENT_ONLY" && (commercial.monthlyRequiredQualifyingContentCount !== null || commercial.contentObligations.length > 0)) {
     warnings.push("This payable is governed by the Agreement alone: there is no delivery evidence for the content obligations it states.");
   }
+
+  // Step 15C section 9.3: tax provenance. No per-counterparty or per-Agreement tax-profile source
+  // exists anywhere in this codebase today (see types.ts's snapshotTaxSchema doc comment). TDS is
+  // populated from the single confirmed CreatorOps product rule (10%, section 9), applied ONLY to
+  // Partner-Review-sourced payables - the product rule was defined in the context of creator
+  // payables, and is never extended to a Vendor basis without an explicit confirmed source. GST
+  // has no confirmed source at all yet, so it is never applicable here - the schema carries the
+  // field for a future confirmed source, never guessed from this one.
+  const tax =
+    input.sourceType === "PARTNER_REVIEW"
+      ? { tdsApplicable: true, tdsRateBps: TDS_PRODUCT_RATE_BPS, tdsProvenance: TDS_PRODUCT_PROVENANCE, gstApplicable: false, gstRateBps: null, gstProvenance: "NOT_CONFIGURED" }
+      : { tdsApplicable: false, tdsRateBps: null, tdsProvenance: "NOT_APPLICABLE_AGREEMENT_ONLY_BASIS", gstApplicable: false, gstRateBps: null, gstProvenance: "NOT_CONFIGURED" };
 
   return payableSourceSnapshotSchema.parse({
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,
@@ -181,6 +201,7 @@ export function buildPayableSourceSnapshot(input: SnapshotInput): PayableSourceS
           affectsPayment: true,
         }
       : null,
+    requiredContentWithoutEvidence,
     lfcSfc: lfcSfc ? { ruleRef: lfcSfc.ruleRef, qualifyingUnit: lfcSfc.qualifyingUnit, lfcCount: lfcSfc.lfcCount, sfcCount: lfcSfc.sfcCount, unclassifiedCount: lfcSfc.unclassifiedCount } : null,
     contentObligations: commercial.contentObligations.map((obligation) => ({
       obligationRef: obligation.obligationRef,
@@ -216,6 +237,7 @@ export function buildPayableSourceSnapshot(input: SnapshotInput): PayableSourceS
       evaluation: target.evaluation,
       affectsPayment: false,
     })),
+    tax,
     warnings: warnings.slice(0, 30),
     capturedAt: input.capturedAt,
   });

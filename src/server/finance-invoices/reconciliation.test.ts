@@ -36,6 +36,48 @@ describe("amount mismatch", () => {
   });
 });
 
+describe("Step 15C: reconciles to the gross expected Invoice total, never the after-TDS net payment", () => {
+  it("MATCHes against payableGrossInvoiceExpectedMinor even though payableExpectedNetPaymentMinor differs (TDS withheld)", () => {
+    // The fixture pin: serviceBase 5,000,000, TDS 500,000, gross 5,000,000, net 4,500,000.
+    expect(PIN.payableGrossInvoiceExpectedMinor).toBe(5_000_000);
+    expect(PIN.payableExpectedNetPaymentMinor).toBe(4_500_000);
+    const result = reconcileInvoiceAgainstPayable({ declared: declared({ declaredTotalMinor: 5_000_000 }), pin: PIN, documentPresent: true, documentRequired: true, duplicateNumberDetected: false });
+    expect(result.state).toBe("MATCH");
+  });
+
+  it("MISMATCHes when the Invoice declares the after-TDS net payment figure instead of the gross total", () => {
+    const result = reconcileInvoiceAgainstPayable({ declared: declared({ declaredTotalMinor: PIN.payableExpectedNetPaymentMinor! }), pin: PIN, documentPresent: true, documentRequired: true, duplicateNumberDetected: false });
+    expect(result.state).toBe("MISMATCH");
+    expect(result.findings.map((f) => f.code)).toEqual(["TOTAL_AMOUNT_MISMATCH"]);
+  });
+
+  it("is MISSING_IN_PAYABLE when the pinned Payable has no computed gross expected Invoice total", () => {
+    const noBase = buildPin({ payableServiceBaseMinor: null, payableGrossInvoiceExpectedMinor: null, payableExpectedNetPaymentMinor: null });
+    const result = reconcileInvoiceAgainstPayable({ declared: declared(), pin: noBase, documentPresent: true, documentRequired: true, duplicateNumberDetected: false });
+    expect(result.state).toBe("MISSING_IN_PAYABLE");
+    expect(result.findings.map((f) => f.code)).toContain("MISSING_PAYABLE_TOTAL");
+  });
+});
+
+describe("Step 15C section 20: subtotal vs service base - informational only, never blocks", () => {
+  it("a subtotal that matches the service base raises no finding", () => {
+    const result = reconcileInvoiceAgainstPayable({ declared: declared({ subtotalMinor: PIN.payableServiceBaseMinor! }), pin: PIN, documentPresent: true, documentRequired: true, duplicateNumberDetected: false });
+    expect(result.findings.map((f) => f.code)).not.toContain("SUBTOTAL_SERVICE_BASE_MISMATCH");
+  });
+
+  it("a subtotal that differs from the service base raises a WARNING, never a BLOCKER, and never changes the overall MATCH state on its own once counted", () => {
+    const result = reconcileInvoiceAgainstPayable({ declared: declared({ subtotalMinor: PIN.payableServiceBaseMinor! - 1 }), pin: PIN, documentPresent: true, documentRequired: true, duplicateNumberDetected: false });
+    const finding = result.findings.find((f) => f.code === "SUBTOTAL_SERVICE_BASE_MISMATCH")!;
+    expect(finding.severity).toBe("WARNING");
+    expect(result.state).toBe("REVIEW_REQUIRED"); // a WARNING with no other blocker => REVIEW_REQUIRED, never BLOCKED/MISMATCH
+  });
+
+  it("no finding when the Invoice declares no subtotal at all", () => {
+    const result = reconcileInvoiceAgainstPayable({ declared: declared({ subtotalMinor: null }), pin: PIN, documentPresent: true, documentRequired: true, duplicateNumberDetected: false });
+    expect(result.findings.map((f) => f.code)).not.toContain("SUBTOTAL_SERVICE_BASE_MISMATCH");
+  });
+});
+
 describe("currency mismatch", () => {
   it("is BLOCKED when the declared currency differs from the pinned Payable's currency", () => {
     const result = reconcileInvoiceAgainstPayable({ declared: declared({ currency: "USD" }), pin: PIN, documentPresent: true, documentRequired: true, duplicateNumberDetected: false });

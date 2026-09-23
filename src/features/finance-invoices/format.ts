@@ -50,6 +50,7 @@ export const RECONCILIATION_RESULT_LABELS: Record<InvoiceReconciliationCode | "O
   MISSING_INVOICE_TOTAL: "Missing in Invoice",
   MISSING_PAYABLE_TOTAL: "Missing in Payable",
   ARITHMETIC_INCONSISTENT: "Review required",
+  SUBTOTAL_SERVICE_BASE_MISMATCH: "Review required",
 };
 
 // --- Counterparty -------------------------------------------------------------------------------------------------------------------

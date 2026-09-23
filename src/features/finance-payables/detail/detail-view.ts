@@ -47,8 +47,9 @@ export function detailActionVisibility(head: PayableDetailDto["head"], permissio
 export type SummaryRow = { label: string; value: string };
 
 export function summaryRows(detail: PayableDetailDto): SummaryRow[] {
-  const { head } = detail;
-  return [
+  const { head, selectedVersion, amountsVisible } = detail;
+  const money = (value: number | null) => formatSignedMoneyMinor(value, head.currency, { amountsVisible });
+  const rows: SummaryRow[] = [
     { label: "Counterparty", value: head.counterparty.displayName ?? head.counterparty.ref },
     { label: "Counterparty type", value: head.counterparty.type === "PARTNER" ? "Partner" : "Vendor" },
     { label: "Commercial period", value: commercialPeriodLabel(head.commercialPeriod.periodKey) },
@@ -56,9 +57,18 @@ export function summaryRows(detail: PayableDetailDto): SummaryRow[] {
     { label: "Review / source", value: head.reviewRef ? `${head.reviewRef} · v${head.reviewVersion}` : sourceTypeLabel(head.sourceType) },
     { label: "Currency", value: head.currency },
     { label: "Determination", value: determinationChip(head.determinationState).label },
-    { label: "Created", value: relativeTime(head.createdAt) },
-    { label: "Updated", value: relativeTime(head.updatedAt) },
   ];
+  // Step 15C section 17/22: service base / GST / TDS / expected net payment, visible on the
+  // summary itself - never only on the breakdown tab.
+  if (selectedVersion) {
+    rows.push({ label: "Service base", value: money(selectedVersion.serviceBaseMinor) });
+    rows.push({ label: "GST", value: money(selectedVersion.gstMinor) });
+    rows.push({ label: "TDS", value: money(selectedVersion.tdsMinor) });
+    rows.push({ label: "Expected net payment", value: money(selectedVersion.expectedNetPaymentMinor) });
+  }
+  rows.push({ label: "Created", value: relativeTime(head.createdAt) });
+  rows.push({ label: "Updated", value: relativeTime(head.updatedAt) });
+  return rows;
 }
 
 export type ReadinessView = {

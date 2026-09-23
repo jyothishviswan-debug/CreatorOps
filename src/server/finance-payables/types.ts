@@ -126,6 +126,41 @@ export const snapshotLfcSfcSchema = z
   })
   .strict();
 
+// --- Tax inputs (Step 15C section 9) ---------------------------------------------------------------------------------------
+// Canonical Finance tax inputs, captured as FACTS only - the engine (amount-determination.ts)
+// decides what to do with them, this schema never computes anything. `tdsRateBps`/`gstRateBps` are
+// basis points (1000 = 10%). A rate is non-null only when its own `applicable` is true; an
+// applicable tax with no rate is the genuinely ambiguous case (GST applicable, rate not yet
+// confirmed) and is handed to Finance by the engine, never guessed here or there.
+//
+// PROVENANCE TODAY: no per-counterparty or per-Agreement tax-profile source exists anywhere in
+// this codebase (Finance Agreements' confirmed commercial terms carry no GST/TDS field - see
+// terms.ts). TDS is therefore populated from the single CreatorOps product rule the user has
+// defined (10% / 1000bps, section 9) - `TDS_PRODUCT_PROVENANCE` below - applied uniformly to every
+// Partner-Review-sourced payable with a computed service base. GST has NO confirmed source at all
+// yet, so `gstApplicable` is always `false` until a real confirmed source is wired up; the schema
+// carries the field so a future confirmed source can populate it without another migration, and so
+// a unit test can exercise the "GST applicable, rate known" / "rate unknown" paths against a
+// synthetic snapshot even though no production code path sets gstApplicable:true today.
+export const TDS_PRODUCT_PROVENANCE = "PLATFORM_PRODUCT_RULE_TDS_V1";
+export const TDS_PRODUCT_RATE_BPS = 1000; // 10%, per the CreatorOps product rule (never tax advice).
+
+export const snapshotTaxSchema = z
+  .object({
+    tdsApplicable: z.boolean(),
+    tdsRateBps: z.number().int().min(0).max(10_000).nullable(),
+    tdsProvenance: shortText(200),
+    gstApplicable: z.boolean(),
+    gstRateBps: z.number().int().min(0).max(10_000).nullable(),
+    gstProvenance: shortText(200),
+  })
+  .strict()
+  .superRefine((tax, ctx) => {
+    if (!tax.tdsApplicable && tax.tdsRateBps !== null) ctx.addIssue({ code: "custom", path: ["tdsRateBps"], message: "A non-applicable tax carries no rate." });
+    if (!tax.gstApplicable && tax.gstRateBps !== null) ctx.addIssue({ code: "custom", path: ["gstRateBps"], message: "A non-applicable tax carries no rate." });
+  });
+export type SnapshotTax = z.infer<typeof snapshotTaxSchema>;
+
 // The Agreement's repeatable content-obligation rows, copied as recorded (never evaluated here).
 export const snapshotContentObligationSchema = z
   .object({ obligationRef: shortText(100), label: shortText(200), quantity: z.number().int().min(0), period: shortText(60).nullable(), operationalMapping: shortText(100).nullable() })
@@ -173,6 +208,15 @@ export const payableSourceSnapshotSchema = z
     review: snapshotReviewSchema.nullable(),
     currency: currencyCodeSchema.nullable(),
     qualifyingContent: snapshotQualifyingContentSchema.nullable(),
+    // True only when the Agreement states a monthly required-content term (a positive
+    // `monthlyRequiredQualifyingContentCount` or at least one content-obligation row) AND the
+    // pinned Review evidence has no evaluated `monthlyDeliverable` for it. This is the ONE signal
+    // the proration engine (section 6) uses to tell "no requirement exists" (qualifyingContent is
+    // null because there is nothing to prorate - the fixed amount applies in full) apart from "a
+    // requirement exists but its evidence is missing" (proration cannot run blind - Finance must
+    // confirm). Never inferred from prose; set only from the same structured check that already
+    // produced this module's pre-existing warning text.
+    requiredContentWithoutEvidence: z.boolean(),
     lfcSfc: snapshotLfcSfcSchema.nullable(),
     contentObligations: z.array(snapshotContentObligationSchema).max(20),
     fixedComponent: snapshotFixedComponentSchema.nullable(),
@@ -181,6 +225,7 @@ export const payableSourceSnapshotSchema = z
     incentive: snapshotIncentiveSchema.nullable(),
     paymentTerms: snapshotPaymentTermsSchema,
     performanceTargets: z.array(snapshotPerformanceTargetSchema).max(12),
+    tax: snapshotTaxSchema,
     // Typed, human-readable ambiguities noticed while capturing the evidence.
     warnings: z.array(shortText(300)).max(MAX_SNAPSHOT_WARNINGS),
     capturedAt: isoTimestamp,
@@ -192,12 +237,19 @@ export const payableSourceSnapshotSchema = z
   });
 export type PayableSourceSnapshot = z.infer<typeof payableSourceSnapshotSchema>;
 
-// --- Amount breakdown (section 8) -------------------------------------------------------------------------------------------
-export const PAYABLE_LINE_CATEGORIES = ["BASE_FIXED", "TRANSFER_FEE", "INCENTIVE", "ADVANCE_ADJUSTMENT", "MANUAL_ADJUSTMENT"] as const;
+// --- Amount breakdown (section 8, revised by Step 15C section 10) -------------------------------------------------------------
+// PRORATED_BASE: the monthly-analytics-prorated service base (section 4). BASE_FIXED remains for
+// the one case proration structurally cannot apply to - a basis with no monthly evidence chain at
+// all (a Vendor/AGREEMENT_ONLY payable) - where the fixed amount is still applied in full, exactly
+// as before. GST/TDS are new tax categories (section 9/10).
+export const PAYABLE_LINE_CATEGORIES = ["PRORATED_BASE", "BASE_FIXED", "TRANSFER_FEE", "GST", "TDS", "INCENTIVE", "ADVANCE_ADJUSTMENT", "MANUAL_ADJUSTMENT"] as const;
 export const payableLineCategorySchema = z.enum(PAYABLE_LINE_CATEGORIES);
 export type PayableLineCategory = z.infer<typeof payableLineCategorySchema>;
 
-export const PAYABLE_LINE_SOURCES = ["AGREEMENT", "PARTNER_REVIEW", "MANUAL"] as const;
+// PLATFORM_RULE: a CreatorOps product rule (today: the TDS 10% rule) rather than a term stated by
+// the Agreement or evaluated by the Review - kept distinct so a reader never mistakes a tax line
+// for contract-stated money.
+export const PAYABLE_LINE_SOURCES = ["AGREEMENT", "PARTNER_REVIEW", "PLATFORM_RULE", "MANUAL"] as const;
 export const payableLineSourceSchema = z.enum(PAYABLE_LINE_SOURCES);
 export type PayableLineSource = z.infer<typeof payableLineSourceSchema>;
 
@@ -248,8 +300,20 @@ export const PAYABLE_REVIEW_CODES = [
   // Several slabs of one metric match the measured value, or it falls in a gap between slabs.
   "INCENTIVE_THRESHOLD_AMBIGUOUS",
   // Qualifying content was under-delivered and the Agreement states no payment consequence.
-  // The fixed fee is NEVER reduced for this - Finance simply has to look.
+  // The fixed fee is NEVER reduced for this - Finance simply has to look. Only raised when
+  // proration itself could not run (see REQUIRED_COUNT_EVIDENCE_MISSING_FOR_PRORATION and the
+  // Vendor/no-requirement fallback in amount-determination.ts) - when proration DID run, an
+  // under-delivery is a fully deterministic, already-reflected proration, not an unresolved item.
   "UNDER_DELIVERY_NO_STATED_CONSEQUENCE",
+  // Step 15C section 6: the Agreement states a monthly required-content term, but the pinned
+  // Review evidence has no evaluated delivery figure for it. Proration cannot run blind - Finance
+  // must confirm before any amount is shown for the fixed component this period.
+  "REQUIRED_COUNT_EVIDENCE_MISSING_FOR_PRORATION",
+  // Step 15C section 9: GST is applicable but no confirmed rate is available yet.
+  "GST_RATE_UNKNOWN",
+  // Step 15C section 9: TDS is applicable but no confirmed rate is available yet (defensive - the
+  // current product rule always states 10%, but the engine never assumes a rate it wasn't given).
+  "TDS_RATE_UNKNOWN",
 ] as const;
 export const payableReviewCodeSchema = z.enum(PAYABLE_REVIEW_CODES);
 export type PayableReviewCode = z.infer<typeof payableReviewCodeSchema>;
@@ -293,6 +357,18 @@ export const PAYABLE_VERSION_CHANGE_KINDS = ["created", "revised", "adjustment_a
 export const payableVersionChangeKindSchema = z.enum(PAYABLE_VERSION_CHANGE_KINDS);
 export type PayableVersionChangeKind = z.infer<typeof payableVersionChangeKindSchema>;
 
+// Step 15C section 13: an explicit, closed identifier for the amount-determination RULE that
+// produced this version - never the evidence-snapshot's own `schemaVersion` (which versions the
+// EVIDENCE shape, not the calculation). A version created before this correction has no such
+// field at all (it predates the concept) and is never rewritten to carry one; every version this
+// build creates is stamped "MONTHLY_ANALYTICS_PRORATION_V1" unconditionally - including the
+// Vendor/no-evidence fallback that still applies a fixed amount in full, because THAT fallback is
+// itself part of this rule's own defined behavior, not a leftover of the old engine.
+export const PAYABLE_CALCULATION_RULE_VERSIONS = ["LEGACY_FIXED_V0", "MONTHLY_ANALYTICS_PRORATION_V1"] as const;
+export const payableCalculationRuleVersionSchema = z.enum(PAYABLE_CALCULATION_RULE_VERSIONS);
+export type PayableCalculationRuleVersion = z.infer<typeof payableCalculationRuleVersionSchema>;
+export const CURRENT_PAYABLE_CALCULATION_RULE_VERSION: PayableCalculationRuleVersion = "MONTHLY_ANALYTICS_PRORATION_V1";
+
 export const payableVersionDocSchema = z
   .object({
     payableRef: nonEmpty,
@@ -303,8 +379,23 @@ export const payableVersionDocSchema = z
     snapshot: payableSourceSnapshotSchema,
     determination: payableDeterminationSchema,
     lines: z.array(payableLineSchema).max(MAX_PAYABLE_LINES),
+    // The full signed payout sum - EVERY line (prorated/fixed base, transfer fee, GST, TDS,
+    // incentive, advance, manual). This is "the Payable total" every existing caller already
+    // means: what CreatorOps will actually transfer. See the tax-breakdown totals below for the
+    // narrower, tax-formula-defined figures section 10 requires kept separate.
     totalAmountMinorSigned: signedAmountMinorSchema,
     currency: currencyCodeSchema,
+    // --- Step 15C section 10: the tax/proration breakdown totals, each its own field so a reader
+    // never has to reconstruct one from the lines, and so gross Invoice total and net payment are
+    // never conflated. Null exactly when there is no fixed/prorated component to compute from.
+    // gst/tds default to 0 (not null) when their tax is not applicable - "not applicable" is an
+    // unambiguous, deterministic zero, never a withheld figure.
+    serviceBaseMinor: signedAmountMinorSchema.nullable(),
+    gstMinor: amountMinorSchema,
+    grossInvoiceExpectedMinor: signedAmountMinorSchema.nullable(),
+    tdsMinor: amountMinorSchema,
+    expectedNetPaymentMinor: signedAmountMinorSchema.nullable(),
+    calculationRuleVersion: payableCalculationRuleVersionSchema,
     // What remains for Finance to confirm on THIS version: the determination's unresolved items
     // minus the ones a manual adjustment in `lines` explicitly resolves.
     openReviewCodes: z.array(payableReviewCodeSchema).max(30),
@@ -328,6 +419,13 @@ export const payableVersionDocSchema = z
     const resolved = new Set(doc.lines.map((line) => line.resolvesCode).filter((code): code is string => code !== null));
     const expected = doc.determination.unresolved.map((item) => item.code).filter((code) => !resolved.has(code));
     if (JSON.stringify([...doc.openReviewCodes].sort()) !== JSON.stringify([...new Set(expected)].sort())) issue("openReviewCodes", "openReviewCodes must be the unresolved determination items no manual adjustment resolves.");
+    if (doc.serviceBaseMinor === null && (doc.grossInvoiceExpectedMinor !== null || doc.expectedNetPaymentMinor !== null)) {
+      issue("grossInvoiceExpectedMinor", "Gross Invoice expected / expected net payment are only derived when a service base was computed.");
+    }
+    if (doc.serviceBaseMinor !== null) {
+      if (doc.grossInvoiceExpectedMinor !== doc.serviceBaseMinor + doc.gstMinor) issue("grossInvoiceExpectedMinor", "grossInvoiceExpectedMinor must equal serviceBaseMinor + gstMinor.");
+      if (doc.expectedNetPaymentMinor !== doc.serviceBaseMinor + doc.gstMinor - doc.tdsMinor) issue("expectedNetPaymentMinor", "expectedNetPaymentMinor must equal serviceBaseMinor + gstMinor - tdsMinor.");
+    }
   });
 export type PayableVersionDoc = z.infer<typeof payableVersionDocSchema>;
 

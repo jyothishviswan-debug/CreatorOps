@@ -8,7 +8,7 @@ import type { PayableReviewCode } from "@/server/finance-payables/types";
 import { addPayableAdjustment, removePayableAdjustment } from "../api-client";
 import { lineSourceLabel } from "../format";
 import { ManualAdjustmentDialog, type ManualAdjustmentInput } from "../create/ManualAdjustmentDialog";
-import { breakdownRows, breakdownTotalText } from "../create/create-view";
+import { breakdownRows, breakdownTotalText, calculationSummaryRows } from "../create/create-view";
 
 // Step 15B: Payable detail - Amount breakdown tab. Shows the FULL immutable current-version breakdown.
 // If DRAFT and authorized (`canAdjust`), a controlled "Add manual adjustment" action and a per-manual-row
@@ -27,6 +27,16 @@ export function AmountBreakdownTab({ detail, permissions, onUpdated }: { detail:
   const currency = detail.head.currency;
   const rows = version ? breakdownRows({ lines: version.lines, unresolved: version.unresolved, currency, amountsVisible: detail.amountsVisible }) : [];
   const resolvableItems: Array<{ code: PayableReviewCode; message: string }> = version ? version.unresolved.map((item) => ({ code: item.code, message: item.message })) : [];
+  // Step 15C section 17/22: service base / GST / gross Invoice / TDS / net payment, kept clearly
+  // separate from the raw line list above - backend-authoritative, never recomputed here.
+  const calculationRows = calculationSummaryRows({
+    snapshot: version?.snapshot ?? null,
+    totals: version
+      ? { serviceBaseMinor: version.serviceBaseMinor, gstMinor: version.gstMinor, grossInvoiceExpectedMinor: version.grossInvoiceExpectedMinor, tdsMinor: version.tdsMinor, expectedNetPaymentMinor: version.expectedNetPaymentMinor }
+      : { serviceBaseMinor: null, gstMinor: null, grossInvoiceExpectedMinor: null, tdsMinor: null, expectedNetPaymentMinor: null },
+    currency,
+    amountsVisible: detail.amountsVisible,
+  });
 
   async function submitAdjustment(input: ManualAdjustmentInput): Promise<{ ok: boolean; message?: string }> {
     const result = await addPayableAdjustment(detail.head.payableRef, { expectedDocVersion: detail.head.docVersion, ...input });
@@ -63,6 +73,24 @@ export function AmountBreakdownTab({ detail, permissions, onUpdated }: { detail:
             {error}
           </div>
         )}
+
+        <div className="tablewrap" style={{ marginBottom: 18 }}>
+          <table className="compact" data-testid="calculation-summary">
+            <tbody>
+              {calculationRows.map((row) => (
+                <tr key={row.label} data-testid="calculation-summary-row">
+                  <th scope="row" style={{ fontWeight: 400, color: "var(--muted)" }}>
+                    {row.label}
+                  </th>
+                  <td style={{ textAlign: "right" }}>
+                    <b>{row.value}</b>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+
         <div className="tablewrap">
           <table className="compact">
             <thead>

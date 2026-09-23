@@ -45,7 +45,16 @@ export type InvoicePayablePinDto = {
   reviewVersion: number | null;
   commercialPeriod: CommercialPeriod;
   payableCurrency: string;
-  payableExpectedTotalMinorSigned: InvoiceAmountDto;
+  // Step 15C: the five distinct tax/proration totals, plus the full payout sum kept as read-only
+  // context. The Invoice reconciles against payableGrossInvoiceExpectedMinor specifically - never
+  // payableExpectedNetPaymentMinor (TDS is payment treatment, not part of the supplier's Invoice).
+  payableTotalAmountMinorSigned: InvoiceAmountDto;
+  payableServiceBaseMinor: InvoiceAmountDto;
+  payableGstMinor: InvoiceAmountDto;
+  payableGrossInvoiceExpectedMinor: InvoiceAmountDto;
+  payableTdsMinor: InvoiceAmountDto;
+  payableExpectedNetPaymentMinor: InvoiceAmountDto;
+  payableCalculationRuleVersion: string;
 };
 
 export type InvoiceDocumentDto = { documentId: string; fileName: string; mimeType: string; sizeBytes: number; sha256: string; storedAt: string; storedByUserRef: string };
@@ -179,7 +188,13 @@ export function toInvoicePayablePinDto(pin: InvoicePayablePin, options: AmountOp
     reviewVersion: pin.reviewVersion,
     commercialPeriod: { ...pin.commercialPeriod },
     payableCurrency: pin.payableCurrency,
-    payableExpectedTotalMinorSigned: amount(pin.payableExpectedTotalMinorSigned, options),
+    payableTotalAmountMinorSigned: amount(pin.payableTotalAmountMinorSigned, options),
+    payableServiceBaseMinor: nullableAmount(pin.payableServiceBaseMinor, options),
+    payableGstMinor: amount(pin.payableGstMinor, options),
+    payableGrossInvoiceExpectedMinor: nullableAmount(pin.payableGrossInvoiceExpectedMinor, options),
+    payableTdsMinor: amount(pin.payableTdsMinor, options),
+    payableExpectedNetPaymentMinor: nullableAmount(pin.payableExpectedNetPaymentMinor, options),
+    payableCalculationRuleVersion: pin.payableCalculationRuleVersion,
   };
 }
 

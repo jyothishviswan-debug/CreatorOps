@@ -234,8 +234,12 @@ export function InvoiceDetailsStep({
                 </b>
               </div>
               <div className="kv">
-                <span>Expected total</span>
-                <b>{formatSignedMoneyMinor(preview.pin.payableExpectedTotalMinorSigned, preview.pin.payableCurrency, { amountsVisible: preview.amountsVisible })}</b>
+                <span>Gross expected Invoice total</span>
+                <b>{formatSignedMoneyMinor(preview.pin.payableGrossInvoiceExpectedMinor, preview.pin.payableCurrency, { amountsVisible: preview.amountsVisible })}</b>
+              </div>
+              <div className="kv">
+                <span>TDS (payment treatment, separate)</span>
+                <b>{formatSignedMoneyMinor(preview.pin.payableTdsMinor, preview.pin.payableCurrency, { amountsVisible: preview.amountsVisible })}</b>
               </div>
               <div className="kv">
                 <span>Currency</span>

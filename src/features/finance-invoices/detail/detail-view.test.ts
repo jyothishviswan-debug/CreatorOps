@@ -15,7 +15,13 @@ const PIN = {
   reviewVersion: null,
   commercialPeriod: { periodKey: "2026-03", periodStart: "2026-03-01", periodEnd: "2026-03-31" },
   payableCurrency: "INR",
-  payableExpectedTotalMinorSigned: 500000,
+  payableTotalAmountMinorSigned: 450000,
+  payableServiceBaseMinor: 500000,
+  payableGstMinor: 0,
+  payableGrossInvoiceExpectedMinor: 500000,
+  payableTdsMinor: 50000,
+  payableExpectedNetPaymentMinor: 450000,
+  payableCalculationRuleVersion: "MONTHLY_ANALYTICS_PRORATION_V1",
 };
 
 function detail(overrides: { status?: InvoiceDetailDto["head"]["status"]; mismatchOverride?: InvoiceDetailDto["head"]["mismatchOverride"]; findings?: InvoiceDetailDto["selectedVersion"] extends null ? never : NonNullable<InvoiceDetailDto["selectedVersion"]>["reconciliation"]["findings"] } = {}): InvoiceDetailDto {

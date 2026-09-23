@@ -430,7 +430,7 @@ describe("eligibility and pinning", () => {
     expect(version.payablePin.agreementRef).toBe(payable.head.agreementRef);
     expect(version.payablePin.reviewRef).toBe(payable.head.reviewRef);
     expect(version.payablePin.commercialPeriod.periodKey).toBe(PERIOD);
-    expect(version.payablePin.payableExpectedTotalMinorSigned).toBe(5_000_000);
+    expect(version.payablePin.payableGrossInvoiceExpectedMinor).toBe(5_000_000);
     expect(version.externalInvoiceNumber).toBeNull();
     expect(version.reconciliation.state).toBe("MISSING_IN_INVOICE");
   });
@@ -747,7 +747,7 @@ describe("source revision (Payable revision is a WARNING, never mutates the Invo
     // The Invoice's own pin and money are completely unchanged.
     const unchanged = must(await getInvoice(headActor, invoice.head.invoiceRef), "read invoice again");
     expect(unchanged.selectedVersion!.payablePin.payableVersion).toBe(invoice.selectedVersion!.payablePin.payableVersion);
-    expect(unchanged.selectedVersion!.payablePin.payableExpectedTotalMinorSigned).toBe(invoice.selectedVersion!.payablePin.payableExpectedTotalMinorSigned);
+    expect(unchanged.selectedVersion!.payablePin.payableGrossInvoiceExpectedMinor).toBe(invoice.selectedVersion!.payablePin.payableGrossInvoiceExpectedMinor);
   });
 });
 

@@ -23,9 +23,16 @@ export function ReconciliationTab({ detail, visibility, onUpdated }: { detail: I
   const { head, selectedVersion } = detail;
   if (!selectedVersion) return null;
 
+  const declaredTaxTotal = selectedVersion.taxLines.reduce<number | null>((sum, line) => (sum === null || line.amountMinor === null ? null : sum + line.amountMinor), selectedVersion.taxLines.length > 0 ? 0 : null);
   const rows = reconciliationComparisonRows({
     pin: selectedVersion.payablePin,
-    declared: { currency: selectedVersion.currency, declaredTotalMinor: selectedVersion.declaredTotalMinor, externalInvoiceNumber: selectedVersion.externalInvoiceNumber },
+    declared: {
+      currency: selectedVersion.currency,
+      declaredTotalMinor: selectedVersion.declaredTotalMinor,
+      externalInvoiceNumber: selectedVersion.externalInvoiceNumber,
+      subtotalMinor: selectedVersion.subtotalMinor,
+      taxTotalMinor: declaredTaxTotal,
+    },
     reconciliation: selectedVersion.reconciliation,
     documentPresent: selectedVersion.document !== null,
     amountsVisible: detail.amountsVisible,
@@ -64,7 +71,7 @@ export function ReconciliationTab({ detail, visibility, onUpdated }: { detail: I
                 </span>
               ) : canOfferOverride ? (
                 <span>
-                  <b>Amount mismatch.</b> This Invoice&apos;s declared total does not match the pinned Payable&apos;s expected total.{" "}
+                  <b>Amount mismatch.</b> This Invoice&apos;s declared total does not match the pinned Payable&apos;s gross expected Invoice total.{" "}
                   <button type="button" className="btn" onClick={() => setOverrideOpen(true)} data-testid="accept-mismatch-action">
                     Accept mismatch
                   </button>
@@ -138,7 +145,9 @@ function MismatchOverrideDialog({ open, detail, onClose, onUpdated }: { open: bo
   const { head, selectedVersion } = detail;
   if (!selectedVersion) return null;
 
-  const expected = selectedVersion.payablePin.payableExpectedTotalMinorSigned;
+  // Step 15C: the mismatch is against the Payable's gross expected Invoice total, never the
+  // after-TDS expected net payment.
+  const expected = selectedVersion.payablePin.payableGrossInvoiceExpectedMinor;
   const declared = selectedVersion.declaredTotalMinor;
   const variance = expected !== null && declared !== null ? declared - expected : null;
 
@@ -182,7 +191,7 @@ function MismatchOverrideDialog({ open, detail, onClose, onUpdated }: { open: bo
         </div>
       )}
       <div className="kv">
-        <span>Payable expected amount</span>
+        <span>Payable gross expected Invoice total</span>
         <b>{formatSignedMoneyMinor(expected, selectedVersion.payablePin.payableCurrency, { amountsVisible: detail.amountsVisible })}</b>
       </div>
       <div className="kv">

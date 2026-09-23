@@ -1,6 +1,7 @@
 import { redactPayableEventMetadata } from "./payable-events";
 import type { PayableSourceBlocker } from "./source-evidence";
 import type {
+  PayableCalculationRuleVersion,
   PayableCounterpartyType,
   PayableDeterminationState,
   PayableEvent,
@@ -54,6 +55,17 @@ export type PayableSnapshotDto = Omit<PayableSourceSnapshot, "fixedComponent" | 
   incentive: { applicable: boolean; narrative: string | null; slabs: Array<{ slabRef: string; metricId: string; lowerBound: number; upperBound: number | null; unit: string; amountMinor: PayableAmountDto }> } | null;
 };
 
+// Step 15C section 10: the five distinct calculation totals, shared by the full version and its
+// summary. Never collapsed into one figure - see amount-determination.ts's own doc comment.
+export type PayableTaxTotalsDto = {
+  serviceBaseMinor: PayableAmountDto;
+  gstMinor: PayableAmountDto;
+  grossInvoiceExpectedMinor: PayableAmountDto;
+  tdsMinor: PayableAmountDto;
+  expectedNetPaymentMinor: PayableAmountDto;
+  calculationRuleVersion: PayableCalculationRuleVersion;
+};
+
 export type PayableVersionDto = {
   version: number;
   changeKind: PayableVersionChangeKind;
@@ -68,7 +80,7 @@ export type PayableVersionDto = {
   snapshot: PayableSnapshotDto;
   createdAt: string;
   createdByUserRef: string;
-};
+} & PayableTaxTotalsDto;
 
 export type PayableVersionSummaryDto = {
   version: number;
@@ -85,7 +97,7 @@ export type PayableVersionSummaryDto = {
   reviewVersion: number | null;
   createdAt: string;
   createdByUserRef: string;
-};
+} & PayableTaxTotalsDto;
 
 export type PayableHeadDto = {
   payableRef: string;
@@ -146,7 +158,7 @@ export type PayableSourcePreviewDto = {
   amountsVisible: boolean;
   // An existing canonical Payable already covers this commercial basis.
   existingPayableRef: string | null;
-};
+} & PayableTaxTotalsDto;
 
 export type PayableSourceRevisionDto = {
   payableRef: string;
@@ -228,6 +240,7 @@ export function toPayableSnapshotDto(snapshot: PayableSourceSnapshot, options: A
     review: snapshot.review ? { ...snapshot.review } : null,
     currency: snapshot.currency,
     qualifyingContent: snapshot.qualifyingContent ? { ...snapshot.qualifyingContent } : null,
+    requiredContentWithoutEvidence: snapshot.requiredContentWithoutEvidence,
     lfcSfc: snapshot.lfcSfc ? { ...snapshot.lfcSfc } : null,
     contentObligations: snapshot.contentObligations.map((obligation) => ({ ...obligation })),
     fixedComponent: snapshot.fixedComponent ? { applicable: snapshot.fixedComponent.applicable, amountMinor: nullableAmount(snapshot.fixedComponent.amountMinor, options) } : null,
@@ -244,8 +257,20 @@ export function toPayableSnapshotDto(snapshot: PayableSourceSnapshot, options: A
       : null,
     paymentTerms: { ...snapshot.paymentTerms },
     performanceTargets: snapshot.performanceTargets.map((target) => ({ ...target })),
+    tax: { ...snapshot.tax },
     warnings: [...snapshot.warnings],
     capturedAt: snapshot.capturedAt,
+  };
+}
+
+function taxTotalsOf(doc: PayableVersionDoc, options: AmountOptions): PayableTaxTotalsDto {
+  return {
+    serviceBaseMinor: nullableAmount(doc.serviceBaseMinor, options),
+    gstMinor: amount(doc.gstMinor, options),
+    grossInvoiceExpectedMinor: nullableAmount(doc.grossInvoiceExpectedMinor, options),
+    tdsMinor: amount(doc.tdsMinor, options),
+    expectedNetPaymentMinor: nullableAmount(doc.expectedNetPaymentMinor, options),
+    calculationRuleVersion: doc.calculationRuleVersion,
   };
 }
 
@@ -264,6 +289,7 @@ export function toPayableVersionDto(doc: PayableVersionDoc, options: AmountOptio
     snapshot: toPayableSnapshotDto(doc.snapshot, options),
     createdAt: doc.createdAt,
     createdByUserRef: doc.createdByUserRef,
+    ...taxTotalsOf(doc, options),
   };
 }
 
@@ -283,6 +309,7 @@ export function toPayableVersionSummaryDto(doc: PayableVersionDoc, options: Amou
     reviewVersion: doc.snapshot.review?.reviewVersion ?? null,
     createdAt: doc.createdAt,
     createdByUserRef: doc.createdByUserRef,
+    ...taxTotalsOf(doc, options),
   };
 }
 

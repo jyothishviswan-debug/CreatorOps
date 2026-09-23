@@ -52,8 +52,19 @@ export type InvoiceStatus = z.infer<typeof invoiceStatusSchema>;
 
 export const MAX_INVOICE_VERSIONS = 200;
 
-// --- Payable pin (section 4/15) - captured once at creation, NEVER re-read live except by the -------------------------------
-// explicit, read-only source-revision comparison. A later Payable revision never mutates this.
+// --- Payable pin (section 4/15, revised by Step 15C section 18/23) - captured once at creation, ----------------------------
+// NEVER re-read live except by the explicit, read-only source-revision comparison. A later Payable
+// revision never mutates this.
+//
+// STEP 15C CORRECTION: the old single `payableExpectedTotalMinorSigned` scalar is REPLACED by the
+// Payable's own five distinct tax/proration totals (finance-payables/types.ts's
+// PayableVersionDoc), copied verbatim so this module never assumes what an old, undifferentiated
+// field name meant. The Invoice reconciles its declared total against
+// `payableGrossInvoiceExpectedMinor` specifically - NOT the after-TDS `payableExpectedNetPaymentMinor`
+// - because TDS is CreatorOps payment treatment, not part of the supplier's own gross Invoice
+// amount (section 18). `payableTotalAmountMinorSigned` (the full payout sum, Payables' own
+// `totalAmountMinorSigned` - includes transfer fee/incentive/manual lines too) is retained ONLY as
+// read-only context, never as the reconciliation target.
 export const invoicePayablePinSchema = z
   .object({
     payableRef: refString,
@@ -66,10 +77,16 @@ export const invoicePayablePinSchema = z
     reviewVersion: z.number().int().min(1).nullable(),
     commercialPeriod: commercialPeriodSchema,
     payableCurrency: currencyCodeSchema,
-    // The Payable's own pinned total AT THE TIME the Invoice was created/revised - a SIGNED figure
-    // (Payables' own totalAmountMinorSigned convention), used only for reconciliation. Re-pinned on
-    // an explicit, reasoned revision; never mutated in place.
-    payableExpectedTotalMinorSigned: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
+    // The Payable's full signed payout sum (Payables' own totalAmountMinorSigned) - context only.
+    payableTotalAmountMinorSigned: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER),
+    // The five Step 15C totals, copied verbatim from the pinned Payable version.
+    payableServiceBaseMinor: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).nullable(),
+    payableGstMinor: amountMinorSchema,
+    // THE reconciliation target for the Invoice's declared total (section 18/23).
+    payableGrossInvoiceExpectedMinor: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).nullable(),
+    payableTdsMinor: amountMinorSchema,
+    payableExpectedNetPaymentMinor: z.number().int().min(-Number.MAX_SAFE_INTEGER).max(Number.MAX_SAFE_INTEGER).nullable(),
+    payableCalculationRuleVersion: z.string().min(1).max(60),
     pinnedAt: isoTimestamp,
   })
   .strict();
@@ -111,6 +128,8 @@ export type InvoiceReconciliationState = z.infer<typeof invoiceReconciliationSta
 // rule - see amount-determination-style discipline in reconciliation.ts.
 export const INVOICE_RECONCILIATION_CODES = [
   "CURRENCY_MISMATCH",
+  // Step 15C section 18/23: the Invoice's declared total vs the Payable's GROSS EXPECTED INVOICE
+  // TOTAL (serviceBase + GST) - never the after-TDS expected net payment.
   "TOTAL_AMOUNT_MISMATCH",
   "COUNTERPARTY_MISMATCH",
   "COMMERCIAL_PERIOD_MISMATCH",
@@ -120,6 +139,10 @@ export const INVOICE_RECONCILIATION_CODES = [
   "MISSING_INVOICE_TOTAL",
   "MISSING_PAYABLE_TOTAL",
   "ARITHMETIC_INCONSISTENT",
+  // Step 15C section 20: an informational (WARNING) comparison of the Invoice's declared subtotal
+  // against the Payable's prorated service base - never a blocker on its own (the supplier's own
+  // subtotal/tax split is theirs to state; only the gross TOTAL is the hard reconciliation target).
+  "SUBTOTAL_SERVICE_BASE_MISMATCH",
 ] as const;
 export const invoiceReconciliationCodeSchema = z.enum(INVOICE_RECONCILIATION_CODES);
 export type InvoiceReconciliationCode = z.infer<typeof invoiceReconciliationCodeSchema>;

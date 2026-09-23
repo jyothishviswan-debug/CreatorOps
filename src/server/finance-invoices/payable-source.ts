@@ -72,7 +72,15 @@ export async function resolveInvoicePayableSource(actor: ActorContext, payableRe
         reviewVersion: payable.head.reviewVersion,
         commercialPeriod: payable.head.commercialPeriod,
         payableCurrency: payable.head.currency,
-        payableExpectedTotalMinorSigned: version.totalAmountMinorSigned,
+        // Step 15C: the full payout sum stays as read-only context; every reconciliation-relevant
+        // figure is one of the five distinct tax/proration totals, copied verbatim.
+        payableTotalAmountMinorSigned: version.totalAmountMinorSigned,
+        payableServiceBaseMinor: version.serviceBaseMinor,
+        payableGstMinor: version.gstMinor ?? 0,
+        payableGrossInvoiceExpectedMinor: version.grossInvoiceExpectedMinor,
+        payableTdsMinor: version.tdsMinor ?? 0,
+        payableExpectedNetPaymentMinor: version.expectedNetPaymentMinor,
+        payableCalculationRuleVersion: version.calculationRuleVersion,
         pinnedAt: now().toISOString(),
       },
     },

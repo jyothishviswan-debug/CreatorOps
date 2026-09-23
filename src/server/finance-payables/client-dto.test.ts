@@ -39,6 +39,12 @@ const VERSION = payableVersionDocSchema.parse({
   lines: [LINE],
   totalAmountMinorSigned: 5_000_000,
   currency: "INR",
+  serviceBaseMinor: 5_000_000,
+  gstMinor: 0,
+  grossInvoiceExpectedMinor: 5_000_000,
+  tdsMinor: 0,
+  expectedNetPaymentMinor: 5_000_000,
+  calculationRuleVersion: "MONTHLY_ANALYTICS_PRORATION_V1",
   openReviewCodes: [],
   changeKind: "created",
   reason: null,
@@ -90,6 +96,19 @@ describe("Payable DTO amount redaction - visible", () => {
     expect(toPayableVersionSummaryDto(VERSION, VISIBLE).totalAmountMinorSigned).toBe(5_000_000);
   });
 
+  it("toPayableVersionDto / toPayableVersionSummaryDto pass the five Step 15C tax totals through, never collapsed into one figure", () => {
+    const dto = toPayableVersionDto(VERSION, VISIBLE);
+    expect(dto.serviceBaseMinor).toBe(5_000_000);
+    expect(dto.gstMinor).toBe(0);
+    expect(dto.grossInvoiceExpectedMinor).toBe(5_000_000);
+    expect(dto.tdsMinor).toBe(0);
+    expect(dto.expectedNetPaymentMinor).toBe(5_000_000);
+    expect(dto.calculationRuleVersion).toBe("MONTHLY_ANALYTICS_PRORATION_V1");
+    const summary = toPayableVersionSummaryDto(VERSION, VISIBLE);
+    expect(summary.serviceBaseMinor).toBe(5_000_000);
+    expect(summary.calculationRuleVersion).toBe("MONTHLY_ANALYTICS_PRORATION_V1");
+  });
+
   it("toPayableHeadDto / toPayableRowDto pass the total through", () => {
     expect(toPayableHeadDto(HEAD, "Fixture Partner", VISIBLE).totalAmountMinorSigned).toBe(5_000_000);
     expect(toPayableRowDto(HEAD, "Fixture Partner", VISIBLE).totalAmountMinorSigned).toBe(5_000_000);
@@ -124,6 +143,19 @@ describe("Payable DTO amount redaction - withheld", () => {
     // Everything else on the summary/version stays visible - only money is gated.
     expect(version.determinationState).toBe("DETERMINISTIC");
     expect(toPayableVersionSummaryDto(VERSION, WITHHELD).agreementRef).toBe("agr_0123456789abcdef0123");
+  });
+
+  it("toPayableVersionDto / toPayableVersionSummaryDto null every Step 15C tax total, but keep calculationRuleVersion (not money) visible", () => {
+    const version = toPayableVersionDto(VERSION, WITHHELD);
+    expect(version.serviceBaseMinor).toBeNull();
+    expect(version.gstMinor).toBeNull();
+    expect(version.grossInvoiceExpectedMinor).toBeNull();
+    expect(version.tdsMinor).toBeNull();
+    expect(version.expectedNetPaymentMinor).toBeNull();
+    expect(version.calculationRuleVersion).toBe("MONTHLY_ANALYTICS_PRORATION_V1");
+    const summary = toPayableVersionSummaryDto(VERSION, WITHHELD);
+    expect(summary.serviceBaseMinor).toBeNull();
+    expect(summary.calculationRuleVersion).toBe("MONTHLY_ANALYTICS_PRORATION_V1");
   });
 
   it("toPayableHeadDto / toPayableRowDto null the total but keep status/workflow fields visible", () => {

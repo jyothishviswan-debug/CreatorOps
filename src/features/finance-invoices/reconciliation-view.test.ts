@@ -16,7 +16,16 @@ const PIN: InvoicePayablePinDto = {
   reviewVersion: null,
   commercialPeriod: { periodKey: "2026-03", periodStart: "2026-03-01", periodEnd: "2026-03-31" },
   payableCurrency: "INR",
-  payableExpectedTotalMinorSigned: 500000,
+  // Step 15C: gross expected Invoice total is the reconciliation target (500000 = ₹5,000, same
+  // figure the pre-15C fixture used for its "expected total" so existing numeric expectations
+  // below stay meaningful); TDS (10%) and the full payout sum are distinct, separate figures.
+  payableTotalAmountMinorSigned: 450000,
+  payableServiceBaseMinor: 500000,
+  payableGstMinor: 0,
+  payableGrossInvoiceExpectedMinor: 500000,
+  payableTdsMinor: 50000,
+  payableExpectedNetPaymentMinor: 450000,
+  payableCalculationRuleVersion: "MONTHLY_ANALYTICS_PRORATION_V1",
 };
 
 function reconciliation(overrides: Partial<InvoiceReconciliationResult> = {}): InvoiceReconciliationResult {
@@ -32,8 +41,53 @@ describe("reconciliationComparisonRows", () => {
       documentPresent: true,
       amountsVisible: true,
     });
-    expect(rows.map((row) => row.field)).toEqual(["Counterparty", "Currency", "Commercial period", "Expected / declared total", "Invoice number uniqueness", "Required document", "Source Payable version"]);
-    expect(rows.every((row) => row.result.label === "Match")).toBe(true);
+    expect(rows.map((row) => row.field)).toEqual([
+      "Counterparty",
+      "Currency",
+      "Commercial period",
+      "Gross expected Invoice / declared total",
+      "Service base / declared subtotal",
+      "GST (expected / declared tax lines)",
+      "TDS (platform payment treatment)",
+      "Expected net payment",
+      "Invoice number uniqueness",
+      "Required document",
+      "Source Payable version",
+    ]);
+    // Every row EXCEPT the informational service-base/GST/TDS/net rows is a clean Match (no
+    // declared subtotal/tax was supplied in this fixture, so those show "Missing in Invoice" /
+    // no-comparison states rather than an invented Match).
+    const coreRows = rows.filter((row) => !["serviceBase", "gst", "tds", "expectedNetPayment"].includes(row.key));
+    expect(coreRows.every((row) => row.result.label === "Match")).toBe(true);
+  });
+
+  it("Step 15C: shows service base, GST, TDS and expected net payment as their own distinct rows, never collapsed into the total", () => {
+    const rows = reconciliationComparisonRows({
+      pin: PIN,
+      declared: { currency: "INR", declaredTotalMinor: 500000, externalInvoiceNumber: "INV-1", subtotalMinor: 500000, taxTotalMinor: 0 },
+      reconciliation: reconciliation(),
+      documentPresent: true,
+      amountsVisible: true,
+    });
+    expect(rows.find((row) => row.key === "serviceBase")).toMatchObject({ payableValue: "₹5,000", invoiceValue: "₹5,000", result: { label: "Match" } });
+    expect(rows.find((row) => row.key === "gst")).toMatchObject({ payableValue: "₹0", invoiceValue: "₹0" });
+    expect(rows.find((row) => row.key === "tds")).toMatchObject({ payableValue: "₹500", invoiceValue: "Not an Invoice line" });
+    expect(rows.find((row) => row.key === "expectedNetPayment")).toMatchObject({ payableValue: "₹4,500", invoiceValue: "—" });
+  });
+
+  it("flags a subtotal/service-base mismatch as an informational review row, never a blocker on its own", () => {
+    const rows = reconciliationComparisonRows({
+      pin: PIN,
+      declared: { currency: "INR", declaredTotalMinor: 500000, externalInvoiceNumber: "INV-1", subtotalMinor: 480000, taxTotalMinor: 20000 },
+      reconciliation: reconciliation({ state: "REVIEW_REQUIRED", findings: [{ code: "SUBTOTAL_SERVICE_BASE_MISMATCH", severity: "WARNING", message: "Both figures are preserved for Finance review." }] }),
+      documentPresent: true,
+      amountsVisible: true,
+    });
+    const serviceBaseRow = rows.find((row) => row.key === "serviceBase")!;
+    expect(serviceBaseRow.result.label).toBe("Review required");
+    expect(serviceBaseRow.resolution).toBe("Both figures are preserved for Finance review.");
+    // The gross total itself is unaffected - a subtotal mismatch alone is never a total mismatch.
+    expect(rows.find((row) => row.key === "total")!.result.label).toBe("Match");
   });
 
   it("marks the total row Mismatch and preserves both figures when TOTAL_AMOUNT_MISMATCH is present", () => {

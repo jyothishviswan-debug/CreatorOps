@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import type { PayableLineDto, PayableSnapshotDto, PayableSourcePreviewDto } from "@/server/finance-payables/client-dto";
 
-import { agreementEvidenceSection, breakdownRows, canCreatePayable, confirmReadiness, performanceTargetsSection, reviewEvidenceSection, sourceEvidenceSummary, sourceReadiness, warningsList } from "./create-view";
+import { agreementEvidenceSection, breakdownRows, calculationSummaryRows, canCreatePayable, confirmReadiness, performanceTargetsSection, reviewEvidenceSection, sourceEvidenceSummary, sourceReadiness, warningsList } from "./create-view";
 
 function line(overrides: Partial<PayableLineDto> = {}): PayableLineDto {
   return { lineRef: "pl_1", label: "Fixed component", category: "BASE_FIXED", amountMinorSigned: 5000000, source: "AGREEMENT", sourceRef: "agr_abc@2", reason: "Fixed component per Agreement", actorUserRef: null, actorAt: null, resolvesCode: null, ...overrides };
@@ -27,6 +27,12 @@ function preview(overrides: Partial<PayableSourcePreviewDto> = {}): PayableSourc
     currency: "INR",
     amountsVisible: true,
     existingPayableRef: null,
+    serviceBaseMinor: 5000000,
+    gstMinor: 0,
+    grossInvoiceExpectedMinor: 5000000,
+    tdsMinor: 500000,
+    expectedNetPaymentMinor: 4500000,
+    calculationRuleVersion: "MONTHLY_ANALYTICS_PRORATION_V1",
     ...overrides,
   };
 }
@@ -137,9 +143,59 @@ describe("agreementEvidenceSection / reviewEvidenceSection", () => {
     expect(reviewEvidenceSection(baseSnapshot({ review: null }))).toBeNull();
   });
 
-  it("names the finalized Partner Review and its qualifying-content actual vs required", () => {
+  it("names the finalized Partner Review (the Monthly Analytics evidence pin) and its qualifying-content actual vs required", () => {
     const section = reviewEvidenceSection(baseSnapshot());
-    expect(section?.rows).toContainEqual({ label: "Qualifying content", value: "8 of 8 approved_content_thread" });
+    expect(section?.title).toContain("Monthly Analytics");
+    expect(section?.rows).toContainEqual({ label: "Qualifying deliverable count", value: "8 of 8 approved_content_thread" });
+  });
+
+  it("surfaces an unclassified LFC/SFC remainder in the evidence row", () => {
+    const section = reviewEvidenceSection(baseSnapshot({ lfcSfc: { ruleRef: "rule-1", qualifyingUnit: "approved_content_thread", lfcCount: 5, sfcCount: 2, unclassifiedCount: 1 } }));
+    expect(section?.rows).toContainEqual({ label: "LFC / SFC (actual)", value: "5 LFC · 2 SFC · 1 unclassified" });
+  });
+});
+
+describe("calculationSummaryRows (Step 15C)", () => {
+  it("lists the full calculation chain in order: Agreement amount, required, delivered, counted, service base, GST, gross, TDS, net", () => {
+    const rows = calculationSummaryRows({
+      snapshot: baseSnapshot({ qualifyingContent: { requiredCount: 20, qualifyingUnit: "approved_content_thread", actualQualifyingCount: 16, variance: -4, evaluation: "below_requirement", affectsPayment: true } }),
+      totals: { serviceBaseMinor: 8_000_000, gstMinor: 0, grossInvoiceExpectedMinor: 8_000_000, tdsMinor: 800_000, expectedNetPaymentMinor: 7_200_000 },
+      currency: "INR",
+      amountsVisible: true,
+    });
+    expect(rows.map((row) => row.label)).toEqual([
+      "Agreement monthly amount",
+      "Required monthly deliverables",
+      "Monthly Analytics delivered",
+      "Counted for payable",
+      "Prorated service base",
+      "GST",
+      "Gross expected Invoice",
+      "TDS",
+      "Expected net payment",
+    ]);
+    expect(rows.find((row) => row.label === "Counted for payable")?.value).toBe("16 approved_content_thread");
+  });
+
+  it("shows the '24 delivered · 20 counted' wording when capped", () => {
+    const rows = calculationSummaryRows({
+      snapshot: baseSnapshot({ qualifyingContent: { requiredCount: 20, qualifyingUnit: "approved_content_thread", actualQualifyingCount: 24, variance: 4, evaluation: "exceeded", affectsPayment: true } }),
+      totals: { serviceBaseMinor: 5_000_000, gstMinor: 0, grossInvoiceExpectedMinor: 5_000_000, tdsMinor: 500_000, expectedNetPaymentMinor: 4_500_000 },
+      currency: "INR",
+      amountsVisible: true,
+    });
+    expect(rows.find((row) => row.label === "Counted for payable")?.value).toBe("24 delivered · 20 counted for payable");
+  });
+
+  it("withholds every money value (not the counts) when amountsVisible is false", () => {
+    const rows = calculationSummaryRows({
+      snapshot: baseSnapshot(),
+      totals: { serviceBaseMinor: null, gstMinor: null, grossInvoiceExpectedMinor: null, tdsMinor: null, expectedNetPaymentMinor: null },
+      currency: "INR",
+      amountsVisible: false,
+    });
+    expect(rows.find((row) => row.label === "Prorated service base")?.value).toBe("Hidden");
+    expect(rows.find((row) => row.label === "Required monthly deliverables")?.value).toBe("8 approved_content_thread");
   });
 });
 
@@ -178,6 +234,7 @@ function baseSnapshot(overrides: Partial<PayableSnapshotDto> = {}): PayableSnaps
     review: { reviewRef: "pr_xyz", reviewVersion: 3, finalizedAt: "2026-04-01T00:00:00.000Z", sourceFingerprint: "a".repeat(64) },
     currency: "INR",
     qualifyingContent: { requiredCount: 8, qualifyingUnit: "approved_content_thread", actualQualifyingCount: 8, variance: 0, evaluation: "met", affectsPayment: true },
+    requiredContentWithoutEvidence: false,
     lfcSfc: null,
     contentObligations: [],
     fixedComponent: { applicable: true, amountMinor: 5000000 },
@@ -186,6 +243,7 @@ function baseSnapshot(overrides: Partial<PayableSnapshotDto> = {}): PayableSnaps
     incentive: null,
     paymentTerms: { paymentCycle: "MONTHLY", invoiceRequired: true, invoiceDueTerms: null, paymentDueTerms: null },
     performanceTargets: [],
+    tax: { tdsApplicable: true, tdsRateBps: 1000, tdsProvenance: "PLATFORM_PRODUCT_RULE_TDS_V1", gstApplicable: false, gstRateBps: null, gstProvenance: "NOT_CONFIGURED" },
     warnings: [],
     capturedAt: "2026-04-02T00:00:00.000Z",
     ...overrides,

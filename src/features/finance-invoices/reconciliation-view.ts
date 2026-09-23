@@ -12,6 +12,10 @@ export type ReconciliationDeclared = {
   currency: string | null;
   declaredTotalMinor: number | null;
   externalInvoiceNumber: string | null;
+  // Step 15C: the declared subtotal and tax-lines total, for the informational service-base/GST
+  // comparison rows below. Both optional so existing callers that don't yet track them keep working.
+  subtotalMinor?: number | null;
+  taxTotalMinor?: number | null;
 };
 
 export type ComparisonResult = "MATCH" | "MISMATCH" | "MISSING_IN_INVOICE" | "MISSING_IN_PAYABLE" | "REVIEW_REQUIRED" | "BLOCKED";
@@ -47,6 +51,7 @@ export function reconciliationComparisonRows(input: {
   const missingPayableTotal = findingFor(reconciliation, "MISSING_PAYABLE_TOTAL");
   const duplicateFinding = findingFor(reconciliation, "DUPLICATE_INVOICE_NUMBER");
   const documentFinding = findingFor(reconciliation, "MISSING_INVOICE_DOCUMENT");
+  const subtotalFinding = findingFor(reconciliation, "SUBTOTAL_SERVICE_BASE_MISMATCH");
 
   const rows: ComparisonRow[] = [];
 
@@ -77,16 +82,63 @@ export function reconciliationComparisonRows(input: {
     resolution: periodFinding?.message ?? "Not required.",
   });
 
-  const payableTotalText = formatSignedMoneyMinor(pin.payableExpectedTotalMinorSigned, pin.payableCurrency, { amountsVisible });
+  // Step 15C section 18/23: the Invoice's declared total reconciles against the Payable's GROSS
+  // EXPECTED INVOICE TOTAL (service base + GST) - never the after-TDS expected net payment.
+  const payableGrossText = formatSignedMoneyMinor(pin.payableGrossInvoiceExpectedMinor, pin.payableCurrency, { amountsVisible });
   const invoiceTotalText = formatMoneyMinor(declared.declaredTotalMinor, declared.currency, { amountsVisible });
   const totalResult: ComparisonResult = missingInvoiceTotal ? "MISSING_IN_INVOICE" : missingPayableTotal ? "MISSING_IN_PAYABLE" : totalFinding ? "MISMATCH" : "MATCH";
   rows.push({
     key: "total",
-    field: "Expected / declared total",
-    payableValue: payableTotalText,
+    field: "Gross expected Invoice / declared total",
+    payableValue: payableGrossText,
     invoiceValue: invoiceTotalText,
     result: RESULT_CHIPS[totalResult],
     resolution: totalFinding?.message ?? missingInvoiceTotal?.message ?? missingPayableTotal?.message ?? "Not required.",
+  });
+
+  // Informational (never blocking on its own): the supplier's own subtotal against the Payable's
+  // prorated service base.
+  const declaredSubtotal = declared.subtotalMinor ?? null;
+  const serviceBaseResult: ComparisonResult = subtotalFinding ? "REVIEW_REQUIRED" : declaredSubtotal === null ? "MISSING_IN_INVOICE" : "MATCH";
+  rows.push({
+    key: "serviceBase",
+    field: "Service base / declared subtotal",
+    payableValue: formatSignedMoneyMinor(pin.payableServiceBaseMinor, pin.payableCurrency, { amountsVisible }),
+    invoiceValue: formatMoneyMinor(declaredSubtotal, declared.currency, { amountsVisible }),
+    result: RESULT_CHIPS[serviceBaseResult],
+    resolution: subtotalFinding?.message ?? (declaredSubtotal === null ? "Enter the invoice subtotal." : "Not required."),
+  });
+
+  // GST: informational comparison against the Payable's own expected GST (no dedicated blocker
+  // code exists for GST alone - a GST difference surfaces through the gross-total mismatch above).
+  const declaredTax = declared.taxTotalMinor ?? null;
+  rows.push({
+    key: "gst",
+    field: "GST (expected / declared tax lines)",
+    payableValue: formatSignedMoneyMinor(pin.payableGstMinor, pin.payableCurrency, { amountsVisible }),
+    invoiceValue: formatMoneyMinor(declaredTax, declared.currency, { amountsVisible }),
+    result: declaredTax !== null && pin.payableGstMinor !== null && declaredTax !== pin.payableGstMinor ? RESULT_CHIPS.REVIEW_REQUIRED : RESULT_CHIPS.MATCH,
+    resolution: "Informational - the gross total above is the binding reconciliation target.",
+  });
+
+  // TDS: NEVER an Invoice-total line - shown as its own informational payment-treatment row,
+  // always separate from anything the supplier's Invoice states (section 20/25).
+  rows.push({
+    key: "tds",
+    field: "TDS (platform payment treatment)",
+    payableValue: formatSignedMoneyMinor(pin.payableTdsMinor, pin.payableCurrency, { amountsVisible }),
+    invoiceValue: "Not an Invoice line",
+    result: RESULT_CHIPS.MATCH,
+    resolution: "TDS is withheld at payment, separate from the supplier's declared Invoice total.",
+  });
+
+  rows.push({
+    key: "expectedNetPayment",
+    field: "Expected net payment",
+    payableValue: formatSignedMoneyMinor(pin.payableExpectedNetPaymentMinor, pin.payableCurrency, { amountsVisible }),
+    invoiceValue: "—",
+    result: RESULT_CHIPS.MATCH,
+    resolution: "Informational only - what CreatorOps will pay out after TDS, not a reconciliation target.",
   });
 
   const numberResult: ComparisonResult = duplicateFinding ? "MISMATCH" : declared.externalInvoiceNumber === null ? "REVIEW_REQUIRED" : "MATCH";

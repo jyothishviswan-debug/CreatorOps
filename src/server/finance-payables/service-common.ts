@@ -2,7 +2,7 @@ import type { z } from "zod";
 
 import type { ActorContext } from "@/server/authz/types";
 
-import { openReviewCodesOf, totalOfLines } from "./amount-determination";
+import { openReviewCodesOf, totalOfLines, type PayableDeterminationResult } from "./amount-determination";
 import { toPayableHeadDto, toPayableVersionDto, toPayableVersionSummaryDto, type PayableDetailDto } from "./client-dto";
 import { listPayableVersionDocs } from "./firestore";
 import { loadAuthorizedPayable, requireAmountsSensitiveAccess, requireFinancePayablesAccess, type AuthorizedPayable, type FinancePayableAction } from "./finance-payables-gate";
@@ -12,7 +12,6 @@ import {
   payableDeterminationSchema,
   payableHeadDisplaySchema,
   type FinancePayablesErrorResult,
-  type PayableDetermination,
   type PayableHeadDisplay,
   type PayableHeadDoc,
   type PayableLine,
@@ -88,12 +87,28 @@ export function buildPayableHeadDisplay(input: { counterpartyName: string; versi
 
 // Assembles the derived parts of a version document from a determination plus the full breakdown
 // (engine lines and any manual adjustments), so every writer computes them the one same way.
-export function versionDerivedFields(determination: PayableDetermination, lines: PayableLine[]): Pick<PayableVersionDoc, "determination" | "lines" | "totalAmountMinorSigned" | "openReviewCodes"> {
+// `determination` is the engine's full result (amount-determination.ts) - `lines` may add manual
+// adjustments on top of `determination.lines`, but the five tax/proration totals never change from
+// what the engine itself computed (a manual adjustment can never silently alter the service base,
+// GST or TDS - only `totalAmountMinorSigned`, the full payout sum, reflects it).
+export function versionDerivedFields(
+  determination: PayableDeterminationResult,
+  lines: PayableLine[],
+): Pick<
+  PayableVersionDoc,
+  "determination" | "lines" | "totalAmountMinorSigned" | "openReviewCodes" | "serviceBaseMinor" | "gstMinor" | "grossInvoiceExpectedMinor" | "tdsMinor" | "expectedNetPaymentMinor" | "calculationRuleVersion"
+> {
   return {
-    determination: payableDeterminationSchema.parse(determination),
+    determination: payableDeterminationSchema.parse({ state: determination.state, unresolved: determination.unresolved, blocked: determination.blocked, warnings: determination.warnings }),
     lines,
     totalAmountMinorSigned: totalOfLines(lines),
     openReviewCodes: openReviewCodesOf(determination.unresolved, lines),
+    serviceBaseMinor: determination.serviceBaseMinor,
+    gstMinor: determination.gstMinor,
+    grossInvoiceExpectedMinor: determination.grossInvoiceExpectedMinor,
+    tdsMinor: determination.tdsMinor,
+    expectedNetPaymentMinor: determination.expectedNetPaymentMinor,
+    calculationRuleVersion: determination.calculationRuleVersion,
   };
 }
 

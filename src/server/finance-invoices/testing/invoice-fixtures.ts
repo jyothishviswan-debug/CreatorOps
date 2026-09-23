@@ -18,7 +18,16 @@ export function buildPin(overrides: PinOverrides = {}): InvoicePayablePin {
     reviewVersion: 1,
     commercialPeriod: { periodKey: "2024-03", periodStart: "2024-03-01", periodEnd: "2024-03-31" },
     payableCurrency: "INR",
-    payableExpectedTotalMinorSigned: 5_000_000,
+    // Step 15C: the five distinct tax/proration totals, plus the full payout sum kept as
+    // read-only context (see finance-payables/testing/payable-fixtures.ts's own default: a fully
+    // delivered 5,000,000 base with the CreatorOps 10% TDS rule applied and no GST).
+    payableTotalAmountMinorSigned: 4_500_000,
+    payableServiceBaseMinor: 5_000_000,
+    payableGstMinor: 0,
+    payableGrossInvoiceExpectedMinor: 5_000_000,
+    payableTdsMinor: 500_000,
+    payableExpectedNetPaymentMinor: 4_500_000,
+    payableCalculationRuleVersion: "MONTHLY_ANALYTICS_PRORATION_V1",
     pinnedAt: "2024-04-03T00:00:00.000Z",
     ...overrides,
   });

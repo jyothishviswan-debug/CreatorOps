@@ -8,7 +8,11 @@ function permissions(overrides: Partial<PayablePermissionsDto> = {}): PayablePer
   return { canView: true, canManage: true, canApprove: true, canAdjust: true, canVoid: true, canViewAmounts: true, ...overrides };
 }
 
-function detail(overrides: Partial<PayableDetailDto["head"]> = {}, versionOverrides: Partial<NonNullable<PayableDetailDto["selectedVersion"]>> = {}): PayableDetailDto {
+function detail(
+  overrides: Partial<PayableDetailDto["head"]> = {},
+  versionOverrides: Partial<NonNullable<PayableDetailDto["selectedVersion"]>> | undefined = {},
+  options: { amountsVisible?: boolean; selectedVersion?: PayableDetailDto["selectedVersion"] } = {},
+): PayableDetailDto {
   const head: PayableDetailDto["head"] = {
     payableRef: "pay_00000000000000000001",
     counterparty: { type: "PARTNER", ref: "partner-1", displayName: "Nila Talks" },
@@ -41,23 +45,32 @@ function detail(overrides: Partial<PayableDetailDto["head"]> = {}, versionOverri
     head,
     versions: [],
     hasMoreVersions: false,
-    selectedVersion: {
-      version: 1,
-      changeKind: "created",
-      reason: null,
-      currency: "INR",
-      totalAmountMinorSigned: 5000000,
-      determinationState: "DETERMINISTIC",
-      unresolved: [],
-      openReviewCodes: [],
-      warnings: [],
-      lines: [{ lineRef: "pl_1", label: "Fixed component", category: "BASE_FIXED", amountMinorSigned: 5000000, source: "AGREEMENT", sourceRef: "agr_abc@2", reason: "Fixed component", actorUserRef: null, actorAt: null, resolvesCode: null }],
-      snapshot: {} as never,
-      createdAt: "2026-03-01T00:00:00.000Z",
-      createdByUserRef: "user-1",
-      ...versionOverrides,
-    },
-    amountsVisible: true,
+    selectedVersion:
+      "selectedVersion" in options
+        ? options.selectedVersion!
+        : {
+            version: 1,
+            changeKind: "created",
+            reason: null,
+            currency: "INR",
+            totalAmountMinorSigned: 5000000,
+            determinationState: "DETERMINISTIC",
+            unresolved: [],
+            openReviewCodes: [],
+            warnings: [],
+            lines: [{ lineRef: "pl_1", label: "Fixed component", category: "BASE_FIXED", amountMinorSigned: 5000000, source: "AGREEMENT", sourceRef: "agr_abc@2", reason: "Fixed component", actorUserRef: null, actorAt: null, resolvesCode: null }],
+            snapshot: {} as never,
+            createdAt: "2026-03-01T00:00:00.000Z",
+            createdByUserRef: "user-1",
+            serviceBaseMinor: 5000000,
+            gstMinor: 0,
+            grossInvoiceExpectedMinor: 5000000,
+            tdsMinor: 500000,
+            expectedNetPaymentMinor: 4500000,
+            calculationRuleVersion: "MONTHLY_ANALYTICS_PRORATION_V1",
+            ...versionOverrides,
+          },
+    amountsVisible: options.amountsVisible ?? true,
   };
 }
 
@@ -98,8 +111,37 @@ describe("summaryRows", () => {
   it("includes every required field with human labels, never raw camelCase", () => {
     const rows = summaryRows(detail());
     const labels = rows.map((row) => row.label);
-    expect(labels).toEqual(["Counterparty", "Counterparty type", "Commercial period", "Agreement", "Review / source", "Currency", "Determination", "Created", "Updated"]);
+    expect(labels).toEqual([
+      "Counterparty",
+      "Counterparty type",
+      "Commercial period",
+      "Agreement",
+      "Review / source",
+      "Currency",
+      "Determination",
+      "Service base",
+      "GST",
+      "TDS",
+      "Expected net payment",
+      "Created",
+      "Updated",
+    ]);
     expect(rows.find((row) => row.label === "Agreement")?.value).toBe("agr_abc · v2");
+  });
+
+  it("Step 15C: shows service base / GST / TDS / expected net payment from the selected version, withheld when amounts are hidden", () => {
+    const withAmounts = summaryRows(detail());
+    expect(withAmounts.find((row) => row.label === "Service base")?.value).toBe("₹50,000");
+    expect(withAmounts.find((row) => row.label === "TDS")?.value).toBe("₹5,000");
+    expect(withAmounts.find((row) => row.label === "Expected net payment")?.value).toBe("₹45,000");
+
+    const hidden = summaryRows(detail({}, {}, { amountsVisible: false }));
+    expect(hidden.find((row) => row.label === "Service base")?.value).toBe("Hidden");
+  });
+
+  it("omits the tax rows entirely when there is no selected version", () => {
+    const rows = summaryRows(detail({}, undefined, { selectedVersion: null }));
+    expect(rows.map((row) => row.label)).not.toContain("Service base");
   });
 });
 

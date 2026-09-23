@@ -65,10 +65,20 @@ export function ApproveDialog({ open, detail, onClose, onUpdated }: { open: bool
         <b>{formatMoneyMinor(head.declaredTotalMinor, head.currency, { amountsVisible: detail.amountsVisible })}</b>
       </div>
       {selectedVersion && (
-        <div className="kv">
-          <span>Payable expected total</span>
-          <b>{formatSignedMoneyMinor(selectedVersion.payablePin.payableExpectedTotalMinorSigned, selectedVersion.payablePin.payableCurrency, { amountsVisible: detail.amountsVisible })}</b>
-        </div>
+        <>
+          <div className="kv">
+            <span>Payable gross expected Invoice total</span>
+            <b>{formatSignedMoneyMinor(selectedVersion.payablePin.payableGrossInvoiceExpectedMinor, selectedVersion.payablePin.payableCurrency, { amountsVisible: detail.amountsVisible })}</b>
+          </div>
+          <div className="kv">
+            <span>TDS (payment treatment, separate)</span>
+            <b>{formatSignedMoneyMinor(selectedVersion.payablePin.payableTdsMinor, selectedVersion.payablePin.payableCurrency, { amountsVisible: detail.amountsVisible })}</b>
+          </div>
+          <div className="kv">
+            <span>Expected net payment</span>
+            <b>{formatSignedMoneyMinor(selectedVersion.payablePin.payableExpectedNetPaymentMinor, selectedVersion.payablePin.payableCurrency, { amountsVisible: detail.amountsVisible })}</b>
+          </div>
+        </>
       )}
       <div className="kv">
         <span>Reconciliation</span>

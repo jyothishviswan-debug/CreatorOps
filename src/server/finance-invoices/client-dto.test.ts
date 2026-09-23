@@ -71,7 +71,12 @@ describe("amount redaction cascades through every DTO builder", () => {
     expect(dto.subtotalMinor).toBeNull();
     expect(dto.declaredTotalMinor).toBeNull();
     expect(dto.taxLines[0]!.amountMinor).toBeNull();
-    expect(dto.payablePin.payableExpectedTotalMinorSigned).toBeNull();
+    expect(dto.payablePin.payableGrossInvoiceExpectedMinor).toBeNull();
+    expect(dto.payablePin.payableServiceBaseMinor).toBeNull();
+    expect(dto.payablePin.payableTdsMinor).toBeNull();
+    expect(dto.payablePin.payableExpectedNetPaymentMinor).toBeNull();
+    // calculationRuleVersion is not money - stays visible even when amounts are withheld.
+    expect(dto.payablePin.payableCalculationRuleVersion).toBe("MONTHLY_ANALYTICS_PRORATION_V1");
     // Non-money fields are still visible.
     expect(dto.externalInvoiceNumber).toBe("INV-001");
     expect(dto.reconciliation.state).toBe("MATCH");
@@ -82,7 +87,10 @@ describe("amount redaction cascades through every DTO builder", () => {
     expect(dto.declaredTotalMinor).toBe(5_000_000);
     expect(dto.subtotalMinor).toBe(4_100_000);
     expect(dto.taxLines[0]!.amountMinor).toBe(900_000);
-    expect(dto.payablePin.payableExpectedTotalMinorSigned).toBe(5_000_000);
+    expect(dto.payablePin.payableGrossInvoiceExpectedMinor).toBe(5_000_000);
+    expect(dto.payablePin.payableServiceBaseMinor).toBe(5_000_000);
+    expect(dto.payablePin.payableTdsMinor).toBe(500_000);
+    expect(dto.payablePin.payableExpectedNetPaymentMinor).toBe(4_500_000);
   });
 
   it("toInvoiceHeadDto and toInvoiceRowDto withhold declaredTotalMinor without amounts access", () => {

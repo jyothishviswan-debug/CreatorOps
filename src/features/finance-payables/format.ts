@@ -60,8 +60,11 @@ export function sourceTypeLabel(type: PayableSourceType): string {
 
 // --- Amount breakdown lines -------------------------------------------------------------------------------------------------------------
 export const LINE_CATEGORY_LABELS: Record<PayableLineCategory, string> = {
+  PRORATED_BASE: "Prorated service base",
   BASE_FIXED: "Base fixed amount",
   TRANSFER_FEE: "Transfer fee",
+  GST: "GST amount",
+  TDS: "TDS withheld",
   INCENTIVE: "Incentive",
   ADVANCE_ADJUSTMENT: "Advance adjustment",
   MANUAL_ADJUSTMENT: "Manual adjustment",
@@ -70,7 +73,7 @@ export function lineCategoryLabel(category: PayableLineCategory): string {
   return LINE_CATEGORY_LABELS[category];
 }
 
-export const LINE_SOURCE_LABELS: Record<PayableLineSource, string> = { AGREEMENT: "Agreement", PARTNER_REVIEW: "Partner Review", MANUAL: "Manual" };
+export const LINE_SOURCE_LABELS: Record<PayableLineSource, string> = { AGREEMENT: "Agreement", PARTNER_REVIEW: "Partner Review", PLATFORM_RULE: "CreatorOps rule", MANUAL: "Manual" };
 export function lineSourceLabel(source: PayableLineSource): string {
   return LINE_SOURCE_LABELS[source];
 }
@@ -91,6 +94,9 @@ export const REVIEW_CODE_COMPONENT_LABELS: Record<PayableReviewCode, string> = {
   INCENTIVE_METRIC_EVIDENCE_MISSING: "Incentive",
   INCENTIVE_THRESHOLD_AMBIGUOUS: "Incentive",
   UNDER_DELIVERY_NO_STATED_CONSEQUENCE: "Qualifying content",
+  REQUIRED_COUNT_EVIDENCE_MISSING_FOR_PRORATION: "Prorated service base",
+  GST_RATE_UNKNOWN: "GST",
+  TDS_RATE_UNKNOWN: "TDS",
 };
 export function reviewCodeComponentLabel(code: PayableReviewCode): string {
   return REVIEW_CODE_COMPONENT_LABELS[code];
