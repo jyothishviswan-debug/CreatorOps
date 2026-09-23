@@ -17,7 +17,8 @@ import { buildFieldRowView, requiredTextOf } from "../agreement-intake-logic/edi
 import { useFieldEditor } from "../agreement-intake-logic/editors/use-field-editor";
 import { useIntake } from "../agreement-intake-logic/intake-context";
 import { editorKindFor, type FieldEditorKind, type FieldViewModel } from "../field-view-model";
-import { NEEDS_MAPPING_LABEL } from "../format";
+import { NEEDS_MAPPING_LABEL, PAYMENT_CYCLE_OPTIONS } from "../format";
+import { QUALIFYING_UNIT_SELECT_OPTIONS } from "../qualifying-unit";
 
 import styles from "./AgreementCreatePage.module.css";
 
@@ -264,7 +265,21 @@ function ValueEditor({ fieldKey, kind, model, canOptOut }: { fieldKey: Agreement
           <textarea value={state.text} onChange={(e) => update({ kind: "text", text: e.target.value })} placeholder={model.label} style={{ width: "100%" }} />
         </div>
       )}
-      {state.kind === "text" && kind !== "longText" && <input value={state.text} onChange={(e) => update({ kind: "text", text: e.target.value })} placeholder={model.label} />}
+      {state.kind === "text" && (kind === "qualifyingUnit" || kind === "paymentCycle") && (
+        // A closed set of server-accepted values (the exact slug/enum string, not the human label) - a free-text
+        // input made this unfillable by a person: the error text shows the LABEL ("Choose Approved Content ..."),
+        // but the value the server accepts is the slug ("approved_content_thread"), never displayed anywhere a
+        // person typing free text could see it. A select removes the guess entirely.
+        <select value={state.text} onChange={(e) => update({ kind: "text", text: e.target.value })}>
+          <option value="">{model.label}</option>
+          {(kind === "qualifyingUnit" ? QUALIFYING_UNIT_SELECT_OPTIONS : PAYMENT_CYCLE_OPTIONS).map((option) => (
+            <option key={option.value} value={option.value}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      )}
+      {state.kind === "text" && kind !== "longText" && kind !== "qualifyingUnit" && kind !== "paymentCycle" && <input value={state.text} onChange={(e) => update({ kind: "text", text: e.target.value })} placeholder={model.label} />}
       {state.kind === "platforms" && <input value={state.text} onChange={(e) => update({ kind: "platforms", text: e.target.value })} placeholder="instagram, youtube" />}
       {state.kind === "lfcSfc" && <LfcSfcEditor state={state} update={update} />}
       {state.kind === "targets" && <TargetsEditor state={state} update={update} />}
