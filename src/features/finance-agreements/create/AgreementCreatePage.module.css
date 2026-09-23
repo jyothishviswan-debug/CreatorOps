@@ -83,9 +83,43 @@
   overflow-wrap: anywhere;
 }
 
+/* FINAL_BUILD_PROMPT Section 6: Screen 2's comparison table on desktop, review-by-exception cards on narrow
+   viewports (Section 6's own mobile rule: "do not squeeze the verification table horizontally"). */
+.verifyTable {
+  display: block;
+}
+
+.verifyCards {
+  display: none;
+}
+
+.legend {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* FINAL_BUILD_PROMPT Section 9: Screen 5's three logical columns, collapsing to two then one per Section 15's
+   responsive rules ("Screen 5 three-column review becomes two/one columns cleanly"). */
+.confirmGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 3fr) minmax(0, 4fr) minmax(0, 3fr);
+  gap: 16px;
+  align-items: start;
+}
+
 @media (max-width: 1200px) {
   .infoGrid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .confirmGrid {
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .confirmGrid > :last-child {
+    grid-column: 1 / -1;
   }
 }
 
@@ -96,6 +130,22 @@
 
   .preview {
     height: 560px;
+  }
+
+  .verifyTable {
+    display: none;
+  }
+
+  .verifyCards {
+    display: block;
+  }
+
+  .confirmGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .confirmGrid > :last-child {
+    grid-column: auto;
   }
 }
 

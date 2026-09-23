@@ -1,11 +1,13 @@
 "use client";
 
-// EXECUTE_HARD_RESET Section 4/6: the canonical page shell. Current CreatorOps AppShell (one global sidebar,
-// current topbar, current Finance horizontal nav) - this component supplies only what's INSIDE the page: the
-// header, the five-step progress strip, and (once a draft exists) the two-pane Step-1 extraction workspace or
-// steps 2-5. Before a draft exists, choosing the Agreement party is what Step 1 starts with - the backend
-// requires a counterparty to create the Agreement record at all, so extraction cannot precede it; nothing here
-// alters that backend contract to fit a different page order.
+// FINAL_BUILD_PROMPT Section 3/4: the canonical page shell, header included (moved in from the route so the
+// subtitle and the top-right actions can react to the current step - a server component can't). Current
+// CreatorOps AppShell (one global sidebar, current topbar, current Finance horizontal nav) already wraps this;
+// this component supplies the breadcrumb/header, the five-step progress strip, and (once a draft exists) the
+// two-pane Step-1 extraction workspace or steps 2-5. Before a draft exists, choosing the Agreement party is what
+// Step 1 starts with - the backend requires a counterparty to create the Agreement record at all, so extraction
+// cannot precede it; nothing here alters that backend contract to fit a different page order.
+import Link from "next/link";
 import { useState } from "react";
 
 import * as api from "../api-client";
@@ -29,8 +31,18 @@ import { TermsTargetsStep } from "./TermsTargetsStep";
 import { VerificationStep } from "./VerificationStep";
 import styles from "./AgreementCreatePage.module.css";
 
-export function AgreementCreatePage() {
-  const { flags, hasDraft, notices, conflict, reloadLatest } = useIntake();
+// FINAL_BUILD_PROMPT Sections 5-9's own header subtitle per screen (the progress strip keeps its own, separate,
+// step-subtitle text - see AGREEMENT_CREATE_STEPS).
+const HEADER_SUBTITLE: Record<AgreementCreateStep, string> = {
+  1: "Upload a signed Agreement to extract details. Review, verify and confirm before creating the Agreement.",
+  2: "Review the extracted information. Verify each field and correct if needed.",
+  3: "Link extracted parties to CreatorOps records and complete KYC where required.",
+  4: "Confirm commercial terms, content obligations, platforms, targets and incentive structure.",
+  5: "Review all details and confirm to create the Agreement. You can go back and edit any section if needed.",
+};
+
+export function AgreementCreatePage({ title }: { title: string }) {
+  const { flags, hasDraft, notices, conflict, reloadLatest, saveDraft, isBusy, notify } = useIntake();
   const [step, setStep] = useState<AgreementCreateStep>(1);
 
   if (!flags.canManage) {
@@ -45,6 +57,40 @@ export function AgreementCreatePage() {
 
   return (
     <div className={styles.page}>
+      <div className="head">
+        <div>
+          <div className="eyebrow">FINANCE / AGREEMENTS / NEW AGREEMENT</div>
+          <h1>{title}</h1>
+          <p>{hasDraft ? HEADER_SUBTITLE[step] : HEADER_SUBTITLE[1]}</p>
+        </div>
+        <div className="actions">
+          {!hasDraft ? (
+            <Link href="/finance/agreements" className="btn">
+              Back to Agreements
+            </Link>
+          ) : (
+            <>
+              {step > 1 && (
+                <button type="button" className="btn" onClick={() => setStep((step - 1) as AgreementCreateStep)}>
+                  Back
+                </button>
+              )}
+              <button type="button" className="btn" disabled={isBusy() || !flags.canEdit} onClick={() => void saveDraft().then((outcome) => notify(outcome.ok ? "success" : "error", outcome.message))}>
+                Save as draft
+              </button>
+              {step < 5 && (
+                <button type="button" className="btn primary" onClick={() => setStep((step + 1) as AgreementCreateStep)}>
+                  Continue
+                </button>
+              )}
+              {/* Step 5's primary "Create Agreement" action stays in ConfirmStep's own body, where readiness
+                  (unresolved fields, commercial issues) is already computed - duplicating that gating here would
+                  risk the header and the body disagreeing about when the Agreement is actually ready. */}
+            </>
+          )}
+        </div>
+      </div>
+
       {conflict && (
         <div className="scopebox" style={{ marginBottom: 18 }}>
           <b>{conflict.message}</b>{" "}
@@ -59,23 +105,11 @@ export function AgreementCreatePage() {
       ) : (
         <>
           <AgreementProgress step={step} onStepClick={setStep} canJumpTo={() => true} />
-          {step === 1 && <UploadExtractStep onContinue={() => setStep(2)} />}
+          {step === 1 && <UploadExtractStep />}
           {step === 2 && <VerificationStep />}
           {step === 3 && <PartiesKycStep />}
           {step === 4 && <TermsTargetsStep />}
           {step === 5 && <ConfirmStep onGoToStep={setStep} />}
-          {step > 1 && (
-            <div style={{ display: "flex", justifyContent: "space-between", marginTop: 18 }}>
-              <button type="button" className="btn" onClick={() => setStep((step - 1) as AgreementCreateStep)}>
-                Back
-              </button>
-              {step < 5 && (
-                <button type="button" className="btn primary" onClick={() => setStep((step + 1) as AgreementCreateStep)}>
-                  Continue
-                </button>
-              )}
-            </div>
-          )}
         </>
       )}
 
@@ -378,7 +412,7 @@ function NewCounterpartyWizard() {
 }
 
 // --- Step 1 (once a draft exists): the two-pane extraction workspace --------------------------------------------------------------------
-function UploadExtractStep({ onContinue }: { onContinue: () => void }) {
+function UploadExtractStep() {
   const { artifact, version, extraction, extractionAttached, extractFromFile, attachExtraction, flags, isBusy, fieldModels, counterparty, version: v } = useIntake();
   const [pickedFile, setPickedFile] = useState<File | null>(null);
   const previewUrl = useLocalPreviewUrl(pickedFile);
@@ -422,11 +456,6 @@ function UploadExtractStep({ onContinue }: { onContinue: () => void }) {
           </button>
         </div>
       )}
-      <div style={{ display: "flex", justifyContent: "flex-end", marginTop: 18 }}>
-        <button type="button" className="btn primary" onClick={onContinue}>
-          Continue
-        </button>
-      </div>
     </>
   );
 }

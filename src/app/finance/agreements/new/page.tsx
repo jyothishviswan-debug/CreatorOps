@@ -27,30 +27,33 @@ export default async function NewAgreementPage({ searchParams }: { searchParams:
 
   if (state.kind === "not_found") notFound();
 
-  return (
-    <AppShell>
-      <div className="head">
-        <div>
-          <div className="eyebrow">FINANCE / AGREEMENTS / NEW AGREEMENT</div>
-          <h1>{state.kind === "ready" ? state.title : "New Agreement"}</h1>
-          <p>Upload a signed Agreement to extract details. Review, verify and confirm before creating the Agreement.</p>
+  if (state.kind === "denied") {
+    return (
+      <AppShell>
+        <div className="head">
+          <div>
+            <div className="eyebrow">FINANCE / AGREEMENTS / NEW AGREEMENT</div>
+            <h1>New Agreement</h1>
+            <p>Upload a signed Agreement to extract details. Review, verify and confirm before creating the Agreement.</p>
+          </div>
+          <div className="actions">
+            <Link href="/finance/agreements" className="btn">
+              Back to Agreements
+            </Link>
+          </div>
         </div>
-        <div className="actions">
-          <Link href="/finance/agreements" className="btn">
-            Back to Agreements
-          </Link>
-        </div>
-      </div>
-
-      {state.kind === "denied" ? (
         <section className="panel">
           <EmptyState title="Access denied" description="You do not have access to this view." icon="lock" />
         </section>
-      ) : (
-        <IntakeProvider key={state.routeKey} permissions={state.permissions} initial={state.initial}>
-          <AgreementCreatePage />
-        </IntakeProvider>
-      )}
+      </AppShell>
+    );
+  }
+
+  return (
+    <AppShell>
+      <IntakeProvider key={state.routeKey} permissions={state.permissions} initial={state.initial}>
+        <AgreementCreatePage title={state.title} />
+      </IntakeProvider>
     </AppShell>
   );
 }
