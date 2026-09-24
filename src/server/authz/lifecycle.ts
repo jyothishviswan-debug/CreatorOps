@@ -177,6 +177,24 @@ export const INVOICE_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
   VOID: ["DRAFT", "SUBMITTED", "REJECTED", "APPROVED"],
 };
 
+// Step 17A: the canonical Finance Payment lifecycle. Keyed by target state -> allowed predecessor
+// states, same convention as every map above. DRAFT is reachable from FAILED because reopening a
+// failed payment creates a revised DRAFT version under the SAME head (the failed version is
+// retained in history, never overwritten) - the same "reopen" shape as Invoices' own DRAFT <-
+// REJECTED edge. CONFIRMED is reachable only from RECORDED and is otherwise terminal for ordinary
+// processing - the only way out of CONFIRMED is the reasoned VOID-as-reversal path (section 7/20),
+// never a silent edit. VOID is reasoned and reachable from every other state, INCLUDING CONFIRMED
+// (an explicit correction/reversal, never a silent one) - nothing lists VOID as an allowed
+// predecessor of anything, so nothing ever leaves it. There is no hard delete anywhere in the
+// module.
+export const PAYMENT_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  DRAFT: ["FAILED"],
+  RECORDED: ["DRAFT"],
+  CONFIRMED: ["RECORDED"],
+  FAILED: ["RECORDED"],
+  VOID: ["DRAFT", "RECORDED", "FAILED", "CONFIRMED"],
+};
+
 export function canTransitionLifecycle(currentState: string, nextState: string, transitions: LifecycleTransitionMap): boolean {
   const allowedFrom = transitions[nextState];
   if (!allowedFrom) return false;

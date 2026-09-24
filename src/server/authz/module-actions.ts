@@ -117,6 +117,10 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "override_invoice_mismatch", label: "Accept an Invoice/Payable amount mismatch" },
     { id: "resolve_invoice_payee_mismatch", label: "Resolve an Invoice payee identity mismatch" },
     { id: "record_payments", label: "Record/manage payments" },
+    { id: "manage_payments", label: "Manage payments (create/revise drafts, record transfers)" },
+    { id: "confirm_payments", label: "Confirm payments" },
+    { id: "void_payments", label: "Void payments" },
+    { id: "override_payment_overage", label: "Override a payment overpayment block" },
     { id: "export", label: "Export finance data" },
   ],
   operations: [

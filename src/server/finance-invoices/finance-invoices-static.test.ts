@@ -106,8 +106,14 @@ describe("no Payment implementation is introduced", () => {
     for (const [name, source] of code) expect(source, name).not.toMatch(/collection\(\s*["'`](payments?|settlements?|paymentLines?)\b/i);
   });
 
-  it("no Payment API route exists under this module's own routes tree", () => {
-    expect(existsSync(path.join(path.dirname(routesDir), "payments"))).toBe(false);
+  it("a Payments API route tree now exists (Step 17A, backend-only) as its own sibling - it consumes Finance Invoices only through its public barrel, never Invoices' Firestore/gate internals", () => {
+    const paymentsRoutesDir = path.join(path.dirname(routesDir), "payments");
+    if (!existsSync(paymentsRoutesDir)) return;
+    for (const file of walk(paymentsRoutesDir, (name) => name.endsWith(".ts"))) {
+      for (const spec of importsOf(readFileSync(file, "utf8"))) {
+        if (/finance-invoices/.test(spec)) expect(spec, `${path.basename(file)} imports ${spec}`).toBe("@/server/finance-invoices");
+      }
+    }
   });
 
   it("nothing here models a Payment status or a paidAt/paymentStatus field", () => {

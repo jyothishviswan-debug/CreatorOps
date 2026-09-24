@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { canTransitionLifecycle, CONTENT_LIFECYCLE_TRANSITIONS, FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS, INVOICE_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS, PARTNER_REVIEW_LIFECYCLE_TRANSITIONS } from "./lifecycle";
+import { canTransitionLifecycle, CONTENT_LIFECYCLE_TRANSITIONS, FINANCE_AGREEMENT_LIFECYCLE_TRANSITIONS, INVOICE_LIFECYCLE_TRANSITIONS, LEAD_LIFECYCLE_TRANSITIONS, PARTNER_REVIEW_LIFECYCLE_TRANSITIONS, PAYMENT_LIFECYCLE_TRANSITIONS } from "./lifecycle";
 
 describe("canTransitionLifecycle", () => {
   it("allows a transition from a listed predecessor state", () => {
@@ -198,6 +198,42 @@ describe("INVOICE_LIFECYCLE_TRANSITIONS", () => {
     expect(canTransitionLifecycle("DRAFT", "REJECTED", T)).toBe(false);
     for (const state of Object.keys(T)) {
       if (state === "REJECTED") continue;
+      expect(canTransitionLifecycle(state, "DRAFT", T)).toBe(false);
+    }
+  });
+});
+
+describe("PAYMENT_LIFECYCLE_TRANSITIONS", () => {
+  const T = PAYMENT_LIFECYCLE_TRANSITIONS;
+
+  it("DRAFT -> RECORDED -> CONFIRMED|FAILED", () => {
+    expect(canTransitionLifecycle("DRAFT", "RECORDED", T)).toBe(true);
+    expect(canTransitionLifecycle("RECORDED", "CONFIRMED", T)).toBe(true);
+    expect(canTransitionLifecycle("RECORDED", "FAILED", T)).toBe(true);
+  });
+
+  it("FAILED reopens back to a new DRAFT version under the same head", () => {
+    expect(canTransitionLifecycle("FAILED", "DRAFT", T)).toBe(true);
+  });
+
+  it("CONFIRMED is reachable only from RECORDED, never directly from DRAFT or FAILED", () => {
+    expect(canTransitionLifecycle("DRAFT", "CONFIRMED", T)).toBe(false);
+    expect(canTransitionLifecycle("FAILED", "CONFIRMED", T)).toBe(false);
+  });
+
+  it("no shortcut skips RECORDED: DRAFT cannot go straight to CONFIRMED or FAILED", () => {
+    expect(canTransitionLifecycle("DRAFT", "CONFIRMED", T)).toBe(false);
+    expect(canTransitionLifecycle("DRAFT", "FAILED", T)).toBe(false);
+  });
+
+  it("VOID is reachable from DRAFT/RECORDED/FAILED/CONFIRMED (the reasoned correction/reversal path) and is terminal", () => {
+    for (const from of ["DRAFT", "RECORDED", "FAILED", "CONFIRMED"]) expect(canTransitionLifecycle(from, "VOID", T)).toBe(true);
+    for (const state of Object.keys(T)) expect(canTransitionLifecycle("VOID", state, T)).toBe(false);
+  });
+
+  it("DRAFT has no other predecessor besides FAILED", () => {
+    for (const state of Object.keys(T)) {
+      if (state === "FAILED") continue;
       expect(canTransitionLifecycle(state, "DRAFT", T)).toBe(false);
     }
   });

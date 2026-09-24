@@ -132,8 +132,16 @@ describe("Payables itself never implements Invoice or Payment business logic", (
     }
   });
 
-  it("no Payment API route exists anywhere; Invoices now has its own route tree, which is Finance Invoices' own concern, not Payables'", () => {
-    expect(existsSync(path.join(path.dirname(routesDir), "payments"))).toBe(false);
+  it("Invoices and (Step 17A) Payments each have their own route tree - Finance Invoices'/Payments' own concern, not Payables'; no file under either imports Finance Payables directly", () => {
+    for (const sibling of ["invoices", "payments"]) {
+      const siblingRoutesDir = path.join(path.dirname(routesDir), sibling);
+      if (!existsSync(siblingRoutesDir)) continue;
+      for (const file of walk(siblingRoutesDir, (name) => name.endsWith(".ts"))) {
+        for (const spec of importsOf(readFileSync(file, "utf8"))) {
+          if (/finance-payables/.test(spec)) expect(spec, `${path.basename(file)} imports ${spec}`).toBe("@/server/finance-payables");
+        }
+      }
+    }
   });
 
   it("READY_FOR_INVOICE is a payable state, never an approval - nothing here models an approval workflow", () => {

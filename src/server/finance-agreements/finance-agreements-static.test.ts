@@ -73,7 +73,10 @@ const moduleFiles = walk(moduleDir).filter((file) => !file.includes(`${path.sep}
 // guard below still applies in full to every Agreements file.
 const PAYABLES_ROUTE_PREFIX = path.join(routesDir, "payables") + path.sep;
 const INVOICES_ROUTE_PREFIX = path.join(routesDir, "invoices") + path.sep;
-const routeFiles = walk(routesDir).filter((file) => !file.startsWith(PAYABLES_ROUTE_PREFIX) && !file.startsWith(INVOICES_ROUTE_PREFIX));
+// Step 17A: Payments now has its own route tree the same way - excluded here, its own guards live
+// in src/server/finance-payments/finance-payments-static.test.ts.
+const PAYMENTS_ROUTE_PREFIX = path.join(routesDir, "payments") + path.sep;
+const routeFiles = walk(routesDir).filter((file) => !file.startsWith(PAYABLES_ROUTE_PREFIX) && !file.startsWith(INVOICES_ROUTE_PREFIX) && !file.startsWith(PAYMENTS_ROUTE_PREFIX));
 const productionFiles = [...moduleFiles, ...routeFiles];
 const code = new Map(productionFiles.map((file) => [rel(file), codeOnly(read(file))] as const));
 
@@ -159,10 +162,10 @@ describe("routes: thin, and exactly the documented surface", () => {
     expect(actual).toEqual(Object.keys(EXPECTED).sort());
     // Step 15A added the "payables" sibling under the shared /api/finance namespace (its own module,
     // its own guards). Step 16A added the "invoices" sibling the same way (its own module, its own
-    // guards in src/server/finance-invoices/finance-invoices-static.test.ts). Payments deliberately
-    // still has no route surface at all.
-    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "invoices", "onboarding", "payables", "permissions"]);
-    expect(readdirSync(routesDir)).not.toContain("payments");
+    // guards in src/server/finance-invoices/finance-invoices-static.test.ts). Step 17A added the
+    // "payments" sibling the same way again (backend/API only - its own module, its own guards in
+    // src/server/finance-payments/finance-payments-static.test.ts).
+    expect(readdirSync(routesDir).sort()).toEqual(["agreements", "contracts", "counterparties", "invoices", "onboarding", "payables", "payments", "permissions"]);
   });
 
   it("every route exports only the documented HTTP methods - never PUT / PATCH / DELETE", () => {

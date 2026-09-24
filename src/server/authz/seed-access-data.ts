@@ -114,6 +114,14 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         // Head/Super-Admin-only.
         resolve_invoice_payee_mismatch: false,
         record_payments: true,
+        // Step 17A: same day-to-day-but-not-governance split as Invoices' own three actions above -
+        // Manager may create/revise a Payment draft and record a transfer (manage_payments), but
+        // confirming it (making it count toward settlement), voiding it, and overriding an
+        // overpayment block are all Head/Super-Admin-only.
+        manage_payments: true,
+        confirm_payments: false,
+        void_payments: false,
+        override_payment_overage: false,
       }),
       // Step 6A: both relationship-owner roles get the full Discovery
       // evidence-recording surface (manage_kyc included - see
@@ -257,6 +265,14 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         // mismatch, matching override_invoice_mismatch's own head-only shape.
         resolve_invoice_payee_mismatch: true,
         record_payments: true,
+        // Step 17A: the only role (besides Super Admin) trusted with the three governance-weight
+        // Payment actions - confirm, void, and the overpayment override - matching
+        // approve_invoices'/void_invoices'/override_invoice_mismatch's own head-only shape. Head
+        // also holds manage_payments (day-to-day authoring), same as every other Finance module.
+        manage_payments: true,
+        confirm_payments: true,
+        void_payments: true,
+        override_payment_overage: true,
       }),
       discovery: featureGrant(true, {
         create: true,

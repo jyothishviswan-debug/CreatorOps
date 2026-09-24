@@ -132,6 +132,21 @@ export const ACTIONS = [
   // finance-invoices-gate.ts's own comment).
   "resolve_invoice_payee_mismatch",
   "record_payments",
+  // Step 17A: Finance Payments' own granular actions, deliberately their own ids rather than
+  // folded into a single "manage" - same "granular rather than one generic manage" discipline as
+  // Invoices' own manage_invoices/approve_invoices/void_invoices/override_invoice_mismatch split.
+  // A Payment records actual money movement against an approved Invoice, so day-to-day authoring
+  // (manage_payments: create/revise a Draft, record a transfer) is separated from the two
+  // governance-weight actions that make a transfer count toward settlement or retire it
+  // (confirm_payments, void_payments), and from the narrowest of the four - accepting an
+  // overpayment past the expected net payment with a mandatory reason
+  // (override_payment_overage), Head/Super-Admin-only, mirroring override_invoice_mismatch's own
+  // narrow shape. The pre-existing `record_payments` id above stays a catalog-only placeholder
+  // (Step 14A) - Payments now has its own real actions instead of that placeholder.
+  "manage_payments",
+  "confirm_payments",
+  "void_payments",
+  "override_payment_overage",
   // Operations
   "manage_tasks",
   "manage_approvals",
