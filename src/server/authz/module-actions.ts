@@ -115,6 +115,7 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "approve_invoices", label: "Approve/reject invoices" },
     { id: "void_invoices", label: "Void invoices" },
     { id: "override_invoice_mismatch", label: "Accept an Invoice/Payable amount mismatch" },
+    { id: "resolve_invoice_payee_mismatch", label: "Resolve an Invoice payee identity mismatch" },
     { id: "record_payments", label: "Record/manage payments" },
     { id: "export", label: "Export finance data" },
   ],

@@ -275,6 +275,103 @@ describe("no approved Overview page is touched or referenced (UI freeze)", () =>
   });
 });
 
+describe("Step 16C section 22: payee identity matching boundaries", () => {
+  const payeeIdentityFiles = new Map([...code].filter(([name]) => name.startsWith(`payee-identity${path.sep}`)));
+
+  it("the payee-identity module exists and was actually scanned", () => {
+    expect(payeeIdentityFiles.size).toBeGreaterThan(0);
+    for (const expected of ["payee-identity/types.ts", "payee-identity/normalization.ts", "payee-identity/matcher.ts", "payee-identity/resolve-identity.ts"]) {
+      expect([...code.keys()], expected).toContain(expected);
+    }
+  });
+
+  it("the matching target is read from the Payable-pinned counterparty ONLY - resolve-identity.ts takes counterpartyType/counterpartyRef as its input, never a free-text name or a client-supplied entity id to search for", () => {
+    const source = code.get("payee-identity/resolve-identity.ts")!;
+    expect(source).toMatch(/counterpartyType/);
+    expect(source).toMatch(/counterpartyRef/);
+  });
+
+  it("no cross-entity fuzzy search: the payee-identity module never queries a Partner/Vendor collection - only a single by-ref document lookup (getPartnerDocByRef / getVendorDocByRef, the SAME accessors the gate already uses for Record Scope), never .where/.orderBy/.limit over all Partners or Vendors", () => {
+    for (const [name, source] of payeeIdentityFiles) {
+      expect(source, `${name} queries a collection instead of a single by-ref lookup`).not.toMatch(/\.(where|orderBy)\s*\(/);
+      expect(source, `${name} calls getAdminFirestore directly`).not.toMatch(/getAdminFirestore\(\)/);
+    }
+    const resolver = code.get("payee-identity/resolve-identity.ts")!;
+    expect(resolver).toMatch(/getPartnerDocByRef/);
+    expect(resolver).toMatch(/getVendorDocByRef/);
+  });
+
+  it("no auto-suggestion or auto-switch of the source Payable/counterparty anywhere in the module", () => {
+    for (const [name, source] of payeeIdentityFiles) {
+      expect(source, name).not.toMatch(/suggestCounterparty|switchPayable|reassignInvoice|autoSelectVendor|autoSelectPartner/i);
+    }
+  });
+
+  it("Invoice payee-identity matching never mutates the Payable's counterparty or any Payable document - the module contains no Firestore write of any kind (only firestore.ts/invoice-events.ts may write, per the earlier guard) and never imports a Payable write function", () => {
+    for (const [name, source] of payeeIdentityFiles) {
+      expect(source, `${name} performs a Firestore write`).not.toMatch(/\btx\.(set|create|update|delete)\s*\(/);
+    }
+    for (const [name, source] of raw) {
+      if (!name.startsWith(`payee-identity${path.sep}`)) continue;
+      for (const spec of importsOf(source)) expect(spec, `${name} imports ${spec}`).not.toMatch(/finance-payables/);
+    }
+  });
+
+  it("no canonical Partner/Vendor master-data mutation: the module never imports a Partner/Vendor SERVICE write function - only the same read-only firestore accessors finance-invoices-gate.ts already uses", () => {
+    for (const [name, source] of raw) {
+      if (!name.startsWith(`payee-identity${path.sep}`)) continue;
+      for (const spec of importsOf(source)) {
+        if (/\/(partners|vendors)\//.test(spec) || /\/(partners|vendors)$/.test(spec)) {
+          expect(spec, `${name} imports ${spec}`).toMatch(/\/(partners|vendors)\/firestore$/);
+        }
+      }
+      expect(source, name).not.toMatch(/savePartnerRestrictedIdentity|saveVendorRestrictedIdentity|updatePartner|updateVendor|editPartner|editVendor/);
+    }
+  });
+
+  it("no PAN/Aadhaar is ever read or referenced by the payee-identity module - only .gst and .bank off the restricted document", () => {
+    for (const [name, source] of payeeIdentityFiles) {
+      expect(source, name).not.toMatch(/\.pan\b/);
+      expect(source, name).not.toMatch(/\.aadhaar\b/);
+    }
+  });
+
+  it("no raw restricted value is ever returned from the matcher - every field result is built through a safe-display helper, never a bare pass-through of expectedTaxId/expectedBankIdentifier/extractedTaxId/extractedBankIdentifier", () => {
+    const matcher = code.get("payee-identity/matcher.ts")!;
+    expect(matcher).not.toMatch(/safeExpectedDisplay:\s*evidence\.expectedTaxId\b/);
+    expect(matcher).not.toMatch(/safeExtractedDisplay:\s*evidence\.extractedTaxId\b/);
+    expect(matcher).not.toMatch(/safeExpectedDisplay:\s*evidence\.expectedBankIdentifier\b/);
+    expect(matcher).not.toMatch(/safeExtractedDisplay:\s*evidence\.extractedBankIdentifier\b/);
+  });
+
+  it("client-dto.ts never contains a raw bank/tax value pattern - only status/masked projections reach the browser", () => {
+    const dto = code.get("client-dto.ts")!;
+    // A masked bank display is always the bullet-mask literal, never a bare digit run.
+    expect(dto).not.toMatch(/safeExpectedDisplay:\s*\w*\.(gst|bank)\./);
+  });
+
+  it("resolveAndComparePayeeIdentity is never exported from the module's public barrel - only the trusted service layer (invoice-service.ts / invoice-lifecycle-service.ts) may call it, never a route directly", () => {
+    const barrel = code.get("index.ts")!;
+    expect(barrel).not.toMatch(/resolveAndComparePayeeIdentity/);
+    for (const file of routeFiles) {
+      expect(codeOnly(readFileSync(file, "utf8")), path.basename(file)).not.toMatch(/resolveAndComparePayeeIdentity/);
+    }
+  });
+
+  it("the new resolve_invoice_payee_mismatch action needs its OWN exact grant, never override_invoice_mismatch reused for a different decision", () => {
+    const source = [...code.values()].join("\n");
+    expect(source).toMatch(/resolve_invoice_payee_mismatch/);
+  });
+
+  it("still no Payments, no OCR, no real Google Drive integration introduced by this module", () => {
+    for (const [name, source] of payeeIdentityFiles) {
+      expect(source, name).not.toMatch(/\b(paidAt|paymentStatus|paymentRef|paymentAmount)\b/);
+      expect(source, name).not.toMatch(/\bocr\b/i);
+      expect(source, name).not.toMatch(/googleapis|drive\.files|DriveClient/i);
+    }
+  });
+});
+
 describe("Agreement/Payable/Partner-Review UI is untouched by the Invoices UI (Step 16B)", () => {
   it("no Payables or Agreements UI file imports anything from this module", () => {
     const payablesFeatureDir = path.join(srcDir, "features", "finance-payables");

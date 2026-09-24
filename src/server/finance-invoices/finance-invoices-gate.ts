@@ -36,13 +36,17 @@ import {
 //                                needs the finance_amounts sensitive category - the same "you cannot
 //                                accept a mismatch in money you may not see" discipline Payables'
 //                                own manual-adjustment action already applies)
+//   resolve_invoice_payee_mismatch  Step 16C: accept the Invoice as belonging to the expected Payable
+//                                counterparty despite a payee identity mismatch/review (also needs
+//                                finance_amounts) - its own narrow action, deliberately never folded
+//                                into override_invoice_mismatch (a distinct decision - section 11).
 // Viewing needs the `finance` feature alone, with no action. Seeing the exact AMOUNTS additionally
 // needs finance_amounts. Because reconciling an Invoice against its pinned Payable is fundamentally
 // a money comparison, every command that creates or revises Invoice content (preview, create,
 // revise, attach document, reconcile) ALSO requires finance_amounts - the same discipline Payables
 // applies to a manual adjustment, extended here to the whole authoring surface since an Invoice IS a
 // money record from the moment it exists.
-export type FinanceInvoiceAction = Extract<ActionId, "manage_invoices" | "approve_invoices" | "void_invoices" | "override_invoice_mismatch">;
+export type FinanceInvoiceAction = Extract<ActionId, "manage_invoices" | "approve_invoices" | "void_invoices" | "override_invoice_mismatch" | "resolve_invoice_payee_mismatch">;
 
 // The canonical sensitive category for "Payable, invoice and payment amounts within Finance"
 // (src/server/authz/sensitive-categories.ts) - the SAME category Payables uses, by design: an

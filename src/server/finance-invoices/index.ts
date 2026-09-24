@@ -26,6 +26,7 @@ export {
   INVOICE_NOT_READY_CODES,
   rejectInvoice,
   reopenInvoice,
+  resolveInvoicePayeeMismatch,
   submitInvoice,
   voidInvoice,
   type InvoicePaymentHandoffDto,
@@ -42,6 +43,9 @@ export type {
   InvoiceExtractionPreviewDto,
   InvoiceHeadDto,
   InvoicePayablePinDto,
+  InvoicePayeeIdentityAcceptedDto,
+  InvoicePayeeIdentityDto,
+  InvoicePayeeIdentityFieldDto,
   InvoicePermissionsDto,
   InvoiceRowDto,
   InvoiceTaxLineDto,
@@ -50,6 +54,14 @@ export type {
   InvoiceWorkspaceDto,
 } from "./client-dto";
 export type { InvoiceExtractedFieldKey, InvoiceExtractionConfidence, InvoiceExtractionReasonCode, InvoiceExtractionStatus } from "./extraction/types";
+export {
+  PAYEE_IDENTITY_FIELD_KEYS,
+  PAYEE_IDENTITY_FIELD_STATUSES,
+  PAYEE_IDENTITY_OVERALL_STATUSES,
+  type PayeeIdentityFieldKey,
+  type PayeeIdentityFieldStatus,
+  type PayeeIdentityOverallStatus,
+} from "./payee-identity/types";
 export {
   INVOICE_COUNTERPARTY_TYPES,
   INVOICE_RECONCILIATION_CODES,

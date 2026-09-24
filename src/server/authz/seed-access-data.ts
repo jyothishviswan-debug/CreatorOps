@@ -109,6 +109,10 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         approve_invoices: false,
         void_invoices: false,
         override_invoice_mismatch: false,
+        // Step 16C: same day-to-day-but-not-governance split as override_invoice_mismatch above -
+        // Manager may prepare/submit an Invoice draft but resolving a payee identity mismatch is
+        // Head/Super-Admin-only.
+        resolve_invoice_payee_mismatch: false,
         record_payments: true,
       }),
       // Step 6A: both relationship-owner roles get the full Discovery
@@ -249,6 +253,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         approve_invoices: true,
         void_invoices: true,
         override_invoice_mismatch: true,
+        // Step 16C: the only role (besides Super Admin) trusted to resolve a payee identity
+        // mismatch, matching override_invoice_mismatch's own head-only shape.
+        resolve_invoice_payee_mismatch: true,
         record_payments: true,
       }),
       discovery: featureGrant(true, {

@@ -1,5 +1,7 @@
 import { z } from "zod";
 
+import { payeeIdentityMatchResultSchema } from "./payee-identity/types";
+
 // Step 16A: the canonical Finance Invoices domain.
 //
 // An Invoice CONSUMES a Payable: it belongs to exactly one canonical Payable head, at exactly one
@@ -185,6 +187,15 @@ export const invoiceVersionDocSchema = z
     dueDate: utcDateSchema.nullable(),
     document: invoiceDocumentRefSchema.nullable(),
     reconciliation: invoiceReconciliationResultSchema,
+    // Step 16C: the Invoice's own extracted/declared payee name - ordinary, non-restricted (see
+    // extraction/field-extractors.ts's supplierNameField). Applied by the client from an extraction
+    // proposal, exactly like externalInvoiceNumber/invoiceDate above - never invented server-side.
+    extractedPayeeName: shortText(200).nullable().default(null),
+    // Step 16C section 8/13: the server-authoritative payee identity comparison for THIS exact
+    // version - pinned by construction (a new version always computes its own fresh result; an
+    // earlier version's result is never rewritten). Null only when the comparison has not been
+    // computed at all (never used to mean "no evidence" - that is INSUFFICIENT_EVIDENCE).
+    payeeIdentity: payeeIdentityMatchResultSchema.nullable().default(null),
     changeKind: invoiceVersionChangeKindSchema,
     reason: shortText(1000).nullable(),
     createdAt: isoTimestamp,
@@ -265,6 +276,11 @@ export const invoiceHeadDocSchema = z
     // Accepted mismatch, pinned to the exact version it was accepted for (section 16). Cleared
     // whenever a NEW version is created (an unreviewed version carries no override).
     mismatchOverride: invoiceMismatchOverrideSchema.nullable().default(null),
+    // Step 16C section 11/13: the accepted PAYEE IDENTITY mismatch/review, pinned to the exact
+    // version it was accepted for - its own field, deliberately never folded into mismatchOverride
+    // above (a payee identity resolution is a distinct decision from an amount mismatch override,
+    // gated by its own narrow action - see finance-invoices-gate.ts). Cleared on every new version.
+    payeeMismatchOverride: invoiceMismatchOverrideSchema.nullable().default(null),
 
     display: invoiceHeadDisplaySchema,
 
@@ -288,6 +304,7 @@ export const invoiceHeadDocSchema = z
     if (head.status === "VOID" && (head.voidedAt === null || head.voidedByUserRef === null || head.voidReason === null)) issue("voidReason", "A voided invoice records when, by whom and why.");
     if (head.status !== "VOID" && (head.voidedAt !== null || head.voidReason !== null)) issue("voidReason", "Only a voided invoice carries a void reason.");
     if (head.mismatchOverride !== null && head.mismatchOverride.forVersion > head.latestVersion) issue("mismatchOverride", "An accepted mismatch cannot name a version beyond the invoice's latest.");
+    if (head.payeeMismatchOverride !== null && head.payeeMismatchOverride.forVersion > head.latestVersion) issue("payeeMismatchOverride", "An accepted payee mismatch cannot name a version beyond the invoice's latest.");
     if (head.externalInvoiceNumber === null && head.normalizedInvoiceNumberKey !== null) issue("normalizedInvoiceNumberKey", "There is no normalized key without a declared invoice number.");
     if (head.externalInvoiceNumber !== null && head.normalizedInvoiceNumberKey === null) issue("normalizedInvoiceNumberKey", "A declared invoice number always has its normalized key.");
   });
@@ -313,6 +330,13 @@ export const INVOICE_EVENT_KINDS = [
   "INVOICE_VOIDED",
   "INVOICE_MISMATCH_ACCEPTED",
   "PAYABLE_REVISION_DETECTED",
+  // Step 16C section 17: fired whenever a fresh payee identity comparison is computed for a version
+  // (creation and every revision - "identity re-evaluated after Invoice revision" is simply another
+  // occurrence of this same event) - its metadata carries the resulting status, so "payee mismatch
+  // detected" is visible as this event's status rather than a wholly separate event kind (keeps
+  // History compact, per section 17's own instruction).
+  "INVOICE_PAYEE_IDENTITY_CHECKED",
+  "INVOICE_PAYEE_MISMATCH_ACCEPTED",
 ] as const;
 export const invoiceEventKindSchema = z.enum(INVOICE_EVENT_KINDS);
 export type InvoiceEventKind = z.infer<typeof invoiceEventKindSchema>;
@@ -416,6 +440,9 @@ export const reviseInvoiceDraftInputSchema = z
     taxLines: z.array(invoiceTaxLineInputSchema).max(MAX_INVOICE_TAX_LINES).optional(),
     declaredTotalMinor: amountMinorSchema.nullable().optional(),
     dueDate: utcDateSchema.nullable().optional(),
+    // Step 16C: the client applies an extraction proposal into the draft exactly like every other
+    // field above - an omitted field keeps the previous value, an explicit null clears it.
+    extractedPayeeName: shortText(200).nullable().optional(),
     reason: reasonSchema,
   })
   .strict();
@@ -458,6 +485,13 @@ export type VoidInvoiceInput = z.infer<typeof voidInvoiceInputSchema>;
 
 export const acceptInvoiceMismatchInputSchema = z.object({ invoiceRef: invoiceRefSchema, expectedDocVersion: expectedDocVersionSchema, reason: reasonSchema }).strict();
 export type AcceptInvoiceMismatchInput = z.infer<typeof acceptInvoiceMismatchInputSchema>;
+
+// Step 16C section 11: "Resolve payee mismatch" - accepts the Invoice as belonging to the expected
+// Payable counterparty despite a MISMATCH/REVIEW_REQUIRED payee identity result. Same shape as
+// acceptInvoiceMismatchInputSchema (a reasoned, version-pinned decision), deliberately its own
+// schema/action - never reused for the amount mismatch override (section 11: distinct decisions).
+export const resolveInvoicePayeeMismatchInputSchema = z.object({ invoiceRef: invoiceRefSchema, expectedDocVersion: expectedDocVersionSchema, reason: reasonSchema }).strict();
+export type ResolveInvoicePayeeMismatchInput = z.infer<typeof resolveInvoicePayeeMismatchInputSchema>;
 
 export const MAX_INVOICE_PAGE_SIZE = 100;
 export const DEFAULT_INVOICE_PAGE_SIZE = 25;

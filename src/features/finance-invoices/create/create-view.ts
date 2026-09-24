@@ -92,13 +92,32 @@ export type InvoiceDetailsForm = {
   taxLines: TaxLineDraft[];
   declaredTotalText: string;
   dueDate: string;
+  // Step 16C: the extracted/declared payee name evidence - never a user-editable field in this
+  // step (there is no manual text input for it), only ever set by applying an extraction proposal
+  // (see applyInvoiceExtractionPrefill below). Compared server-side against the expected Payable
+  // counterparty (see payee-identity/resolve-identity.ts) - this form field is not itself the
+  // comparison result.
+  payeeName: string;
 };
 
 export function emptyInvoiceDetailsForm(currency: string): InvoiceDetailsForm {
-  return { externalInvoiceNumber: "", invoiceDate: "", receivedDate: "", currency, subtotalText: "", taxLines: [], declaredTotalText: "", dueDate: "" };
+  return { externalInvoiceNumber: "", invoiceDate: "", receivedDate: "", currency, subtotalText: "", taxLines: [], declaredTotalText: "", dueDate: "", payeeName: "" };
 }
 
-export function invoiceDetailsFormFromVersion(version: { externalInvoiceNumber: string | null; invoiceDate: string | null; receivedDate: string | null; currency: string | null; subtotalMinor: number | null; taxLines: InvoiceTaxLineDto[]; declaredTotalMinor: number | null; dueDate: string | null }, fallbackCurrency: string): InvoiceDetailsForm {
+export function invoiceDetailsFormFromVersion(
+  version: {
+    externalInvoiceNumber: string | null;
+    invoiceDate: string | null;
+    receivedDate: string | null;
+    currency: string | null;
+    subtotalMinor: number | null;
+    taxLines: InvoiceTaxLineDto[];
+    declaredTotalMinor: number | null;
+    dueDate: string | null;
+    extractedPayeeName?: string | null;
+  },
+  fallbackCurrency: string,
+): InvoiceDetailsForm {
   return {
     externalInvoiceNumber: version.externalInvoiceNumber ?? "",
     invoiceDate: version.invoiceDate ?? "",
@@ -108,6 +127,7 @@ export function invoiceDetailsFormFromVersion(version: { externalInvoiceNumber: 
     taxLines: version.taxLines.map((line, index) => ({ key: `existing-${index}`, label: line.label, rateText: line.ratePercentBasisPoints !== null ? String(line.ratePercentBasisPoints / 100) : "", amountText: line.amountMinor !== null ? String(line.amountMinor / 100) : "" })),
     declaredTotalText: version.declaredTotalMinor !== null ? String(version.declaredTotalMinor / 100) : "",
     dueDate: version.dueDate ?? "",
+    payeeName: version.extractedPayeeName ?? "",
   };
 }
 
@@ -130,7 +150,7 @@ export type InvoiceExtractionProposal = { fieldKey: string; value: string | numb
 // tag renders from - NEVER the raw proposal keys - so a tag only ever appears next to a value that
 // genuinely came from extraction, never next to a user-touched field extraction merely proposed a
 // (correctly discarded) value for.
-export type AppliedExtractionKey = "externalInvoiceNumber" | "invoiceDate" | "dueDate" | "currency" | "subtotalMinor" | "declaredTotalMinor" | "taxAmountMinor";
+export type AppliedExtractionKey = "externalInvoiceNumber" | "invoiceDate" | "dueDate" | "currency" | "subtotalMinor" | "declaredTotalMinor" | "taxAmountMinor" | "supplierName";
 
 export type InvoiceExtractionPrefillResult = { form: InvoiceDetailsForm; appliedKeys: ReadonlySet<AppliedExtractionKey> };
 
@@ -181,6 +201,14 @@ export function applyInvoiceExtractionPrefill(form: InvoiceDetailsForm, fields: 
     appliedKeys.add("declaredTotalMinor");
   }
 
+  // Step 16C: the payee name has no manual text input in this step (see InvoiceDetailsForm's own
+  // comment), so it is never gated by `touched` - the freshest extraction proposal always applies.
+  const supplierName = byKey.get("supplierName");
+  if (typeof supplierName?.value === "string" && supplierName.value.trim().length > 0) {
+    next.payeeName = supplierName.value;
+    appliedKeys.add("supplierName");
+  }
+
   if (!touched.has("taxLines") && next.taxLines.length === 0) {
     const taxAmount = byKey.get("taxAmountMinor");
     const taxRate = byKey.get("taxRateBps");
@@ -222,6 +250,7 @@ export type ReviseFieldsResult =
         taxLines: Array<{ label: string; ratePercentBasisPoints: number | null; amountMinor: number }>;
         declaredTotalMinor: number | null;
         dueDate: string | null;
+        extractedPayeeName: string | null;
       };
     }
   | { ok: false; errors: string[] };
@@ -276,6 +305,7 @@ export function reviseFieldsFromForm(form: InvoiceDetailsForm): ReviseFieldsResu
       taxLines,
       declaredTotalMinor,
       dueDate: form.dueDate || null,
+      extractedPayeeName: form.payeeName.trim() || null,
     },
   };
 }

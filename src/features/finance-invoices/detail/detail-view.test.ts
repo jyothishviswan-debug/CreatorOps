@@ -49,6 +49,7 @@ function detail(overrides: { status?: InvoiceDetailDto["head"]["status"]; mismat
       voidedByUserRef: null,
       voidReason: null,
       mismatchOverride: overrides.mismatchOverride ?? null,
+      payeeMismatchOverride: null,
       docVersion: 1,
       declaredTotalMinor: 500000,
       reconciliationState: "MATCH",
@@ -74,6 +75,8 @@ function detail(overrides: { status?: InvoiceDetailDto["head"]["status"]; mismat
       dueDate: null,
       document: { documentId: "doc_1", fileName: "invoice.pdf", mimeType: "application/pdf", sizeBytes: 2048, sha256: "a".repeat(64), storedAt: "2026-03-01T00:00:00.000Z", storedByUserRef: "user_1" },
       reconciliation: { state: "MATCH", findings: overrides.findings ?? [], computedAt: "2026-03-01T00:00:00.000Z" },
+      extractedPayeeName: null,
+      payeeIdentity: null,
       createdAt: "2026-03-01T00:00:00.000Z",
       createdByUserRef: "user_1",
     },
@@ -99,32 +102,33 @@ describe("detailHeaderView", () => {
 });
 
 describe("detailActionVisibility", () => {
-  const permissions: InvoicePermissionsDto = { canView: true, canManage: true, canApprove: true, canVoid: true, canOverrideMismatch: true, canViewAmounts: true };
+  const permissions: InvoicePermissionsDto = { canView: true, canManage: true, canApprove: true, canVoid: true, canOverrideMismatch: true, canResolvePayeeMismatch: true, canViewAmounts: true };
 
   it("DRAFT: Edit + Submit + overflow Void", () => {
     const visibility = detailActionVisibility(detail({ status: "DRAFT" }).head, permissions);
-    expect(visibility).toEqual({ canEdit: true, canSubmit: true, canApprove: false, canReject: false, canReopen: false, canVoid: true, canOverrideMismatch: false, readOnly: false });
+    expect(visibility).toEqual({ canEdit: true, canSubmit: true, canApprove: false, canReject: false, canReopen: false, canVoid: true, canOverrideMismatch: false, canResolvePayeeMismatch: false, readOnly: false });
   });
 
   it("SUBMITTED: Approve/Reject/mismatch-override/Void gated by the exact permission, never role rank", () => {
     const authorized = detailActionVisibility(detail({ status: "SUBMITTED" }).head, permissions);
-    expect(authorized).toEqual({ canEdit: false, canSubmit: false, canApprove: true, canReject: true, canReopen: false, canVoid: true, canOverrideMismatch: true, readOnly: false });
+    expect(authorized).toEqual({ canEdit: false, canSubmit: false, canApprove: true, canReject: true, canReopen: false, canVoid: true, canOverrideMismatch: true, canResolvePayeeMismatch: true, readOnly: false });
 
-    const managerOnly: InvoicePermissionsDto = { canView: true, canManage: true, canApprove: false, canVoid: false, canOverrideMismatch: false, canViewAmounts: true };
+    const managerOnly: InvoicePermissionsDto = { canView: true, canManage: true, canApprove: false, canVoid: false, canOverrideMismatch: false, canResolvePayeeMismatch: false, canViewAmounts: true };
     const readOnlyManager = detailActionVisibility(detail({ status: "SUBMITTED" }).head, managerOnly);
     expect(readOnlyManager.canApprove).toBe(false);
     expect(readOnlyManager.canReject).toBe(false);
     expect(readOnlyManager.canVoid).toBe(false);
+    expect(readOnlyManager.canResolvePayeeMismatch).toBe(false);
   });
 
   it("APPROVED is fully read-only (no Payment action, no Void re-offered)", () => {
     const visibility = detailActionVisibility(detail({ status: "APPROVED" }).head, permissions);
-    expect(visibility).toEqual({ canEdit: false, canSubmit: false, canApprove: false, canReject: false, canReopen: false, canVoid: false, canOverrideMismatch: false, readOnly: true });
+    expect(visibility).toEqual({ canEdit: false, canSubmit: false, canApprove: false, canReject: false, canReopen: false, canVoid: false, canOverrideMismatch: false, canResolvePayeeMismatch: false, readOnly: true });
   });
 
   it("REJECTED: Reopen + Void", () => {
     const visibility = detailActionVisibility(detail({ status: "REJECTED" }).head, permissions);
-    expect(visibility).toEqual({ canEdit: false, canSubmit: false, canApprove: false, canReject: false, canReopen: true, canVoid: true, canOverrideMismatch: false, readOnly: false });
+    expect(visibility).toEqual({ canEdit: false, canSubmit: false, canApprove: false, canReject: false, canReopen: true, canVoid: true, canOverrideMismatch: false, canResolvePayeeMismatch: false, readOnly: false });
   });
 
   it("VOID is fully read-only", () => {

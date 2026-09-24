@@ -26,6 +26,7 @@ import { INVOICE_DOCUMENT_MIME_TYPE, getInvoiceDocumentStorage, sha256Hex, valid
 import { invoiceDocumentIdempotencyKey, invoiceNumberClaimId, invoiceRefFor, normalizeInvoiceNumber } from "./ids";
 import { appendInvoiceEvent } from "./invoice-events";
 import { resolveInvoicePayableSource, type InvoicePayableBlocker } from "./payable-source";
+import { resolveAndComparePayeeIdentity } from "./payee-identity/resolve-identity";
 import { reconcileInvoiceAgainstPayable } from "./reconciliation";
 import { buildInvoiceDetailDto, buildInvoiceHeadDisplay, formatIssues, isAlreadyExistsError, scopeFieldsOf } from "./service-common";
 import {
@@ -133,6 +134,11 @@ export async function createInvoiceDraft(actor: ActorContext | null, rawInput: u
   if (!source.ok) return financeInvoicesNotReadyResult("This invoice cannot be created from the named payable.", source.blockers);
   const { pin, counterpartyDisplayName } = source.resolved;
 
+  // Step 16C: a DRAFT starts with no extracted payee evidence - the comparison still runs (against
+  // the Payable-pinned counterparty ONLY, section 3/20), so an empty draft's payee identity reads
+  // INSUFFICIENT_EVIDENCE/PARTIAL_MATCH rather than null, matching every later version's shape.
+  const payeeIdentity = await resolveAndComparePayeeIdentity({ counterpartyType: pin.counterpartyType, counterpartyRef: pin.counterpartyRef, extractedPayeeName: null });
+
   type CreateTxResult = { kind: "created"; head: InvoiceHeadDoc; version: InvoiceVersionDoc } | { kind: "existing" };
 
   let txResult: CreateTxResult;
@@ -160,6 +166,8 @@ export async function createInvoiceDraft(actor: ActorContext | null, rawInput: u
         dueDate: null,
         document: null,
         reconciliation,
+        extractedPayeeName: null,
+        payeeIdentity,
         changeKind: "created",
         reason: null,
         createdAt: now,
@@ -200,6 +208,7 @@ export async function createInvoiceDraft(actor: ActorContext | null, rawInput: u
         createdAt: now,
       });
       appendInvoiceEvent(tx, { invoiceRef, kind: "INVOICE_VERSION_CREATED", version: 1, actorUserRef: actor!.userRef, metadata: { version: 1, changeKind: "created" }, requestId, createdAt: now });
+      appendInvoiceEvent(tx, { invoiceRef, kind: "INVOICE_PAYEE_IDENTITY_CHECKED", version: 1, actorUserRef: actor!.userRef, metadata: { version: 1, payeeIdentityStatus: payeeIdentity.overallStatus }, requestId, createdAt: now });
       return { kind: "created", head, version };
     });
   } catch (error) {
@@ -366,6 +375,13 @@ export async function reviseInvoiceDraft(actor: ActorContext | null, rawInput: u
   const livePayable = await getPayable(actor!, previous.payablePin.payableRef);
   const payableRevisionDetected = livePayable.ok && livePayable.data.head.latestVersion !== previous.payablePin.payableVersion;
 
+  // Step 16C section 13: EVERY revision recomputes a fresh payee identity result for the NEW
+  // version - an earlier version's result is never touched. The client applies an extraction
+  // proposal into `extractedPayeeName` exactly like any other declared field (omitted = keep,
+  // explicit null = clear).
+  const extractedPayeeName = input.extractedPayeeName === undefined ? previous.extractedPayeeName : input.extractedPayeeName;
+  const payeeIdentity = await resolveAndComparePayeeIdentity({ counterpartyType: previous.payablePin.counterpartyType, counterpartyRef: previous.payablePin.counterpartyRef, extractedPayeeName });
+
   const result = await getAdminFirestore().runTransaction<VersionTxResult>(async (tx) => {
     const head = await txGetInvoiceHead(tx, input.invoiceRef);
     const failure = checkDraftRevisable(head, input.expectedDocVersion);
@@ -396,6 +412,8 @@ export async function reviseInvoiceDraft(actor: ActorContext | null, rawInput: u
       dueDate: input.dueDate === undefined ? previous.dueDate : input.dueDate,
       document: previous.document,
       reconciliation,
+      extractedPayeeName,
+      payeeIdentity,
       changeKind: "revised",
       reason: input.reason,
       createdAt: now,
@@ -411,6 +429,7 @@ export async function reviseInvoiceDraft(actor: ActorContext | null, rawInput: u
       latestVersion: nextNumber,
       // A DRAFT never carries a stale accepted mismatch from an earlier, now-superseded version.
       mismatchOverride: null,
+      payeeMismatchOverride: null,
       display: buildInvoiceHeadDisplay({ counterpartyName: displayName, version, projectedAt: now }),
       docVersion: head.docVersion + 1,
       updatedAt: now,
@@ -425,6 +444,15 @@ export async function reviseInvoiceDraft(actor: ActorContext | null, rawInput: u
       version: nextNumber,
       actorUserRef: actor!.userRef,
       metadata: { previousVersion: previous.version, newVersion: nextNumber, changeKind: "revised", reconciliationState: reconciliation.state, reason: input.reason },
+      requestId,
+      createdAt: now,
+    });
+    appendInvoiceEvent(tx, {
+      invoiceRef: head.invoiceRef,
+      kind: "INVOICE_PAYEE_IDENTITY_CHECKED",
+      version: nextNumber,
+      actorUserRef: actor!.userRef,
+      metadata: { version: nextNumber, payeeIdentityStatus: payeeIdentity.overallStatus },
       requestId,
       createdAt: now,
     });
@@ -535,6 +563,7 @@ export async function attachInvoiceDocument(actor: ActorContext | null, rawInput
       ...scopeFieldsOf(liveScope),
       latestVersion: nextNumber,
       mismatchOverride: null,
+      payeeMismatchOverride: null,
       display: buildInvoiceHeadDisplay({ counterpartyName: displayName, version, projectedAt: now }),
       docVersion: head.docVersion + 1,
       updatedAt: now,
@@ -598,5 +627,5 @@ export async function reconcileInvoice(actor: ActorContext | null, rawInput: unk
   const reconciliation = reconcileInvoiceAgainstPayable({ declared, pin: current.payablePin, documentPresent: current.document !== null, documentRequired: true, duplicateNumberDetected });
 
   const amounts = await requireAmountsSensitiveAccess(actor!);
-  return { ok: true, data: toInvoiceVersionDto({ ...current, reconciliation }, { amountsVisible: amounts.ok }) };
+  return { ok: true, data: toInvoiceVersionDto({ ...current, reconciliation }, { amountsVisible: amounts.ok }, head.payeeMismatchOverride) };
 }

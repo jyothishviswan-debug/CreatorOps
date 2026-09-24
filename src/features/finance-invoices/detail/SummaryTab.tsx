@@ -66,6 +66,10 @@ export function SummaryTab({ detail, revision }: { detail: InvoiceDetailDto; rev
               <span>Mismatch override</span>
               <b>{readiness.mismatchOverrideStatus}</b>
             </div>
+            <div className="kv" data-testid="summary-payee-identity">
+              <span>Payee identity</span>
+              <b>{readiness.payeeIdentity ? <Pill tone={readiness.payeeIdentity.tone}>{readiness.payeeIdentity.label}</Pill> : "Not yet checked"}</b>
+            </div>
             <div className="kv">
               <span>Source revision</span>
               <b>{readiness.sourceRevisionState ?? "Current"}</b>

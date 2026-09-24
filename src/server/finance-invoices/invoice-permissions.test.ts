@@ -6,12 +6,20 @@ import { deriveInvoicePermissions, NO_INVOICE_PERMISSIONS } from "./invoice-perm
 
 describe("deriveInvoicePermissions", () => {
   it("holds nothing without the finance feature, regardless of any action grant", () => {
-    const result = deriveInvoicePermissions({ financeView: false, manageInvoices: true, approveInvoices: true, voidInvoices: true, overrideInvoiceMismatch: true, financeAmounts: true });
+    const result = deriveInvoicePermissions({
+      financeView: false,
+      manageInvoices: true,
+      approveInvoices: true,
+      voidInvoices: true,
+      overrideInvoiceMismatch: true,
+      resolvePayeeMismatch: true,
+      financeAmounts: true,
+    });
     expect(result).toEqual(NO_INVOICE_PERMISSIONS);
   });
 
   it("canManage/canApprove/canVoid each require their own exact action, independent of the others", () => {
-    const base = { financeView: true, manageInvoices: false, approveInvoices: false, voidInvoices: false, overrideInvoiceMismatch: false, financeAmounts: false };
+    const base = { financeView: true, manageInvoices: false, approveInvoices: false, voidInvoices: false, overrideInvoiceMismatch: false, resolvePayeeMismatch: false, financeAmounts: false };
     expect(deriveInvoicePermissions({ ...base, manageInvoices: true }).canManage).toBe(true);
     expect(deriveInvoicePermissions({ ...base, manageInvoices: true }).canApprove).toBe(false);
     expect(deriveInvoicePermissions({ ...base, approveInvoices: true }).canApprove).toBe(true);
@@ -20,19 +28,32 @@ describe("deriveInvoicePermissions", () => {
   });
 
   it("canOverrideMismatch requires BOTH the exact action AND finance_amounts", () => {
-    const base = { financeView: true, manageInvoices: false, approveInvoices: false, voidInvoices: false, overrideInvoiceMismatch: false, financeAmounts: false };
+    const base = { financeView: true, manageInvoices: false, approveInvoices: false, voidInvoices: false, overrideInvoiceMismatch: false, resolvePayeeMismatch: false, financeAmounts: false };
     expect(deriveInvoicePermissions({ ...base, overrideInvoiceMismatch: true, financeAmounts: false }).canOverrideMismatch).toBe(false);
     expect(deriveInvoicePermissions({ ...base, overrideInvoiceMismatch: false, financeAmounts: true }).canOverrideMismatch).toBe(false);
     expect(deriveInvoicePermissions({ ...base, overrideInvoiceMismatch: true, financeAmounts: true }).canOverrideMismatch).toBe(true);
   });
 
+  it("canResolvePayeeMismatch requires BOTH the exact action AND finance_amounts, independent of canOverrideMismatch", () => {
+    const base = { financeView: true, manageInvoices: false, approveInvoices: false, voidInvoices: false, overrideInvoiceMismatch: false, resolvePayeeMismatch: false, financeAmounts: false };
+    expect(deriveInvoicePermissions({ ...base, resolvePayeeMismatch: true, financeAmounts: false }).canResolvePayeeMismatch).toBe(false);
+    expect(deriveInvoicePermissions({ ...base, resolvePayeeMismatch: false, financeAmounts: true }).canResolvePayeeMismatch).toBe(false);
+    expect(deriveInvoicePermissions({ ...base, resolvePayeeMismatch: true, financeAmounts: true }).canResolvePayeeMismatch).toBe(true);
+    // Holding one governance action never implies the other.
+    expect(deriveInvoicePermissions({ ...base, overrideInvoiceMismatch: true, financeAmounts: true }).canResolvePayeeMismatch).toBe(false);
+    expect(deriveInvoicePermissions({ ...base, resolvePayeeMismatch: true, financeAmounts: true }).canOverrideMismatch).toBe(false);
+  });
+
   it("canViewAmounts requires finance_amounts and nothing else", () => {
-    expect(deriveInvoicePermissions({ financeView: true, manageInvoices: false, approveInvoices: false, voidInvoices: false, overrideInvoiceMismatch: false, financeAmounts: true }).canViewAmounts).toBe(true);
+    expect(
+      deriveInvoicePermissions({ financeView: true, manageInvoices: false, approveInvoices: false, voidInvoices: false, overrideInvoiceMismatch: false, resolvePayeeMismatch: false, financeAmounts: true })
+        .canViewAmounts,
+    ).toBe(true);
   });
 
   it("every Invoice action id this module checks is a real entry in the canonical finance module-action catalog", () => {
     const financeActionIds = MODULE_ACTIONS.finance.map((entry) => entry.id);
-    for (const action of ["manage_invoices", "approve_invoices", "void_invoices", "override_invoice_mismatch"]) {
+    for (const action of ["manage_invoices", "approve_invoices", "void_invoices", "override_invoice_mismatch", "resolve_invoice_payee_mismatch"]) {
       expect(financeActionIds).toContain(action);
     }
   });

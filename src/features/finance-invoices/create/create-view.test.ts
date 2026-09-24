@@ -104,7 +104,7 @@ describe("selectedPayableSummary", () => {
 describe("detailsFormComplete", () => {
   it("requires invoice number, date, a 3-letter currency and a declared total", () => {
     expect(detailsFormComplete(emptyInvoiceDetailsForm("INR"))).toBe(false);
-    expect(detailsFormComplete({ externalInvoiceNumber: "INV-1", invoiceDate: "2026-03-01", receivedDate: "", currency: "INR", subtotalText: "", taxLines: [], declaredTotalText: "5000", dueDate: "" })).toBe(true);
+    expect(detailsFormComplete({ externalInvoiceNumber: "INV-1", invoiceDate: "2026-03-01", receivedDate: "", currency: "INR", subtotalText: "", taxLines: [], declaredTotalText: "5000", dueDate: "", payeeName: "" })).toBe(true);
   });
 });
 
@@ -122,9 +122,12 @@ describe("invoiceDetailsFormFromVersion", () => {
 
 describe("reviseFieldsFromForm", () => {
   it("converts a complete form into typed fields, clearing blanks to null (never a guessed value)", () => {
-    const form = { externalInvoiceNumber: "INV-1", invoiceDate: "2026-03-01", receivedDate: "", currency: "inr", subtotalText: "4500", taxLines: [], declaredTotalText: "5000", dueDate: "" };
+    const form = { externalInvoiceNumber: "INV-1", invoiceDate: "2026-03-01", receivedDate: "", currency: "inr", subtotalText: "4500", taxLines: [], declaredTotalText: "5000", dueDate: "", payeeName: "" };
     const result = reviseFieldsFromForm(form);
-    expect(result).toEqual({ ok: true, fields: { externalInvoiceNumber: "INV-1", invoiceDate: "2026-03-01", receivedDate: null, currency: "INR", subtotalMinor: 450000, taxLines: [], declaredTotalMinor: 500000, dueDate: null } });
+    expect(result).toEqual({
+      ok: true,
+      fields: { externalInvoiceNumber: "INV-1", invoiceDate: "2026-03-01", receivedDate: null, currency: "INR", subtotalMinor: 450000, taxLines: [], declaredTotalMinor: 500000, dueDate: null, extractedPayeeName: null },
+    });
   });
 
   it("never performs client-side tax computation - a tax line's amount is taken exactly as typed", () => {
@@ -176,6 +179,7 @@ describe("invoiceSummaryRows / confirmReadiness / confirmBlockers", () => {
       voidedByUserRef: null,
       voidReason: null,
       mismatchOverride: null,
+      payeeMismatchOverride: null,
       docVersion: 1,
       declaredTotalMinor: 500000,
       reconciliationState: "MATCH" as const,
@@ -201,6 +205,8 @@ describe("invoiceSummaryRows / confirmReadiness / confirmBlockers", () => {
       dueDate: null,
       document: { documentId: "doc_1", fileName: "invoice.pdf", mimeType: "application/pdf", sizeBytes: 1000, sha256: "a".repeat(64), storedAt: "2026-03-01T00:00:00.000Z", storedByUserRef: "user_1" },
       reconciliation: { state: "MATCH" as const, findings: [], computedAt: "2026-03-01T00:00:00.000Z" },
+      extractedPayeeName: null,
+      payeeIdentity: null,
       createdAt: "2026-03-01T00:00:00.000Z",
       createdByUserRef: "user_1",
     },

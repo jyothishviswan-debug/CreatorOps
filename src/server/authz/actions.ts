@@ -127,6 +127,10 @@ export const ACTIONS = [
   "approve_invoices",
   "void_invoices",
   "override_invoice_mismatch",
+  // Step 16C: resolving a payee identity mismatch/review on an Invoice - its own narrow action,
+  // deliberately never folded into override_invoice_mismatch (a distinct decision - see
+  // finance-invoices-gate.ts's own comment).
+  "resolve_invoice_payee_mismatch",
   "record_payments",
   // Operations
   "manage_tasks",

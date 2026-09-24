@@ -1,5 +1,7 @@
 import type { InvoiceExtractedFieldKey, InvoiceExtractionConfidence, InvoiceExtractionReasonCode, InvoiceExtractionStatus } from "./extraction/types";
 import { redactInvoiceEventMetadata } from "./invoice-events";
+import { displayOverallStatus } from "./payee-identity/matcher";
+import type { PayeeIdentityFieldResult, PayeeIdentityMatchResult, PayeeIdentityOverallStatus } from "./payee-identity/types";
 import type {
   CommercialPeriod,
   InvoiceCounterpartyType,
@@ -62,6 +64,38 @@ export type InvoiceDocumentDto = { documentId: string; fileName: string; mimeTyp
 
 export type InvoiceMismatchOverrideDto = { forVersion: number; reason: string; actorUserRef: string; at: string };
 
+// --- Payee identity (Step 16C) -----------------------------------------------------------------------------------------------------
+// Every field here is ALREADY safe (built once, server-side, by payee-identity/matcher.ts's
+// safe-display projection) - this builder is a plain, explicit field-by-field copy, same "nothing
+// reaches the browser by accident" discipline as the rest of this file. No raw restricted value
+// (tax registration, bank identifier) is representable in this shape at all.
+export type InvoicePayeeIdentityFieldDto = PayeeIdentityFieldResult;
+
+export type InvoicePayeeIdentityAcceptedDto = { reason: string; actorUserRef: string; at: string };
+
+export type InvoicePayeeIdentityDto = {
+  // The DISPLAY status (section 16): "OVERRIDDEN" only when `accepted` below is non-null for this
+  // exact version - the underlying `fields`/`warnings` evidence is NEVER overwritten by a fake green
+  // Match state, so the original mismatch/review evidence stays visible alongside "Accepted with
+  // reason".
+  overallStatus: PayeeIdentityOverallStatus;
+  fields: InvoicePayeeIdentityFieldDto[];
+  warnings: string[];
+  comparedAt: string;
+  accepted: InvoicePayeeIdentityAcceptedDto | null;
+};
+
+export function toInvoicePayeeIdentityDto(payeeIdentity: PayeeIdentityMatchResult, override: InvoiceMismatchOverride | null, versionNumber: number): InvoicePayeeIdentityDto {
+  const acceptedForThisVersion = override !== null && override.forVersion === versionNumber;
+  return {
+    overallStatus: displayOverallStatus(payeeIdentity, override, versionNumber),
+    fields: payeeIdentity.fields.map((field) => ({ ...field })),
+    warnings: [...payeeIdentity.warnings],
+    comparedAt: payeeIdentity.comparedAt,
+    accepted: acceptedForThisVersion ? { reason: override.reason, actorUserRef: override.actorUserRef, at: override.at } : null,
+  };
+}
+
 export type InvoiceVersionDto = {
   version: number;
   changeKind: InvoiceVersionChangeKind;
@@ -77,6 +111,8 @@ export type InvoiceVersionDto = {
   dueDate: string | null;
   document: InvoiceDocumentDto | null;
   reconciliation: InvoiceReconciliationResult;
+  extractedPayeeName: string | null;
+  payeeIdentity: InvoicePayeeIdentityDto | null;
   createdAt: string;
   createdByUserRef: string;
 };
@@ -116,6 +152,7 @@ export type InvoiceHeadDto = {
   voidedByUserRef: string | null;
   voidReason: string | null;
   mismatchOverride: InvoiceMismatchOverrideDto | null;
+  payeeMismatchOverride: InvoiceMismatchOverrideDto | null;
   docVersion: number;
   declaredTotalMinor: InvoiceAmountDto;
   reconciliationState: InvoiceReconciliationResult["state"];
@@ -150,7 +187,7 @@ export type InvoiceRowDto = {
   lastUpdatedAt: string;
 };
 
-export type InvoicePermissionsDto = { canView: boolean; canManage: boolean; canApprove: boolean; canVoid: boolean; canOverrideMismatch: boolean; canViewAmounts: boolean };
+export type InvoicePermissionsDto = { canView: boolean; canManage: boolean; canApprove: boolean; canVoid: boolean; canOverrideMismatch: boolean; canResolvePayeeMismatch: boolean; canViewAmounts: boolean };
 
 export type InvoiceWorkspaceDto = {
   rows: InvoiceRowDto[];
@@ -207,7 +244,10 @@ export function toInvoiceMismatchOverrideDto(override: InvoiceMismatchOverride):
   return { forVersion: override.forVersion, reason: override.reason, actorUserRef: override.actorUserRef, at: override.at };
 }
 
-export function toInvoiceVersionDto(doc: InvoiceVersionDoc, options: AmountOptions): InvoiceVersionDto {
+// `payeeMismatchOverride` is the HEAD's own field (see types.ts) - passed in explicitly (never read
+// from `doc`, which has no knowledge of the head) so the DISPLAY status can be computed for exactly
+// this version, matching the same "override pinned to an exact version" shape as mismatchOverride.
+export function toInvoiceVersionDto(doc: InvoiceVersionDoc, options: AmountOptions, payeeMismatchOverride: InvoiceMismatchOverride | null = null): InvoiceVersionDto {
   return {
     version: doc.version,
     changeKind: doc.changeKind,
@@ -223,6 +263,8 @@ export function toInvoiceVersionDto(doc: InvoiceVersionDoc, options: AmountOptio
     dueDate: doc.dueDate,
     document: doc.document ? toInvoiceDocumentDto(doc.document) : null,
     reconciliation: { state: doc.reconciliation.state, findings: doc.reconciliation.findings.map((finding) => ({ ...finding })), computedAt: doc.reconciliation.computedAt },
+    extractedPayeeName: doc.extractedPayeeName,
+    payeeIdentity: doc.payeeIdentity ? toInvoicePayeeIdentityDto(doc.payeeIdentity, payeeMismatchOverride, doc.version) : null,
     createdAt: doc.createdAt,
     createdByUserRef: doc.createdByUserRef,
   };
@@ -266,6 +308,7 @@ export function toInvoiceHeadDto(head: InvoiceHeadDoc, displayName: string | nul
     voidedByUserRef: head.voidedByUserRef,
     voidReason: head.voidReason,
     mismatchOverride: head.mismatchOverride ? toInvoiceMismatchOverrideDto(head.mismatchOverride) : null,
+    payeeMismatchOverride: head.payeeMismatchOverride ? toInvoiceMismatchOverrideDto(head.payeeMismatchOverride) : null,
     docVersion: head.docVersion,
     declaredTotalMinor: nullableAmount(head.display.declaredTotalMinor, options),
     reconciliationState: head.display.reconciliationState,

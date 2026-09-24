@@ -3,6 +3,7 @@
 // the small generic pieces (relative/absolute time), matching Payables' own "Finance never imports
 // from another feature's format module" rule.
 import { absoluteTime, relativeTime } from "@/features/administration/format";
+import type { PayeeIdentityFieldKey, PayeeIdentityFieldStatus, PayeeIdentityOverallStatus } from "@/server/finance-invoices/payee-identity/types";
 import type { InvoiceCounterpartyType, InvoiceReconciliationCode, InvoiceReconciliationState, InvoiceStatus, InvoiceVersionChangeKind } from "@/server/finance-invoices/types";
 
 export { absoluteTime, relativeTime };
@@ -53,6 +54,42 @@ export const RECONCILIATION_RESULT_LABELS: Record<InvoiceReconciliationCode | "O
   SUBTOTAL_SERVICE_BASE_MISMATCH: "Review required",
 };
 
+// --- Payee identity (Step 16C) --------------------------------------------------------------------------------------------------------
+export const PAYEE_IDENTITY_FIELD_LABELS: Record<PayeeIdentityFieldKey, string> = {
+  NAME: "Name",
+  TAX_REGISTRATION: "GST / tax registration",
+  ADDRESS: "Address",
+  BANK: "Bank account",
+};
+export function payeeIdentityFieldLabel(field: PayeeIdentityFieldKey): string {
+  return PAYEE_IDENTITY_FIELD_LABELS[field];
+}
+
+// Per-field status chip - EXACT and NORMALIZED_MATCH both read as "Match" (the distinction is
+// evidence for Finance, not a different color); bank's "EXACT" is exactly section 5's "MATCH".
+export const PAYEE_IDENTITY_FIELD_CHIPS: Record<PayeeIdentityFieldStatus, ChipSpec> = {
+  EXACT: { label: "Match", tone: "default" },
+  NORMALIZED_MATCH: { label: "Match", tone: "default" },
+  MISMATCH: { label: "Mismatch", tone: "red" },
+  REVIEW_REQUIRED: { label: "Review required", tone: "orange" },
+  UNAVAILABLE: { label: "Unavailable", tone: "gray" },
+};
+export function payeeIdentityFieldChip(status: PayeeIdentityFieldStatus): ChipSpec {
+  return PAYEE_IDENTITY_FIELD_CHIPS[status];
+}
+
+export const PAYEE_IDENTITY_OVERALL_CHIPS: Record<PayeeIdentityOverallStatus, ChipSpec> = {
+  MATCH: { label: "Match", tone: "default" },
+  PARTIAL_MATCH: { label: "Partial match", tone: "orange" },
+  MISMATCH: { label: "Mismatch", tone: "red" },
+  INSUFFICIENT_EVIDENCE: { label: "Insufficient evidence", tone: "gray" },
+  REVIEW_REQUIRED: { label: "Review required", tone: "orange" },
+  OVERRIDDEN: { label: "Accepted with reason", tone: "blue" },
+};
+export function payeeIdentityOverallChip(status: PayeeIdentityOverallStatus): ChipSpec {
+  return PAYEE_IDENTITY_OVERALL_CHIPS[status];
+}
+
 // --- Counterparty -------------------------------------------------------------------------------------------------------------------
 export const COUNTERPARTY_TYPE_LABELS: Record<InvoiceCounterpartyType, string> = { PARTNER: "Partner", VENDOR: "Vendor" };
 export function counterpartyTypeLabel(type: InvoiceCounterpartyType): string {
@@ -85,6 +122,8 @@ export const EVENT_KIND_LABELS: Record<string, string> = {
   INVOICE_VOIDED: "Voided",
   INVOICE_MISMATCH_ACCEPTED: "Mismatch accepted",
   PAYABLE_REVISION_DETECTED: "Payable revision detected",
+  INVOICE_PAYEE_IDENTITY_CHECKED: "Payee identity checked",
+  INVOICE_PAYEE_MISMATCH_ACCEPTED: "Payee mismatch accepted",
 };
 export function eventKindLabel(kind: string): string {
   return EVENT_KIND_LABELS[kind] ?? kind;

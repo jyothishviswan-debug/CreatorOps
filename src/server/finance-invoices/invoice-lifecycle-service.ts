@@ -7,6 +7,8 @@ import type { InvoiceDetailDto } from "./client-dto";
 import { getInvoiceVersionDoc, txCreateInvoiceVersion, txGetInvoiceHead, txGetInvoiceVersion, txSetInvoiceHead } from "./firestore";
 import { loadAuthorizedInvoice, requireAmountsSensitiveAccess, requireAuthoringAccess, requireFinanceInvoicesAccess } from "./finance-invoices-gate";
 import { appendInvoiceEvent } from "./invoice-events";
+import { payeeIdentityApprovalBlocker } from "./payee-identity/matcher";
+import type { PayeeIdentityOverallStatus } from "./payee-identity/types";
 import { buildInvoiceDetailDto, scopeFieldsOf } from "./service-common";
 import { compareInvoicePayableRevision, INVOICE_SOURCE_REVISION_MESSAGES, type CurrentPayableVersion } from "./source-revision";
 import {
@@ -21,6 +23,7 @@ import {
   rejectInvoiceInputSchema,
   reopenInvoiceInputSchema,
   approveInvoiceInputSchema,
+  resolveInvoicePayeeMismatchInputSchema,
   submitInvoiceInputSchema,
   voidInvoiceInputSchema,
   type FinanceInvoicesErrorResult,
@@ -156,6 +159,11 @@ export async function approveInvoice(actor: ActorContext | null, rawInput: unkno
       }
       blockers.push({ code: finding.code, message: finding.message });
     }
+    // Step 16C section 12: payee identity is evaluated SEPARATELY from the reconciliation findings
+    // above (a distinct concept from an amount mismatch - never conflated with it) but gates
+    // approval the same way: server-authoritative, never satisfied by UI button visibility alone.
+    const payeeBlocker = payeeIdentityApprovalBlocker(version.payeeIdentity, head.payeeMismatchOverride, version.version);
+    if (payeeBlocker) blockers.push(payeeBlocker);
     if (blockers.length > 0) return { kind: "not_ready", message: "This invoice cannot be approved yet.", blockers };
 
     const now = new Date().toISOString();
@@ -217,6 +225,7 @@ export async function rejectInvoice(actor: ActorContext | null, rawInput: unknow
       rejectedByUserRef: actor!.userRef,
       rejectionReason: input.reason,
       mismatchOverride: null,
+      payeeMismatchOverride: null,
       docVersion: head.docVersion + 1,
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
@@ -282,6 +291,7 @@ export async function reopenInvoice(actor: ActorContext | null, rawInput: unknow
       rejectedByUserRef: null,
       rejectionReason: null,
       mismatchOverride: null,
+      payeeMismatchOverride: null,
       docVersion: head.docVersion + 1,
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
@@ -333,6 +343,7 @@ export async function voidInvoice(actor: ActorContext | null, rawInput: unknown,
       voidedByUserRef: actor!.userRef,
       voidReason: input.reason,
       mismatchOverride: null,
+      payeeMismatchOverride: null,
       docVersion: head.docVersion + 1,
       updatedAt: now,
       updatedByUserRef: actor!.userRef,
@@ -397,6 +408,66 @@ export async function acceptInvoiceMismatch(actor: ActorContext | null, rawInput
     appendInvoiceEvent(tx, {
       invoiceRef: head.invoiceRef,
       kind: "INVOICE_MISMATCH_ACCEPTED",
+      version: version.version,
+      actorUserRef: actor!.userRef,
+      metadata: { version: version.version, reason: input.reason },
+      requestId,
+      createdAt: now,
+    });
+    return { kind: "ok", head: nextHead };
+  });
+
+  if (result.kind !== "ok") return failureResult(result);
+  return { ok: true, data: await buildInvoiceDetailDto(actor!, result.head, displayName, await getInvoiceVersionDoc(result.head.invoiceRef, result.head.latestVersion)) };
+}
+
+// --- Resolve a payee identity mismatch (Step 16C section 11) -----------------------------------------------------------------
+// Only the exact `resolve_invoice_payee_mismatch` action (Partnership Head / Super Admin in this
+// phase's grants - never role rank) plus `finance_amounts` (the same "you cannot resolve an issue in
+// a record you may not see the amounts of" discipline as override_invoice_mismatch). Requires a
+// reason, is audit-logged, and NEVER mutates the Payable's counterparty or any Partner/Vendor master
+// data (section 11/19/20) - it only records that Finance accepts THIS Invoice as belonging to the
+// expected Payable counterparty, pinned to the EXACT version it was accepted for. The original
+// mismatch evidence (version.payeeIdentity) is never rewritten - see client-dto.ts's
+// toInvoicePayeeIdentityDto for how "Accepted with reason" is shown alongside it, never in place of
+// it (section 16).
+export async function resolveInvoicePayeeMismatch(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<FinanceInvoicesServiceResult<InvoiceDetailDto>> {
+  const access = await requireAuthoringAccess(actor, "resolve_invoice_payee_mismatch");
+  if (!access.ok) return financeInvoicesUnauthorizedResult(access.reason);
+
+  const parsed = resolveInvoicePayeeMismatchInputSchema.safeParse(rawInput);
+  if (!parsed.success) return financeInvoicesInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
+  const input = parsed.data;
+
+  const loaded = await loadAuthorizedInvoice(actor, input.invoiceRef, "resolve_invoice_payee_mismatch");
+  if (!loaded.ok) return loaded.error;
+  const { displayName, liveScope } = loaded.authorized;
+
+  const result = await getAdminFirestore().runTransaction<OkResult | Failure>(async (tx) => {
+    const head = await txGetInvoiceHead(tx, input.invoiceRef);
+    if (!head) return { kind: "not_found" };
+    if (head.docVersion !== input.expectedDocVersion) return { kind: "stale" };
+    if (head.status !== "SUBMITTED") return { kind: "conflict", message: "A payee mismatch can only be resolved on a submitted invoice, immediately before approval." };
+    const version = await txGetInvoiceVersion(tx, input.invoiceRef, head.latestVersion);
+    if (!version) return { kind: "not_found" };
+    const blockingStatuses: PayeeIdentityOverallStatus[] = ["MISMATCH", "REVIEW_REQUIRED"];
+    if (!version.payeeIdentity || !blockingStatuses.includes(version.payeeIdentity.overallStatus)) {
+      return { kind: "conflict", message: "This invoice has no payee identity issue to resolve." };
+    }
+
+    const now = new Date().toISOString();
+    const nextHead: InvoiceHeadDoc = invoiceHeadDocSchema.parse({
+      ...head,
+      ...scopeFieldsOf(liveScope),
+      payeeMismatchOverride: { forVersion: version.version, reason: input.reason, actorUserRef: actor!.userRef, at: now },
+      docVersion: head.docVersion + 1,
+      updatedAt: now,
+      updatedByUserRef: actor!.userRef,
+    });
+    txSetInvoiceHead(tx, nextHead);
+    appendInvoiceEvent(tx, {
+      invoiceRef: head.invoiceRef,
+      kind: "INVOICE_PAYEE_MISMATCH_ACCEPTED",
       version: version.version,
       actorUserRef: actor!.userRef,
       metadata: { version: version.version, reason: input.reason },

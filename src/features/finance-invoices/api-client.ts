@@ -199,6 +199,7 @@ export type ReviseInvoiceRequestInput = {
   taxLines?: Array<{ label: string; ratePercentBasisPoints: number | null; amountMinor: number }>;
   declaredTotalMinor?: number | null;
   dueDate?: string | null;
+  extractedPayeeName?: string | null;
   reason: string;
 };
 export function reviseInvoiceDraft(invoiceRef: string, input: ReviseInvoiceRequestInput, options?: InvoicesRequestOptions): Promise<InvoicesApiResult<InvoiceDetailDto>> {
@@ -243,4 +244,10 @@ export function voidInvoice(invoiceRef: string, input: { expectedDocVersion: num
 
 export function acceptInvoiceMismatch(invoiceRef: string, input: { expectedDocVersion: number; reason: string }, options?: InvoicesRequestOptions): Promise<InvoicesApiResult<InvoiceDetailDto>> {
   return postJson(invoicePath(invoiceRef, "/mismatch-override"), input, options);
+}
+
+// Step 16C section 11: "Resolve payee mismatch" - accepts the Invoice as belonging to the expected
+// Payable counterparty despite a payee identity mismatch/review.
+export function resolveInvoicePayeeMismatch(invoiceRef: string, input: { expectedDocVersion: number; reason: string }, options?: InvoicesRequestOptions): Promise<InvoicesApiResult<InvoiceDetailDto>> {
+  return postJson(invoicePath(invoiceRef, "/resolve-payee-mismatch"), input, options);
 }

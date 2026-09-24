@@ -3,10 +3,10 @@
 // the two screens can never disagree about what a given reconciliation result means. Nothing here
 // calls the network, invents an amount, or recomputes what the server already decided (section 11:
 // human labels only, never a raw enum/camelCase code).
-import type { InvoicePayablePinDto } from "@/server/finance-invoices/client-dto";
+import type { InvoicePayablePinDto, InvoicePayeeIdentityDto } from "@/server/finance-invoices/client-dto";
 import type { InvoiceReconciliationResult } from "@/server/finance-invoices/types";
 
-import { commercialPeriodLabel, counterpartyTypeLabel, formatMoneyMinor, formatSignedMoneyMinor, type ChipSpec } from "./format";
+import { commercialPeriodLabel, counterpartyTypeLabel, formatMoneyMinor, formatSignedMoneyMinor, payeeIdentityFieldChip, payeeIdentityFieldLabel, payeeIdentityOverallChip, type ChipSpec } from "./format";
 
 export type ReconciliationDeclared = {
   currency: string | null;
@@ -170,6 +170,35 @@ export function reconciliationComparisonRows(input: {
   });
 
   return rows;
+}
+
+// --- Payee identity (Step 16C section 14/16) -----------------------------------------------------------------------------------------
+// Compact section rows: Name / GST / Address / Bank / Overall. Every value here is already safe
+// (server-provided display strings, restricted values pre-masked) - this is pure display mapping,
+// never a re-derivation of the server's verdict.
+export type PayeeIdentityRow = { key: string; field: string; expected: string; extracted: string; result: ChipSpec; reason: string | null };
+
+export function payeeIdentityRows(payeeIdentity: InvoicePayeeIdentityDto): PayeeIdentityRow[] {
+  return payeeIdentity.fields.map((field) => ({
+    key: field.field,
+    field: payeeIdentityFieldLabel(field.field),
+    expected: field.safeExpectedDisplay ?? "Not available",
+    extracted: field.safeExtractedDisplay ?? "Not available",
+    result: payeeIdentityFieldChip(field.status),
+    reason: field.reason,
+  }));
+}
+
+export type PayeeIdentityOverallRow = { result: ChipSpec; accepted: InvoicePayeeIdentityDto["accepted"] };
+
+export function payeeIdentityOverallRow(payeeIdentity: InvoicePayeeIdentityDto): PayeeIdentityOverallRow {
+  return { result: payeeIdentityOverallChip(payeeIdentity.overallStatus), accepted: payeeIdentity.accepted };
+}
+
+// Section 11: the user must make an explicit decision when MISMATCH or REVIEW_REQUIRED and no
+// resolution has been recorded yet for this exact version.
+export function payeeIdentityNeedsResolution(payeeIdentity: InvoicePayeeIdentityDto): boolean {
+  return (payeeIdentity.overallStatus === "MISMATCH" || payeeIdentity.overallStatus === "REVIEW_REQUIRED") && payeeIdentity.accepted === null;
 }
 
 export function arithmeticWarning(reconciliation: InvoiceReconciliationResult): string | null {

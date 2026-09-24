@@ -64,7 +64,7 @@ export async function buildInvoiceDetailDto(actor: ActorContext, head: InvoiceHe
     head: toInvoiceHeadDto(head, displayName, options),
     versions: versions.versions.map((doc) => toInvoiceVersionSummaryDto(doc, options)),
     hasMoreVersions: versions.hasMore,
-    selectedVersion: selected ? toInvoiceVersionDto(selected, options) : null,
+    selectedVersion: selected ? toInvoiceVersionDto(selected, options, head.payeeMismatchOverride) : null,
     amountsVisible: amounts.ok,
   };
 }

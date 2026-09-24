@@ -3,7 +3,7 @@
 import type { InvoiceDetailDto, InvoiceEventDto, InvoicePermissionsDto } from "@/server/finance-invoices/client-dto";
 import type { InvoiceSourceRevisionDto } from "@/server/finance-invoices/invoice-lifecycle-service";
 
-import { commercialPeriodLabel, eventKindLabel, formatFileSize, formatMoneyMinor, invoiceStatusChip, reconciliationChip, relativeTime, type ChipSpec } from "../format";
+import { commercialPeriodLabel, eventKindLabel, formatFileSize, formatMoneyMinor, invoiceStatusChip, payeeIdentityOverallChip, reconciliationChip, relativeTime, type ChipSpec } from "../format";
 
 export type DetailTabKey = "summary" | "reconciliation" | "document" | "history";
 export const DETAIL_TABS: Array<{ key: DetailTabKey; label: string }> = [
@@ -33,13 +33,43 @@ export function detailHeaderView(head: InvoiceDetailDto["head"]): DetailHeaderVi
 // Actions depend on both the lifecycle status AND the exact server-computed permission - never a
 // role-rank assumption. APPROVED and VOID are always fully read-only in this UI (section 10: no
 // Payment creation surface here, and Void is deliberately not re-offered once Approved).
-export type DetailActionVisibility = { canEdit: boolean; canSubmit: boolean; canApprove: boolean; canReject: boolean; canReopen: boolean; canVoid: boolean; canOverrideMismatch: boolean; readOnly: boolean };
+export type DetailActionVisibility = {
+  canEdit: boolean;
+  canSubmit: boolean;
+  canApprove: boolean;
+  canReject: boolean;
+  canReopen: boolean;
+  canVoid: boolean;
+  canOverrideMismatch: boolean;
+  canResolvePayeeMismatch: boolean;
+  readOnly: boolean;
+};
 
 export function detailActionVisibility(head: InvoiceDetailDto["head"], permissions: InvoicePermissionsDto): DetailActionVisibility {
-  const none: DetailActionVisibility = { canEdit: false, canSubmit: false, canApprove: false, canReject: false, canReopen: false, canVoid: false, canOverrideMismatch: false, readOnly: true };
+  const none: DetailActionVisibility = {
+    canEdit: false,
+    canSubmit: false,
+    canApprove: false,
+    canReject: false,
+    canReopen: false,
+    canVoid: false,
+    canOverrideMismatch: false,
+    canResolvePayeeMismatch: false,
+    readOnly: true,
+  };
   if (head.status === "VOID" || head.status === "APPROVED") return none;
   if (head.status === "DRAFT") return { ...none, canEdit: permissions.canManage, canSubmit: permissions.canManage, canVoid: permissions.canVoid, readOnly: false };
-  if (head.status === "SUBMITTED") return { ...none, canApprove: permissions.canApprove, canReject: permissions.canApprove, canVoid: permissions.canVoid, canOverrideMismatch: permissions.canOverrideMismatch, readOnly: false };
+  if (head.status === "SUBMITTED") {
+    return {
+      ...none,
+      canApprove: permissions.canApprove,
+      canReject: permissions.canApprove,
+      canVoid: permissions.canVoid,
+      canOverrideMismatch: permissions.canOverrideMismatch,
+      canResolvePayeeMismatch: permissions.canResolvePayeeMismatch,
+      readOnly: false,
+    };
+  }
   // REJECTED
   return { ...none, canReopen: permissions.canManage, canVoid: permissions.canVoid, readOnly: false };
 }
@@ -78,6 +108,9 @@ export type ApprovalReadinessView = {
   reconciliation: ChipSpec;
   documentAttached: boolean;
   mismatchOverrideStatus: string;
+  // Step 16C section 15: one compact identity status item - never a full identity card here (the
+  // full field-by-field comparison lives on the Reconciliation tab, see payeeIdentityRows below).
+  payeeIdentity: ChipSpec | null;
   sourceRevisionState: string | null;
   eligibleForApproval: boolean;
 };
@@ -89,13 +122,15 @@ export function approvalReadinessView(detail: InvoiceDetailDto, revision: Invoic
     if (finding.code === "TOTAL_AMOUNT_MISMATCH" && head.mismatchOverride?.forVersion === selectedVersion?.version) return false;
     return true;
   });
+  const payeeBlocking = selectedVersion?.payeeIdentity ? ["MISMATCH", "REVIEW_REQUIRED"].includes(selectedVersion.payeeIdentity.overallStatus) && selectedVersion.payeeIdentity.accepted === null : false;
   return {
     lifecycle: invoiceStatusChip(head.status),
     reconciliation: reconciliationChip(head.reconciliationState),
     documentAttached: (selectedVersion?.document ?? null) !== null,
     mismatchOverrideStatus: head.mismatchOverride ? "Accepted with reason" : "None",
+    payeeIdentity: selectedVersion?.payeeIdentity ? payeeIdentityOverallChip(selectedVersion.payeeIdentity.overallStatus) : null,
     sourceRevisionState: revision && revision.state !== "CURRENT" ? revision.state : null,
-    eligibleForApproval: head.status === "SUBMITTED" && !hasUnresolvedBlocker,
+    eligibleForApproval: head.status === "SUBMITTED" && !hasUnresolvedBlocker && !payeeBlocking,
   };
 }
 
@@ -128,6 +163,10 @@ function metadataSummary(metadata: Record<string, unknown> | null): string {
   if (typeof reason === "string" && reason.length > 0) return reason;
   const fileName = metadata.fileName;
   if (typeof fileName === "string" && fileName.length > 0) return fileName;
+  // Step 16C: INVOICE_PAYEE_IDENTITY_CHECKED carries no reason/fileName - show its status instead
+  // (human label only, never the raw enum - never a digit or restricted value).
+  const payeeIdentityStatus = metadata.payeeIdentityStatus;
+  if (typeof payeeIdentityStatus === "string" && payeeIdentityStatus.length > 0) return payeeIdentityOverallChip(payeeIdentityStatus as never).label;
   return "—";
 }
 

@@ -76,6 +76,7 @@ import {
   reconcileInvoice,
   rejectInvoice,
   reopenInvoice,
+  resolveInvoicePayeeMismatch,
   reviseInvoiceDraft,
   submitInvoice,
   voidInvoice,
@@ -935,5 +936,93 @@ describe("the workspace list", () => {
 
     expect(must(await listInvoicesWorkspace(headActor, { commercialPeriod: "2019-09" }), "other period").rows).toEqual([]);
     expect(failure(await listInvoicesWorkspace(headActor, { status: "APPROVING" as never })).code).toBe("invalid_input");
+  });
+});
+
+// =====================================================================================================================
+// Step 16C: payee identity matching, end to end against a real Partner and a real Invoice pipeline.
+// The canonical expected counterparty is always the SAME Partner `draftInvoice()`/`completeDraft()`
+// already pinned from the Payable - never a different entity, never a global search (section 3/20).
+describe("payee identity matching (Step 16C)", () => {
+  it("a matching extracted supplier name reads PARTIAL_MATCH (no hard corroborating identifier exists yet) and never blocks approval", async () => {
+    const headActor = await actorFor("partnership_head");
+    const { invoice, partner } = await completeDraft();
+    const revised = must(
+      await reviseInvoiceDraft(headActor, { invoiceRef: invoice.head.invoiceRef, expectedDocVersion: invoice.head.docVersion, extractedPayeeName: partner.displayName, reason: "Applying extracted payee name." }, requestId()),
+      "apply payee name",
+    );
+    expect(revised.selectedVersion!.payeeIdentity!.overallStatus).toBe("PARTIAL_MATCH");
+    const nameField = revised.selectedVersion!.payeeIdentity!.fields.find((f) => f.field === "NAME")!;
+    expect(nameField.status).toBe("EXACT");
+    expect(nameField.safeExpectedDisplay).toBe(partner.displayName);
+
+    const submitted = must(await submitInvoice(headActor, { invoiceRef: revised.head.invoiceRef, expectedDocVersion: revised.head.docVersion }, requestId()), "submit");
+    const approved = must(await approveInvoice(headActor, { invoiceRef: submitted.head.invoiceRef, expectedDocVersion: submitted.head.docVersion }, requestId()), "approve should not be blocked by a partial match");
+    expect(approved.head.status).toBe("APPROVED");
+  });
+
+  it("a clearly mismatched extracted supplier name reads MISMATCH and blocks approval until an authorized resolution", async () => {
+    const headActor = await actorFor("partnership_head");
+    const managerActor = await actorFor("partnership_manager");
+    const { invoice } = await completeDraft();
+    const revised = must(
+      await reviseInvoiceDraft(headActor, { invoiceRef: invoice.head.invoiceRef, expectedDocVersion: invoice.head.docVersion, extractedPayeeName: "Totally Different Legal Entity LLC", reason: "Applying extracted payee name." }, requestId()),
+      "apply mismatched payee name",
+    );
+    expect(revised.selectedVersion!.payeeIdentity!.overallStatus).toBe("MISMATCH");
+
+    const submitted = must(await submitInvoice(headActor, { invoiceRef: revised.head.invoiceRef, expectedDocVersion: revised.head.docVersion }, requestId()), "submit");
+
+    // approval BLOCKED before resolution
+    const blocked = failure(await approveInvoice(headActor, { invoiceRef: submitted.head.invoiceRef, expectedDocVersion: submitted.head.docVersion }, requestId()));
+    expect(blocked.code).toBe("not_ready");
+    expect(blocked.blockers?.some((b) => b.code === "PAYEE_IDENTITY_MISMATCH")).toBe(true);
+
+    // unauthorized actor (Partnership Manager) cannot resolve the mismatch
+    const denied = failure(await resolveInvoicePayeeMismatch(managerActor, { invoiceRef: submitted.head.invoiceRef, expectedDocVersion: submitted.head.docVersion, reason: "Manager attempting to resolve." }, requestId()));
+    expect(denied.code).toBe("unauthorized");
+
+    // authorized Head/Admin accepts the mismatch with a reason
+    const resolved = must(
+      await resolveInvoicePayeeMismatch(headActor, { invoiceRef: submitted.head.invoiceRef, expectedDocVersion: submitted.head.docVersion, reason: "Verified against the signed Agreement; same legal entity under a trading name." }, requestId()),
+      "resolve payee mismatch",
+    );
+    expect(resolved.head.payeeMismatchOverride?.forVersion).toBe(resolved.selectedVersion!.version);
+    // the DISPLAY status shows the resolution...
+    expect(resolved.selectedVersion!.payeeIdentity!.overallStatus).toBe("OVERRIDDEN");
+    expect(resolved.selectedVersion!.payeeIdentity!.accepted?.reason).toContain("signed Agreement");
+    // ...but the ORIGINAL per-field mismatch evidence is preserved verbatim, never rewritten into a
+    // fake green Match state (section 16).
+    const nameField = resolved.selectedVersion!.payeeIdentity!.fields.find((f) => f.field === "NAME")!;
+    expect(nameField.status).toBe("MISMATCH");
+    expect(nameField.safeExtractedDisplay).toBe("Totally Different Legal Entity LLC");
+
+    // approval ALLOWED after the authorized resolution
+    const approved = must(await approveInvoice(headActor, { invoiceRef: resolved.head.invoiceRef, expectedDocVersion: resolved.head.docVersion }, requestId()), "approve after resolution");
+    expect(approved.head.status).toBe("APPROVED");
+
+    // history records the resolution and the checks, with no raw identity value anywhere
+    const events = must(await listInvoiceEvents(headActor, approved.head.invoiceRef), "events");
+    expect(events.events.some((e) => e.kind === "INVOICE_PAYEE_MISMATCH_ACCEPTED")).toBe(true);
+    expect(events.events.some((e) => e.kind === "INVOICE_PAYEE_IDENTITY_CHECKED")).toBe(true);
+    const serializedEvents = JSON.stringify(events.events);
+    expect(serializedEvents).not.toContain("Totally Different Legal Entity LLC");
+  });
+
+  it("never exposes a raw bank/tax value anywhere in the Invoice response, even when a payee identity field is present", async () => {
+    const headActor = await actorFor("partnership_head");
+    const { invoice } = await completeDraft();
+    const revised = must(
+      await reviseInvoiceDraft(headActor, { invoiceRef: invoice.head.invoiceRef, expectedDocVersion: invoice.head.docVersion, extractedPayeeName: "Some Supplier Name", reason: "Applying extracted payee name." }, requestId()),
+      "revise",
+    );
+    const serialized = JSON.stringify(revised);
+    for (const forbidden of ["panNumber", "aadhaarNumber", "bankAccountNumber", "accountNumber", "ifsc", "gstin", "gstNumber"]) expect(serialized, forbidden).not.toContain(forbidden);
+    // a masked bank display, if ever present, is always the bullet-mask literal - never a bare 9+
+    // digit run WITHIN the payeeIdentity field displays specifically (the wider response legitimately
+    // carries unrelated long digit runs - a sha256 hex digest, this test's own run-id-based fixture
+    // refs - which are not restricted identity values and are out of scope for this assertion).
+    const displays = revised.selectedVersion!.payeeIdentity!.fields.flatMap((f) => [f.safeExpectedDisplay, f.safeExtractedDisplay]).filter((v): v is string => v !== null);
+    for (const display of displays) expect(display, display).not.toMatch(/\d{9,}/);
   });
 });

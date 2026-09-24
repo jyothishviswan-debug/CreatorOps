@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { financeInvoiceEventsCollection } from "./firestore";
+import { PAYEE_IDENTITY_MATCHER_STATUSES } from "./payee-identity/types";
 import {
   INVOICE_COUNTERPARTY_TYPES,
   INVOICE_RECONCILIATION_STATES,
@@ -69,6 +70,10 @@ export const INVOICE_EVENT_METADATA_ALLOWLIST: Readonly<Record<string, ValueChec
   counterpartyType: oneOf(INVOICE_COUNTERPARTY_TYPES),
   changeKind: oneOf(INVOICE_VERSION_CHANGE_KINDS),
   reconciliationState: oneOf(INVOICE_RECONCILIATION_STATES),
+  // Step 16C: the computed payee identity overall status (never OVERRIDDEN - that is a display-only
+  // projection, see payee-identity/matcher.ts's displayOverallStatus - so the matcher's own closed
+  // set is exactly what this event can ever carry).
+  payeeIdentityStatus: oneOf(PAYEE_IDENTITY_MATCHER_STATUSES),
   // opaque refs and the currency CODE (never an amount)
   payableRef: isOpaqueRef,
   counterpartyRef: isOpaqueRef,

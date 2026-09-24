@@ -14,6 +14,7 @@ import { FINANCE_AMOUNTS_CATEGORY } from "./finance-invoices-gate";
 //   canApprove           canView + approve_invoices  (approve or reject a SUBMITTED Invoice)
 //   canVoid              canView + void_invoices
 //   canOverrideMismatch  canView + override_invoice_mismatch + finance_amounts
+//   canResolvePayeeMismatch  canView + resolve_invoice_payee_mismatch + finance_amounts (Step 16C)
 //   canViewAmounts       canView + finance_amounts   (otherwise every figure is withheld)
 
 export type InvoicePermissionInputs = {
@@ -22,6 +23,7 @@ export type InvoicePermissionInputs = {
   approveInvoices: boolean;
   voidInvoices: boolean;
   overrideInvoiceMismatch: boolean;
+  resolvePayeeMismatch: boolean;
   financeAmounts: boolean;
 };
 
@@ -34,6 +36,7 @@ export function deriveInvoicePermissions(inputs: InvoicePermissionInputs): Invoi
     canApprove: view && inputs.approveInvoices,
     canVoid: view && inputs.voidInvoices,
     canOverrideMismatch: view && inputs.overrideInvoiceMismatch && inputs.financeAmounts,
+    canResolvePayeeMismatch: view && inputs.resolvePayeeMismatch && inputs.financeAmounts,
     canViewAmounts: view && inputs.financeAmounts,
   };
 }
@@ -44,18 +47,20 @@ export const NO_INVOICE_PERMISSIONS: InvoicePermissionsDto = deriveInvoicePermis
   approveInvoices: false,
   voidInvoices: false,
   overrideInvoiceMismatch: false,
+  resolvePayeeMismatch: false,
   financeAmounts: false,
 });
 
 export async function computeInvoicePermissions(actor: ActorContext | null): Promise<InvoicePermissionsDto> {
   if (!actor) return NO_INVOICE_PERMISSIONS;
-  const [financeView, manageInvoices, approveInvoices, voidInvoices, overrideInvoiceMismatch, financeAmounts] = await Promise.all([
+  const [financeView, manageInvoices, approveInvoices, voidInvoices, overrideInvoiceMismatch, resolvePayeeMismatch, financeAmounts] = await Promise.all([
     canAccessFeature(actor, "finance"),
     canPerformAction(actor, "finance", "manage_invoices"),
     canPerformAction(actor, "finance", "approve_invoices"),
     canPerformAction(actor, "finance", "void_invoices"),
     canPerformAction(actor, "finance", "override_invoice_mismatch"),
+    canPerformAction(actor, "finance", "resolve_invoice_payee_mismatch"),
     canAccessSensitive(actor, FINANCE_AMOUNTS_CATEGORY),
   ]);
-  return deriveInvoicePermissions({ financeView, manageInvoices, approveInvoices, voidInvoices, overrideInvoiceMismatch, financeAmounts });
+  return deriveInvoicePermissions({ financeView, manageInvoices, approveInvoices, voidInvoices, overrideInvoiceMismatch, resolvePayeeMismatch, financeAmounts });
 }
