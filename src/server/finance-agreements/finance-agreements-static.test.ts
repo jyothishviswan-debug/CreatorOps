@@ -522,7 +522,10 @@ describe("Agreement document storage (Drive) boundaries", () => {
   const isTest = (file: string) => /\.test\.tsx?$/.test(file);
 
   it("the real Drive adapter is reachable only through the storage resolver, and 'googleapis' is loaded only by it (lazily) within Finance", () => {
-    const importers = allSource.filter((file) => !isTest(file) && importsOf(read(file)).some((spec) => /(^|\/)document-storage\/google-drive$|^\.\/google-drive$/.test(spec))).map((file) => path.relative(moduleDir, file));
+    // Scoped to THIS module's own production files (not a repo-wide scan): Step 16E gives Finance
+    // Invoices its own, separate document-storage/google-drive.ts behind its own resolver - a
+    // sibling module's identically-named relative import is not this module's concern.
+    const importers = productionFiles.filter((file) => importsOf(read(file)).some((spec) => /(^|\/)document-storage\/google-drive$|^\.\/google-drive$/.test(spec))).map((file) => path.relative(moduleDir, file));
     expect(importers).toEqual(["document-storage/index.ts"]);
     const googleapisUsers = productionFiles.filter((file) => importsOf(read(file)).includes("googleapis")).map((file) => path.relative(moduleDir, file));
     expect(googleapisUsers).toEqual(["document-storage/google-drive.ts"]);
@@ -538,8 +541,10 @@ describe("Agreement document storage (Drive) boundaries", () => {
         return /createGoogleDriveAgreementStorage|document-storage\/google-drive|from\s+"googleapis"|import\(\s*"googleapis"\s*\)|vi\.mock\(\s*"googleapis"/.test(source);
       })
       .map(rel);
-    // (this scan file itself names the identifiers above inside string / regex literals)
-    expect(offenders.filter((name) => !name.endsWith("finance-agreements-static.test.ts"))).toEqual([]);
+    // (any module's own *-static.test.ts legitimately names these identifiers inside string / regex
+    // literals for its OWN Drive-boundary guards - e.g. Finance Invoices' equivalent guard, Step 16E -
+    // without ever actually importing the real adapter or 'googleapis' itself)
+    expect(offenders.filter((name) => !/-static\.test\.ts$/.test(name))).toEqual([]);
     const own = read(path.join(moduleDir, "document-storage/document-storage.test.ts"));
     expect(own).toMatch(/vi\.mock\(\s*"googleapis"/);
   });

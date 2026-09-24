@@ -33,7 +33,12 @@ export type InvoiceDocumentStoreInput = {
   metadata: InvoiceDocumentMetadata;
 };
 
-export const INVOICE_DOCUMENT_FAILURE_CODES = ["not_configured", "live_backend_disabled_in_tests", "invalid_input", "storage_unavailable", "unknown"] as const;
+// Step 16E adds four provider-neutral failure states (access_denied, file_not_found, quota_exceeded,
+// integrity_mismatch) needed to map real Google Drive failures deterministically - see
+// document-storage/google-drive.ts's mapDriveError. The FAKE adapter never produces these unless a
+// test explicitly injects them with failNext(). Names stay provider-neutral (never "drive_*") because
+// this port must not leak which backend is behind it.
+export const INVOICE_DOCUMENT_FAILURE_CODES = ["not_configured", "live_backend_disabled_in_tests", "invalid_input", "storage_unavailable", "access_denied", "file_not_found", "quota_exceeded", "integrity_mismatch", "unknown"] as const;
 export type InvoiceDocumentFailureCode = (typeof INVOICE_DOCUMENT_FAILURE_CODES)[number];
 
 export const INVOICE_DOCUMENT_FAILURE_MESSAGES: Record<InvoiceDocumentFailureCode, string> = {
@@ -41,6 +46,10 @@ export const INVOICE_DOCUMENT_FAILURE_MESSAGES: Record<InvoiceDocumentFailureCod
   live_backend_disabled_in_tests: "A real document storage backend is disabled in automated test runs.",
   invalid_input: "The document could not be stored because the request was not valid.",
   storage_unavailable: "Document storage is temporarily unavailable. Try again.",
+  access_denied: "Document storage denied access. Confirm the Invoice folder is shared with the service account as an editor.",
+  file_not_found: "The Invoice document folder could not be found in storage. Check the configured folder.",
+  quota_exceeded: "Document storage could not store the file (storage quota). Try again later or contact an administrator.",
+  integrity_mismatch: "The document could not be verified against its recorded checksum.",
   unknown: "The document could not be stored. Try again.",
 };
 
@@ -57,11 +66,13 @@ export interface InvoiceDocumentStorage {
 }
 
 // What getInvoiceDocumentStorage() answers: an adapter, or a truthful NOT_CONFIGURED state (never a
-// fabricated reference). Step 16A never wires a live backend (no real Google Drive call anywhere in
-// this phase) - only the fake (dev/test) or NOT_CONFIGURED exist today; a future Payments-adjacent
-// step can add a live adapter behind this same port without reshaping anything above it.
-export type InvoiceDocumentStorageNotConfiguredReason = "live_backend_disabled_in_tests" | "test_override" | "not_implemented";
+// fabricated reference). Step 16A shipped only the fake (dev/test) behind this port. Step 16E adds a
+// real Google Drive adapter behind the SAME interface, selected ONLY by explicit configuration (see
+// document-storage/index.ts's resolveInvoiceDocumentStorageKind) - it is never live in an automated
+// test run, and a missing/invalid Drive configuration fails closed to NOT_CONFIGURED, never a silent
+// fallback to the fake.
+export type InvoiceDocumentStorageNotConfiguredReason = "live_backend_disabled_in_tests" | "test_override" | "not_implemented" | "missing_credentials" | "missing_folder";
 
-export type InvoiceDocumentStorageResolution = { state: "CONFIGURED"; storage: InvoiceDocumentStorage; mode: "FAKE" | "TEST_OVERRIDE" } | { state: "NOT_CONFIGURED"; reason: InvoiceDocumentStorageNotConfiguredReason };
+export type InvoiceDocumentStorageResolution = { state: "CONFIGURED"; storage: InvoiceDocumentStorage; mode: "FAKE" | "TEST_OVERRIDE" | "GOOGLE_DRIVE" } | { state: "NOT_CONFIGURED"; reason: InvoiceDocumentStorageNotConfiguredReason };
 
 export const INVOICE_DOCUMENT_STORAGE_NOT_CONFIGURED_MESSAGE = "Document storage not configured";

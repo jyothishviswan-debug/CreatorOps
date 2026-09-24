@@ -387,3 +387,76 @@ describe("Agreement/Payable/Partner-Review UI is untouched by the Invoices UI (S
     }
   });
 });
+
+// =====================================================================================================================
+// Step 16E: the original Invoice document (Google Drive). These guards keep a test - or any stray import - from ever
+// reaching real Google Drive, keep the folder id and any raw Drive locator out of source / DTO shapes, keep Drive
+// disabled by default, and keep the storage seam the only way in. Mirrors Agreements' own Drive-boundary guards.
+describe("Invoice document storage (Drive) boundaries", () => {
+  const repoRoot = path.resolve(moduleDir, "../../..");
+  const testFiles = walk(moduleDir, (name) => name.endsWith(".test.ts"));
+  const OWN_DRIVE_TEST = path.join(moduleDir, "document-storage", "document-storage.test.ts");
+
+  it("the real Drive adapter is reachable only through the storage resolver, and 'googleapis' is loaded only by it (lazily)", () => {
+    const importers = [...raw.entries()].filter(([, source]) => importsOf(source).some((spec) => /(^|\/)document-storage\/google-drive$|^\.\/google-drive$/.test(spec))).map(([name]) => name);
+    expect(importers).toEqual(["document-storage/index.ts"]);
+    const googleapisUsers = [...raw.entries()].filter(([, source]) => importsOf(source).includes("googleapis")).map(([name]) => name);
+    expect(googleapisUsers).toEqual(["document-storage/google-drive.ts"]);
+    // dynamic import only (a top-level import would load the Google client for every route that imports the barrel)
+    expect(code.get("document-storage/google-drive.ts")).not.toMatch(/^import[^;]*from\s+"googleapis"/m);
+  });
+
+  it("no TEST file (in this module) can reach real Drive: only the adapter's own mocked-googleapis unit test imports the real adapter, mocks or names 'googleapis'", () => {
+    const offenders = testFiles
+      .filter((file) => file !== OWN_DRIVE_TEST)
+      .filter((file) => /createGoogleDriveInvoiceStorage|document-storage\/google-drive|from\s+"googleapis"|import\(\s*"googleapis"\s*\)|vi\.mock\(\s*"googleapis"/.test(readFileSync(file, "utf8")))
+      // this scan file, and the finance-invoices-static.test.ts file, legitimately name these identifiers in string/regex literals
+      .filter((file) => !file.endsWith("finance-invoices-static.test.ts"));
+    expect(offenders).toEqual([]);
+    expect(readFileSync(OWN_DRIVE_TEST, "utf8")).toMatch(/vi\.mock\(\s*"googleapis"/);
+  });
+
+  it("the real adapter checks the automated-test-run guard FIRST on every call (store AND get), before configuration or the Drive client", () => {
+    const adapter = code.get("document-storage/google-drive.ts")!;
+    const storeBody = adapter.slice(adapter.indexOf("async store("), adapter.indexOf("async get("));
+    expect(storeBody.indexOf("isAutomatedTestRun()")).toBeGreaterThan(-1);
+    expect(storeBody.indexOf("isAutomatedTestRun()")).toBeLessThan(storeBody.indexOf("getClient()"));
+    expect(storeBody.indexOf("isAutomatedTestRun()")).toBeLessThan(storeBody.indexOf("config."));
+    const getBody = adapter.slice(adapter.indexOf("async get("));
+    expect(getBody.indexOf("isAutomatedTestRun()")).toBeGreaterThan(-1);
+    expect(getBody.indexOf("isAutomatedTestRun()")).toBeLessThan(getBody.indexOf("getClient()"));
+    const guard = code.get("document-storage/guard.ts")!;
+    expect(guard).toMatch(/NODE_ENV === "test"/);
+    expect(guard).toMatch(/process\.env\.VITEST/);
+  });
+
+  it("no Drive folder id or credential is hard-coded in source; the folder id comes only from configuration, and documentation examples are placeholders only", () => {
+    for (const [name, source] of raw) expect(source, name).not.toMatch(/^FINANCE_INVOICE_DRIVE_FOLDER_ID=.+$/m);
+    const env = readFileSync(path.join(repoRoot, "src/lib/env/server.ts"), "utf8");
+    expect(env).toMatch(/FINANCE_INVOICE_DRIVE_FOLDER_ID/);
+    expect(env).toMatch(/FINANCE_INVOICE_DRIVE_PROVIDER/);
+    const example = readFileSync(path.join(repoRoot, ".env.example"), "utf8");
+    expect(example).toMatch(/^FINANCE_INVOICE_DRIVE_FOLDER_ID=\s*$/m);
+    expect(example).toMatch(/^# FINANCE_INVOICE_DRIVE_PROVIDER=google_drive/m);
+  });
+
+  it("provider selection is EXPLICIT: Drive is never selected just because credentials/folder happen to be configured, and the default local/test provider is the fake", () => {
+    const resolver = code.get("document-storage/index.ts")!;
+    expect(resolver).toMatch(/env\.provider === "google_drive"/);
+    expect(resolver).not.toMatch(/credentialsPath[^;]*&&[^;]*folderId[^;]*\?\s*"GOOGLE_DRIVE"/);
+  });
+
+  it("the Drive file id / any raw provider locator never appear on a DTO shape: only the opaque documentId (already the port's existing contract) is representable", () => {
+    const dto = code.get("client-dto.ts")!;
+    expect(dto).not.toMatch(/driveFileId|webViewLink|driveLink|drive\.google\.com/i);
+    const version = z.toJSONSchema(invoiceVersionDocSchema, { io: "input", unrepresentable: "any" }) as { properties: Record<string, unknown> };
+    expect(Object.keys(version.properties)).toContain("document");
+    expect(JSON.stringify(z.toJSONSchema(invoiceVersionDocSchema, { io: "input", unrepresentable: "any" }))).not.toMatch(/driveLink|driveFileId|webViewLink/);
+  });
+
+  it("only the document-storage seam calls into a real backend client; the service layer never imports googleapis or constructs a Drive client directly", () => {
+    const service = code.get("invoice-service.ts")!;
+    expect(service).toMatch(/getInvoiceDocumentStorage\(\)/);
+    expect(service).not.toMatch(/googleapis|google\.drive\(/);
+  });
+});

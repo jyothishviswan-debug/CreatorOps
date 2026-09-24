@@ -61,3 +61,31 @@ export function getFinanceAgreementDriveEnv(): FinanceAgreementDriveEnv {
     mode: process.env.FINANCE_AGREEMENT_DRIVE_MODE?.trim() === "fake" ? "fake" : undefined,
   };
 }
+
+// Step 16E: durable Invoice-document storage (Google Drive) configuration. Read straight from the
+// environment on every call, same discipline as Agreements' own env above.
+//
+//   FINANCE_INVOICE_DRIVE_FOLDER_ID
+//       The single Drive folder id that receives original Invoice document PDFs. Optional: absent =>
+//       "Document storage not configured" (never a fabricated reference). Credentials are the SAME
+//       GOOGLE_APPLICATION_CREDENTIALS Agreements' own Drive adapter uses.
+//   FINANCE_INVOICE_DRIVE_PROVIDER=google_drive
+//       EXPLICIT opt-in only. Unlike Agreements' own resolver (which infers Drive from configuration
+//       presence), Step 16E requires this exact value before Drive is even considered - folder id and
+//       credentials being present is never, by itself, enough to select Drive. Any other value (unset,
+//       "fake", a typo) keeps the in-memory fake as the default outside production, and NOT_CONFIGURED
+//       in production. Never overridden by test-time env values: an automated test run always resolves
+//       to NOT_CONFIGURED unless it explicitly installs a storage override.
+export type FinanceInvoiceDriveEnv = {
+  credentialsPath: string | undefined;
+  folderId: string | undefined;
+  provider: "google_drive" | undefined;
+};
+
+export function getFinanceInvoiceDriveEnv(): FinanceInvoiceDriveEnv {
+  return {
+    credentialsPath: nonBlank(process.env.GOOGLE_APPLICATION_CREDENTIALS),
+    folderId: nonBlank(process.env.FINANCE_INVOICE_DRIVE_FOLDER_ID),
+    provider: process.env.FINANCE_INVOICE_DRIVE_PROVIDER?.trim() === "google_drive" ? "google_drive" : undefined,
+  };
+}
