@@ -1,27 +1,34 @@
 import { AppShell } from "@/ui/AppShell";
 import { ModuleTabs } from "@/ui/ModuleTabs";
-import { WorkspaceView } from "@/ui/WorkspaceView";
-import { getOperationsWorkspace } from "@/features/operations/fixtures";
+import { computeOperationsPermissions, listApprovalQueue } from "@/server/operations";
+import { resolveRequestActor } from "@/server/operations/http";
 
-const TABS = [
-  { label: "Overview", href: "/operations" },
-  { label: "Tasks", href: "/operations/tasks" },
-  { label: "Approvals", href: "/operations/approvals" },
-  { label: "Reminders", href: "/operations/reminders" },
-];
+import { OPERATIONS_TABS } from "@/features/operations/operations-tabs";
+import { ApprovalQueueWorkspace } from "@/features/operations-approvals/ApprovalQueueWorkspace";
 
-export default function OperationsApprovalsPage() {
+// Step 18B: /operations/approvals - the Approval Queue. A live, read-only projection built on Step
+// 18A's zero-persistence service (mirrors src/app/finance/payments/page.tsx's own server-resolves-
+// actor-then-reads-directly shape). No Create action anywhere on this page - see the spec's own
+// "This is a live read model over authoritative source modules" and ApprovalQueueWorkspace.tsx's
+// own top comment for why no mutation ever belongs here.
+export default async function OperationsApprovalsPage() {
+  const actor = await resolveRequestActor();
+  const permissions = await computeOperationsPermissions(actor);
+  const result = permissions.canViewApprovalQueue ? await listApprovalQueue(actor, {}) : null;
+
   return (
     <AppShell>
       <div className="head">
         <div>
-          <div className="eyebrow">ACT & REPORT</div>
-          <h1>Approvals</h1>
-          <p>Decisions waiting on you.</p>
+          <div className="eyebrow">OPERATIONS / APPROVAL QUEUE</div>
+          <h1>Approval Queue</h1>
+          <p>Review items that need action in their source module.</p>
         </div>
       </div>
-      <ModuleTabs tabs={TABS} />
-      <WorkspaceView workspace={getOperationsWorkspace("approvals")} />
+
+      <ModuleTabs tabs={OPERATIONS_TABS} />
+
+      <ApprovalQueueWorkspace initial={result && result.ok ? { items: result.data.items, notices: result.data.notices } : { items: [], notices: [] }} canView={permissions.canViewApprovalQueue} />
     </AppShell>
   );
 }

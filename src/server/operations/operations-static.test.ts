@@ -261,22 +261,30 @@ describe("no external notification integration, no Drive/OCR/bank calls, no cron
   });
 });
 
-describe("no Operations UI in Step 18A (the existing placeholder route is untouched)", () => {
-  it("no .tsx file anywhere imports the Operations backend module", () => {
-    const componentFiles = walk(appDir, (name) => name.endsWith(".tsx"));
-    for (const file of componentFiles) {
-      for (const spec of importsOf(readFileSync(file, "utf8"))) {
-        expect(spec, `${path.relative(srcDir, file)} imports ${spec}`).not.toMatch(/@\/server\/operations/);
-      }
-    }
-  });
-
-  it("the operations app route directory holds only its four pre-existing placeholder pages - no new page was added", () => {
+// Step 18A shipped no UI at all (a placeholder route only) and guarded that boundary with the two
+// checks this block used to contain. Step 18B is the UI step this backend was built for - it is
+// EXPECTED and CORRECT for Operations screens to import @/server/operations now (every one of them
+// does, the same way every closed Finance workspace/detail server page imports its own module
+// directly - see src/app/finance/payments/page.tsx). What still needs guarding after Step 18B is the
+// canonical route SURFACE itself: exactly the seven routes the spec names, never an
+// /operations/overview, v2, or experimental route slipped in alongside them.
+describe("Operations UI route surface (Step 18B): exactly the seven canonical routes, nothing else", () => {
+  it("the operations app route directory holds exactly the seven canonical Step 18B pages", () => {
     const opsAppDir = path.join(appDir, "operations");
     const files = walk(opsAppDir, (name) => name.endsWith(".tsx"))
       .map((f) => path.relative(srcDir, f).split(path.sep).join("/"))
       .sort();
-    expect(files).toEqual(["app/operations/approvals/page.tsx", "app/operations/page.tsx", "app/operations/reminders/page.tsx", "app/operations/tasks/page.tsx"].sort());
+    expect(files).toEqual(
+      [
+        "app/operations/page.tsx",
+        "app/operations/tasks/new/page.tsx",
+        "app/operations/tasks/[taskRef]/page.tsx",
+        "app/operations/approvals/page.tsx",
+        "app/operations/reminders/page.tsx",
+        "app/operations/reminders/new/page.tsx",
+        "app/operations/reminders/[reminderRef]/page.tsx",
+      ].sort(),
+    );
   });
 });
 
