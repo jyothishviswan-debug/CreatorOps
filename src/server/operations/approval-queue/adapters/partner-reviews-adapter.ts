@@ -17,6 +17,18 @@ import type { ApprovalItemDto } from "../types";
 // is imported anywhere in this module (proved by operations-static.test.ts).
 export const PARTNER_REVIEWS_APPROVAL_SCAN_LIMIT = 50;
 
+// Step 18C: a fixed locale, never `undefined` - same reason as src/features/operations/copy.ts's own
+// formatDateTime/src/features/administration/format.ts's own DATE_LOCALE (a raw ISO timestamp
+// embedded straight into this adapter's `summary` copy was found live during Step 18C's own browser
+// certification pass: "In review since it was last updated on 2026-09-24T17:47:07.190Z."). Formatted
+// here rather than importing the client-facing copy.ts helper, since this module is server-side and
+// deliberately keeps zero non-server-authz/Partner-Reviews-published-read-function imports.
+function formatSummaryDate(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return iso;
+  return date.toLocaleString("en-GB", { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+
 export async function listPendingPartnerReviewApprovals(actor: ActorContext | null): Promise<{ items: ApprovalItemDto[]; scanned: number }> {
   const result = await listPartnerReviewHeads(actor, { status: "IN_REVIEW", limit: PARTNER_REVIEWS_APPROVAL_SCAN_LIMIT });
   if (!result.ok) return { items: [], scanned: 0 };
@@ -35,7 +47,7 @@ export async function listPendingPartnerReviewApprovals(actor: ActorContext | nu
     sourceVersion: head.latestVersion,
     actionType: "FINALIZE_PARTNER_REVIEW",
     title: `Finalize review - ${head.partnerDisplayName ?? "Partner"} (${head.periodKey})`,
-    summary: `In review since it was last updated on ${head.updatedAt}. Partner: ${head.partnerDisplayName ?? "unknown"}. Period: ${head.periodKey}.`,
+    summary: `In review since it was last updated on ${formatSummaryDate(head.updatedAt)}. Partner: ${head.partnerDisplayName ?? "unknown"}. Period: ${head.periodKey}.`,
     requestedBy: head.updatedByUserRef,
     requestedByDisplayName: displayNames.get(head.updatedByUserRef) ?? null,
     requestedAt: head.updatedAt,

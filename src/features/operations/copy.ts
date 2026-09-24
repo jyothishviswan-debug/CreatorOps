@@ -108,11 +108,20 @@ export const APPROVAL_SOURCE_LABEL: Record<ApprovalSourceModule, string> = {
   finance_payments: "Payment",
 };
 
+// Step 18C: a fixed locale, never `undefined` - `undefined` resolves to the running environment's
+// own default locale, which differs between the Node.js server (SSR) and the browser (hydration),
+// producing two different formatted strings for the exact same instant and a genuine React hydration
+// mismatch (observed live on a Task detail page's "Created"/"Updated" fields during Step 18C's own
+// browser certification pass: server rendered "24 Sept 2026, 23:14", client rehydrated to
+// "Sep 24, 2026, 11:14 PM"). "en-GB" matches the SAME fix already applied for this exact reason
+// elsewhere in the app - see src/features/administration/format.ts's own DATE_LOCALE constant.
+const DATE_LOCALE = "en-GB";
+
 export function formatDateTime(iso: string | null): string {
   if (!iso) return "—";
   const date = new Date(iso);
   if (Number.isNaN(date.getTime())) return "—";
-  return date.toLocaleString(undefined, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
+  return date.toLocaleString(DATE_LOCALE, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
 export function formatDateTimeInputValue(iso: string | null): string {

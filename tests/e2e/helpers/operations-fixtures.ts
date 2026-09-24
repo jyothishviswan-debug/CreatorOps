@@ -8,6 +8,8 @@ import { createReminder } from "@/server/operations/reminder-service";
 import { finalizePartnerReview } from "@/server/partner-reviews/partner-review-lifecycle-service";
 import { getAdminFirestore } from "@/server/firebase/admin";
 import { operationsTasksCollection, operationsRemindersCollection } from "@/server/operations/firestore";
+import { getPartnerDocByRef } from "@/server/partners/firestore";
+import type { PartnerDoc } from "@/server/partners/types";
 
 // Step 18B e2e fixtures for the Operations UI. Built on TOP of createFinanceFixtures (real Partner
 // records + actorOf(role)) and partner-reviews-fixtures' seedDirectReview - the SAME established
@@ -62,6 +64,26 @@ export function createOperationsFixtures(tag: string) {
     return { partner, reviewRef };
   }
 
+  // Step 18C: the SAME live-pending-review shape as seedPendingApproval above, but the underlying
+  // Partner is seeded into `finance.hiddenRegion` - a region grantFixtureRegion() never grants to
+  // ANY fixture identity (manager/head/viewer/analyst). This is the established "record-scope
+  // contrast" idiom every other Finance/Partner-Reviews e2e fixture already uses (see
+  // finance-agreements-onboarding.spec.ts / partner-reviews-workspace.spec.ts's own `fx.hiddenRegion`
+  // seeds) - here it proves the Approval Queue's own live re-derivation inherits Partner Reviews'
+  // record-scope gate, independent of the acting role's Operations feature/action grants (Head holds
+  // full view_approval_queue yet still cannot see a hidden-region item).
+  async function seedScopedOutPendingApproval(displayName: string) {
+    const partner = await finance.seedPartner({ displayName, regionIds: [finance.hiddenRegion] });
+    const { reviewRef } = await reviews.seedDirectReview(partner, "2026-08", { status: "IN_REVIEW" });
+    return { partner, reviewRef };
+  }
+
+  // Raw Firestore snapshot of a Partner doc - used to prove a Task/Reminder lifecycle running against
+  // this Partner as its target never mutates the Partner record itself (cross-module immutability).
+  async function snapshotPartner(partnerRef: string): Promise<PartnerDoc | null> {
+    return getPartnerDocByRef(partnerRef);
+  }
+
   async function finalizeReview(reviewRef: string, as: RoleName = "head") {
     const actor = await finance.actorOf(as);
     return must(await finalizePartnerReview(actor, reviewRef, { expectedDocVersion: 1 }, randomUUID()), "finalizePartnerReview");
@@ -75,7 +97,7 @@ export function createOperationsFixtures(tag: string) {
     await finance.cleanupAll();
   }
 
-  return { finance, reviews, seedTask, seedReminder, seedPendingApproval, finalizeReview, cleanupAll };
+  return { finance, reviews, seedTask, seedReminder, seedPendingApproval, seedScopedOutPendingApproval, snapshotPartner, finalizeReview, cleanupAll };
 }
 
 export type OperationsFixtures = ReturnType<typeof createOperationsFixtures>;

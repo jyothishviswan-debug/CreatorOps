@@ -29,8 +29,13 @@ const STATIC_ROUTES = [
   "/finance/payables",
   "/finance/invoices",
   "/finance/payments",
+  // Step 18A/18B replaced the Step 3B skeleton's own placeholder /operations/tasks route with the
+  // real Tasks workspace living directly at /operations (see operations-tabs.ts / the accepted
+  // Operations navigation contract - Tasks | Approval Queue | Reminders, at /operations,
+  // /operations/approvals, /operations/reminders) - the skeleton-era /operations/tasks entry below
+  // this comment used to point at was never migrated and 404s against current `main`. Removed here
+  // (Step 18C) rather than reintroducing a route the accepted design no longer has.
   "/operations",
-  "/operations/tasks",
   "/operations/approvals",
   "/operations/reminders",
   "/reports",

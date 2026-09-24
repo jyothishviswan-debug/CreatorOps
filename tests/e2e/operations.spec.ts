@@ -102,6 +102,61 @@ test.describe("Tasks", () => {
     expect(errors.errors).toEqual([]);
   });
 
+  test("4: Edit Task changes permitted fields and is audited", async ({ page }) => {
+    const errors = collectBrowserErrors(page);
+    const partner = await fx.finance.seedPartner({ displayName: `${TAG} Edit Partner` });
+    const task = await fx.seedTask({ title: `${TAG} Editable Task`, targetType: "PARTNER", targetRef: partner.partnerRef, assigneeUserRef: managerUserRef });
+
+    await signInAs(page, "head");
+    await page.goto(`/operations/tasks/${task.taskRef}`);
+    await page.getByTestId("task-action-edit").click();
+    await page.getByTestId("edit-task-title").fill(`${TAG} Editable Task (revised)`);
+    await page.getByTestId("edit-task-reason").fill("Correcting the title.");
+    await page.getByTestId("edit-task-submit").click();
+
+    // DialogShell wraps a native <dialog> - its content stays IN THE DOM (closed via the imperative
+    // .close() DOM API, not by unmounting), so a mere presence check would pass even while the dialog
+    // is still open. Assert on visibility (native <dialog> hides its content via the UA stylesheet
+    // when not open) and, load-bearingly, on the h1 actually reflecting the server's revised title.
+    await expect(page.getByTestId("edit-task-submit")).not.toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: `${TAG} Editable Task (revised)` })).toBeVisible();
+
+    await page.getByRole("tab", { name: "Activity" }).click();
+    await expect(page.getByTestId("task-activity-row").filter({ hasText: "Revised" })).toBeVisible();
+    expect(errors.errors).toEqual([]);
+  });
+
+  test("Task target (the linked Partner record) remains byte-for-byte unchanged across a full lifecycle - Operations owns no target mutation", async ({ page }) => {
+    const errors = collectBrowserErrors(page);
+    const partner = await fx.finance.seedPartner({ displayName: `${TAG} Immutability Partner` });
+    const before = await fx.snapshotPartner(partner.partnerRef);
+    expect(before).not.toBeNull();
+
+    const task = await fx.seedTask({ title: `${TAG} Immutability Task`, targetType: "PARTNER", targetRef: partner.partnerRef, assigneeUserRef: managerUserRef });
+
+    await signInAs(page, "head");
+    await page.goto(`/operations/tasks/${task.taskRef}`);
+    await page.getByTestId("task-action-start").click();
+    await expect(page.getByText("In progress", { exact: true }).first()).toBeVisible();
+    await page.getByTestId("task-action-block").click();
+    await page.getByTestId("lifecycle-reason-input").fill("Waiting on a reply.");
+    await page.getByTestId("lifecycle-reason-confirm").click();
+    await expect(page.getByText("Blocked", { exact: true }).first()).toBeVisible();
+    await page.getByTestId("task-action-unblock").click();
+    await expect(page.getByText("In progress", { exact: true }).first()).toBeVisible();
+    await page.getByTestId("task-action-edit").click();
+    await page.getByTestId("edit-task-title").fill(`${TAG} Immutability Task (revised)`);
+    await page.getByTestId("edit-task-reason").fill("Small title fix.");
+    await page.getByTestId("edit-task-submit").click();
+    await expect(page.getByTestId("edit-task-submit")).not.toBeVisible();
+    await page.getByTestId("task-action-complete").click();
+    await expect(page.getByText("Done", { exact: true }).first()).toBeVisible();
+
+    const after = await fx.snapshotPartner(partner.partnerRef);
+    expect(after).toEqual(before);
+    expect(errors.errors).toEqual([]);
+  });
+
   test("5: Activity tab lists every lifecycle event in order", async ({ page }) => {
     const errors = collectBrowserErrors(page);
     await signInAs(page, "head");
@@ -171,6 +226,49 @@ test.describe("Approval Queue", () => {
 
     await page.getByTestId("refresh-approval-queue").click();
     await expect(page.getByTestId("approval-row").filter({ hasText: partner.displayName })).toHaveCount(0);
+    expect(errors.errors).toEqual([]);
+  });
+
+  test("11: no generic approval mutation control exists anywhere on the Approval Queue page (page-wide sweep, not just one row)", async ({ page }) => {
+    const errors = collectBrowserErrors(page);
+    const { partner } = await fx.seedPendingApproval(`${TAG} Sweep Partner`);
+    await signInAs(page, "head");
+    await page.goto("/operations/approvals");
+    await expect(page.getByTestId("approval-row").filter({ hasText: partner.displayName })).toBeVisible();
+
+    // No generic Approve/Reject/Resolve/Confirm/Finalize control anywhere on the WHOLE page - not
+    // scoped to a single row. "Finalize" is legitimately allowed to appear on the Partner Review's
+    // OWN page after following "Open source" (a separate page, asserted in 7-8), but must never
+    // appear as a control ON the Approval Queue page itself.
+    for (const forbidden of ["Approve", "Reject", "Resolve", "Confirm", "Finalize"]) {
+      await expect(page.getByRole("button", { name: forbidden })).toHaveCount(0);
+      await expect(page.getByRole("link", { name: forbidden })).toHaveCount(0);
+    }
+    // Only "Open source" is a real cross-module navigation control; every other interactive element
+    // on the page is read-only (search/filter/refresh), never a mutation.
+    const buttons = await page.getByRole("button").all();
+    for (const button of buttons) {
+      const name = (await button.textContent())?.trim() ?? "";
+      expect(["Approve", "Reject", "Resolve", "Confirm", "Finalize", "Set status"]).not.toContain(name);
+    }
+    expect(errors.errors).toEqual([]);
+  });
+
+  test("17: a record-scope-limited item does not appear in the Approval Queue, even for an actor who otherwise holds full view_approval_queue (scope, not role)", async ({ page }) => {
+    const errors = collectBrowserErrors(page);
+    // Partnership Head holds the SAME view_approval_queue grant as Manager (Step 18A's own "no
+    // separate approval step" shape) - this proves the queue is additionally gated per-record by the
+    // source module's own scope model, not just by the Operations feature/action grant. The Partner
+    // backing this review lives in `finance.hiddenRegion`, a region grantFixtureRegion() never grants
+    // to ANY fixture identity, so no seeded role (Head included) can see it - a genuine record-scope
+    // denial, distinct from the role-based "Analyst cannot view Approval Queue at all" case below.
+    const { partner, reviewRef } = await fx.seedScopedOutPendingApproval(`${TAG} Scoped Out Partner`);
+    await signInAs(page, "head");
+    await page.goto("/operations/approvals");
+    await expect(page.getByTestId("approval-row").filter({ hasText: partner.displayName })).toHaveCount(0);
+    // Existence is not leaked through any other surface on the page either (title/error text).
+    await expect(page.getByText(partner.displayName)).toHaveCount(0);
+    await expect(page.getByText(reviewRef)).toHaveCount(0);
     expect(errors.errors).toEqual([]);
   });
 
