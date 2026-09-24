@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 import { attachInvoiceDocument, createInvoiceDraft, previewInvoiceEligibility, previewInvoiceExtraction, reconcileInvoice, reviseInvoiceDraft } from "../api-client";
+import { todayUtcDate } from "../format";
 import type { InvoiceDetailDto, InvoiceExtractedFieldProposalDto, InvoiceVersionDto } from "@/server/finance-invoices/client-dto";
 import type { InvoicePermissionsDto } from "@/server/finance-invoices/client-dto";
 import type { PreviewInvoiceEligibilityDto } from "@/server/finance-invoices/invoice-service";
@@ -121,6 +122,14 @@ export function InvoiceCreatePage({ permissions }: { permissions: InvoicePermiss
     setStagedDocument(document);
     setExtractionStatus("extracting");
     setExtractionError(null);
+
+    // Received date is never extracted from the document itself (it records when WE received it,
+    // not a date the invoice declares) - default it to today the moment a file is staged, exactly
+    // like a person would fill it in by hand. Respects the same touched-field guard as every other
+    // field, so a value the user already set (on this document or a prior one) is never overwritten.
+    if (!touchedFieldsRef.current.has("receivedDate")) {
+      setDetailsForm((current) => (current.receivedDate ? current : { ...current, receivedDate: todayUtcDate() }));
+    }
 
     let current = invoice;
     if (!current) {

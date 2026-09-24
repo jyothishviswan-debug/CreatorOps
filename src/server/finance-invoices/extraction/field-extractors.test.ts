@@ -73,4 +73,21 @@ describe("extractInvoiceFields", () => {
     expect(totals[0]!.value).toBe(100_000);
     expect(totals[0]!.page).toBe(1);
   });
+
+  it("finds an amount glued directly BEFORE its label with no separator (a real PDF-export layout)", () => {
+    // Confirmed real-world pattern from a user-uploaded invoice: the amount and its label render
+    // with zero whitespace between them once the PDF's text layer is flattened.
+    const result = fields("₹27000Sub Total");
+    const proposal = result.fields.find((f) => f.fieldKey === "subtotalMinor");
+    expect(proposal?.value).toBe(2_700_000);
+    expect(proposal?.confidence).toBe("HIGH");
+    expect(proposal?.warnings).toContain("amount_found_before_label");
+  });
+
+  it("does not misattribute an unrelated amount earlier on the page to a later label", () => {
+    // "INR 500" here is a separate line item, not glued onto "Total" - the gap is too wide to
+    // trust, so this must not propose 500 as the declared total.
+    const result = fields("Line item: INR 500\n\nTotal: to be confirmed later");
+    expect(result.fields.some((f) => f.fieldKey === "declaredTotalMinor")).toBe(false);
+  });
 });

@@ -200,6 +200,12 @@ export function parseRatePercentToBasisPoints(input: string): { ok: true; value:
   return { ok: true, value };
 }
 
+// The current UTC calendar date as YYYY-MM-DD (injectable clock for tests) - a local copy of
+// Agreements' own equivalent, same "Finance never imports from another feature's format module" rule.
+export function todayUtcDate(now: Date = new Date()): string {
+  return now.toISOString().slice(0, 10);
+}
+
 // --- File size --------------------------------------------------------------------------------------------------------------------
 export function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;

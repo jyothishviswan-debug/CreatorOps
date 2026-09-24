@@ -24,13 +24,13 @@ function snippetAround(text: string, index: number, length: number): string {
 // Finds the first occurrence of ANY label in `labels` (case-insensitive) on `text`, and returns
 // the text window immediately after it (up to WINDOW_CHARS or the next blank line, whichever is
 // shorter) plus the label's own match index (for the snippet and confidence check).
-function windowAfterLabel(text: string, labels: RegExp): { window: string; labelEnd: number; sameLineChars: number } | null {
+function windowAfterLabel(text: string, labels: RegExp): { window: string; labelStart: number; labelEnd: number; sameLineChars: number } | null {
   const match = labels.exec(text);
   if (!match) return null;
   const labelEnd = match.index + match[0].length;
   const restOfLine = text.slice(labelEnd, text.indexOf("\n", labelEnd) === -1 ? text.length : text.indexOf("\n", labelEnd));
   const window = text.slice(labelEnd, labelEnd + WINDOW_CHARS);
-  return { window, labelEnd, sameLineChars: restOfLine.length };
+  return { window, labelStart: match.index, labelEnd, sameLineChars: restOfLine.length };
 }
 
 function amountField(
@@ -42,19 +42,42 @@ function amountField(
   const found = windowAfterLabel(page, labelPattern);
   if (!found) return null;
   const amounts = findAmounts(found.window);
-  if (amounts.length === 0) return null;
-  const amount = amounts[0]!;
-  // HIGH when the amount sits within the label's own line (a clean "Label: 5,000" pattern);
-  // MEDIUM when it was found further down the window (a label followed by a line break, still
-  // unambiguous - only one amount was found in the whole window).
-  const confidence: InvoiceExtractionConfidence = amount.index < found.sameLineChars + 5 ? "HIGH" : "MEDIUM";
+  if (amounts.length > 0) {
+    const amount = amounts[0]!;
+    // HIGH when the amount sits within the label's own line (a clean "Label: 5,000" pattern);
+    // MEDIUM when it was found further down the window (a label followed by a line break, still
+    // unambiguous - only one amount was found in the whole window).
+    const confidence: InvoiceExtractionConfidence = amount.index < found.sameLineChars + 5 ? "HIGH" : "MEDIUM";
+    return {
+      fieldKey,
+      value: amount.amountMinor,
+      rawSnippet: snippetAround(found.window, amount.index, amount.length),
+      page: pageIndex + 1,
+      confidence,
+      warnings: [],
+      requiresHumanConfirmation: true,
+      restricted: false,
+    };
+  }
+
+  // Fallback: some real invoice layouts place the amount immediately BEFORE its label with NO
+  // separator at all (e.g. a PDF export that glues "₹27000" straight onto "Sub Total" once the
+  // text layer is flattened). Only ever trusted when the amount is glued with ZERO characters of
+  // gap - anything else (a space, a line break) means it's a different piece of text (a line item
+  // a paragraph above, a rate) and must never be misattributed to this label.
+  const beforeStart = Math.max(0, found.labelStart - WINDOW_CHARS);
+  const beforeWindow = page.slice(beforeStart, found.labelStart);
+  const beforeAmounts = findAmounts(beforeWindow);
+  if (beforeAmounts.length === 0) return null;
+  const closest = beforeAmounts[beforeAmounts.length - 1]!;
+  if (closest.index + closest.length !== beforeWindow.length) return null;
   return {
     fieldKey,
-    value: amount.amountMinor,
-    rawSnippet: snippetAround(found.window, amount.index, amount.length),
+    value: closest.amountMinor,
+    rawSnippet: snippetAround(page, beforeStart + closest.index, closest.length),
     page: pageIndex + 1,
-    confidence,
-    warnings: [],
+    confidence: "HIGH",
+    warnings: ["amount_found_before_label"],
     requiresHumanConfirmation: true,
     restricted: false,
   };

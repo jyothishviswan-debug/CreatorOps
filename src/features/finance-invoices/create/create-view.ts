@@ -120,7 +120,7 @@ export function detailsFormComplete(form: InvoiceDetailsForm): boolean {
 // TouchableFormField, which is intentionally NOT imported from here - a UI-side literal list and a
 // view-side literal list agreeing is itself part of the safety property; a typo in either desyncs
 // them and the corresponding unit test below catches it).
-export type TouchableInvoiceField = "externalInvoiceNumber" | "invoiceDate" | "dueDate" | "currency" | "subtotalText" | "declaredTotalText" | "taxLines";
+export type TouchableInvoiceField = "externalInvoiceNumber" | "invoiceDate" | "dueDate" | "receivedDate" | "currency" | "subtotalText" | "declaredTotalText" | "taxLines";
 
 export type InvoiceExtractionProposal = { fieldKey: string; value: string | number | null };
 
