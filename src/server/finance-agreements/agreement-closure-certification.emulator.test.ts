@@ -505,17 +505,18 @@ const productionSrc = allSrc.filter((file) => /\.(ts|tsx)$/.test(file) && !isTes
 // real Invoice UI landed and replaced the invoices placeholder page, exactly as Payables UI did to
 // this same block in Step 15B, but this file's own PLACEHOLDERS/INVOICE_OWNERS were never updated
 // to match.
-// Step 17A: Payments now EXIST too - BACKEND/API ONLY (section 17A's own explicit scope: no UI).
-// `/finance/payments` stays the fixture-only placeholder page it always was (still not
-// implemented); only src/server/finance-payments/** and its API routes under
-// src/app/api/finance/payments/** are new. What this block still certifies, unchanged and in full,
-// is that Payments has no UI implementation of any kind, and that everything Payable-, Invoice- or
-// Payment-shaped lives in exactly the places that are allowed to own it.
-describe("Payment implementation is BACKEND/API ONLY (Payables landed in Step 15A, Invoices landed in Step 16A/16B, Payments landed backend-only in Step 17A)", () => {
-  // Payments' own UI remains the one fixture-only placeholder page (still not implemented, by
-  // Step 17A's own explicit scope). Invoices' own placeholder page is gone - Step 16B replaced it
-  // with the real workspace.
-  const PLACEHOLDERS = ["src/app/finance/payments/page.tsx"];
+// Step 17A: Payments backend/API landed first - BACKEND/API ONLY (section 17A's own explicit
+// scope: no UI). Step 17B (pre-existing gap fixed here, unrelated to Step 17C - discovered during
+// Step 17C's own emulator regression, not caused by it, same category as Step 16B's own fix above):
+// the real Payments UI landed and replaced the payments placeholder page, exactly as Invoices UI
+// did to this same block in Step 16B, but this file's own PLACEHOLDERS/PAYMENT_OWNERS were never
+// updated to match. What this block still certifies, unchanged and in full, is that everything
+// Payable-, Invoice- or Payment-shaped lives in exactly the places that are allowed to own it.
+describe("Payment implementation (Payables landed in Step 15A, Invoices landed in Step 16A/16B, Payments backend landed in Step 17A, Payments UI landed in Step 17B)", () => {
+  // No frozen placeholder remains for any of the three modules - Payables' own placeholder page is
+  // gone (Step 15B), Invoices' own placeholder page is gone (Step 16B), and Payments' own
+  // placeholder page is gone too (Step 17B) - all three now have their real workspace.
+  const PLACEHOLDERS: string[] = [];
   // The only places a Payable-named path may live: the Payables module, its API routes, and (as of
   // Step 15B) its real UI - the three canonical routes under src/app/finance/payables/** and the
   // feature code under src/features/finance-payables/**.
@@ -524,22 +525,17 @@ describe("Payment implementation is BACKEND/API ONLY (Payables landed in Step 15
   // Step 16B) its real UI - the three canonical routes under src/app/finance/invoices/** and the
   // feature code under src/features/finance-invoices/**.
   const INVOICE_OWNERS = [/^src\/app\/finance\/invoices\//, /^src\/features\/finance-invoices\//, /^src\/server\/finance-invoices\//, /^src\/app\/api\/finance\/invoices\//];
-  // The only places a Payment-named path may live: the Payments module and its API routes -
-  // DELIBERATELY no `src/app/finance/payments/**` (beyond the frozen placeholder itself) and no
-  // `src/features/finance-payments/**` - Step 17A builds no UI at all.
-  const PAYMENT_OWNERS = [/^src\/server\/finance-payments\//, /^src\/app\/api\/finance\/payments\//];
+  // The only places a Payment-named path may live: the Payments module, its API routes, and (as of
+  // Step 17B) its real UI - the three canonical routes under src/app/finance/payments/** and the
+  // feature code under src/features/finance-payments/**.
+  const PAYMENT_OWNERS = [/^src\/app\/finance\/payments\//, /^src\/features\/finance-payments\//, /^src\/server\/finance-payments\//, /^src\/app\/api\/finance\/payments\//];
 
-  it("every payment-named path belongs to the Payments module/routes or is the frozen placeholder page, and every payable-/invoice-named path belongs to its own module, its routes or its placeholder page", () => {
+  it("every payment-named path belongs to the Payments module/routes, and every payable-/invoice-named path belongs to its own module or routes", () => {
     const paymentNamed = allSrc.map(relative).filter((file) => /(payment|settlement)/i.test(file));
     expect(paymentNamed.length).toBeGreaterThan(5);
     for (const file of paymentNamed) {
       expect(PLACEHOLDERS.includes(file) || PAYMENT_OWNERS.some((owner) => owner.test(file)), file).toBe(true);
     }
-    // No Payments UI beyond the frozen placeholder: nothing under src/app/finance/payments/** other
-    // than the placeholder page itself, and no src/features/finance-payments/** at all.
-    const paymentsAppFiles = allSrc.map(relative).filter((file) => file.startsWith("src/app/finance/payments/"));
-    expect(paymentsAppFiles).toEqual(PLACEHOLDERS);
-    expect(allSrc.map(relative).filter((file) => file.startsWith("src/features/finance-payments/"))).toEqual([]);
 
     // A payable-named path belongs to the Payables module itself, OR (Step 16A) to the Invoices
     // module - an Invoice legitimately pins and reads a Payable, so a file like

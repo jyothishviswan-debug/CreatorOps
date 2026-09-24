@@ -696,10 +696,12 @@ describe("status read, and Finance stores no identity data", () => {
 
     // Step 15A: `financePayables` is now a legitimate Finance root owned by its own module, and other emulator test files
     // (which run in parallel against the one emulator) may first-write it during this test. Step 16A: `financeInvoices` and
-    // `financeInvoiceNumberClaims` join it the same way, owned by the Invoices module. Onboarding itself still writes none
-    // of these - that is what the instrumented `docs` walk above proves - and Payments still has no root at all.
+    // `financeInvoiceNumberClaims` join it the same way, owned by the Invoices module. Step 17A: `financePayments`,
+    // `financePaymentReferenceClaims` and `financePaymentSettlements` join it the same way, owned by the Payments module
+    // (Step 17C found and closed this gap - it was never added when Step 17A landed). Onboarding itself still writes none
+    // of these - that is what the instrumented `docs` walk above proves.
     const collections = (await getAdminFirestore().listCollections()).map((collection) => collection.id);
-    const LEGITIMATE_FINANCE_ROOTS = new Set(["financePayables", "financeInvoices", "financeInvoiceNumberClaims"]);
+    const LEGITIMATE_FINANCE_ROOTS = new Set(["financePayables", "financeInvoices", "financeInvoiceNumberClaims", "financePayments", "financePaymentReferenceClaims", "financePaymentSettlements"]);
     expect(collections.filter((id) => /payable|invoice|payment|settlement/i.test(id) && !LEGITIMATE_FINANCE_ROOTS.has(id))).toEqual([]);
   });
 });
