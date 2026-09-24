@@ -83,10 +83,17 @@ describe("a Payment consumes an Invoice only through its public, read-only contr
     expect(source).toMatch(/INVOICE_NOT_APPROVED/);
   });
 
-  it("the payment target is expectedNetPaymentMinor - never a gross total, service base or Agreement amount", () => {
+  // Step 17B section 13 legitimately pins service base/GST/gross/TDS onto PaymentInvoicePin too -
+  // as clearly-named, READ-ONLY display context for the Source Invoice tab, never as a candidate
+  // for the payment's own target amount. The real invariant this guards is narrower and more
+  // precise than "never mention these identifiers at all": the TARGET assignment itself
+  // (`expectedNetPaymentMinor:`) must always come from the Invoice's own already-computed net
+  // figure, never from gross/service-base/declared-total/Agreement-amount.
+  it("the payment target is expectedNetPaymentMinor - pinned from the Invoice's own net figure, never substituted with a gross total, service base or Agreement amount", () => {
     const source = code.get("payment-source.ts")!;
-    expect(source).toMatch(/expectedNetPaymentMinor/);
-    expect(source).not.toMatch(/declaredTotalMinor|payableGrossInvoiceExpectedMinor|payableServiceBaseMinor|payableTotalAmountMinorSigned|agreementMonthlyAmount/);
+    expect(source).toMatch(/expectedNetPaymentMinor:\s*version\.payablePin\.payableExpectedNetPaymentMinor/);
+    expect(source).not.toMatch(/expectedNetPaymentMinor:\s*version\.payablePin\.(?!payableExpectedNetPaymentMinor)\w+/);
+    expect(source).not.toMatch(/declaredTotalMinor|payableTotalAmountMinorSigned|agreementMonthlyAmount/);
   });
 
   it("only the module's own Firestore helper performs a write, and it names only Payment collections", () => {

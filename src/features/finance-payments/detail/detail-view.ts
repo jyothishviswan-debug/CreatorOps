@@ -145,13 +145,19 @@ export function sourceInvoiceRows(detail: PaymentDetailDto): SourceInvoiceRow[] 
   const { head, selectedVersion } = detail;
   const opts = { amountsVisible: detail.amountsVisible };
   const pin = selectedVersion?.invoicePin ?? null;
+  const currency = pin?.currency ?? head.currency;
   const rows: SourceInvoiceRow[] = [
+    { label: "Invoice number", value: pin?.externalInvoiceNumber ?? "—" },
     { label: "Invoice ref / version", value: pin ? invoicePinRefLabel(pin) : head.invoiceRef },
     { label: "Counterparty", value: `${head.counterparty.displayName ?? head.counterparty.ref} (${counterpartyTypeLabel(head.counterparty.type)})` },
     { label: "Payable ref / version", value: pin ? payablePinRefLabel(pin) : head.payableRef },
     { label: "Commercial period", value: pin?.commercialPeriod.periodKey ?? "—" },
-    { label: "Currency", value: pin?.currency ?? head.currency },
-    { label: "Expected net payment", value: formatMoneyMinor(pin?.expectedNetPaymentMinor ?? null, pin?.currency ?? head.currency, opts) },
+    { label: "Currency", value: currency },
+    { label: "Service base", value: formatMoneyMinor(pin?.serviceBaseMinor ?? null, currency, opts) },
+    { label: "GST", value: formatMoneyMinor(pin?.gstMinor ?? null, currency, opts) },
+    { label: "Gross approved Invoice", value: formatMoneyMinor(pin?.grossInvoiceExpectedMinor ?? null, currency, opts) },
+    { label: "TDS", value: formatMoneyMinor(pin?.tdsMinor ?? null, currency, opts) },
+    { label: "Expected net payment", value: formatMoneyMinor(pin?.expectedNetPaymentMinor ?? null, currency, opts) },
     { label: "Payee identity decision", value: payeeIdentityStatusLabel(selectedVersion?.payeeIdentity.overallStatusAtApproval ?? null) },
   ];
   return rows;

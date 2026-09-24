@@ -79,6 +79,15 @@ export const paymentInvoicePinSchema = z
     counterpartyRef: refString,
     commercialPeriod: commercialPeriodSchema,
     currency: currencyCodeSchema,
+    externalInvoiceNumber: shortText(200).nullable(),
+    // Step 17B section 13: the Invoice's own already-computed breakdown, pinned alongside the
+    // payment target for read-only display on the Source Invoice tab - NEVER recomputed here (same
+    // "copy verbatim, never re-derive" discipline as expectedNetPaymentMinor below and the payee-
+    // identity snapshot above).
+    serviceBaseMinor: amountMinorSchema,
+    gstMinor: amountMinorSchema,
+    grossInvoiceExpectedMinor: amountMinorSchema,
+    tdsMinor: amountMinorSchema,
     // THE payment target (section 3) - never the gross Invoice total, service base, or Agreement
     // monthly amount. Null only when the actor pinning the source could not see amounts (blocked
     // upstream by payment-source.ts before a draft is ever created - kept nullable here only so the

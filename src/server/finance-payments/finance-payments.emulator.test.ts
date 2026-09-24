@@ -421,6 +421,11 @@ describe("lifecycle: draft, record, confirm, fail, reopen, void", () => {
     const settlement = must(await getInvoicePaymentSettlement(headActor, invoice.head.invoiceRef), "settlement");
     expect(settlement.summary.confirmedPaidMinor).toBe(Math.floor(expectedNetPaymentMinor / 2));
     expect(settlement.summary.state).toBe("PARTIALLY_PAID");
+    // Step 17B: the Settlement tab's related-Payments table shows the real method (never "—" for a
+    // payment that actually has one) - the head doc itself doesn't carry method, so this proves the
+    // settlement read model resolves it from the payment's latest version.
+    const row = settlement.payments.find((p) => p.paymentRef === confirmed.head.paymentRef);
+    expect(row?.method).toBe("BANK_TRANSFER");
   });
 
   it("fails a recorded payment (never counts), and reopening creates a revised DRAFT version under the same head", async () => {

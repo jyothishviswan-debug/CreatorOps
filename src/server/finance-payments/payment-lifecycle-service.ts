@@ -407,6 +407,10 @@ export async function getInvoicePaymentSettlement(actor: ActorContext | null, ra
   const currency = source.ok ? source.resolved.pin.currency : null;
 
   const heads = await listPaymentHeadDocsForInvoice(invoiceRef);
+  // The method is on the latest VERSION, not the head - the same one small bounded read per row
+  // (never the whole collection) that payment-workspace-service.ts's own list already does, so the
+  // Settlement tab's related-Payments table (section 12) shows the real method instead of always "—".
+  const methods = await Promise.all(heads.map((head) => listPaymentVersionDocs(head.paymentRef, 1)));
   const countable = heads.filter((head) => head.status === "RECORDED" || head.status === "CONFIRMED" || head.status === "FAILED");
   const summary = computeSettlement(
     expectedNetPaymentMinor,
@@ -431,7 +435,7 @@ export async function getInvoicePaymentSettlement(actor: ActorContext | null, ra
         state: summary.state,
         warnings: summary.warnings,
       },
-      payments: heads.map((head) => toPaymentRowDto(head, null, null, options)),
+      payments: heads.map((head, index) => toPaymentRowDto(head, null, methods[index]?.versions[0]?.method ?? null, options)),
     },
   };
 }

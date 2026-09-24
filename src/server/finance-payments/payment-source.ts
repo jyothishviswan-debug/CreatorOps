@@ -53,7 +53,13 @@ export async function resolvePaymentInvoiceSource(actor: ActorContext, invoiceRe
   if (!invoice.amountsVisible) {
     return blocked("INVOICE_AMOUNTS_UNAVAILABLE", "You do not hold Finance amounts access, so this invoice's expected net payment cannot be pinned to a Payment.");
   }
-  if (version.payablePin.payableExpectedNetPaymentMinor === null) {
+  if (
+    version.payablePin.payableExpectedNetPaymentMinor === null ||
+    version.payablePin.payableServiceBaseMinor === null ||
+    version.payablePin.payableGstMinor === null ||
+    version.payablePin.payableGrossInvoiceExpectedMinor === null ||
+    version.payablePin.payableTdsMinor === null
+  ) {
     return blocked("INVOICE_MISSING_EXPECTED_NET_PAYMENT", "This invoice's pinned payable has no computed expected net payment yet.");
   }
   if (version.currency === null) {
@@ -76,6 +82,11 @@ export async function resolvePaymentInvoiceSource(actor: ActorContext, invoiceRe
         counterpartyRef: invoice.head.counterparty.ref,
         commercialPeriod: invoice.head.commercialPeriod,
         currency: version.currency,
+        externalInvoiceNumber: version.externalInvoiceNumber,
+        serviceBaseMinor: version.payablePin.payableServiceBaseMinor,
+        gstMinor: version.payablePin.payableGstMinor,
+        grossInvoiceExpectedMinor: version.payablePin.payableGrossInvoiceExpectedMinor,
+        tdsMinor: version.payablePin.payableTdsMinor,
         expectedNetPaymentMinor: version.payablePin.payableExpectedNetPaymentMinor,
         pinnedAt: now().toISOString(),
       },

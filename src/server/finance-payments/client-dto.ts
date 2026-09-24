@@ -37,6 +37,11 @@ export type PaymentInvoicePinDto = {
   counterpartyRef: string;
   commercialPeriod: CommercialPeriod;
   currency: string;
+  externalInvoiceNumber: string | null;
+  serviceBaseMinor: PaymentAmountDto;
+  gstMinor: PaymentAmountDto;
+  grossInvoiceExpectedMinor: PaymentAmountDto;
+  tdsMinor: PaymentAmountDto;
   expectedNetPaymentMinor: PaymentAmountDto;
 };
 
@@ -182,6 +187,11 @@ export function toPaymentInvoicePinDto(pin: PaymentInvoicePin, options: AmountOp
     counterpartyRef: pin.counterpartyRef,
     commercialPeriod: { ...pin.commercialPeriod },
     currency: pin.currency,
+    externalInvoiceNumber: pin.externalInvoiceNumber,
+    serviceBaseMinor: amount(pin.serviceBaseMinor, options),
+    gstMinor: amount(pin.gstMinor, options),
+    grossInvoiceExpectedMinor: amount(pin.grossInvoiceExpectedMinor, options),
+    tdsMinor: amount(pin.tdsMinor, options),
     expectedNetPaymentMinor: amount(pin.expectedNetPaymentMinor, options),
   };
 }
