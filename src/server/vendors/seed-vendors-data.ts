@@ -250,6 +250,7 @@ export async function seedVendorsData(): Promise<void> {
     aadhaar: null,
     gst: { applicable: true, number: "29ABCDE1111F1Z5" },
     bank: { accountHolderName: "Northline Talent Agency", accountNumber: "000000000002", ifsc: "TEST0000002", bankName: "Test Bank", branchName: "Test Branch" },
+    address: null,
     evidence: [],
     updatedAt: nowIso,
     updatedByUserRef: headUserRef,

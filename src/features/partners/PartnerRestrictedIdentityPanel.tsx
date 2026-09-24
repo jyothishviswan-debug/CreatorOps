@@ -24,6 +24,7 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
   const [branchName, setBranchName] = useState("");
   const [gstApplicable, setGstApplicable] = useState(false);
   const [gstNumber, setGstNumber] = useState("");
+  const [address, setAddress] = useState("");
   const [existingVersion, setExistingVersion] = useState(0);
   const [evidence, setEvidence] = useState<RestrictedFinancialIdentityEvidence[]>([]);
   const [saving, setSaving] = useState(false);
@@ -49,6 +50,7 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
       setBranchName(result.data.bank?.branchName ?? "");
       setGstApplicable(result.data.gst?.applicable ?? false);
       setGstNumber(result.data.gst?.number ?? "");
+      setAddress(result.data.address ?? "");
       setExistingVersion(result.data.version);
       setEvidence(result.data.evidence);
     }
@@ -67,6 +69,7 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
       aadhaar: aadhaarNumber.trim() ? { number: aadhaarNumber.trim() } : null,
       bank: accountNumber.trim() ? { accountHolderName, accountNumber, ifsc, bankName, branchName } : null,
       gst: { applicable: gstApplicable, number: gstApplicable ? gstNumber.trim() : undefined },
+      address: address.trim() ? address.trim() : null,
       expectedVersion: existingVersion,
     });
     setSaving(false);
@@ -102,11 +105,15 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
         )}
         {state === "ready" && (
           <form onSubmit={handleSubmit}>
-            <p className="foundationnote">No postal address or address proof is collected. These values are never shown outside this authorized panel.</p>
+            <p className="foundationnote">These values are never shown outside this authorized panel.</p>
             <div className="fields">
               <div className="field">
                 <label htmlFor="ri-pan">PAN</label>
                 <input id="ri-pan" type="text" value={panNumber} onChange={(e) => setPanNumber(e.target.value)} />
+              </div>
+              <div className="field full">
+                <label htmlFor="ri-address">Registered / billing address</label>
+                <textarea id="ri-address" rows={3} maxLength={500} value={address} onChange={(e) => setAddress(e.target.value)} />
               </div>
               <div className="field">
                 <label htmlFor="ri-aadhaar">Aadhaar number</label>

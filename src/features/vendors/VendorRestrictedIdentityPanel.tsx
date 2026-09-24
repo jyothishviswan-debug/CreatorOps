@@ -25,6 +25,7 @@ export function VendorRestrictedIdentityPanel({ vendorRef }: { vendorRef: string
   const [branchName, setBranchName] = useState("");
   const [gstApplicable, setGstApplicable] = useState(false);
   const [gstNumber, setGstNumber] = useState("");
+  const [address, setAddress] = useState("");
   const [existingVersion, setExistingVersion] = useState(0);
   const [evidence, setEvidence] = useState<RestrictedFinancialIdentityEvidence[]>([]);
   const [saving, setSaving] = useState(false);
@@ -49,6 +50,7 @@ export function VendorRestrictedIdentityPanel({ vendorRef }: { vendorRef: string
       setBranchName(result.data.bank?.branchName ?? "");
       setGstApplicable(result.data.gst?.applicable ?? false);
       setGstNumber(result.data.gst?.number ?? "");
+      setAddress(result.data.address ?? "");
       setExistingVersion(result.data.version);
       setEvidence(result.data.evidence);
     }
@@ -66,6 +68,7 @@ export function VendorRestrictedIdentityPanel({ vendorRef }: { vendorRef: string
       pan: panNumber.trim() ? { number: panNumber.trim() } : null,
       bank: accountNumber.trim() ? { accountHolderName, accountNumber, ifsc, bankName, branchName } : null,
       gst: { applicable: gstApplicable, number: gstApplicable ? gstNumber.trim() : undefined },
+      address: address.trim() ? address.trim() : null,
       expectedVersion: existingVersion,
     });
     setSaving(false);
@@ -105,11 +108,15 @@ export function VendorRestrictedIdentityPanel({ vendorRef }: { vendorRef: string
         )}
         {state === "ready" && (
           <form onSubmit={handleSubmit}>
-            <p className="foundationnote">Business subject fields only - no Aadhaar, no postal address. These values are never shown outside this authorized panel.</p>
+            <p className="foundationnote">Business subject fields only - no Aadhaar. These values are never shown outside this authorized panel.</p>
             <div className="fields">
               <div className="field">
                 <label htmlFor="vri-pan">PAN / tax ID</label>
                 <input id="vri-pan" type="text" value={panNumber} onChange={(e) => setPanNumber(e.target.value)} />
+              </div>
+              <div className="field full">
+                <label htmlFor="vri-address">Registered / billing address</label>
+                <textarea id="vri-address" rows={3} maxLength={500} value={address} onChange={(e) => setAddress(e.target.value)} />
               </div>
               <div className="field">
                 <label htmlFor="vri-account-holder">Account holder name</label>

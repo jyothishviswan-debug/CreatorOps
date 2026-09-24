@@ -27,6 +27,7 @@ import { invoiceDocumentIdempotencyKey, invoiceNumberClaimId, invoiceRefFor, nor
 import { appendInvoiceEvent } from "./invoice-events";
 import { resolveInvoicePayableSource, type InvoicePayableBlocker } from "./payable-source";
 import { resolveAndComparePayeeIdentity } from "./payee-identity/resolve-identity";
+import { extractRestrictedPayeeIdentityEvidenceFromBytes } from "./payee-identity/restricted-extraction";
 import { reconcileInvoiceAgainstPayable } from "./reconciliation";
 import { buildInvoiceDetailDto, buildInvoiceHeadDisplay, formatIssues, isAlreadyExistsError, scopeFieldsOf } from "./service-common";
 import {
@@ -380,7 +381,23 @@ export async function reviseInvoiceDraft(actor: ActorContext | null, rawInput: u
   // proposal into `extractedPayeeName` exactly like any other declared field (omitted = keep,
   // explicit null = clear).
   const extractedPayeeName = input.extractedPayeeName === undefined ? previous.extractedPayeeName : input.extractedPayeeName;
-  const payeeIdentity = await resolveAndComparePayeeIdentity({ counterpartyType: previous.payablePin.counterpartyType, counterpartyRef: previous.payablePin.counterpartyRef, extractedPayeeName });
+  // Step 16D section 16: the document itself is UNCHANGED by a plain field revision (it is only
+  // ever replaced via attachInvoiceDocument, above), so restricted GST/address/bank evidence is
+  // re-derived fresh from that SAME currently-attached document's bytes rather than carried forward
+  // from `previous.payeeIdentity` (which is never itself re-used as an input - only the safe,
+  // already-computed verdict of an EARLIER version, never a source of raw restricted evidence).
+  // This keeps a name-only revision from silently losing a previously-detected GST/bank match. No
+  // document attached, or the configured storage cannot return its bytes -> no restricted evidence,
+  // exactly the same as a Draft that has never had a document attached (section 9).
+  let restrictedEvidence = null as Awaited<ReturnType<typeof extractRestrictedPayeeIdentityEvidenceFromBytes>>;
+  if (previous.document) {
+    const resolution = getInvoiceDocumentStorage();
+    if (resolution.state !== "NOT_CONFIGURED") {
+      const bytes = await resolution.storage.get(previous.document.documentId);
+      if (bytes) restrictedEvidence = await extractRestrictedPayeeIdentityEvidenceFromBytes(bytes);
+    }
+  }
+  const payeeIdentity = await resolveAndComparePayeeIdentity({ counterpartyType: previous.payablePin.counterpartyType, counterpartyRef: previous.payablePin.counterpartyRef, extractedPayeeName, restrictedEvidence });
 
   const result = await getAdminFirestore().runTransaction<VersionTxResult>(async (tx) => {
     const head = await txGetInvoiceHead(tx, input.invoiceRef);
@@ -535,6 +552,19 @@ export async function attachInvoiceDocument(actor: ActorContext | null, rawInput
     commercialPeriod: previous.payablePin.commercialPeriod,
   };
 
+  // Step 16D section 5/11/16: a NEW document means a NEW immutable version, so its payee-identity
+  // evidence is re-derived from THESE EXACT bytes (never inherited from `previous`) and the Step 16C
+  // matcher is re-run synchronously, before the transaction - the same "compute fresh, then create
+  // the next version" shape createInvoiceDraft/reviseInvoiceDraft already use for payeeIdentity. No
+  // OCR: a PDF with no extractable text yields no restricted evidence (section 9), never a guess.
+  const restrictedEvidence = await extractRestrictedPayeeIdentityEvidenceFromBytes(bytes);
+  const payeeIdentity = await resolveAndComparePayeeIdentity({
+    counterpartyType: previous.payablePin.counterpartyType,
+    counterpartyRef: previous.payablePin.counterpartyRef,
+    extractedPayeeName: previous.extractedPayeeName,
+    restrictedEvidence,
+  });
+
   const result = await getAdminFirestore().runTransaction<VersionTxResult>(async (tx) => {
     const head = await txGetInvoiceHead(tx, input.invoiceRef);
     const failure = checkDraftRevisable(head, input.expectedDocVersion);
@@ -552,6 +582,7 @@ export async function attachInvoiceDocument(actor: ActorContext | null, rawInput
       version: nextNumber,
       document: { ...documentDto, storedAt: now },
       reconciliation,
+      payeeIdentity,
       changeKind: "document_attached",
       reason: null,
       createdAt: now,
@@ -578,6 +609,15 @@ export async function attachInvoiceDocument(actor: ActorContext | null, rawInput
       version: nextNumber,
       actorUserRef: actor!.userRef,
       metadata: { previousVersion: previous.version, newVersion: nextNumber, changeKind: "document_attached", documentId: documentDto.documentId, fileName: documentDto.fileName, mimeType: documentDto.mimeType },
+      requestId,
+      createdAt: now,
+    });
+    appendInvoiceEvent(tx, {
+      invoiceRef: head.invoiceRef,
+      kind: "INVOICE_PAYEE_IDENTITY_CHECKED",
+      version: nextNumber,
+      actorUserRef: actor!.userRef,
+      metadata: { version: nextNumber, payeeIdentityStatus: payeeIdentity.overallStatus },
       requestId,
       createdAt: now,
     });

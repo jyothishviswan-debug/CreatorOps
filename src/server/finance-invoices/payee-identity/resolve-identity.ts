@@ -2,7 +2,8 @@ import { getPartnerDocByRef } from "@/server/partners/firestore";
 import { getRestrictedFinancialIdentityDoc } from "@/server/shared/restricted-financial-identity";
 import { getVendorDocByRef } from "@/server/vendors/firestore";
 
-import { computePayeeIdentityMatch, type PayeeIdentityEvidence } from "./matcher";
+import { computePayeeIdentityMatch } from "./matcher";
+import { buildPayeeIdentityEvidence, type RestrictedPayeeIdentityEvidence } from "./restricted-extraction";
 import type { PayeeIdentityMatchResult } from "./types";
 
 // Step 16C section 3/4/20: resolves the CANONICAL counterparty identity from the Payable-pinned
@@ -29,9 +30,19 @@ export type ResolvePayeeIdentityInput = {
   counterpartyType: "PARTNER" | "VENDOR";
   counterpartyRef: string;
   // The Invoice's own extracted/declared payee evidence (ordinary, non-restricted - see
-  // extraction/field-extractors.ts's supplierNameField). Address/bank/tax extraction do not exist
-  // yet in this codebase (no OCR, no restricted extraction pipeline) - see the null literals below.
+  // extraction/field-extractors.ts's supplierNameField).
   extractedPayeeName: string | null;
+  // Step 16D: already-extracted RESTRICTED evidence (GSTIN/address/bank) for the EXACT document
+  // bytes this Invoice version pins - computed synchronously by the caller, immediately before this
+  // call, from pdf-text.ts + restricted-extraction.ts (see invoice-service.ts's
+  // attachInvoiceDocument/reviseInvoiceDraft). Never sourced from a client request, never persisted
+  // anywhere raw - this function folds it into the safe comparison result below and then it is
+  // discarded. `null`/omitted when no document is attached yet, its text could not be read (section
+  // 9: no OCR - INSUFFICIENT_EVIDENCE, matching Step 16C's existing behaviour), or the caller has
+  // not (yet) recomputed it (e.g. a Draft with a document already attached, revised for a reason
+  // unrelated to identity - see reviseInvoiceDraft, which always re-derives this from the currently
+  // attached document rather than omitting it).
+  restrictedEvidence?: RestrictedPayeeIdentityEvidence | null;
 };
 
 export async function resolveAndComparePayeeIdentity(input: ResolvePayeeIdentityInput): Promise<PayeeIdentityMatchResult> {
@@ -51,26 +62,11 @@ export async function resolveAndComparePayeeIdentity(input: ResolvePayeeIdentity
   const restricted = subjectUid ? await getRestrictedFinancialIdentityDoc(input.counterpartyType, subjectUid) : null;
   const expectedTaxId = restricted?.gst?.applicable ? (restricted.gst.number ?? null) : null;
   const expectedBankIdentifier = restricted?.bank?.accountNumber ?? null;
+  // Step 16D section 3/10: the one canonical registered/billing address (see
+  // src/server/shared/restricted-financial-identity.ts) - null when the subject has none on file.
+  const expectedAddress = restricted?.address ?? null;
 
-  const evidence: PayeeIdentityEvidence = {
-    expectedName,
-    extractedName: input.extractedPayeeName,
-    expectedTaxId,
-    // Step 16C: the raw tax-registration value is never surfaced out of Invoice extraction (see
-    // extraction/field-extractors.ts's gstinField - `value` is withheld as null by design; there is
-    // no restricted-extraction pipeline in this step and no OCR). The comparator above fully
-    // supports this field end to end (see matcher.test.ts / normalization.test.ts); only this live
-    // data path cannot populate the extracted side yet, so it always reports UNAVAILABLE today.
-    extractedTaxId: null,
-    // No canonical "billing/business address" field exists on Partner or Vendor today (see
-    // src/server/partners/types.ts / src/server/vendors/types.ts) and no address extraction exists
-    // (section 6: "do not invent identity values") - both sides are always UNAVAILABLE today.
-    expectedAddress: null,
-    extractedAddress: null,
-    expectedBankIdentifier,
-    // No bank-identifier extraction exists in this step (no OCR) - always UNAVAILABLE today.
-    extractedBankIdentifier: null,
-  };
+  const evidence = buildPayeeIdentityEvidence({ expectedName, expectedTaxId, expectedAddress, expectedBankIdentifier }, input.extractedPayeeName, input.restrictedEvidence ?? null);
 
   return computePayeeIdentityMatch(evidence);
 }

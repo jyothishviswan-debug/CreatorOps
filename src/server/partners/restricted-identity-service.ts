@@ -76,6 +76,9 @@ const saveRestrictedIdentityInputSchema = z.object({
     .nullable()
     .optional(),
   gst: z.object({ applicable: z.boolean(), number: z.string().min(1).max(30).optional() }).nullable().optional(),
+  // Step 16D section 3/10: free-text registered/billing address - same carry-forward-on-omit
+  // convention as every other field here.
+  address: z.string().min(1).max(500).nullable().optional(),
   expectedVersion: z.number().int().min(0), // 0 == "no restricted identity doc exists yet"
 });
 export type SavePartnerRestrictedIdentityInput = z.input<typeof saveRestrictedIdentityInputSchema>;
@@ -119,6 +122,7 @@ export async function savePartnerRestrictedIdentity(actor: ActorContext | null, 
       aadhaar: input.aadhaar !== undefined ? input.aadhaar : (existing?.success ? existing.data.aadhaar : null),
       bank: input.bank !== undefined ? input.bank : (existing?.success ? existing.data.bank : null),
       gst: input.gst !== undefined ? input.gst : (existing?.success ? existing.data.gst : null),
+      address: input.address !== undefined ? input.address : (existing?.success ? existing.data.address : null),
       evidence: existing?.success ? existing.data.evidence : [],
       updatedAt: now,
       updatedByUserRef: actor!.userRef,

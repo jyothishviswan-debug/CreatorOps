@@ -67,6 +67,14 @@ export const restrictedFinancialIdentityDocSchema = z.object({
     })
     .nullable()
     .default(null),
+  // Step 16D section 3/4/10: the one canonical registered/billing address for this subject -
+  // free-text, deliberately NOT a structured street/city/state/pincode shape (there is no
+  // structured-address precedent anywhere in this codebase, and the eventual comparison target - an
+  // Invoice PDF's extracted supplier block, see finance-invoices/payee-identity/restricted-
+  // extraction.ts - never decomposes cleanly into structured components either). Minimal canonical
+  // field added because no authoritative address field existed anywhere on Partner, Vendor or this
+  // restricted record before this step (confirmed by inspection - see Step 16D's completion report).
+  address: z.string().min(1).max(500).nullable().default(null),
   evidence: z.array(restrictedFinancialIdentityEvidenceSchema).default([]),
   updatedAt: z.string().min(1),
   updatedByUserRef: z.string().min(1),

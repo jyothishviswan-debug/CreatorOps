@@ -201,6 +201,7 @@ export async function seedPartnersData(): Promise<void> {
     aadhaar: { number: "0000-0000-0000" },
     bank: { accountHolderName: "Creator House", accountNumber: "000000000001", ifsc: "TEST0000001", bankName: "Test Bank", branchName: "Test Branch" },
     gst: { applicable: false },
+    address: null,
     evidence: [],
     updatedAt: now,
     updatedByUserRef: headUserRef,
