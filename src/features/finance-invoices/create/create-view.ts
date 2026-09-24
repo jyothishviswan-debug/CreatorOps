@@ -115,6 +115,95 @@ export function detailsFormComplete(form: InvoiceDetailsForm): boolean {
   return form.externalInvoiceNumber.trim().length > 0 && form.invoiceDate.trim().length > 0 && form.currency.trim().length === 3 && form.declaredTotalText.trim().length > 0;
 }
 
+// --- Step 15C section 19/24/26: extraction prefill, respecting the "user-touched" rule -----------------------------------------
+// The exact field keys extraction may ever prefill (mirrors InvoiceCreatePage.tsx's own
+// TouchableFormField, which is intentionally NOT imported from here - a UI-side literal list and a
+// view-side literal list agreeing is itself part of the safety property; a typo in either desyncs
+// them and the corresponding unit test below catches it).
+export type TouchableInvoiceField = "externalInvoiceNumber" | "invoiceDate" | "dueDate" | "currency" | "subtotalText" | "declaredTotalText" | "taxLines";
+
+export type InvoiceExtractionProposal = { fieldKey: string; value: string | number | null };
+
+// The DTO-side field keys `applyInvoiceExtractionPrefill` can ever mark as actually applied -
+// mirrors `InvoiceExtractedFieldKey` (deliberately not imported: same UI-side/view-side literal
+// list discipline as `TouchableInvoiceField` above). This is what InvoiceDetailsStep's "Extracted"
+// tag renders from - NEVER the raw proposal keys - so a tag only ever appears next to a value that
+// genuinely came from extraction, never next to a user-touched field extraction merely proposed a
+// (correctly discarded) value for.
+export type AppliedExtractionKey = "externalInvoiceNumber" | "invoiceDate" | "dueDate" | "currency" | "subtotalMinor" | "declaredTotalMinor" | "taxAmountMinor";
+
+export type InvoiceExtractionPrefillResult = { form: InvoiceDetailsForm; appliedKeys: ReadonlySet<AppliedExtractionKey> };
+
+// PURE. Never mutates `form`; never overwrites a field whose key is in `touched`. A field with no
+// proposal, or a proposal of the wrong type for that field, is left exactly as it was - never
+// guessed, never coerced. Tax lines are prefilled ONLY when the current list is both untouched AND
+// genuinely empty (never appended to, never merged with a line the user already added). Returns
+// BOTH the new form and the exact set of fields it actually changed - a field's presence in the
+// extraction response is not enough on its own to call it "applied" (see AppliedExtractionKey).
+export function applyInvoiceExtractionPrefill(form: InvoiceDetailsForm, fields: InvoiceExtractionProposal[], touched: ReadonlySet<TouchableInvoiceField>): InvoiceExtractionPrefillResult {
+  const byKey = new Map(fields.map((field) => [field.fieldKey, field] as const));
+  const next: InvoiceDetailsForm = { ...form };
+  const appliedKeys = new Set<AppliedExtractionKey>();
+
+  const invoiceNumber = byKey.get("externalInvoiceNumber");
+  if (!touched.has("externalInvoiceNumber") && typeof invoiceNumber?.value === "string") {
+    next.externalInvoiceNumber = invoiceNumber.value;
+    appliedKeys.add("externalInvoiceNumber");
+  }
+
+  const invoiceDate = byKey.get("invoiceDate");
+  if (!touched.has("invoiceDate") && typeof invoiceDate?.value === "string") {
+    next.invoiceDate = invoiceDate.value;
+    appliedKeys.add("invoiceDate");
+  }
+
+  const dueDate = byKey.get("dueDate");
+  if (!touched.has("dueDate") && typeof dueDate?.value === "string") {
+    next.dueDate = dueDate.value;
+    appliedKeys.add("dueDate");
+  }
+
+  const currency = byKey.get("currency");
+  if (!touched.has("currency") && typeof currency?.value === "string") {
+    next.currency = currency.value;
+    appliedKeys.add("currency");
+  }
+
+  const subtotal = byKey.get("subtotalMinor");
+  if (!touched.has("subtotalText") && typeof subtotal?.value === "number") {
+    next.subtotalText = minorToDecimalText(subtotal.value);
+    appliedKeys.add("subtotalMinor");
+  }
+
+  const declaredTotal = byKey.get("declaredTotalMinor");
+  if (!touched.has("declaredTotalText") && typeof declaredTotal?.value === "number") {
+    next.declaredTotalText = minorToDecimalText(declaredTotal.value);
+    appliedKeys.add("declaredTotalMinor");
+  }
+
+  if (!touched.has("taxLines") && next.taxLines.length === 0) {
+    const taxAmount = byKey.get("taxAmountMinor");
+    const taxRate = byKey.get("taxRateBps");
+    if (typeof taxAmount?.value === "number") {
+      next.taxLines = [{ key: `extracted-tax`, label: "GST", rateText: typeof taxRate?.value === "number" ? String(taxRate.value / 100) : "", amountText: minorToDecimalText(taxAmount.value) }];
+      appliedKeys.add("taxAmountMinor");
+    }
+  }
+
+  return { form: next, appliedKeys };
+}
+
+// Minor units -> plain decimal text (no grouping, no symbol) - the same shape the amount/rate text
+// inputs already hold, distinct from format.ts's `minorToInputText` only in that it never handles a
+// SIGNED figure (every Invoice-declared amount is unsigned).
+function minorToDecimalText(amountMinor: number): string {
+  if (!Number.isSafeInteger(amountMinor) || amountMinor < 0) return "";
+  const text = String(amountMinor).padStart(3, "0");
+  const major = text.slice(0, -2);
+  const fraction = text.slice(-2);
+  return fraction === "00" ? major : `${major}.${fraction}`;
+}
+
 // --- Original document panel --------------------------------------------------------------------------------------------------------
 export type DocumentCardView = { fileName: string; mimeLabel: string; sizeText: string; uploaded: boolean };
 

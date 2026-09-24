@@ -3,6 +3,7 @@ import { expect as baseExpect, test, type Page } from "@playwright/test";
 import { collectBrowserErrors, noDocumentOverflow, PDFS, SAMPLE_PDF_NAME, waitForHydration } from "./helpers/finance-agreements-fixtures";
 import { createInvoiceFixtures, PASSWORD, VIEWPORTS, type InvoiceFixtures } from "./helpers/finance-invoices-fixtures";
 import { emailFor } from "./helpers/finance-payables-fixtures";
+import { makeTextPdf } from "@/server/finance-agreements/testing/pdf-fixtures";
 
 // Dev-mode route compilation makes the first call of an API route slow: allow more than the 5 s default.
 const expect = baseExpect.configure({ timeout: 20_000 });
@@ -41,6 +42,13 @@ async function expectNoOverflow(page: Page, label: string) {
   const { scrollWidth, innerWidth } = await noDocumentOverflow(page);
   expect(scrollWidth, `${label}: document scrolls horizontally (${scrollWidth} > ${innerWidth})`).toBeLessThanOrEqual(innerWidth);
 }
+
+// Step 15C section 34: a real, Invoice-shaped text PDF (distinct from PDFS.sample(), which is an
+// Agreement contract fixture) - the same wording pattern the backend emulator suite's own
+// extraction-preview tests use, so this exercises the identical extraction path end to end through
+// a real browser upload.
+const EXTRACTION_PDF_NAME = "supplier-invoice.pdf";
+const extractionSamplePdf = () => makeTextPdf([["Invoice Number: INV-E2E-777", "Invoice Date: 20 June 2024", "Sub Total: INR 10,000", "GST @ 18%", "Total Due: INR 11,800"]]);
 
 test.afterAll(async () => {
   await fx.cleanupAll();
@@ -103,6 +111,42 @@ test.describe("Create Invoice", () => {
     matchInvoiceRef = new URL(page.url()).pathname.split("/").pop()!;
     await expect(page.getByText("Draft", { exact: true }).first()).toBeVisible();
     await expect(page.getByText("Match", { exact: true }).first()).toBeVisible();
+
+    expect(errors.errors).toEqual([]);
+  });
+});
+
+test.describe("Invoice extraction", () => {
+  test("uploading a real Invoice PDF extracts and prefills fields, and a user-edited field survives", async ({ page }) => {
+    const errors = collectBrowserErrors(page);
+    const displayName = `${TAG} Extraction Vendor`;
+    const basis = await fx.seedReadyVendorPayable(displayName);
+
+    await signInAs(page, "manager");
+    await page.goto("/finance/invoices/new");
+    await page.locator(`[data-testid="eligible-payable-row"][data-payable-ref="${basis.payableRef}"]`).getByTestId("select-payable").click();
+    await page.getByRole("button", { name: "Continue" }).click();
+    await expect(page.getByRole("heading", { level: 2, name: "Invoice details" })).toBeVisible();
+
+    // Manually set the invoice date FIRST (marks it touched) - proves extraction, which would
+    // otherwise propose a different date from the PDF text below, never overwrites it.
+    await page.getByLabel("Invoice date").fill("2099-01-01");
+
+    await page.getByLabel("Invoice document file").setInputFiles({ name: EXTRACTION_PDF_NAME, mimeType: "application/pdf", buffer: extractionSamplePdf() });
+    await expect(page.getByTestId("staged-document")).toBeVisible();
+    await expect(page.getByTestId("extraction-status-banner")).toBeVisible();
+    await expect(page.getByTestId("extraction-status-banner")).toContainText(/Extraction completed/);
+
+    // Untouched fields were prefilled from the PDF and carry the "Extracted" tag.
+    await expect(page.getByLabel("Invoice number")).toHaveValue("INV-E2E-777");
+    await expect(page.getByTestId("extracted-tag-externalInvoiceNumber")).toBeVisible();
+    await expect(page.getByLabel("Declared total")).toHaveValue("11800");
+    await expect(page.getByTestId("extracted-tag-declaredTotalMinor")).toBeVisible();
+
+    // The user-touched field kept the manual value, and was never retagged as extracted.
+    await expect(page.getByLabel("Invoice date")).toHaveValue("2099-01-01");
+    await expect(page.getByTestId("extracted-tag-invoiceDate")).toHaveCount(0);
+    await expectNoOverflow(page, "create details stage with extraction");
 
     expect(errors.errors).toEqual([]);
   });
@@ -219,6 +263,12 @@ test.describe("Invoice detail", () => {
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByLabel("Invoice number").fill(`${TAG}-VOID-001`);
     await page.getByRole("button", { name: "Continue" }).click();
+    // Wait for Stage 3 to actually render before clicking Continue again - firing both clicks
+    // back-to-back risks the second one landing on Stage 2's own "Continue" a second time (a real
+    // double-submit race: two concurrent saves against the same optimistic-concurrency docVersion,
+    // one of which fails and strands the flow on Stage 2) - the same wait the "matched Invoice"
+    // test above already uses between its own two Continue clicks.
+    await expect(page.getByRole("heading", { level: 2, name: "Reconciliation" })).toBeVisible();
     await page.getByRole("button", { name: "Continue" }).click();
     await page.getByTestId("create-invoice-action").click();
     await page.waitForURL(/\/finance\/invoices\/inv_[0-9a-f]{20}$/);

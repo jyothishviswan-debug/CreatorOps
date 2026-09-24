@@ -432,6 +432,13 @@ export const attachInvoiceDocumentInputSchema = z
   .strict();
 export type AttachInvoiceDocumentInput = z.infer<typeof attachInvoiceDocumentInputSchema>;
 
+// Step 15C section 26: preview extraction over the EXACT bytes the browser already has locally
+// (the same staged file `attachInvoiceDocumentInputSchema` would persist) - a read-only preview,
+// never a mutation, so it takes no `expectedDocVersion` and writes nothing. The Invoice must still
+// exist and be a DRAFT the actor may author, exactly like attaching the document itself.
+export const previewInvoiceExtractionInputSchema = z.object({ invoiceRef: invoiceRefSchema, contentBase64: z.string().min(1) }).strict();
+export type PreviewInvoiceExtractionInput = z.infer<typeof previewInvoiceExtractionInputSchema>;
+
 export const reconcileInvoiceInputSchema = z.object({ invoiceRef: invoiceRefSchema }).strict();
 
 export const submitInvoiceInputSchema = z.object({ invoiceRef: invoiceRefSchema, expectedDocVersion: expectedDocVersionSchema }).strict();

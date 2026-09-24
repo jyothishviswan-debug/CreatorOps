@@ -33,10 +33,13 @@ export {
 } from "./invoice-lifecycle-service";
 export { listInvoicesWorkspace, INVOICE_HEAD_SCAN_CEILING } from "./invoice-workspace-service";
 export { computeInvoicePermissions } from "./invoice-permissions";
+export { previewInvoiceExtraction } from "./extraction-preview-service";
 export type {
   InvoiceDetailDto,
   InvoiceDocumentDto,
   InvoiceEventDto,
+  InvoiceExtractedFieldProposalDto,
+  InvoiceExtractionPreviewDto,
   InvoiceHeadDto,
   InvoicePayablePinDto,
   InvoicePermissionsDto,
@@ -46,6 +49,7 @@ export type {
   InvoiceVersionSummaryDto,
   InvoiceWorkspaceDto,
 } from "./client-dto";
+export type { InvoiceExtractedFieldKey, InvoiceExtractionConfidence, InvoiceExtractionReasonCode, InvoiceExtractionStatus } from "./extraction/types";
 export {
   INVOICE_COUNTERPARTY_TYPES,
   INVOICE_RECONCILIATION_CODES,

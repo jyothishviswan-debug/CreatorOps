@@ -3,10 +3,24 @@
 import { useRef, useState } from "react";
 
 import { formatFileSize, formatSignedMoneyMinor } from "../format";
-import { emptyTaxLine, type InvoiceDetailsForm, type TaxLineDraft } from "./create-view";
+import { emptyTaxLine, type AppliedExtractionKey, type InvoiceDetailsForm, type TaxLineDraft } from "./create-view";
 import type { PreviewInvoiceEligibilityDto } from "@/server/finance-invoices/invoice-service";
 
 export type StagedDocument = { fileName: string; sizeBytes: number; contentBase64: string; previewUrl: string };
+
+// Step 15C section 26: the Invoice Details step's own extraction-state vocabulary. "idle"/"failed"
+// are UI-only additions on top of the server's own InvoiceExtractionStatus ("EXTRACTED" / "PARTIAL"
+// / "MANUAL_REVIEW_REQUIRED") - "extracting" covers both the in-flight upload-then-extract call.
+export type ExtractionUiStatus = "idle" | "extracting" | "EXTRACTED" | "PARTIAL" | "MANUAL_REVIEW_REQUIRED" | "failed";
+
+const EXTRACTION_BANNER: Record<ExtractionUiStatus, { title: string; copy: string; tone: "info" | "success" | "orange" | "red" } | null> = {
+  idle: null,
+  extracting: { title: "Extracting…", copy: "Reading the Invoice and proposing values.", tone: "info" },
+  EXTRACTED: { title: "Extraction completed", copy: "We found information in this Invoice. Review the prefilled fields before continuing.", tone: "success" },
+  PARTIAL: { title: "Extraction completed with items to review", copy: "Some details could not be read automatically. Fill in the rest below.", tone: "orange" },
+  MANUAL_REVIEW_REQUIRED: { title: "Manual review required", copy: "This document could not be read automatically. Enter the details manually.", tone: "orange" },
+  failed: { title: "Extraction failed", copy: "Something went wrong reading this document. You can still enter every field manually.", tone: "red" },
+};
 
 const MAX_DOCUMENT_BYTES = 10 * 1024 * 1024;
 
@@ -34,6 +48,9 @@ export function InvoiceDetailsStep({
   onStageDocument,
   onClearStagedDocument,
   preview,
+  extractionStatus = "idle",
+  appliedExtractionKeys = new Set(),
+  extractionError = null,
 }: {
   form: InvoiceDetailsForm;
   onChange: (change: Partial<InvoiceDetailsForm>) => void;
@@ -42,9 +59,16 @@ export function InvoiceDetailsStep({
   onStageDocument: (document: StagedDocument) => void;
   onClearStagedDocument: () => void;
   preview: PreviewInvoiceEligibilityDto | null;
+  extractionStatus?: ExtractionUiStatus;
+  // Drives the "Extracted" tag - ONLY the fields extraction actually wrote into the form (never a
+  // field the user had already touched, even if extraction separately proposed a value for it; see
+  // AppliedExtractionKey's own doc comment in create-view.ts).
+  appliedExtractionKeys?: ReadonlySet<AppliedExtractionKey>;
+  extractionError?: string | null;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const banner = EXTRACTION_BANNER[extractionStatus];
 
   function updateTaxLine(key: string, change: Partial<TaxLineDraft>) {
     onChange({ taxLines: form.taxLines.map((line) => (line.key === key ? { ...line, ...change } : line)) });
@@ -74,6 +98,13 @@ export function InvoiceDetailsStep({
     onStageDocument({ fileName: file.name, sizeBytes: file.size, contentBase64, previewUrl });
   }
 
+  const extractedTag = (fieldKey: AppliedExtractionKey) =>
+    appliedExtractionKeys.has(fieldKey) ? (
+      <span className="pill" style={{ marginLeft: 6, fontSize: 10 }} data-testid={`extracted-tag-${fieldKey}`}>
+        Extracted
+      </span>
+    ) : null;
+
   return (
     <div className="grid">
       <section className="panel s7">
@@ -86,11 +117,17 @@ export function InvoiceDetailsStep({
         <div className="panelbody">
           <div className="fields">
             <div className="field">
-              <label htmlFor="invoice-number">Invoice number</label>
+              <label htmlFor="invoice-number">
+                Invoice number
+                {extractedTag("externalInvoiceNumber")}
+              </label>
               <input id="invoice-number" type="text" maxLength={100} value={form.externalInvoiceNumber} onChange={(event) => onChange({ externalInvoiceNumber: event.target.value })} />
             </div>
             <div className="field">
-              <label htmlFor="invoice-date">Invoice date</label>
+              <label htmlFor="invoice-date">
+                Invoice date
+                {extractedTag("invoiceDate")}
+              </label>
               <input id="invoice-date" type="date" value={form.invoiceDate} onChange={(event) => onChange({ invoiceDate: event.target.value })} />
             </div>
             <div className="field">
@@ -101,15 +138,24 @@ export function InvoiceDetailsStep({
 
           <div className="fields" style={{ marginTop: 4 }}>
             <div className="field">
-              <label htmlFor="invoice-currency">Currency</label>
+              <label htmlFor="invoice-currency">
+                Currency
+                {extractedTag("currency")}
+              </label>
               <input id="invoice-currency" type="text" maxLength={3} placeholder="INR" value={form.currency} onChange={(event) => onChange({ currency: event.target.value.toUpperCase() })} />
             </div>
             <div className="field">
-              <label htmlFor="invoice-subtotal">Declared subtotal</label>
+              <label htmlFor="invoice-subtotal">
+                Declared subtotal
+                {extractedTag("subtotalMinor")}
+              </label>
               <input id="invoice-subtotal" type="text" inputMode="decimal" placeholder="0.00" value={form.subtotalText} onChange={(event) => onChange({ subtotalText: event.target.value })} />
             </div>
             <div className="field">
-              <label htmlFor="invoice-total">Declared total</label>
+              <label htmlFor="invoice-total">
+                Declared total
+                {extractedTag("declaredTotalMinor")}
+              </label>
               <input id="invoice-total" type="text" inputMode="decimal" placeholder="0.00" value={form.declaredTotalText} onChange={(event) => onChange({ declaredTotalText: event.target.value })} />
             </div>
           </div>
@@ -156,7 +202,10 @@ export function InvoiceDetailsStep({
           </button>
 
           <div className="field" style={{ marginTop: 16 }}>
-            <label htmlFor="invoice-due-date">Due date (optional)</label>
+            <label htmlFor="invoice-due-date">
+              Due date (optional)
+              {extractedTag("dueDate")}
+            </label>
             <input id="invoice-due-date" type="date" value={form.dueDate} onChange={(event) => onChange({ dueDate: event.target.value })} />
           </div>
         </div>
@@ -170,6 +219,16 @@ export function InvoiceDetailsStep({
           </div>
         </div>
         <div className="panelbody">
+          {banner && (
+            <div className="banner" role={banner.tone === "red" ? "alert" : "status"} style={{ marginBottom: 10 }} data-testid="extraction-status-banner">
+              <b>{banner.title}.</b> {banner.copy}
+            </div>
+          )}
+          {extractionError && (
+            <div className="banner" role="alert" style={{ marginBottom: 10 }}>
+              {extractionError}
+            </div>
+          )}
           {uploadError && (
             <div className="banner" role="alert" style={{ marginBottom: 10 }}>
               {uploadError}

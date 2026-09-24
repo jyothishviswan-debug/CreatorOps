@@ -1,3 +1,4 @@
+import type { InvoiceExtractedFieldKey, InvoiceExtractionConfidence, InvoiceExtractionReasonCode, InvoiceExtractionStatus } from "./extraction/types";
 import { redactInvoiceEventMetadata } from "./invoice-events";
 import type {
   CommercialPeriod,
@@ -294,4 +295,37 @@ export function toInvoiceRowDto(head: InvoiceHeadDoc, displayName: string | null
 // Metadata is re-screened through the allowlist redactor on the way OUT as well.
 export function toInvoiceEventDto(event: InvoiceEvent): InvoiceEventDto {
   return { kind: event.kind, version: event.version, actorUserRef: event.actorUserRef, metadata: redactInvoiceEventMetadata(event.metadata), createdAt: event.createdAt };
+}
+
+// --- Extraction preview (Step 15C section 24/26) --------------------------------------------------------------------------------
+// Every field is a PROPOSAL, never confirmed here - the same "requiresHumanConfirmation always
+// true" discipline as extraction/types.ts itself. Deliberately excludes `rawSnippet` (section 28:
+// "do not store large raw contract/document snippets in normal client-visible state") - a
+// restricted field (today: only gstin) already carries `value: null` from the pure extractor, so
+// no further gating is needed here, but the DTO copy is still explicit field-by-field, matching
+// this file's own "nothing reaches the browser by accident" rule.
+export type InvoiceExtractedFieldProposalDto = {
+  fieldKey: InvoiceExtractedFieldKey;
+  value: string | number | null;
+  page: number;
+  confidence: InvoiceExtractionConfidence;
+  warnings: string[];
+  restricted: boolean;
+};
+
+export type InvoiceExtractionPreviewDto = {
+  status: InvoiceExtractionStatus;
+  reasons: InvoiceExtractionReasonCode[];
+  fields: InvoiceExtractedFieldProposalDto[];
+};
+
+export function toInvoiceExtractionPreviewDto(result: {
+  classification: { status: InvoiceExtractionStatus; reasons: InvoiceExtractionReasonCode[] };
+  fields: Array<{ fieldKey: InvoiceExtractedFieldKey; value: string | number | null; page: number; confidence: InvoiceExtractionConfidence; warnings: string[]; restricted: boolean }>;
+}): InvoiceExtractionPreviewDto {
+  return {
+    status: result.classification.status,
+    reasons: [...result.classification.reasons],
+    fields: result.fields.map((field) => ({ fieldKey: field.fieldKey, value: field.value, page: field.page, confidence: field.confidence, warnings: [...field.warnings], restricted: field.restricted })),
+  };
 }

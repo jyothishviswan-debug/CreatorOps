@@ -23,7 +23,7 @@
 // like a server route would import another module's published contract.
 import type { PayableWorkspaceDto } from "@/server/finance-payables/client-dto";
 import type { PayableCounterpartyType } from "@/server/finance-payables/types";
-import type { InvoiceDetailDto, InvoiceEventDto, InvoiceVersionDto, InvoiceWorkspaceDto } from "@/server/finance-invoices/client-dto";
+import type { InvoiceDetailDto, InvoiceEventDto, InvoiceExtractionPreviewDto, InvoiceVersionDto, InvoiceWorkspaceDto } from "@/server/finance-invoices/client-dto";
 import type { InvoiceCounterpartyType, InvoiceReconciliationState, InvoiceStatus } from "@/server/finance-invoices/types";
 import type { PreviewInvoiceEligibilityDto } from "@/server/finance-invoices/invoice-service";
 import type { InvoiceSourceRevisionDto } from "@/server/finance-invoices/invoice-lifecycle-service";
@@ -208,6 +208,13 @@ export function reviseInvoiceDraft(invoiceRef: string, input: ReviseInvoiceReque
 export type AttachInvoiceDocumentInput = { expectedDocVersion: number; fileName: string; contentBase64: string };
 export function attachInvoiceDocument(invoiceRef: string, input: AttachInvoiceDocumentInput, options?: InvoicesRequestOptions): Promise<InvoicesApiResult<InvoiceDetailDto>> {
   return postJson(invoicePath(invoiceRef, "/document"), input, options);
+}
+
+// Step 15C section 19/24/26: preview extraction over the SAME staged bytes a subsequent
+// attachInvoiceDocument call would persist - read-only, no expectedDocVersion (nothing is written).
+export type PreviewInvoiceExtractionInput = { contentBase64: string };
+export function previewInvoiceExtraction(invoiceRef: string, input: PreviewInvoiceExtractionInput, options?: InvoicesRequestOptions): Promise<InvoicesApiResult<InvoiceExtractionPreviewDto>> {
+  return postJson(invoicePath(invoiceRef, "/extraction"), input, options);
 }
 
 export function reconcileInvoice(invoiceRef: string, options?: InvoicesRequestOptions): Promise<InvoicesApiResult<InvoiceVersionDto>> {

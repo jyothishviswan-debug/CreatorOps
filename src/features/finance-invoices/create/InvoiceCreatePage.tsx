@@ -1,17 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 
-import { attachInvoiceDocument, createInvoiceDraft, previewInvoiceEligibility, reconcileInvoice, reviseInvoiceDraft } from "../api-client";
-import type { InvoiceDetailDto, InvoiceVersionDto } from "@/server/finance-invoices/client-dto";
+import { attachInvoiceDocument, createInvoiceDraft, previewInvoiceEligibility, previewInvoiceExtraction, reconcileInvoice, reviseInvoiceDraft } from "../api-client";
+import type { InvoiceDetailDto, InvoiceExtractedFieldProposalDto, InvoiceVersionDto } from "@/server/finance-invoices/client-dto";
 import type { InvoicePermissionsDto } from "@/server/finance-invoices/client-dto";
 import type { PreviewInvoiceEligibilityDto } from "@/server/finance-invoices/invoice-service";
 
 import { ConfirmStep } from "./ConfirmStep";
-import { emptyInvoiceDetailsForm, reviseFieldsFromForm, type CreateStage, type InvoiceDetailsForm } from "./create-view";
-import { InvoiceDetailsStep, type StagedDocument } from "./InvoiceDetailsStep";
+import { applyInvoiceExtractionPrefill, emptyInvoiceDetailsForm, reviseFieldsFromForm, type AppliedExtractionKey, type CreateStage, type InvoiceDetailsForm, type TouchableInvoiceField } from "./create-view";
+import { InvoiceDetailsStep, type ExtractionUiStatus, type StagedDocument } from "./InvoiceDetailsStep";
 import { ReconciliationStep } from "./ReconciliationStep";
 import { SourcePayableStep } from "./SourcePayableStep";
 
@@ -47,6 +47,23 @@ export function InvoiceCreatePage({ permissions }: { permissions: InvoicePermiss
   const [detailsForm, setDetailsForm] = useState<InvoiceDetailsForm>(emptyInvoiceDetailsForm("INR"));
   const [stagedDocument, setStagedDocument] = useState<StagedDocument | null>(null);
 
+  // Step 15C section 19/24/26: extraction state. `touchedFieldsRef` is the "user-touched" guard -
+  // a REF, not state, so an in-flight extraction call (async, can resolve well after the user has
+  // already started typing) always reads the LATEST touched set, never a stale closure's. Every
+  // call to `handleDetailsChange` below marks its changed keys touched BEFORE updating form state,
+  // so a race between "user types" and "extraction resolves" can never let the extraction win.
+  const touchedFieldsRef = useRef<Set<TouchableInvoiceField>>(new Set());
+  const [extractionStatus, setExtractionStatus] = useState<ExtractionUiStatus>("idle");
+  // The fields `applyExtractionPrefill` ACTUALLY wrote into the form (never every key the server
+  // merely proposed, whether applied or not - see AppliedExtractionKey's own doc comment in
+  // create-view.ts). This is what drives the "Extracted" tag. Set from INSIDE the same
+  // `setDetailsForm` updater that computes it, so it is always derived from the identical,
+  // correctly-latest `current` form the updater read - never a separate, possibly-stale closure
+  // over `detailsForm` (real React state, not a ref - a ref's `.current` must never be read during
+  // render, which is exactly where this value is consumed, in the JSX below).
+  const [appliedExtractionKeys, setAppliedExtractionKeys] = useState<ReadonlySet<AppliedExtractionKey>>(new Set());
+  const [extractionError, setExtractionError] = useState<string | null>(null);
+
   const [invoice, setInvoice] = useState<InvoiceDetailDto | null>(null);
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -75,6 +92,68 @@ export function InvoiceCreatePage({ permissions }: { permissions: InvoicePermiss
   function goToStage2() {
     if (preview?.pin) setDetailsForm((current) => ({ ...current, currency: current.currency || preview.pin!.payableCurrency }));
     setStage(2);
+  }
+
+  // The ONLY path that mutates form state from a USER edit - every key it touches is marked
+  // touched FIRST, so a still-in-flight extraction result can never overwrite it (see
+  // touchedFieldsRef's own comment above).
+  function handleDetailsChange(change: Partial<InvoiceDetailsForm>) {
+    for (const key of Object.keys(change)) touchedFieldsRef.current.add(key as TouchableInvoiceField);
+    setDetailsForm((current) => ({ ...current, ...change }));
+  }
+
+  // Prefills ONLY the fields the user has not already touched, via the PURE (unit-tested)
+  // applyInvoiceExtractionPrefill in create-view.ts. Never called from handleDetailsChange itself -
+  // this is the one and only path that mutates form state WITHOUT marking fields touched.
+  function applyExtractionPrefill(fields: InvoiceExtractedFieldProposalDto[]) {
+    setDetailsForm((current) => {
+      const { form, appliedKeys } = applyInvoiceExtractionPrefill(current, fields, touchedFieldsRef.current);
+      setAppliedExtractionKeys(appliedKeys);
+      return form;
+    });
+  }
+
+  // Stages the file locally (no server call yet - InvoiceDetailsStep already does this), then runs
+  // extraction over the SAME bytes. Creates the Draft first if one does not exist yet (idempotent -
+  // `createInvoiceDraft` is safe to call again from `saveDetailsAndContinue`, which checks `invoice`
+  // state before creating; this never creates a second Draft, see that function's own comment).
+  async function onDocumentStaged(document: StagedDocument) {
+    setStagedDocument(document);
+    setExtractionStatus("extracting");
+    setExtractionError(null);
+
+    let current = invoice;
+    if (!current) {
+      if (!selectedPayableRef) {
+        setExtractionStatus("failed");
+        setExtractionError("Select a Payable before attaching a document.");
+        return;
+      }
+      const created = await createInvoiceDraft(selectedPayableRef);
+      if (!created.ok) {
+        setExtractionStatus("failed");
+        setExtractionError(created.message);
+        return;
+      }
+      current = created.data.data;
+      setInvoice(current);
+    }
+
+    const result = await previewInvoiceExtraction(current.head.invoiceRef, { contentBase64: document.contentBase64 });
+    if (!result.ok) {
+      setExtractionStatus("failed");
+      setExtractionError(result.message);
+      return;
+    }
+    setExtractionStatus(result.data.status);
+    applyExtractionPrefill(result.data.fields);
+  }
+
+  function onClearStagedDocument() {
+    setStagedDocument(null);
+    setExtractionStatus("idle");
+    setAppliedExtractionKeys(new Set());
+    setExtractionError(null);
   }
 
   // Stage 2 -> 3: create the Draft if it does not exist yet, save every declared field, attach a
@@ -203,12 +282,15 @@ export function InvoiceCreatePage({ permissions }: { permissions: InvoicePermiss
       {stage === 2 && (
         <InvoiceDetailsStep
           form={detailsForm}
-          onChange={(change) => setDetailsForm((current) => ({ ...current, ...change }))}
+          onChange={handleDetailsChange}
           existingDocument={invoice?.selectedVersion?.document ?? null}
           stagedDocument={stagedDocument}
-          onStageDocument={setStagedDocument}
-          onClearStagedDocument={() => setStagedDocument(null)}
+          onStageDocument={(document) => void onDocumentStaged(document)}
+          onClearStagedDocument={onClearStagedDocument}
           preview={preview}
+          extractionStatus={extractionStatus}
+          appliedExtractionKeys={appliedExtractionKeys}
+          extractionError={extractionError}
         />
       )}
 

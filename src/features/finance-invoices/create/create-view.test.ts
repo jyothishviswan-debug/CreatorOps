@@ -3,7 +3,22 @@ import { describe, expect, it } from "vitest";
 import type { PayableRowDto } from "@/server/finance-payables/client-dto";
 import type { PreviewInvoiceEligibilityDto } from "@/server/finance-invoices/invoice-service";
 
-import { confirmBlockers, confirmReadiness, detailsFormComplete, emptyInvoiceDetailsForm, emptyTaxLine, invoiceDetailsFormFromVersion, invoiceSummaryRows, reviseFieldsFromForm, selectedPayableSummary, sourceReadiness, toEligiblePayableRowView } from "./create-view";
+import {
+  applyInvoiceExtractionPrefill,
+  confirmBlockers,
+  confirmReadiness,
+  detailsFormComplete,
+  emptyInvoiceDetailsForm,
+  emptyTaxLine,
+  invoiceDetailsFormFromVersion,
+  invoiceSummaryRows,
+  reviseFieldsFromForm,
+  selectedPayableSummary,
+  sourceReadiness,
+  toEligiblePayableRowView,
+  type InvoiceExtractionProposal,
+  type TouchableInvoiceField,
+} from "./create-view";
 
 const PAYABLE_ROW: PayableRowDto = {
   payableRef: "pay_00000000000000000001",
@@ -209,5 +224,90 @@ describe("invoiceSummaryRows / confirmReadiness / confirmBlockers", () => {
     const blocked = { ...baseDetail, selectedVersion: { ...baseDetail.selectedVersion, reconciliation: { state: "MISMATCH" as const, findings: [{ code: "TOTAL_AMOUNT_MISMATCH" as const, severity: "BLOCKER" as const, message: "Both figures preserved." }], computedAt: "x" } } };
     expect(confirmBlockers(blocked)).toEqual([{ code: "TOTAL_AMOUNT_MISMATCH", message: "Both figures preserved." }]);
     expect(confirmReadiness(blocked).find((item) => item.label === "No unresolved blocking mismatch")?.met).toBe(false);
+  });
+});
+
+describe("applyInvoiceExtractionPrefill (Step 15C section 19/24/26 - the 'user-touched' rule)", () => {
+  const NO_TOUCH: ReadonlySet<TouchableInvoiceField> = new Set();
+  const FIELDS: InvoiceExtractionProposal[] = [
+    { fieldKey: "externalInvoiceNumber", value: "INV-2026-014" },
+    { fieldKey: "invoiceDate", value: "2026-03-15" },
+    { fieldKey: "dueDate", value: "2026-03-30" },
+    { fieldKey: "currency", value: "INR" },
+    { fieldKey: "subtotalMinor", value: 4_100_000 },
+    { fieldKey: "declaredTotalMinor", value: 4_838_000 },
+    { fieldKey: "taxRateBps", value: 1800 },
+    { fieldKey: "taxAmountMinor", value: 738_000 },
+  ];
+
+  it("prefills every untouched field from the proposals, and reports every one of them as applied", () => {
+    const { form: next, appliedKeys } = applyInvoiceExtractionPrefill(emptyInvoiceDetailsForm("INR"), FIELDS, NO_TOUCH);
+    expect(next.externalInvoiceNumber).toBe("INV-2026-014");
+    expect(next.invoiceDate).toBe("2026-03-15");
+    expect(next.dueDate).toBe("2026-03-30");
+    expect(next.currency).toBe("INR");
+    expect(next.subtotalText).toBe("41000");
+    expect(next.declaredTotalText).toBe("48380");
+    expect(next.taxLines).toEqual([{ key: "extracted-tax", label: "GST", rateText: "18", amountText: "7380" }]);
+    expect([...appliedKeys].sort()).toEqual(["currency", "declaredTotalMinor", "dueDate", "externalInvoiceNumber", "invoiceDate", "subtotalMinor", "taxAmountMinor"]);
+  });
+
+  it("NEVER overwrites a field the user has already touched - the core safety property", () => {
+    const startingForm = { ...emptyInvoiceDetailsForm("INR"), externalInvoiceNumber: "USER-TYPED-001", declaredTotalText: "99999" };
+    const touched: ReadonlySet<TouchableInvoiceField> = new Set(["externalInvoiceNumber", "declaredTotalText"]);
+    const { form: next } = applyInvoiceExtractionPrefill(startingForm, FIELDS, touched);
+    expect(next.externalInvoiceNumber).toBe("USER-TYPED-001"); // untouched by extraction
+    expect(next.declaredTotalText).toBe("99999"); // untouched by extraction
+    expect(next.invoiceDate).toBe("2026-03-15"); // still prefilled - this field was not touched
+  });
+
+  // Regression test for a real bug caught by this correction's own Playwright coverage: a field's
+  // presence in the RAW proposal list is not the same as it being APPLIED. A touched field must
+  // never be reported as "applied" even though extraction proposed a (correctly discarded) value
+  // for it - otherwise the UI's "Extracted" tag would appear next to a value the user actually typed.
+  it("does NOT report a touched field as applied, even though extraction proposed a value for it", () => {
+    const startingForm = { ...emptyInvoiceDetailsForm("INR"), externalInvoiceNumber: "USER-TYPED-001", declaredTotalText: "99999" };
+    const touched: ReadonlySet<TouchableInvoiceField> = new Set(["externalInvoiceNumber", "declaredTotalText"]);
+    const { appliedKeys } = applyInvoiceExtractionPrefill(startingForm, FIELDS, touched);
+    expect(appliedKeys.has("externalInvoiceNumber")).toBe(false);
+    expect(appliedKeys.has("declaredTotalMinor")).toBe(false);
+    // Untouched fields are still reported applied.
+    expect(appliedKeys.has("invoiceDate")).toBe(true);
+    expect(appliedKeys.has("currency")).toBe(true);
+  });
+
+  it("never appends to or merges with tax lines the user already added, even when untouched-by-key", () => {
+    const startingForm = { ...emptyInvoiceDetailsForm("INR"), taxLines: [{ key: "manual-1", label: "VAT", rateText: "5", amountText: "100" }] };
+    const { form: next, appliedKeys } = applyInvoiceExtractionPrefill(startingForm, FIELDS, NO_TOUCH);
+    expect(next.taxLines).toEqual([{ key: "manual-1", label: "VAT", rateText: "5", amountText: "100" }]);
+    expect(appliedKeys.has("taxAmountMinor")).toBe(false);
+  });
+
+  it("never prefills taxLines once the user has touched that field, even if the list is empty", () => {
+    const touched: ReadonlySet<TouchableInvoiceField> = new Set(["taxLines"]);
+    const { form: next, appliedKeys } = applyInvoiceExtractionPrefill(emptyInvoiceDetailsForm("INR"), FIELDS, touched);
+    expect(next.taxLines).toEqual([]);
+    expect(appliedKeys.has("taxAmountMinor")).toBe(false);
+  });
+
+  it("ignores a proposal of the wrong type for a field rather than coercing it, and does not report it applied", () => {
+    const badFields: InvoiceExtractionProposal[] = [{ fieldKey: "declaredTotalMinor", value: "not-a-number" }];
+    const { form: next, appliedKeys } = applyInvoiceExtractionPrefill(emptyInvoiceDetailsForm("INR"), badFields, NO_TOUCH);
+    expect(next.declaredTotalText).toBe("");
+    expect(appliedKeys.has("declaredTotalMinor")).toBe(false);
+  });
+
+  it("is pure - never mutates the input form", () => {
+    const form = emptyInvoiceDetailsForm("INR");
+    const snapshot = { ...form };
+    applyInvoiceExtractionPrefill(form, FIELDS, NO_TOUCH);
+    expect(form).toEqual(snapshot);
+  });
+
+  it("leaves every field alone and reports nothing applied when there are no proposals at all", () => {
+    const form = { ...emptyInvoiceDetailsForm("INR"), externalInvoiceNumber: "ABC" };
+    const { form: next, appliedKeys } = applyInvoiceExtractionPrefill(form, [], NO_TOUCH);
+    expect(next).toEqual(form);
+    expect(appliedKeys.size).toBe(0);
   });
 });

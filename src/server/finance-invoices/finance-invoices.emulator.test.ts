@@ -45,6 +45,10 @@ import { agreementClaimId, financeAgreementClaimsCollection, financeAgreementsCo
 import { agreementCommercialPolicyProvider } from "@/server/finance-agreements/policy-adapter";
 import { READY_DECISIONS, type FieldDecisionSeed } from "@/server/finance-agreements/testing/agreement-service-fixtures";
 import type { AgreementCounterpartyInput, FinanceAgreementsServiceResult } from "@/server/finance-agreements/types";
+// Test-only reuse of a domain-agnostic PDF-byte builder (this file is a `.test.ts`, so the
+// finance-invoices-static.test.ts "no finance-agreements import" guard - which scans only
+// non-test files - does not, and should not, apply here).
+import { makeTextPdf } from "@/server/finance-agreements/testing/pdf-fixtures";
 import { setCommercialPolicyProviderForTests } from "@/server/partner-reviews/commercial-policy";
 import { partnerReviewsCollection } from "@/server/partner-reviews/firestore";
 import { finalizePartnerReview, submitPartnerReviewForReview } from "@/server/partner-reviews/partner-review-lifecycle-service";
@@ -68,6 +72,7 @@ import {
   listInvoiceEvents,
   listInvoicesWorkspace,
   previewInvoiceEligibility,
+  previewInvoiceExtraction,
   reconcileInvoice,
   rejectInvoice,
   reopenInvoice,
@@ -578,6 +583,53 @@ describe("document attach (fake storage only, never real Google Drive)", () => {
     const notAPdf = Buffer.from("not a pdf at all", "utf8").toString("base64");
     const refused = failure(await attachInvoiceDocument(headActor, { invoiceRef: invoice.head.invoiceRef, expectedDocVersion: invoice.head.docVersion, fileName: "fake.pdf", contentBase64: notAPdf }, requestId()));
     expect(refused.code).toBe("invalid_input");
+  });
+});
+
+describe("extraction preview (Step 15C section 19/24/26 - read-only, never persisted, never confirms a value)", () => {
+  it("previews EXTRACTED-status proposals over a real, structurally-valid Invoice PDF without attaching or mutating the Invoice", async () => {
+    const headActor = await actorFor("partnership_head");
+    const { invoice } = await draftInvoice();
+    const docVersionBefore = invoice.head.docVersion;
+
+    const realInvoicePdf = makeTextPdf([["Invoice Number: INV-EMU-001", "Invoice Date: 1 April 2026", "Sub Total: INR 41,000", "GST @ 18%", "Total Due: INR 48,380"]]);
+    const preview = must(await previewInvoiceExtraction(headActor, { invoiceRef: invoice.head.invoiceRef, contentBase64: realInvoicePdf.toString("base64") }), "extraction preview");
+
+    expect(preview.status).toBe("EXTRACTED");
+    const byKey = Object.fromEntries(preview.fields.map((field) => [field.fieldKey, field]));
+    expect(byKey.externalInvoiceNumber?.value).toBe("INV-EMU-001");
+    expect(byKey.declaredTotalMinor?.value).toBe(4_838_000);
+    for (const field of preview.fields) expect(field.restricted).toBe(false); // no GSTIN in this fixture
+
+    // Genuinely read-only: re-reading the Invoice shows the exact same docVersion/latestVersion.
+    const reread = must(await getInvoice(headActor, invoice.head.invoiceRef), "reread after preview");
+    expect(reread.head.docVersion).toBe(docVersionBefore);
+    expect(reread.head.latestVersion).toBe(invoice.head.latestVersion);
+    expect(reread.selectedVersion!.document).toBeNull(); // no document was attached by previewing
+  });
+
+  it("MANUAL_REVIEW_REQUIRED, never a crash, for a minimal/garbage PDF - no fields invented", async () => {
+    const headActor = await actorFor("partnership_head");
+    const { invoice } = await draftInvoice();
+    const preview = must(await previewInvoiceExtraction(headActor, { invoiceRef: invoice.head.invoiceRef, contentBase64: MINIMAL_PDF.toString("base64") }), "extraction preview on minimal PDF");
+    expect(preview.status).toBe("MANUAL_REVIEW_REQUIRED");
+    expect(preview.fields).toEqual([]);
+  });
+
+  it("refuses a non-PDF payload with invalid_input, exactly like document attach", async () => {
+    const headActor = await actorFor("partnership_head");
+    const { invoice } = await draftInvoice();
+    const notAPdf = Buffer.from("not a pdf at all", "utf8").toString("base64");
+    const refused = failure(await previewInvoiceExtraction(headActor, { invoiceRef: invoice.head.invoiceRef, contentBase64: notAPdf }));
+    expect(refused.code).toBe("invalid_input");
+  });
+
+  it("is denied without manage_invoices, the same gate document attach uses - Viewer holds no Invoices capability at all", async () => {
+    const viewer = await actorFor("viewer");
+    const { invoice } = await draftInvoice();
+    const denied = failure(await previewInvoiceExtraction(viewer, { invoiceRef: invoice.head.invoiceRef, contentBase64: MINIMAL_PDF.toString("base64") }));
+    expect(denied.code).toBe("unauthorized");
+    expect(denied.reason).toBe("feature_denied");
   });
 });
 

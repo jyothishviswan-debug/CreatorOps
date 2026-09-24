@@ -499,23 +499,26 @@ const productionSrc = allSrc.filter((file) => /\.(ts|tsx)$/.test(file) && !isTes
 // (Agreement -> Payable -> Invoice -> approval -> Payment(s)), with their own module, routes and
 // static guards (src/server/finance-payables/finance-payables-static.test.ts).
 // Step 16A: Invoices now EXIST too, the same way - their own module, routes and static guards
-// (src/server/finance-invoices/finance-invoices-static.test.ts). What this block still certifies,
-// unchanged and in full, is that PAYMENTS do not exist anywhere, that Invoice UI does not exist yet
-// (backend-only stage), and that everything Payable- or Invoice-shaped lives in exactly the places
-// that are allowed to own it.
-describe("no Payment implementation exists anywhere in src (Payables landed in Step 15A, Invoices landed in Step 16A)", () => {
+// (src/server/finance-invoices/finance-invoices-static.test.ts).
+// Step 16B (pre-existing gap fixed here, unrelated to Step 15C - discovered and corrected during
+// Step 15C's own emulator regression, not caused by it - see that step's completion report): the
+// real Invoice UI landed and replaced the invoices placeholder page, exactly as Payables UI did to
+// this same block in Step 15B, but this file's own PLACEHOLDERS/INVOICE_OWNERS were never updated
+// to match. What this block still certifies, unchanged and in full, is that PAYMENTS do not exist
+// anywhere, and that everything Payable- or Invoice-shaped lives in exactly the places that are
+// allowed to own it.
+describe("no Payment implementation exists anywhere in src (Payables landed in Step 15A, Invoices landed in Step 16A/16B)", () => {
   // Payments remains the one fixture-only placeholder page (still not implemented). Invoices' own
-  // placeholder page also still exists - Step 16A is backend-only and deliberately builds no
-  // Invoice UI (no Invoice Overview page, nothing under src/app/finance/invoices/ beyond the
-  // existing placeholder, nothing under src/features/finance-invoices/).
-  const PLACEHOLDERS = ["src/app/finance/invoices/page.tsx", "src/app/finance/payments/page.tsx"];
+  // placeholder page is gone - Step 16B replaced it with the real workspace.
+  const PLACEHOLDERS = ["src/app/finance/payments/page.tsx"];
   // The only places a Payable-named path may live: the Payables module, its API routes, and (as of
   // Step 15B) its real UI - the three canonical routes under src/app/finance/payables/** and the
   // feature code under src/features/finance-payables/**.
   const PAYABLE_OWNERS = [/^src\/app\/finance\/payables\//, /^src\/features\/finance-payables\//, /^src\/server\/finance-payables\//, /^src\/app\/api\/finance\/payables\//];
-  // The only places an Invoice-named path may live: the Invoices module and its API routes (no UI
-  // yet - Step 16A is backend-only, see PLACEHOLDERS above).
-  const INVOICE_OWNERS = [/^src\/server\/finance-invoices\//, /^src\/app\/api\/finance\/invoices\//];
+  // The only places an Invoice-named path may live: the Invoices module, its API routes, and (as of
+  // Step 16B) its real UI - the three canonical routes under src/app/finance/invoices/** and the
+  // feature code under src/features/finance-invoices/**.
+  const INVOICE_OWNERS = [/^src\/app\/finance\/invoices\//, /^src\/features\/finance-invoices\//, /^src\/server\/finance-invoices\//, /^src\/app\/api\/finance\/invoices\//];
 
   it("the only paths in src named payment / settlement are the Payments placeholder page, and every payable-/invoice-named path belongs to its own module, its routes or its placeholder page", () => {
     const paymentNamed = allSrc.map(relative).filter((file) => /(payment|settlement)/i.test(file));
@@ -532,12 +535,12 @@ describe("no Payment implementation exists anywhere in src (Payables landed in S
     expect(payableNamed.length).toBeGreaterThan(10);
     for (const file of payableNamed) expect(PAYABLE_OWNERS.some((owner) => owner.test(file)) || INVOICE_OWNERS.some((owner) => owner.test(file)), file).toBe(true);
 
-    const invoiceNamed = allSrc.map(relative).filter((file) => /invoice/i.test(file) && file !== "src/app/finance/invoices/page.tsx");
+    const invoiceNamed = allSrc.map(relative).filter((file) => /invoice/i.test(file));
     expect(invoiceNamed.length).toBeGreaterThan(10);
     for (const file of invoiceNamed) expect(INVOICE_OWNERS.some((owner) => owner.test(file)), file).toBe(true);
   });
 
-  it("the two placeholder pages are FIXTURE pages: they import only the shared shell / view / static fixtures - no server module, no fetch, no server action, no Firestore", () => {
+  it("the placeholder page is a FIXTURE page: it imports only the shared shell / view / static fixtures - no server module, no fetch, no server action, no Firestore", () => {
     for (const file of PLACEHOLDERS) {
       const source = codeOf(readFileSync(path.join(repoRoot, file), "utf8"));
       const imports = [...source.matchAll(/from\s+"([^"]+)"/g)].map((match) => match[1]);

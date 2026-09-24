@@ -265,6 +265,8 @@ const DETERMINED_TERMS = (): FieldDecisionSeed[] =>
   });
 
 // The same, but requiring THREE units - the evidence delivers one, so it is under-delivered.
+// Step 15C: this evidenced case is now a fully DETERMINISTIC proration (1 of 3), never a Finance
+// review item - see amount-determination.test.ts's own coverage of this exact case.
 const UNDER_DELIVERED_TERMS = (): FieldDecisionSeed[] =>
   decisionsWith({
     effectiveDate: { fieldKey: "effectiveDate", decision: "CORRECTED", value: "2019-01-01" },
@@ -272,6 +274,19 @@ const UNDER_DELIVERED_TERMS = (): FieldDecisionSeed[] =>
     qualifyingUnit: { fieldKey: "qualifyingUnit", decision: "CORRECTED", value: SUPPORTED_UNIT },
     monthlyRequiredQualifyingContentCount: { fieldKey: "monthlyRequiredQualifyingContentCount", decision: "CORRECTED", value: 3 },
     incentive: { fieldKey: "incentive", decision: "NOT_APPLICABLE" },
+  });
+
+// A transfer fee ticked applicable with NO stated amount - still the genuinely ambiguous case
+// under Step 15C (unchanged from Step 15A): TRANSFER_FEE_APPLICATION_UNSPECIFIED stays a real,
+// still-open Finance-review item, used here to exercise the resolve-then-ready-for-invoice flow.
+const TRANSFER_FEE_UNSPECIFIED_TERMS = (): FieldDecisionSeed[] =>
+  decisionsWith({
+    effectiveDate: { fieldKey: "effectiveDate", decision: "CORRECTED", value: "2019-01-01" },
+    terminationDate: { fieldKey: "terminationDate", decision: "CORRECTED", value: "2019-12-31" },
+    qualifyingUnit: { fieldKey: "qualifyingUnit", decision: "CORRECTED", value: SUPPORTED_UNIT },
+    monthlyRequiredQualifyingContentCount: { fieldKey: "monthlyRequiredQualifyingContentCount", decision: "CORRECTED", value: 1 },
+    incentive: { fieldKey: "incentive", decision: "NOT_APPLICABLE" },
+    accountTransferFee: { fieldKey: "accountTransferFee", decision: "CORRECTED", value: { applicable: true, amountMinor: null, details: "Amount to be confirmed by Finance." } },
   });
 
 const partnerCp = (partner: PartnerDoc): AgreementCounterpartyInput => ({ type: "PARTNER", partnerRef: partner.partnerRef });
@@ -408,8 +423,18 @@ describe("source selection", () => {
     expect(version.snapshot.agreement).toMatchObject({ agreementRef: agreement.head.agreementRef, agreementVersion: 1 });
     expect(version.snapshot.qualifyingContent).toMatchObject({ requiredCount: 1, qualifyingUnit: SUPPORTED_UNIT, actualQualifyingCount: 1, evaluation: "met", affectsPayment: true });
     expect(version.determinationState).toBe("DETERMINISTIC");
-    expect(version.lines.map((line) => [line.category, line.amountMinorSigned])).toEqual([["BASE_FIXED", 5_000_000]]);
-    expect(version.totalAmountMinorSigned).toBe(5_000_000);
+    // Step 15C: fully delivered (1 of 1) prorates to the full fixed amount (PRORATED_BASE, not the
+    // old unprorated BASE_FIXED), and the CreatorOps 10% TDS rule now applies.
+    expect(version.lines.map((line) => [line.category, line.amountMinorSigned])).toEqual([
+      ["PRORATED_BASE", 5_000_000],
+      ["TDS", -500_000],
+    ]);
+    expect(version.totalAmountMinorSigned).toBe(4_500_000);
+    expect(version.serviceBaseMinor).toBe(5_000_000);
+    expect(version.tdsMinor).toBe(500_000);
+    expect(version.grossInvoiceExpectedMinor).toBe(5_000_000);
+    expect(version.expectedNetPaymentMinor).toBe(4_500_000);
+    expect(version.calculationRuleVersion).toBe("MONTHLY_ANALYTICS_PRORATION_V1");
   });
 
   it("refuses a Review that is not finalized, and one that does not exist, with a plain-language reason", async () => {
@@ -500,10 +525,17 @@ describe("source selection", () => {
     }
     expect(io.paths).toEqual([]);
     expect(preview.existingPayableRef).toBeNull();
-    expect(preview.determinationState).toBe("FINANCE_REVIEW_REQUIRED");
-    expect(preview.unresolved.map((item) => item.code)).toEqual(["UNDER_DELIVERY_NO_STATED_CONSEQUENCE"]);
-    // Under-delivery is never a deduction: the fixed fee is intact in the preview too.
-    expect(preview.totalAmountMinorSigned).toBe(5_000_000);
+    // Step 15C: under-delivery with BOTH required and actual counts present now prorates
+    // deterministically (1 of 3 required) instead of raising a Finance-review item - the whole
+    // point of this correction. serviceBase = 5,000,000 * 1/3 = 1,666,667 (half-up); TDS 10% of
+    // that = 166,667; net = 1,500,000.
+    expect(preview.determinationState).toBe("DETERMINISTIC");
+    expect(preview.unresolved).toEqual([]);
+    expect(preview.serviceBaseMinor).toBe(1_666_667);
+    expect(preview.tdsMinor).toBe(166_667);
+    expect(preview.expectedNetPaymentMinor).toBe(1_500_000);
+    expect(preview.totalAmountMinorSigned).toBe(1_500_000);
+    expect(preview.warnings.join(" ")).toMatch(/under-delivered.*1 of 3/);
     expect(await getPayableHeadDoc(payableRefFor({ counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD }))).toBeNull();
   });
 });
@@ -647,30 +679,36 @@ describe("lifecycle, adjustments and immutability", () => {
     );
     expect(adjusted.head.latestVersion).toBe(2);
     expect(adjusted.selectedVersion!.changeKind).toBe("adjustment_added");
-    expect(adjusted.selectedVersion!.totalAmountMinorSigned).toBe(4_900_000);
+    // Step 15C: DETERMINED_TERMS (1 of 1, fully delivered) prorates to the full fixed amount minus
+    // the CreatorOps 10% TDS: 5,000,000 - 500,000 = 4,500,000, then the manual -100,000 adjustment.
+    expect(adjusted.selectedVersion!.totalAmountMinorSigned).toBe(4_400_000);
     const manual = adjusted.selectedVersion!.lines.find((line) => line.category === "MANUAL_ADJUSTMENT")!;
     expect(manual.actorUserRef).toBe(head.userRef);
     expect(manual.reason).toBe("Agreed with the partner in writing.");
 
     const storedV1 = (await financePayableVersionsCollection(payableRef).doc("1").get()).data() as Record<string, unknown>;
-    expect(storedV1.totalAmountMinorSigned).toBe(5_000_000);
-    expect((storedV1.lines as unknown[]).length).toBe(1);
+    expect(storedV1.totalAmountMinorSigned).toBe(4_500_000);
+    expect((storedV1.lines as unknown[]).length).toBe(2); // PRORATED_BASE + TDS
 
     const removed = must(await removePayableAdjustment(head, { payableRef, expectedDocVersion: adjusted.head.docVersion, lineRef: manual.lineRef, reason: "Reverted after review." }, requestId()), "remove adjustment");
     expect(removed.head.latestVersion).toBe(3);
-    expect(removed.selectedVersion!.totalAmountMinorSigned).toBe(5_000_000);
+    expect(removed.selectedVersion!.totalAmountMinorSigned).toBe(4_500_000);
 
     const events = must(await listPayableEvents(head, payableRef), "events");
     expect(events.events.map((event) => event.kind)).toEqual(expect.arrayContaining(["PAYABLE_CREATED", "PAYABLE_VERSION_CREATED", "MANUAL_ADJUSTMENT_ADDED", "MANUAL_ADJUSTMENT_REMOVED"]));
     // No event carries an amount.
-    for (const event of events.events) expect(JSON.stringify(event.metadata ?? {})).not.toMatch(/100000|5000000|4900000/);
+    for (const event of events.events) expect(JSON.stringify(event.metadata ?? {})).not.toMatch(/100000|500000|4500000|4400000/);
   });
 
   it("refuses READY_FOR_INVOICE while a Finance item is open, and accepts it once a manual adjustment resolves it", async () => {
     const head = await actorFor("partnership_head");
-    const { payable } = await draftPayable(UNDER_DELIVERED_TERMS());
+    // Step 15C: an evidenced under-delivery no longer opens a review item (it prorates
+    // deterministically instead - see the dedicated test above) - a still-genuinely-ambiguous
+    // transfer fee exercises this resolve-then-ready flow instead.
+    const { payable } = await draftPayable(TRANSFER_FEE_UNSPECIFIED_TERMS());
     const payableRef = payable.head.payableRef;
-    expect(payable.selectedVersion!.openReviewCodes).toEqual(["UNDER_DELIVERY_NO_STATED_CONSEQUENCE"]);
+    expect(payable.selectedVersion!.openReviewCodes).toEqual(["TRANSFER_FEE_APPLICATION_UNSPECIFIED"]);
+    expect(payable.selectedVersion!.totalAmountMinorSigned).toBe(4_500_000);
 
     const blocked = failure(await markPayableReadyForInvoice(head, { payableRef, expectedDocVersion: payable.head.docVersion }, requestId()));
     expect(blocked.code).toBe("not_ready");
@@ -679,7 +717,7 @@ describe("lifecycle, adjustments and immutability", () => {
     const resolved = must(
       await addPayableAdjustment(
         head,
-        { payableRef, expectedDocVersion: payable.head.docVersion, label: "Under-delivery reviewed", amountMinorSigned: 0, reason: "Reviewed: the Agreement states no payment consequence, so the fee stands.", resolvesCode: "UNDER_DELIVERY_NO_STATED_CONSEQUENCE" },
+        { payableRef, expectedDocVersion: payable.head.docVersion, label: "Transfer fee reviewed", amountMinorSigned: 0, reason: "Reviewed: Finance confirmed the transfer fee is nil for this period.", resolvesCode: "TRANSFER_FEE_APPLICATION_UNSPECIFIED" },
         requestId(),
       ),
       "resolve review item",
@@ -687,7 +725,7 @@ describe("lifecycle, adjustments and immutability", () => {
     expect(resolved.selectedVersion!.openReviewCodes).toEqual([]);
     // The determination STATE is still the engine's own verdict - a manual line never rewrites it.
     expect(resolved.selectedVersion!.determinationState).toBe("FINANCE_REVIEW_REQUIRED");
-    expect(resolved.selectedVersion!.totalAmountMinorSigned).toBe(5_000_000);
+    expect(resolved.selectedVersion!.totalAmountMinorSigned).toBe(4_500_000);
 
     const ready = must(await markPayableReadyForInvoice(head, { payableRef, expectedDocVersion: resolved.head.docVersion }, requestId()), "ready");
     expect(ready.head.status).toBe("READY_FOR_INVOICE");
@@ -896,13 +934,16 @@ describe("data safety", () => {
     const created = must(await createFor(headActor, "PARTNER", partner.partnerRef), "create");
     const payableRef = created.payable.head.payableRef;
 
+    // Step 15C: DETERMINED_TERMS (1 of 1, fully delivered) prorates to the full fixed amount minus
+    // the CreatorOps 10% TDS: 5,000,000 - 500,000 = 4,500,000. The snapshot's own fixedComponent
+    // figure (the Agreement-stated amount BEFORE proration/tax) is unaffected and stays 5,000,000.
     const asHead = must(await getPayable(headActor, payableRef), "head read");
     expect(asHead.amountsVisible).toBe(true);
-    expect(asHead.selectedVersion!.totalAmountMinorSigned).toBe(5_000_000);
+    expect(asHead.selectedVersion!.totalAmountMinorSigned).toBe(4_500_000);
 
     const asManager = must(await getPayable(manager, payableRef), "manager read");
     expect(asManager.amountsVisible).toBe(true);
-    expect(asManager.selectedVersion!.totalAmountMinorSigned).toBe(5_000_000);
+    expect(asManager.selectedVersion!.totalAmountMinorSigned).toBe(4_500_000);
     expect(asManager.selectedVersion!.snapshot.fixedComponent!.amountMinor).toBe(5_000_000);
 
     // Manager sees the figure it prepares but still holds none of the CATEGORY-gated governance
@@ -914,7 +955,7 @@ describe("data safety", () => {
     // that override, not this widening, is the correct place to assert canApprove's value.
     const workspace = must(await listPayablesWorkspace(manager, { counterpartyRef: partner.partnerRef }), "manager workspace");
     expect(workspace.permissions).toMatchObject({ canView: true, canManage: true, canAdjust: false, canVoid: false, canViewAmounts: true });
-    expect(workspace.rows.map((row) => row.totalAmountMinorSigned)).toEqual([5_000_000]);
+    expect(workspace.rows.map((row) => row.totalAmountMinorSigned)).toEqual([4_500_000]);
   });
 });
 
