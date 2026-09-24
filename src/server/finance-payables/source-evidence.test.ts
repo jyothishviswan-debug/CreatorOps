@@ -163,6 +163,17 @@ describe("immutable evidence snapshot assembly", () => {
     expect(snapshot.review).toEqual({ reviewRef: "pr_0123456789abcdef0123", reviewVersion: 2, finalizedAt: "2024-04-02T00:00:00.000Z", sourceFingerprint: "c".repeat(64) });
   });
 
+  // Step 15C.1 section 10: a FRESHLY resolved Partner-Review-sourced snapshot never guesses GST -
+  // it pins gstApplicable:null ("unconfirmed"), never false ("confirmed not applicable"). TDS is
+  // the one confirmed CreatorOps product rule and applies unconditionally on this basis.
+  it("pins GST applicability as unconfirmed (null), never a silent 'not applicable', for a Partner Review basis; TDS applies at the product rate", () => {
+    expect(snapshot.tax.gstApplicable).toBeNull();
+    expect(snapshot.tax.gstRateBps).toBeNull();
+    expect(snapshot.tax.gstProvenance).toBe("UNCONFIRMED_NO_CANONICAL_SOURCE");
+    expect(snapshot.tax.tdsApplicable).toBe(true);
+    expect(snapshot.tax.tdsRateBps).toBe(1000);
+  });
+
   it("copies the obligations, the actuals and the finance terms needed to explain the amount later", () => {
     expect(snapshot.qualifyingContent).toEqual({ requiredCount: 8, qualifyingUnit: "approved_content_thread", actualQualifyingCount: 9, variance: 1, evaluation: "exceeded", affectsPayment: true });
     expect(snapshot.lfcSfc).toEqual({ ruleRef: "agr_0123456789abcdef0123@2:lfc-sfc", qualifyingUnit: "approved_content_thread", lfcCount: 2, sfcCount: 7, unclassifiedCount: 0 });
@@ -223,5 +234,9 @@ describe("immutable evidence snapshot assembly", () => {
     expect(vendor.qualifyingContent).toBeNull();
     expect(vendor.performanceTargets).toEqual([]);
     expect(vendor.warnings.join(" ")).toMatch(/governed by the Agreement alone/);
+    // A Vendor/agreement-only basis carries no TDS/GST review workflow at all (see
+    // payable-service.ts's confirmPayableTax) - it stays a confirmed, deterministic "not
+    // applicable", never the "unconfirmed" state a Partner Review basis starts in.
+    expect(vendor.tax).toEqual({ tdsApplicable: false, tdsRateBps: null, tdsProvenance: "NOT_APPLICABLE_AGREEMENT_ONLY_BASIS", gstApplicable: false, gstRateBps: null, gstProvenance: "NOT_APPLICABLE_AGREEMENT_ONLY_BASIS" });
   });
 });

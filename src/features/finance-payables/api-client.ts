@@ -184,6 +184,13 @@ export function removePayableAdjustment(payableRef: string, input: RemoveAdjustm
   return deleteJson(payablePath(payableRef, "/adjustments"), input, options);
 }
 
+// Step 15C.1 section 10: confirms GST applicability/rate on a DRAFT, Partner-Review-sourced
+// Payable. `gstRateBps` is required when `gstApplicable` is true, and must be null otherwise.
+export type ConfirmTaxInput = { expectedDocVersion: number; gstApplicable: boolean; gstRateBps: number | null };
+export function confirmPayableTax(payableRef: string, input: ConfirmTaxInput, options?: PayablesRequestOptions): Promise<PayablesApiResult<PayableDetailDto>> {
+  return postJson(payablePath(payableRef, "/tax"), input, options);
+}
+
 export function markPayableReadyForInvoice(payableRef: string, input: { expectedDocVersion: number }, options?: PayablesRequestOptions): Promise<PayablesApiResult<PayableDetailDto>> {
   return postJson(payablePath(payableRef, "/ready"), input, options);
 }

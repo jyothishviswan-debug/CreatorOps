@@ -9,8 +9,10 @@ import { PAYABLE_EVENT_KINDS } from "./types";
 
 describe("the required event kinds all exist", () => {
   it("names exactly the section 15 minimum", () => {
+    // Step 15C.1 section 10 adds TAX_CONFIRMED: the audit event for the one new Finance
+    // confirmation action (confirmPayableTax) that resolves GST_APPLICABILITY_UNCONFIRMED.
     expect([...PAYABLE_EVENT_KINDS].sort()).toEqual(
-      ["MANUAL_ADJUSTMENT_ADDED", "MANUAL_ADJUSTMENT_REMOVED", "PAYABLE_CREATED", "PAYABLE_READY_FOR_INVOICE", "PAYABLE_VERSION_CREATED", "PAYABLE_VOIDED", "SOURCE_REVISION_DETECTED"].sort(),
+      ["MANUAL_ADJUSTMENT_ADDED", "MANUAL_ADJUSTMENT_REMOVED", "PAYABLE_CREATED", "PAYABLE_READY_FOR_INVOICE", "PAYABLE_VERSION_CREATED", "PAYABLE_VOIDED", "SOURCE_REVISION_DETECTED", "TAX_CONFIRMED"].sort(),
     );
   });
 });

@@ -241,6 +241,27 @@ describe("tax: GST (Step 15C section 9)", () => {
     expect(result.grossInvoiceExpectedMinor).toBe(result.serviceBaseMinor); // 0 GST assumed only for the running total, never silently invented as non-zero
     expect(result.tdsMinor).toBe(500_000); // TDS is independent and still resolves
   });
+
+  // Step 15C.1 section 10: applicability ITSELF (gstApplicable === null) is a third state, distinct
+  // from "confirmed not applicable" (false). It must never be silently treated as "No" - it raises
+  // its OWN named review code, separate from GST_RATE_UNKNOWN (which only ever fires once
+  // applicability is already known to be Yes).
+  it("GST applicability unconfirmed (null) => Finance review required with its own named code, never silently 'No'", () => {
+    const result = determine(buildSnapshot({ tax: { tdsApplicable: true, tdsRateBps: 1000, tdsProvenance: "test", gstApplicable: null, gstRateBps: null, gstProvenance: "UNCONFIRMED_NO_CANONICAL_SOURCE" } }));
+    expect(result.state).toBe("FINANCE_REVIEW_REQUIRED");
+    expect(result.unresolved.map((item) => item.code)).toEqual(["GST_APPLICABILITY_UNCONFIRMED"]);
+    expect(result.gstMinor).toBe(0);
+    expect(result.grossInvoiceExpectedMinor).toBe(result.serviceBaseMinor);
+    expect(result.tdsMinor).toBe(500_000); // TDS is independent and still resolves even while GST is unconfirmed
+  });
+
+  it("GST confirmed NOT applicable (false, not null) => deterministic, no review item at all", () => {
+    const result = determine(buildSnapshot({ tax: { tdsApplicable: true, tdsRateBps: 1000, tdsProvenance: "test", gstApplicable: false, gstRateBps: null, gstProvenance: "FINANCE_CONFIRMED" } }));
+    expect(result.state).toBe("DETERMINISTIC");
+    expect(result.unresolved).toEqual([]);
+    expect(result.gstMinor).toBe(0);
+    expect(result.grossInvoiceExpectedMinor).toBe(result.serviceBaseMinor);
+  });
 });
 
 describe("explicit supported incentive calculation", () => {

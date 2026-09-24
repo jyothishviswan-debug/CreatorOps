@@ -7,6 +7,8 @@ import { derivePeriod, reviewRefFor } from "@/server/partner-reviews/period";
 import type { AuthorizedPayableCounterparty } from "./finance-payables-gate";
 import { payableBusinessKey } from "./ids";
 import {
+  GST_NOT_APPLICABLE_BASIS_PROVENANCE,
+  GST_UNCONFIRMED_PROVENANCE,
   payableSourceSnapshotSchema,
   SNAPSHOT_SCHEMA_VERSION,
   SOURCE_TYPE_BY_COUNTERPARTY,
@@ -162,17 +164,24 @@ export function buildPayableSourceSnapshot(input: SnapshotInput): PayableSourceS
     warnings.push("This payable is governed by the Agreement alone: there is no delivery evidence for the content obligations it states.");
   }
 
-  // Step 15C section 9.3: tax provenance. No per-counterparty or per-Agreement tax-profile source
+  // Step 15C.1 section 10: tax provenance. No per-counterparty or per-Agreement tax-profile source
   // exists anywhere in this codebase today (see types.ts's snapshotTaxSchema doc comment). TDS is
   // populated from the single confirmed CreatorOps product rule (10%, section 9), applied ONLY to
   // Partner-Review-sourced payables - the product rule was defined in the context of creator
-  // payables, and is never extended to a Vendor basis without an explicit confirmed source. GST
-  // has no confirmed source at all yet, so it is never applicable here - the schema carries the
-  // field for a future confirmed source, never guessed from this one.
+  // payables, and is never extended to a Vendor basis without an explicit confirmed source.
+  //
+  // GST has no canonical source either, so a FRESHLY resolved snapshot (create, or a revision that
+  // refreshes source) never guesses it: `gstApplicable` starts `null` ("unconfirmed" - the engine
+  // raises GST_APPLICABILITY_UNCONFIRMED for it, see amount-determination.ts, rather than silently
+  // treating it as "not applicable"). It becomes non-null ONLY through the dedicated
+  // `confirmPayableTax` Finance action, which overrides these three fields on the payable's
+  // snapshot directly (payable-service.ts) - never here. A Vendor/AGREEMENT_ONLY basis carries no
+  // TDS either (see above), so it is kept a confirmed, deterministic "not applicable" - there is no
+  // review workflow for a basis this module's tax rule was never defined for.
   const tax =
     input.sourceType === "PARTNER_REVIEW"
-      ? { tdsApplicable: true, tdsRateBps: TDS_PRODUCT_RATE_BPS, tdsProvenance: TDS_PRODUCT_PROVENANCE, gstApplicable: false, gstRateBps: null, gstProvenance: "NOT_CONFIGURED" }
-      : { tdsApplicable: false, tdsRateBps: null, tdsProvenance: "NOT_APPLICABLE_AGREEMENT_ONLY_BASIS", gstApplicable: false, gstRateBps: null, gstProvenance: "NOT_CONFIGURED" };
+      ? { tdsApplicable: true, tdsRateBps: TDS_PRODUCT_RATE_BPS, tdsProvenance: TDS_PRODUCT_PROVENANCE, gstApplicable: null, gstRateBps: null, gstProvenance: GST_UNCONFIRMED_PROVENANCE }
+      : { tdsApplicable: false, tdsRateBps: null, tdsProvenance: "NOT_APPLICABLE_AGREEMENT_ONLY_BASIS", gstApplicable: false, gstRateBps: null, gstProvenance: GST_NOT_APPLICABLE_BASIS_PROVENANCE };
 
   return payableSourceSnapshotSchema.parse({
     schemaVersion: SNAPSHOT_SCHEMA_VERSION,

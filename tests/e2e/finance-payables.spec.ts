@@ -1,5 +1,7 @@
 import { expect as baseExpect, test, type Page } from "@playwright/test";
 
+import { createPayable } from "@/server/finance-payables";
+
 import { collectBrowserErrors, noDocumentOverflow, waitForHydration } from "./helpers/finance-agreements-fixtures";
 import { createPayablesFixtures, signInAs, VIEWPORTS, type PayablesFixtures } from "./helpers/finance-payables-fixtures";
 
@@ -162,6 +164,40 @@ test.describe("Payable detail", () => {
     await expect(readyDialog).toBeHidden();
     await expect(page.getByText("Ready for invoice", { exact: true }).first()).toBeVisible();
     await expect(page.getByRole("button", { name: "Ready for invoice" })).toHaveCount(0);
+
+    expect(errors.errors).toEqual([]);
+  });
+
+  // Step 15C.1 section 10: GST applicability is never guessed - a fresh Partner-Review Payable
+  // whose fixed amount applies in full (no proration/incentive ambiguity - seedGstOpenPartnerBasis)
+  // opens with GST applicability as its ONE open Finance-review item, resolved only through the
+  // dedicated "Confirm GST" control on this same Review Amount flow.
+  test("Confirm GST: resolves the open GST review item via the dedicated dialog, never a generic manual adjustment", async ({ page }) => {
+    const errors = collectBrowserErrors(page);
+    const displayName = `${TAG} GST Open Partner`;
+    const basis = await fx.seedGstOpenPartnerBasis(displayName);
+    const actor = await fx.finance.actorOf("head");
+    const created = await createPayable(actor, { counterpartyType: "PARTNER", counterpartyRef: basis.counterpartyRef, commercialPeriod: basis.commercialPeriod }, "req-gst-e2e");
+    if (!created.ok) throw new Error(`createPayable failed: ${created.code} ${created.message}`);
+    const gstPayableRef = created.data.payable.head.payableRef;
+    expect(created.data.payable.selectedVersion?.openReviewCodes).toEqual(["GST_APPLICABILITY_UNCONFIRMED"]);
+
+    await signInAs(page, "admin");
+    await page.goto(`/finance/payables/${gstPayableRef}`);
+    await page.getByRole("tab", { name: "Amount breakdown" }).click();
+    await expect(page.getByRole("heading", { level: 2, name: "Amount breakdown" })).toBeVisible();
+
+    await expect(page.getByTestId("breakdown-unresolved").filter({ hasText: "GST" })).toHaveCount(1);
+
+    await page.getByRole("button", { name: "Confirm GST" }).click();
+    const gstDialog = page.getByRole("dialog", { name: "Confirm GST" });
+    await expect(gstDialog).toBeVisible();
+    await gstDialog.getByLabel("Is GST applicable?").selectOption("no");
+    await gstDialog.getByRole("button", { name: "Confirm" }).click();
+    await expect(gstDialog).toBeHidden();
+
+    await expect(page.getByTestId("breakdown-unresolved").filter({ hasText: "GST" })).toHaveCount(0);
+    await expect(page.getByTestId("calculation-summary-row").filter({ hasText: "GST" })).toBeVisible();
 
     expect(errors.errors).toEqual([]);
   });

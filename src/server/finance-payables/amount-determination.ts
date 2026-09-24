@@ -286,7 +286,17 @@ function applyTax(builder: Builder, snapshot: PayableSourceSnapshot, payableRef:
   const tax = snapshot.tax;
 
   let gstMinor = 0;
-  if (tax.gstApplicable) {
+  if (tax.gstApplicable === null) {
+    // Step 15C.1 section 10: "Unknown" is a third state, never silently treated as "No". Finance
+    // must explicitly confirm Yes/No (and the rate, if Yes) via confirmPayableTax before the gross
+    // expected Invoice total / expected net payment are treated as final.
+    addUnresolved(
+      builder,
+      "GST_APPLICABILITY_UNCONFIRMED",
+      "GST applicability for this Payable has not been confirmed by Finance yet. Confirm Yes/No (and the rate, if Yes) before the gross expected Invoice total and expected net payment are treated as final.",
+      null,
+    );
+  } else if (tax.gstApplicable) {
     if (tax.gstRateBps === null) {
       addUnresolved(builder, "GST_RATE_UNKNOWN", "GST is applicable to this Payable but no confirmed rate is available. Finance must confirm the GST rate before the gross expected Invoice total is accurate.", null);
     } else {

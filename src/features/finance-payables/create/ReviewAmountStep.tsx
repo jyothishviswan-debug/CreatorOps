@@ -5,9 +5,10 @@ import { useState } from "react";
 import type { PayableDetailDto, PayableSourcePreviewDto } from "@/server/finance-payables/client-dto";
 import type { PayableReviewCode } from "@/server/finance-payables/types";
 
-import { addPayableAdjustment } from "../api-client";
+import { addPayableAdjustment, confirmPayableTax } from "../api-client";
 import { commercialPeriodLabel, determinationChip } from "../format";
 import { agreementEvidenceSection, breakdownRows, breakdownTotalText, calculationSummaryRows, performanceTargetsSection, reviewEvidenceSection, warningsList, type BreakdownRowView } from "./create-view";
+import { ConfirmGstDialog, type ConfirmGstInput } from "./ConfirmGstDialog";
 import { ManualAdjustmentDialog, type ManualAdjustmentInput } from "./ManualAdjustmentDialog";
 
 // Step 15B: Create Payable - Stage 2 (Review amount), the primary operational screen. 8/12 left (amount
@@ -35,6 +36,8 @@ export function ReviewAmountStep({
 }) {
   const [dialogOpen, setDialogOpen] = useState(false);
   const [adjustBusy, setAdjustBusy] = useState(false);
+  const [gstDialogOpen, setGstDialogOpen] = useState(false);
+  const [gstBusy, setGstBusy] = useState(false);
 
   const currency = preview.currency ?? payable?.head.currency ?? "INR";
   const selectedVersion = payable?.selectedVersion ?? null;
@@ -43,7 +46,14 @@ export function ReviewAmountStep({
     : breakdownRows({ lines: preview.lines, unresolved: preview.unresolved, currency, amountsVisible });
   const total = selectedVersion ? selectedVersion.totalAmountMinorSigned : preview.totalAmountMinorSigned;
   const determinationState = selectedVersion ? selectedVersion.determinationState : preview.determinationState;
-  const resolvableItems: Array<{ code: PayableReviewCode; message: string }> = (selectedVersion ? selectedVersion.unresolved : preview.unresolved).map((item) => ({ code: item.code, message: item.message }));
+  // GST_APPLICABILITY_UNCONFIRMED is resolved ONLY by the dedicated "Confirm GST" dialog below (it
+  // writes the typed tax fields, not an arbitrary line) - never offered as a generic manual-adjustment
+  // resolution target.
+  const resolvableItems: Array<{ code: PayableReviewCode; message: string }> = (selectedVersion ? selectedVersion.unresolved : preview.unresolved)
+    .filter((item) => item.code !== "GST_APPLICABILITY_UNCONFIRMED")
+    .map((item) => ({ code: item.code, message: item.message }));
+  const snapshotForTax = selectedVersion?.snapshot ?? preview.snapshot;
+  const canConfirmGst = canAdjust && snapshotForTax?.sourceType === "PARTNER_REVIEW";
 
   // Step 15C: the calculation chain, backend-authoritative - every figure comes straight from the
   // selected version (once one exists) or the live preview, never recomputed here.
@@ -73,6 +83,20 @@ export function ReviewAmountStep({
       return { ok: true };
     } finally {
       setAdjustBusy(false);
+    }
+  }
+
+  async function submitGstConfirmation(input: ConfirmGstInput): Promise<{ ok: boolean; message?: string }> {
+    setGstBusy(true);
+    try {
+      const target = await onEnsurePayable();
+      if (!target) return { ok: false, message: createError ?? "Could not create the Payable yet." };
+      const result = await confirmPayableTax(target.head.payableRef, { expectedDocVersion: target.head.docVersion, ...input });
+      if (!result.ok) return { ok: false, message: result.message };
+      onAdjustmentApplied(result.data);
+      return { ok: true };
+    } finally {
+      setGstBusy(false);
     }
   }
 
@@ -176,11 +200,18 @@ export function ReviewAmountStep({
             </table>
           </div>
 
-          {canAdjust && (
-            <div style={{ marginTop: 14 }}>
-              <button type="button" className="btn" onClick={() => setDialogOpen(true)} disabled={creating}>
-                Add manual adjustment
-              </button>
+          {(canAdjust || canConfirmGst) && (
+            <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+              {canAdjust && (
+                <button type="button" className="btn" onClick={() => setDialogOpen(true)} disabled={creating}>
+                  Add manual adjustment
+                </button>
+              )}
+              {canConfirmGst && (
+                <button type="button" className="btn" onClick={() => setGstDialogOpen(true)} disabled={creating}>
+                  Confirm GST
+                </button>
+              )}
             </div>
           )}
         </div>
@@ -241,6 +272,14 @@ export function ReviewAmountStep({
       </section>
 
       <ManualAdjustmentDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onSubmit={submitAdjustment} resolvableItems={resolvableItems} busy={adjustBusy} />
+      <ConfirmGstDialog
+        open={gstDialogOpen}
+        onClose={() => setGstDialogOpen(false)}
+        onSubmit={submitGstConfirmation}
+        currentApplicable={snapshotForTax?.tax.gstApplicable ?? null}
+        currentRateBps={snapshotForTax?.tax.gstRateBps ?? null}
+        busy={gstBusy}
+      />
     </div>
   );
 }

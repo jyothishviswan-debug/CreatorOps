@@ -97,6 +97,7 @@ export const REVIEW_CODE_COMPONENT_LABELS: Record<PayableReviewCode, string> = {
   REQUIRED_COUNT_EVIDENCE_MISSING_FOR_PRORATION: "Prorated service base",
   GST_RATE_UNKNOWN: "GST",
   TDS_RATE_UNKNOWN: "TDS",
+  GST_APPLICABILITY_UNCONFIRMED: "GST",
 };
 export function reviewCodeComponentLabel(code: PayableReviewCode): string {
   return REVIEW_CODE_COMPONENT_LABELS[code];
@@ -107,6 +108,7 @@ export const CHANGE_KIND_LABELS: Record<PayableVersionChangeKind, string> = {
   revised: "Revised",
   adjustment_added: "Manual adjustment added",
   adjustment_removed: "Manual adjustment removed",
+  tax_confirmed: "GST confirmed by Finance",
 };
 export function changeKindLabel(kind: PayableVersionChangeKind): string {
   return CHANGE_KIND_LABELS[kind];
@@ -121,6 +123,7 @@ export const EVENT_KIND_LABELS: Record<string, string> = {
   PAYABLE_READY_FOR_INVOICE: "Ready for invoice",
   PAYABLE_VOIDED: "Voided",
   SOURCE_REVISION_DETECTED: "Source revision detected",
+  TAX_CONFIRMED: "GST confirmed by Finance",
 };
 export function eventKindLabel(kind: string): string {
   return EVENT_KIND_LABELS[kind] ?? kind;

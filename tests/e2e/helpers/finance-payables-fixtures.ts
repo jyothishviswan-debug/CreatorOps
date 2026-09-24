@@ -41,6 +41,24 @@ export const VENDOR_DETERMINISTIC_SEEDS: FieldDecisionSeed[] = SUPPORTED_READY_D
 // rather than exercising that unrelated, already-tracked bug.
 export const PARTNER_REVIEW_REQUIRED_SEEDS: FieldDecisionSeed[] = SUPPORTED_READY_DECISIONS.map((seed) => (seed.fieldKey === "performanceTargets" ? { fieldKey: "performanceTargets", decision: "NOT_APPLICABLE" } : seed));
 
+// Step 15C.1: a Partner basis with NO monthly required-content term and NO incentive (so proration
+// never applies and there is no unmeasured-incentive ambiguity either) - the fixed amount applies
+// in FULL (a non-zero service base), leaving GST applicability as the ONE open Finance-review item.
+// Deterministic and isolated from PARTNER_REVIEW_REQUIRED_SEEDS's own scenario/period.
+export const PARTNER_GST_OPEN_SEEDS: FieldDecisionSeed[] = SUPPORTED_READY_DECISIONS.map((seed) =>
+  seed.fieldKey === "incentive"
+    ? { fieldKey: "incentive", decision: "NOT_APPLICABLE" }
+    : seed.fieldKey === "monthlyRequiredQualifyingContentCount"
+      ? { fieldKey: "monthlyRequiredQualifyingContentCount", decision: "NOT_APPLICABLE" }
+      : seed.fieldKey === "qualifyingUnit"
+        ? { fieldKey: "qualifyingUnit", decision: "NOT_APPLICABLE" }
+        : seed.fieldKey === "lfcSfc"
+          ? { fieldKey: "lfcSfc", decision: "NOT_APPLICABLE" }
+          : seed.fieldKey === "performanceTargets"
+            ? { fieldKey: "performanceTargets", decision: "NOT_APPLICABLE" }
+            : seed,
+);
+
 export function createPayablesFixtures(tag: string) {
   const finance = createFinanceFixtures(tag);
   const reviews = createReviewFixtures(tag);
@@ -78,6 +96,17 @@ export function createPayablesFixtures(tag: string) {
     return { counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, displayName: partner.displayName, commercialPeriod: periodKey, agreementRef: active.head.agreementRef, reviewRef: review.reviewRef };
   }
 
+  // Step 15C.1: a Partner basis whose fixed amount applies in full (no proration, no incentive
+  // ambiguity) - the ONE open Finance-review item is GST applicability, for the Confirm GST e2e flow.
+  async function seedGstOpenPartnerBasis(displayName: string): Promise<{ counterpartyType: "PARTNER"; counterpartyRef: string; displayName: string; commercialPeriod: string; agreementRef: string; reviewRef: string }> {
+    await finance.grantFixtureRegion();
+    const partner = await finance.seedPartner({ displayName });
+    const active = await finance.seedActive(finance.partnerCp(partner), PARTNER_GST_OPEN_SEEDS);
+    const periodKey = "2024-07";
+    const review = await seedFinalizedReview(partner, periodKey);
+    return { counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, displayName: partner.displayName, commercialPeriod: periodKey, agreementRef: active.head.agreementRef, reviewRef: review.reviewRef };
+  }
+
   async function cleanupAll() {
     for (const reviewRef of reviewRefs) {
       await getAdminFirestore()
@@ -87,7 +116,7 @@ export function createPayablesFixtures(tag: string) {
     await finance.cleanupAll();
   }
 
-  return { finance, region, seedDeterministicVendorBasis, seedReviewRequiredPartnerBasis, cleanupAll };
+  return { finance, region, seedDeterministicVendorBasis, seedReviewRequiredPartnerBasis, seedGstOpenPartnerBasis, cleanupAll };
 }
 
 export type PayablesFixtures = ReturnType<typeof createPayablesFixtures>;

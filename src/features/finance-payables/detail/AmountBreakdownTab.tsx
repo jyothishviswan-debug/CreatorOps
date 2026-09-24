@@ -5,8 +5,9 @@ import { useState } from "react";
 import type { PayableDetailDto, PayablePermissionsDto } from "@/server/finance-payables/client-dto";
 import type { PayableReviewCode } from "@/server/finance-payables/types";
 
-import { addPayableAdjustment, removePayableAdjustment } from "../api-client";
+import { addPayableAdjustment, confirmPayableTax, removePayableAdjustment } from "../api-client";
 import { lineSourceLabel } from "../format";
+import { ConfirmGstDialog, type ConfirmGstInput } from "../create/ConfirmGstDialog";
 import { ManualAdjustmentDialog, type ManualAdjustmentInput } from "../create/ManualAdjustmentDialog";
 import { breakdownRows, breakdownTotalText, calculationSummaryRows } from "../create/create-view";
 
@@ -18,15 +19,21 @@ export function AmountBreakdownTab({ detail, permissions, onUpdated }: { detail:
   const [dialogOpen, setDialogOpen] = useState(false);
   const [busyLineRef, setBusyLineRef] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [gstDialogOpen, setGstDialogOpen] = useState(false);
+  const [gstBusy, setGstBusy] = useState(false);
 
   const version = detail.selectedVersion;
   const isDraft = detail.head.status === "DRAFT";
   const isLatest = version !== null && version.version === detail.head.latestVersion;
   const canEditBreakdown = isDraft && isLatest && permissions.canAdjust;
+  const canConfirmGst = canEditBreakdown && version?.snapshot.sourceType === "PARTNER_REVIEW";
 
   const currency = detail.head.currency;
   const rows = version ? breakdownRows({ lines: version.lines, unresolved: version.unresolved, currency, amountsVisible: detail.amountsVisible }) : [];
-  const resolvableItems: Array<{ code: PayableReviewCode; message: string }> = version ? version.unresolved.map((item) => ({ code: item.code, message: item.message })) : [];
+  // GST_APPLICABILITY_UNCONFIRMED is resolved ONLY by the dedicated "Confirm GST" dialog below.
+  const resolvableItems: Array<{ code: PayableReviewCode; message: string }> = version
+    ? version.unresolved.filter((item) => item.code !== "GST_APPLICABILITY_UNCONFIRMED").map((item) => ({ code: item.code, message: item.message }))
+    : [];
   // Step 15C section 17/22: service base / GST / gross Invoice / TDS / net payment, kept clearly
   // separate from the raw line list above - backend-authoritative, never recomputed here.
   const calculationRows = calculationSummaryRows({
@@ -43,6 +50,18 @@ export function AmountBreakdownTab({ detail, permissions, onUpdated }: { detail:
     if (!result.ok) return { ok: false, message: result.message };
     onUpdated(result.data);
     return { ok: true };
+  }
+
+  async function submitGstConfirmation(input: ConfirmGstInput): Promise<{ ok: boolean; message?: string }> {
+    setGstBusy(true);
+    try {
+      const result = await confirmPayableTax(detail.head.payableRef, { expectedDocVersion: detail.head.docVersion, ...input });
+      if (!result.ok) return { ok: false, message: result.message };
+      onUpdated(result.data);
+      return { ok: true };
+    } finally {
+      setGstBusy(false);
+    }
   }
 
   async function removeLine(lineRef: string) {
@@ -147,16 +166,31 @@ export function AmountBreakdownTab({ detail, permissions, onUpdated }: { detail:
           </table>
         </div>
 
-        {canEditBreakdown && (
-          <div style={{ marginTop: 14 }}>
-            <button type="button" className="btn" onClick={() => setDialogOpen(true)}>
-              Add manual adjustment
-            </button>
+        {(canEditBreakdown || canConfirmGst) && (
+          <div style={{ marginTop: 14, display: "flex", gap: 8 }}>
+            {canEditBreakdown && (
+              <button type="button" className="btn" onClick={() => setDialogOpen(true)}>
+                Add manual adjustment
+              </button>
+            )}
+            {canConfirmGst && (
+              <button type="button" className="btn" onClick={() => setGstDialogOpen(true)}>
+                Confirm GST
+              </button>
+            )}
           </div>
         )}
       </div>
 
       <ManualAdjustmentDialog open={dialogOpen} onClose={() => setDialogOpen(false)} onSubmit={submitAdjustment} resolvableItems={resolvableItems} />
+      <ConfirmGstDialog
+        open={gstDialogOpen}
+        onClose={() => setGstDialogOpen(false)}
+        onSubmit={submitGstConfirmation}
+        currentApplicable={version?.snapshot.tax.gstApplicable ?? null}
+        currentRateBps={version?.snapshot.tax.gstRateBps ?? null}
+        busy={gstBusy}
+      />
     </section>
   );
 }

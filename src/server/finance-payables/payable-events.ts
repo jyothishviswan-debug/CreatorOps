@@ -40,6 +40,10 @@ type ValueCheck = (value: unknown) => boolean;
 const isCount: ValueCheck = (value) => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 100_000;
 const isVersionNumber: ValueCheck = (value) => typeof value === "number" && Number.isInteger(value) && value >= 1 && value <= 1_000;
 const isBoolean: ValueCheck = (value) => typeof value === "boolean";
+// A tax RATE in basis points (0-10000 = 0%-100%) - a percentage, never a money amount, so it is
+// safe under this file's own "no amount has a key here" rule.
+const isBpsRate: ValueCheck = (value) => typeof value === "number" && Number.isInteger(value) && value >= 0 && value <= 10_000;
+const isNullableBpsRate: ValueCheck = (value) => value === null || isBpsRate(value);
 const oneOf =
   (allowed: readonly string[]): ValueCheck =>
   (value) =>
@@ -104,6 +108,10 @@ export const PAYABLE_EVENT_METADATA_ALLOWLIST: Readonly<Record<string, ValueChec
   refreshSource: isBoolean,
   sourceChanged: isBoolean,
   idempotentReplay: isBoolean,
+  // Step 15C.1 section 10: Finance's confirmed GST applicability/rate - a Yes/No flag and a
+  // percentage rate, never a money amount, so both are safe under this file's own rule above.
+  gstApplicable: isBoolean,
+  gstRateBps: isNullableBpsRate,
   // human text (also screened for identity/email/amount shapes)
   reason: isSafeNote,
   label: isSafeNote,

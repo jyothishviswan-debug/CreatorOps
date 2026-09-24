@@ -57,7 +57,7 @@ import { partnersCollection } from "@/server/partners/firestore";
 import { partnerDocSchema, type PartnerDoc } from "@/server/partners/types";
 import { vendorsCollection } from "@/server/vendors/firestore";
 import { vendorDocSchema, type VendorDoc } from "@/server/vendors/types";
-import { createPayable, getPayable, markPayableReadyForInvoice, revisePayable, voidPayable, type PayableDetailDto } from "@/server/finance-payables";
+import { confirmPayableTax, createPayable, getPayable, markPayableReadyForInvoice, revisePayable, voidPayable, type PayableDetailDto } from "@/server/finance-payables";
 import { financePayablesCollection } from "@/server/finance-payables/firestore";
 import type { FinancePayablesServiceResult } from "@/server/finance-payables/types";
 
@@ -350,7 +350,12 @@ async function readyPayable(seeds: FieldDecisionSeed[] = DETERMINED_TERMS()): Pr
 
   const created = must(await createPayable(headActor, { counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD }, requestId()), "create payable");
   payableRefs.add(created.payable.head.payableRef);
-  const ready = must(await markPayableReadyForInvoice(headActor, { payableRef: created.payable.head.payableRef, expectedDocVersion: created.payable.head.docVersion }, requestId()), "ready payable");
+  // Step 15C.1 section 10: GST applicability is never guessed - a freshly created Partner-Review
+  // Payable opens with GST_APPLICABILITY_UNCONFIRMED until Finance explicitly confirms it. The
+  // Invoice fixtures below are unconcerned with GST itself, so they confirm "not applicable" here,
+  // exactly like a real Finance actor would before moving a Payable to READY_FOR_INVOICE.
+  const taxConfirmed = must(await confirmPayableTax(headActor, { payableRef: created.payable.head.payableRef, expectedDocVersion: created.payable.head.docVersion, gstApplicable: false, gstRateBps: null }, requestId()), "confirm GST not applicable");
+  const ready = must(await markPayableReadyForInvoice(headActor, { payableRef: created.payable.head.payableRef, expectedDocVersion: taxConfirmed.head.docVersion }, requestId()), "ready payable");
   return { partner, payable: ready };
 }
 

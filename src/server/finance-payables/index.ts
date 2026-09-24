@@ -7,7 +7,7 @@
 // Deliberately NOT here, and deliberately not implemented anywhere in this module: Invoices and
 // Payments. A Payable's READY_FOR_INVOICE state pins the exact immutable version a future Invoice
 // module will consume, and that is the whole extent of the forward coupling.
-export { addPayableAdjustment, createPayable, getPayable, listPayableEvents, previewPayableSource, removePayableAdjustment, revisePayable, type CreatePayableOutcome } from "./payable-service";
+export { addPayableAdjustment, confirmPayableTax, createPayable, getPayable, listPayableEvents, previewPayableSource, removePayableAdjustment, revisePayable, type CreatePayableOutcome } from "./payable-service";
 export { getPayableSourceRevision, markPayableReadyForInvoice, PAYABLE_NOT_READY_CODES, voidPayable } from "./payable-lifecycle-service";
 export { listPayablesWorkspace, PAYABLE_HEAD_SCAN_CEILING } from "./payable-workspace-service";
 export { computePayablePermissions } from "./payable-permissions";

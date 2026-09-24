@@ -64,6 +64,7 @@ import { vendorDocSchema, type VendorDoc } from "@/server/vendors/types";
 
 import {
   addPayableAdjustment,
+  confirmPayableTax,
   createPayable,
   getPayable,
   getPayableSourceRevision,
@@ -422,7 +423,11 @@ describe("source selection", () => {
     expect(version.snapshot.review).toMatchObject({ reviewRef, reviewVersion: 1 });
     expect(version.snapshot.agreement).toMatchObject({ agreementRef: agreement.head.agreementRef, agreementVersion: 1 });
     expect(version.snapshot.qualifyingContent).toMatchObject({ requiredCount: 1, qualifyingUnit: SUPPORTED_UNIT, actualQualifyingCount: 1, evaluation: "met", affectsPayment: true });
-    expect(version.determinationState).toBe("DETERMINISTIC");
+    // Step 15C.1 section 10: a freshly created Partner-Review payable opens with GST applicability
+    // UNCONFIRMED (never a silent "No") - FINANCE_REVIEW_REQUIRED for that one named reason, even
+    // though every money figure below is already fully and correctly computed.
+    expect(version.determinationState).toBe("FINANCE_REVIEW_REQUIRED");
+    expect(version.unresolved.map((item) => item.code)).toEqual(["GST_APPLICABILITY_UNCONFIRMED"]);
     // Step 15C: fully delivered (1 of 1) prorates to the full fixed amount (PRORATED_BASE, not the
     // old unprorated BASE_FIXED), and the CreatorOps 10% TDS rule now applies.
     expect(version.lines.map((line) => [line.category, line.amountMinorSigned])).toEqual([
@@ -435,6 +440,14 @@ describe("source selection", () => {
     expect(version.grossInvoiceExpectedMinor).toBe(5_000_000);
     expect(version.expectedNetPaymentMinor).toBe(4_500_000);
     expect(version.calculationRuleVersion).toBe("MONTHLY_ANALYTICS_PRORATION_V1");
+
+    // Explicitly confirming GST not applicable resolves the item deterministically, with every
+    // money figure UNCHANGED - the confirmation writes provenance, never a guessed amount.
+    const confirmed = must(await confirmPayableTax(head, { payableRef: payable.head.payableRef, expectedDocVersion: payable.head.docVersion, gstApplicable: false, gstRateBps: null }, requestId()), "confirm GST");
+    expect(confirmed.selectedVersion!.determinationState).toBe("DETERMINISTIC");
+    expect(confirmed.selectedVersion!.openReviewCodes).toEqual([]);
+    expect(confirmed.selectedVersion!.totalAmountMinorSigned).toBe(4_500_000);
+    expect(confirmed.selectedVersion!.snapshot.tax.gstProvenance).toBe("FINANCE_CONFIRMED");
   });
 
   it("refuses a Review that is not finalized, and one that does not exist, with a plain-language reason", async () => {
@@ -529,8 +542,11 @@ describe("source selection", () => {
     // deterministically (1 of 3 required) instead of raising a Finance-review item - the whole
     // point of this correction. serviceBase = 5,000,000 * 1/3 = 1,666,667 (half-up); TDS 10% of
     // that = 166,667; net = 1,500,000.
-    expect(preview.determinationState).toBe("DETERMINISTIC");
-    expect(preview.unresolved).toEqual([]);
+    // Step 15C.1 section 10: a Partner-Review preview ALSO now names GST_APPLICABILITY_UNCONFIRMED
+    // (nothing is persisted yet at preview time, so there is nothing to confirm against) - every
+    // money figure below is unaffected.
+    expect(preview.determinationState).toBe("FINANCE_REVIEW_REQUIRED");
+    expect(preview.unresolved.map((item) => item.code)).toEqual(["GST_APPLICABILITY_UNCONFIRMED"]);
     expect(preview.serviceBaseMinor).toBe(1_666_667);
     expect(preview.tdsMinor).toBe(166_667);
     expect(preview.expectedNetPaymentMinor).toBe(1_500_000);
@@ -707,17 +723,22 @@ describe("lifecycle, adjustments and immutability", () => {
     // transfer fee exercises this resolve-then-ready flow instead.
     const { payable } = await draftPayable(TRANSFER_FEE_UNSPECIFIED_TERMS());
     const payableRef = payable.head.payableRef;
-    expect(payable.selectedVersion!.openReviewCodes).toEqual(["TRANSFER_FEE_APPLICATION_UNSPECIFIED"]);
+    // Step 15C.1 section 10: a fresh Partner-Review payable ALSO opens with GST unconfirmed - this
+    // test is about the transfer-fee item specifically, so it confirms GST first (kept out of the
+    // way, exactly as a real Finance actor would handle two independent open items one at a time).
+    expect(payable.selectedVersion!.openReviewCodes.slice().sort()).toEqual(["GST_APPLICABILITY_UNCONFIRMED", "TRANSFER_FEE_APPLICATION_UNSPECIFIED"].sort());
     expect(payable.selectedVersion!.totalAmountMinorSigned).toBe(4_500_000);
+    const gstConfirmed = must(await confirmPayableTax(head, { payableRef, expectedDocVersion: payable.head.docVersion, gstApplicable: false, gstRateBps: null }, requestId()), "confirm GST");
+    expect(gstConfirmed.selectedVersion!.openReviewCodes).toEqual(["TRANSFER_FEE_APPLICATION_UNSPECIFIED"]);
 
-    const blocked = failure(await markPayableReadyForInvoice(head, { payableRef, expectedDocVersion: payable.head.docVersion }, requestId()));
+    const blocked = failure(await markPayableReadyForInvoice(head, { payableRef, expectedDocVersion: gstConfirmed.head.docVersion }, requestId()));
     expect(blocked.code).toBe("not_ready");
     expect(blocked.blockers?.map((blocker) => blocker.code)).toEqual(["payable_open_review_items"]);
 
     const resolved = must(
       await addPayableAdjustment(
         head,
-        { payableRef, expectedDocVersion: payable.head.docVersion, label: "Transfer fee reviewed", amountMinorSigned: 0, reason: "Reviewed: Finance confirmed the transfer fee is nil for this period.", resolvesCode: "TRANSFER_FEE_APPLICATION_UNSPECIFIED" },
+        { payableRef, expectedDocVersion: gstConfirmed.head.docVersion, label: "Transfer fee reviewed", amountMinorSigned: 0, reason: "Reviewed: Finance confirmed the transfer fee is nil for this period.", resolvesCode: "TRANSFER_FEE_APPLICATION_UNSPECIFIED" },
         requestId(),
       ),
       "resolve review item",
@@ -737,7 +758,8 @@ describe("lifecycle, adjustments and immutability", () => {
     const head = await actorFor("partnership_head");
     const { payable } = await draftPayable();
     const payableRef = payable.head.payableRef;
-    const ready = must(await markPayableReadyForInvoice(head, { payableRef, expectedDocVersion: payable.head.docVersion }, requestId()), "ready");
+    const gstConfirmed = must(await confirmPayableTax(head, { payableRef, expectedDocVersion: payable.head.docVersion, gstApplicable: false, gstRateBps: null }, requestId()), "confirm GST");
+    const ready = must(await markPayableReadyForInvoice(head, { payableRef, expectedDocVersion: gstConfirmed.head.docVersion }, requestId()), "ready");
     const readyVersion = ready.head.readyVersion!;
 
     const refused = failure(await addPayableAdjustment(head, { payableRef, expectedDocVersion: ready.head.docVersion, label: "Late correction", amountMinorSigned: -1, reason: "Too late." }, requestId()));
@@ -804,7 +826,10 @@ describe("boundaries: a Payable mutation writes only Payable documents", () => {
         await addPayableAdjustment(head, { payableRef, expectedDocVersion: created.payable.head.docVersion, label: "Correction", amountMinorSigned: -1_000, reason: "Agreed correction." }, requestId()),
         "adjust",
       );
-      const ready = must(await markPayableReadyForInvoice(head, { payableRef, expectedDocVersion: adjusted.head.docVersion }, requestId()), "ready");
+      // confirmPayableTax (Step 15C.1 section 10) is itself a Payable mutation - it belongs
+      // inside this same boundary check.
+      const taxConfirmed = must(await confirmPayableTax(head, { payableRef, expectedDocVersion: adjusted.head.docVersion, gstApplicable: false, gstRateBps: null }, requestId()), "confirm GST");
+      const ready = must(await markPayableReadyForInvoice(head, { payableRef, expectedDocVersion: taxConfirmed.head.docVersion }, requestId()), "ready");
       must(await voidPayable(head, { payableRef, expectedDocVersion: ready.head.docVersion, reason: "Cleaning up the boundary fixture." }, requestId()), "void");
     } finally {
       io.stop();
@@ -858,15 +883,19 @@ describe("authorization", () => {
 
   it("moving to READY_FOR_INVOICE is decided by the EXACT approve_payables grant, including an explicit per-user override", async () => {
     const manager = await actorFor("partnership_manager");
+    const head = await actorFor("partnership_head");
     const { partner } = await partnerReadyForPayable();
     const created = must(await createFor(manager, "PARTNER", partner.partnerRef), "create");
+    // GST confirmation needs adjust_payables + finance_amounts (head holds it; this test is about
+    // approve_payables specifically, so head confirms GST out of the way first).
+    const taxConfirmed = must(await confirmPayableTax(head, { payableRef: created.payable.head.payableRef, expectedDocVersion: created.payable.head.docVersion, gstApplicable: false, gstRateBps: null }, requestId()), "confirm GST");
 
     // The seeded access data gives THIS identity an explicit per-user override for exactly this
     // action (the role baseline denies it) - so the allow below is grant-driven, never role-ranked.
     const override = await getAdminFirestore().collection(COLLECTIONS.userAccessOverrides).doc(manager.uid).get();
     expect((override.data() as { features?: { finance?: { actions?: Record<string, boolean> } } } | undefined)?.features?.finance?.actions?.approve_payables).toBe(true);
 
-    const ready = must(await markPayableReadyForInvoice(manager, { payableRef: created.payable.head.payableRef, expectedDocVersion: created.payable.head.docVersion }, requestId()), "manager ready via override");
+    const ready = must(await markPayableReadyForInvoice(manager, { payableRef: created.payable.head.payableRef, expectedDocVersion: taxConfirmed.head.docVersion }, requestId()), "manager ready via override");
     expect(ready.head.status).toBe("READY_FOR_INVOICE");
   });
 

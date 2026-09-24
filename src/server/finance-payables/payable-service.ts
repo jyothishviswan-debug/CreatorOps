@@ -32,6 +32,7 @@ import { buildPayableDetailDto, buildPayableHeadDisplay, formatIssues, isAlready
 import { resolvePayableSource, type ResolvedPayableSource } from "./source-evidence";
 import {
   addPayableAdjustmentInputSchema,
+  confirmPayableTaxInputSchema,
   createPayableInputSchema,
   CURRENT_PAYABLE_CALCULATION_RULE_VERSION,
   financePayablesConflictResult,
@@ -40,8 +41,10 @@ import {
   financePayablesNotReadyResult,
   financePayablesStaleResult,
   financePayablesUnauthorizedResult,
+  GST_FINANCE_CONFIRMED_PROVENANCE,
   MAX_PAYABLE_VERSIONS,
   payableHeadDocSchema,
+  payableSourceSnapshotSchema,
   payableVersionDocSchema,
   removePayableAdjustmentInputSchema,
   revisePayableInputSchema,
@@ -680,6 +683,114 @@ export async function removePayableAdjustment(actor: ActorContext | null, rawInp
       version: nextNumber,
       actorUserRef: actor!.userRef,
       metadata: { previousVersion: previous.version, newVersion: nextNumber, changeKind: "adjustment_removed", determinationState: version.determination.state, lineCount: version.lines.length, openReviewCount: version.openReviewCodes.length },
+      requestId,
+      createdAt: now,
+    });
+    return { kind: "ok", head: nextHead, version };
+  });
+
+  if (result.kind !== "ok") return mutationFailureResult(result);
+  return { ok: true, data: await buildPayableDetailDto(actor!, result.head, displayName, result.version) };
+}
+
+// --- Tax confirmation (Step 15C.1 section 10) ------------------------------------------------------------------------------------
+// GST has no canonical per-counterparty/per-Agreement source in this codebase (see
+// source-evidence.ts and types.ts's snapshotTaxSchema). Rather than leaving `gstApplicable`
+// hard-coded and permanently false (which would silently treat "unknown" as "no GST, ever"), a
+// freshly resolved snapshot pins it `null` ("unconfirmed") for a Partner-Review-sourced payable,
+// and the engine raises GST_APPLICABILITY_UNCONFIRMED for it. This is the ONE authorized way that
+// review item is ever resolved: it overrides the CURRENT version's own snapshot.tax fields (never
+// re-resolving Agreement/Review evidence, never touching anything else in the snapshot) and
+// creates the next immutable version from it, exactly like every other Payable mutation. Same
+// gate as a manual adjustment (`adjust_payables` + `finance_amounts`) - confirming a tax
+// applicability is itself a financial decision.
+export async function confirmPayableTax(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<FinancePayablesServiceResult<PayableDetailDto>> {
+  const denied = await requireAdjustAccess(actor);
+  if (denied) return denied;
+
+  const parsed = confirmPayableTaxInputSchema.safeParse(rawInput);
+  if (!parsed.success) return financePayablesInvalidInputResult(formatIssues(parsed.error));
+  const input = parsed.data;
+
+  const loaded = await loadAuthorizedPayable(actor, input.payableRef, "adjust_payables");
+  if (!loaded.ok) return loaded.error;
+  const { displayName, liveScope } = loaded.authorized;
+
+  const result = await getAdminFirestore().runTransaction<VersionTxResult>(async (tx) => {
+    const head = await txGetPayableHead(tx, input.payableRef);
+    const failure = checkRevisable(head, input.expectedDocVersion, { draftOnly: true });
+    if (failure) return failure;
+    if (!head) return { kind: "not_found" };
+    const previous = await txGetPayableVersion(tx, input.payableRef, head.latestVersion);
+    if (!previous) return { kind: "not_found" };
+
+    if (previous.snapshot.sourceType !== "PARTNER_REVIEW") {
+      return { kind: "conflict", message: "GST applicability is only Finance-confirmed for a Partner Review-sourced Payable; this basis carries no GST/TDS at all." };
+    }
+
+    const now = new Date().toISOString();
+    const snapshot = payableSourceSnapshotSchema.parse({
+      ...previous.snapshot,
+      tax: {
+        ...previous.snapshot.tax,
+        gstApplicable: input.gstApplicable,
+        gstRateBps: input.gstApplicable ? input.gstRateBps : null,
+        gstProvenance: GST_FINANCE_CONFIRMED_PROVENANCE,
+      },
+    });
+
+    const determination = determinePayableAmount(snapshot, head.payableRef);
+    if (determination.state === "BLOCKED") return { kind: "conflict", message: "This payable's pinned evidence can no longer be determined." };
+    const manualLines = previous.lines.filter((line) => line.category === "MANUAL_ADJUSTMENT");
+
+    const nextNumber = head.latestVersion + 1;
+    const version = payableVersionDocSchema.parse({
+      payableRef: head.payableRef,
+      version: nextNumber,
+      businessKey: previous.businessKey,
+      snapshot,
+      ...versionDerivedFields(determination, [...determination.lines, ...manualLines]),
+      currency: previous.currency,
+      changeKind: "tax_confirmed",
+      reason: input.gstApplicable ? `GST confirmed applicable by Finance at ${(input.gstRateBps! / 100).toFixed(2).replace(/\.?0+$/, "")}%.` : "GST confirmed not applicable by Finance.",
+      createdAt: now,
+      createdByUserRef: actor!.userRef,
+    });
+
+    const nextHead: PayableHeadDoc = payableHeadDocSchema.parse({
+      ...head,
+      ...scopeFieldsOf(liveScope),
+      latestVersion: nextNumber,
+      display: buildPayableHeadDisplay({ counterpartyName: displayName, version, projectedAt: now }),
+      docVersion: head.docVersion + 1,
+      updatedAt: now,
+      updatedByUserRef: actor!.userRef,
+    });
+
+    txCreatePayableVersion(tx, version);
+    txSetPayableHead(tx, nextHead);
+    appendPayableEvent(tx, {
+      payableRef: head.payableRef,
+      kind: "TAX_CONFIRMED",
+      version: nextNumber,
+      actorUserRef: actor!.userRef,
+      metadata: { gstApplicable: input.gstApplicable, gstRateBps: input.gstRateBps },
+      requestId,
+      createdAt: now,
+    });
+    appendPayableEvent(tx, {
+      payableRef: head.payableRef,
+      kind: "PAYABLE_VERSION_CREATED",
+      version: nextNumber,
+      actorUserRef: actor!.userRef,
+      metadata: {
+        previousVersion: previous.version,
+        newVersion: nextNumber,
+        changeKind: "tax_confirmed",
+        determinationState: version.determination.state,
+        lineCount: version.lines.length,
+        openReviewCount: version.openReviewCodes.length,
+      },
       requestId,
       createdAt: now,
     });

@@ -7,6 +7,7 @@ import { COUNTERPARTY_TYPES } from "@/server/finance-agreements/types";
 import { buildSnapshot } from "./testing/payable-fixtures";
 import {
   amountMinorSchema,
+  confirmPayableTaxInputSchema,
   currencyCodeSchema,
   PAYABLE_COUNTERPARTY_TYPES,
   payableHeadDocSchema,
@@ -233,5 +234,26 @@ describe("immutable source snapshot - what it may never carry (section 6)", () =
   it("pins a Partner Review for a PARTNER_REVIEW source and never fabricates one for AGREEMENT_ONLY", () => {
     expect(() => buildSnapshot({ review: null })).toThrow();
     expect(() => buildSnapshot({ sourceType: "AGREEMENT_ONLY" })).toThrow();
+  });
+});
+
+// Step 15C.1 section 10: GST applicability is a tri-state - null ("unconfirmed"), false ("confirmed
+// not applicable") and true ("confirmed applicable", rate required) - and the confirmation input a
+// Finance actor submits carries the same "rate iff applicable" invariant.
+describe("GST tax tri-state and the Finance confirmation input (section 10)", () => {
+  it("accepts gstApplicable: null (unconfirmed) with no rate", () => {
+    expect(() => buildSnapshot({ tax: { tdsApplicable: true, tdsRateBps: 1000, tdsProvenance: "test", gstApplicable: null, gstRateBps: null, gstProvenance: "UNCONFIRMED_NO_CANONICAL_SOURCE" } })).not.toThrow();
+  });
+
+  it("rejects a null/false gstApplicable that still carries a rate", () => {
+    expect(() => buildSnapshot({ tax: { tdsApplicable: true, tdsRateBps: 1000, tdsProvenance: "test", gstApplicable: null, gstRateBps: 1800, gstProvenance: "test" } })).toThrow();
+    expect(() => buildSnapshot({ tax: { tdsApplicable: true, tdsRateBps: 1000, tdsProvenance: "test", gstApplicable: false, gstRateBps: 1800, gstProvenance: "test" } })).toThrow();
+  });
+
+  it("confirmPayableTaxInputSchema requires a rate exactly when gstApplicable is true", () => {
+    expect(confirmPayableTaxInputSchema.safeParse({ payableRef: "pay_00000000000000000001", expectedDocVersion: 1, gstApplicable: true, gstRateBps: 1800 }).success).toBe(true);
+    expect(confirmPayableTaxInputSchema.safeParse({ payableRef: "pay_00000000000000000001", expectedDocVersion: 1, gstApplicable: false, gstRateBps: null }).success).toBe(true);
+    expect(confirmPayableTaxInputSchema.safeParse({ payableRef: "pay_00000000000000000001", expectedDocVersion: 1, gstApplicable: true, gstRateBps: null }).success).toBe(false);
+    expect(confirmPayableTaxInputSchema.safeParse({ payableRef: "pay_00000000000000000001", expectedDocVersion: 1, gstApplicable: false, gstRateBps: 1800 }).success).toBe(false);
   });
 });

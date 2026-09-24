@@ -137,27 +137,39 @@ export const snapshotLfcSfcSchema = z
 // this codebase (Finance Agreements' confirmed commercial terms carry no GST/TDS field - see
 // terms.ts). TDS is therefore populated from the single CreatorOps product rule the user has
 // defined (10% / 1000bps, section 9) - `TDS_PRODUCT_PROVENANCE` below - applied uniformly to every
-// Partner-Review-sourced payable with a computed service base. GST has NO confirmed source at all
-// yet, so `gstApplicable` is always `false` until a real confirmed source is wired up; the schema
-// carries the field so a future confirmed source can populate it without another migration, and so
-// a unit test can exercise the "GST applicable, rate known" / "rate unknown" paths against a
-// synthetic snapshot even though no production code path sets gstApplicable:true today.
+// Partner-Review-sourced payable with a computed service base.
+//
+// GST has no canonical per-counterparty/per-Agreement source either, so it is never inferred or
+// guessed. `gstApplicable` is a TRI-STATE, not a boolean default: `null` means "not yet confirmed
+// by Finance" (the ONE state this schema must never silently collapse into `false` - see
+// amount-determination.ts's GST_APPLICABILITY_UNCONFIRMED review code), `false` means confirmed
+// not applicable, and `true` means confirmed applicable (with a required `gstRateBps`). The only
+// authorized way `gstApplicable` ever becomes non-null for a Partner-Review-sourced payable is an
+// explicit Finance confirmation action (payable-service.ts's `confirmPayableTax`, provenance
+// `GST_FINANCE_CONFIRMED_PROVENANCE`) - never geography, name or any other heuristic.
 export const TDS_PRODUCT_PROVENANCE = "PLATFORM_PRODUCT_RULE_TDS_V1";
 export const TDS_PRODUCT_RATE_BPS = 1000; // 10%, per the CreatorOps product rule (never tax advice).
+
+// GST provenance sentinels (Step 15C.1). `NOT_CONFIGURED` is kept only for pre-existing
+// fixtures/tests that mean "confirmed not applicable, not a review trigger" (e.g. a Vendor basis).
+export const GST_UNCONFIRMED_PROVENANCE = "UNCONFIRMED_NO_CANONICAL_SOURCE";
+export const GST_FINANCE_CONFIRMED_PROVENANCE = "FINANCE_CONFIRMED";
+export const GST_NOT_APPLICABLE_BASIS_PROVENANCE = "NOT_APPLICABLE_AGREEMENT_ONLY_BASIS";
 
 export const snapshotTaxSchema = z
   .object({
     tdsApplicable: z.boolean(),
     tdsRateBps: z.number().int().min(0).max(10_000).nullable(),
     tdsProvenance: shortText(200),
-    gstApplicable: z.boolean(),
+    // null = applicability not yet confirmed by Finance ("Unknown" - never treated as "No").
+    gstApplicable: z.boolean().nullable(),
     gstRateBps: z.number().int().min(0).max(10_000).nullable(),
     gstProvenance: shortText(200),
   })
   .strict()
   .superRefine((tax, ctx) => {
     if (!tax.tdsApplicable && tax.tdsRateBps !== null) ctx.addIssue({ code: "custom", path: ["tdsRateBps"], message: "A non-applicable tax carries no rate." });
-    if (!tax.gstApplicable && tax.gstRateBps !== null) ctx.addIssue({ code: "custom", path: ["gstRateBps"], message: "A non-applicable tax carries no rate." });
+    if (!tax.gstApplicable && tax.gstRateBps !== null) ctx.addIssue({ code: "custom", path: ["gstRateBps"], message: "A non-applicable or unconfirmed tax carries no rate." });
   });
 export type SnapshotTax = z.infer<typeof snapshotTaxSchema>;
 
@@ -314,6 +326,14 @@ export const PAYABLE_REVIEW_CODES = [
   // Step 15C section 9: TDS is applicable but no confirmed rate is available yet (defensive - the
   // current product rule always states 10%, but the engine never assumes a rate it wasn't given).
   "TDS_RATE_UNKNOWN",
+  // Step 15C.1 section 10: GST APPLICABILITY ITSELF (not just its rate) has never been confirmed
+  // by Finance for this Partner-Review-sourced payable. Distinct from GST_RATE_UNKNOWN (which
+  // fires only once applicability is already known to be "Yes"): this fires when nobody has yet
+  // said Yes or No. Resolved ONLY by the dedicated `confirmPayableTax` Finance action - never by a
+  // generic manual adjustment - because the answer must be written back onto the snapshot's own
+  // typed `tax` fields (so grossInvoiceExpectedMinor/expectedNetPaymentMinor stay correct), not
+  // folded into an arbitrary breakdown line.
+  "GST_APPLICABILITY_UNCONFIRMED",
 ] as const;
 export const payableReviewCodeSchema = z.enum(PAYABLE_REVIEW_CODES);
 export type PayableReviewCode = z.infer<typeof payableReviewCodeSchema>;
@@ -353,7 +373,7 @@ export type PayableDetermination = z.infer<typeof payableDeterminationSchema>;
 
 // --- Version document (financePayables/{payableRef}/versions/{n}) ---------------------------------------------------------------
 // IMMUTABLE. Created with tx.create and never rewritten - every change creates the NEXT version.
-export const PAYABLE_VERSION_CHANGE_KINDS = ["created", "revised", "adjustment_added", "adjustment_removed"] as const;
+export const PAYABLE_VERSION_CHANGE_KINDS = ["created", "revised", "adjustment_added", "adjustment_removed", "tax_confirmed"] as const;
 export const payableVersionChangeKindSchema = z.enum(PAYABLE_VERSION_CHANGE_KINDS);
 export type PayableVersionChangeKind = z.infer<typeof payableVersionChangeKindSchema>;
 
@@ -518,6 +538,7 @@ export const PAYABLE_EVENT_KINDS = [
   "PAYABLE_READY_FOR_INVOICE",
   "PAYABLE_VOIDED",
   "SOURCE_REVISION_DETECTED",
+  "TAX_CONFIRMED",
 ] as const;
 export const payableEventKindSchema = z.enum(PAYABLE_EVENT_KINDS);
 export type PayableEventKind = z.infer<typeof payableEventKindSchema>;
@@ -644,6 +665,24 @@ export type AddPayableAdjustmentInput = z.infer<typeof addPayableAdjustmentInput
 
 export const removePayableAdjustmentInputSchema = z.object({ payableRef: payableRefSchema, expectedDocVersion: expectedDocVersionSchema, lineRef: payableLineRefSchema, reason: reasonSchema }).strict();
 export type RemovePayableAdjustmentInput = z.infer<typeof removePayableAdjustmentInputSchema>;
+
+// Step 15C.1 section 10: the smallest safe Finance confirmation of GST applicability/rate for a
+// DRAFT, Partner-Review-sourced payable. `gstApplicable: false` is an explicit, audited "confirmed
+// not applicable" - never the same thing as leaving it unconfirmed (null). A rate is required
+// exactly when applicable, exactly like the snapshot's own tax schema.
+export const confirmPayableTaxInputSchema = z
+  .object({
+    payableRef: payableRefSchema,
+    expectedDocVersion: expectedDocVersionSchema,
+    gstApplicable: z.boolean(),
+    gstRateBps: z.number().int().min(0).max(10_000).nullable(),
+  })
+  .strict()
+  .superRefine((input, ctx) => {
+    if (input.gstApplicable && input.gstRateBps === null) ctx.addIssue({ code: "custom", path: ["gstRateBps"], message: "A confirmed applicable GST needs a rate." });
+    if (!input.gstApplicable && input.gstRateBps !== null) ctx.addIssue({ code: "custom", path: ["gstRateBps"], message: "A confirmed non-applicable GST carries no rate." });
+  });
+export type ConfirmPayableTaxInput = z.infer<typeof confirmPayableTaxInputSchema>;
 
 export const markPayableReadyInputSchema = z.object({ payableRef: payableRefSchema, expectedDocVersion: expectedDocVersionSchema }).strict();
 export type MarkPayableReadyInput = z.infer<typeof markPayableReadyInputSchema>;
