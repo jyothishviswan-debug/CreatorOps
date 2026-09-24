@@ -232,6 +232,20 @@ function minorToDecimalText(amountMinor: number): string {
   return fraction === "00" ? major : `${major}.${fraction}`;
 }
 
+// --- Payee identity extraction note (Step 16C section 18) ----------------------------------------------------------------------------
+// After extraction completes (never before - "do not claim a match before server comparison
+// completes"), a compact, honest note: if the extraction found a payee/supplier name and applied
+// it, say the comparison will run against the expected counterparty; otherwise a neutral note that
+// identity evidence is unavailable. Never claims a match/mismatch result itself - that only exists
+// once the Invoice is saved and the server computes it (see ReconciliationTab's "Payee identity").
+export function payeeIdentityExtractionNote(input: { extractionCompleted: boolean; supplierNameApplied: boolean; expectedCounterpartyName: string | null }): string | null {
+  if (!input.extractionCompleted) return null;
+  if (input.supplierNameApplied && input.expectedCounterpartyName) {
+    return `Payee identity will be checked against ${input.expectedCounterpartyName}.`;
+  }
+  return "No payee/supplier identity evidence was found in this document. Payee identity will show as unavailable until reviewed manually.";
+}
+
 // --- Original document panel --------------------------------------------------------------------------------------------------------
 export type DocumentCardView = { fileName: string; mimeLabel: string; sizeText: string; uploaded: boolean };
 

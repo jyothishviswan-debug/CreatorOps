@@ -12,6 +12,7 @@ import {
   emptyTaxLine,
   invoiceDetailsFormFromVersion,
   invoiceSummaryRows,
+  payeeIdentityExtractionNote,
   reviseFieldsFromForm,
   selectedPayableSummary,
   sourceReadiness,
@@ -315,5 +316,42 @@ describe("applyInvoiceExtractionPrefill (Step 15C section 19/24/26 - the 'user-t
     const { form: next, appliedKeys } = applyInvoiceExtractionPrefill(form, [], NO_TOUCH);
     expect(next).toEqual(form);
     expect(appliedKeys.size).toBe(0);
+  });
+
+  // Step 16C section 6/18: the extracted payee/supplier name always applies (there is no manual
+  // text input for it, so it is never gated by `touched`) and is reported applied.
+  it("applies an extracted supplier name into payeeName and reports it applied", () => {
+    const { form: next, appliedKeys } = applyInvoiceExtractionPrefill(emptyInvoiceDetailsForm("INR"), [...FIELDS, { fieldKey: "supplierName", value: "Acme Studios" }], NO_TOUCH);
+    expect(next.payeeName).toBe("Acme Studios");
+    expect(appliedKeys.has("supplierName")).toBe(true);
+  });
+
+  it("never applies a blank or non-string supplierName proposal", () => {
+    const { form: next, appliedKeys } = applyInvoiceExtractionPrefill(emptyInvoiceDetailsForm("INR"), [{ fieldKey: "supplierName", value: "   " }], NO_TOUCH);
+    expect(next.payeeName).toBe("");
+    expect(appliedKeys.has("supplierName")).toBe(false);
+  });
+});
+
+describe("payeeIdentityExtractionNote (Step 16C section 18)", () => {
+  it("shows nothing before extraction has completed", () => {
+    expect(payeeIdentityExtractionNote({ extractionCompleted: false, supplierNameApplied: true, expectedCounterpartyName: "Acme Studios" })).toBeNull();
+  });
+
+  it("names the expected counterparty once extraction completed and found a payee name", () => {
+    const note = payeeIdentityExtractionNote({ extractionCompleted: true, supplierNameApplied: true, expectedCounterpartyName: "Acme Studios" });
+    expect(note).toBe("Payee identity will be checked against Acme Studios.");
+  });
+
+  it("shows a neutral note when extraction completed but found no payee name", () => {
+    const note = payeeIdentityExtractionNote({ extractionCompleted: true, supplierNameApplied: false, expectedCounterpartyName: "Acme Studios" });
+    expect(note).not.toBeNull();
+    expect(note).not.toContain("Acme Studios");
+    expect(note?.toLowerCase()).toContain("no payee");
+  });
+
+  it("never claims a match/mismatch result itself - only that the check will run", () => {
+    const note = payeeIdentityExtractionNote({ extractionCompleted: true, supplierNameApplied: true, expectedCounterpartyName: "Acme Studios" });
+    expect(note).not.toMatch(/match|mismatch/i);
   });
 });

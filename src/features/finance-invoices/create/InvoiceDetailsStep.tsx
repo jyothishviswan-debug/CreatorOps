@@ -3,7 +3,7 @@
 import { useRef, useState } from "react";
 
 import { formatFileSize, formatSignedMoneyMinor } from "../format";
-import { emptyTaxLine, type AppliedExtractionKey, type InvoiceDetailsForm, type TaxLineDraft } from "./create-view";
+import { emptyTaxLine, payeeIdentityExtractionNote, type AppliedExtractionKey, type InvoiceDetailsForm, type TaxLineDraft } from "./create-view";
 import type { PreviewInvoiceEligibilityDto } from "@/server/finance-invoices/invoice-service";
 
 export type StagedDocument = { fileName: string; sizeBytes: number; contentBase64: string; previewUrl: string };
@@ -69,6 +69,10 @@ export function InvoiceDetailsStep({
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const banner = EXTRACTION_BANNER[extractionStatus];
+  // Step 16C section 18: shown only once extraction has actually completed (never before - never
+  // claims a match/mismatch result itself, only that the check will run).
+  const extractionCompleted = extractionStatus === "EXTRACTED" || extractionStatus === "PARTIAL" || extractionStatus === "MANUAL_REVIEW_REQUIRED";
+  const payeeNote = payeeIdentityExtractionNote({ extractionCompleted, supplierNameApplied: appliedExtractionKeys.has("supplierName"), expectedCounterpartyName: preview?.counterpartyDisplayName ?? null });
 
   function updateTaxLine(key: string, change: Partial<TaxLineDraft>) {
     onChange({ taxLines: form.taxLines.map((line) => (line.key === key ? { ...line, ...change } : line)) });
@@ -227,6 +231,11 @@ export function InvoiceDetailsStep({
           {extractionError && (
             <div className="banner" role="alert" style={{ marginBottom: 10 }}>
               {extractionError}
+            </div>
+          )}
+          {payeeNote && (
+            <div className="banner" role="status" style={{ marginBottom: 10 }} data-testid="payee-identity-extraction-note">
+              {payeeNote}
             </div>
           )}
           {uploadError && (
