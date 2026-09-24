@@ -123,6 +123,15 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         void_payments: false,
         override_payment_overage: false,
       }),
+      // Step 18A: Operations has no governance-weight/day-to-day split the way Finance's approve_*
+      // actions do - a Task/Reminder has no separate "approval" step of its own (see
+      // lifecycle.ts's own comment), so Manager and Head get the identical action set here, the
+      // same "no separate approval step" shape Assignments' own Manager/Head split already
+      // established. Manager/Head both hold view_approval_queue: the Approval Queue surface itself
+      // shows only items the actor's OWN Finance/Partner-Reviews grants already let them see (each
+      // adapter re-runs that source module's own gate - see approval-queue-service.ts), so this
+      // grant alone can never reveal an item Manager/Head could not already see directly.
+      operations: featureGrant(true, { manage_tasks: true, assign_tasks: true, complete_tasks: true, view_approval_queue: true, manage_reminders: true }),
       // Step 6A: both relationship-owner roles get the full Discovery
       // evidence-recording surface (manage_kyc included - see
       // SENSITIVE_GRANTS below for why that alone isn't enough to read
@@ -274,6 +283,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         void_payments: true,
         override_payment_overage: true,
       }),
+      // Step 18A: identical action set to partnership_manager's own operations grant above - see
+      // that grant's comment for why.
+      operations: featureGrant(true, { manage_tasks: true, assign_tasks: true, complete_tasks: true, view_approval_queue: true, manage_reminders: true }),
       discovery: featureGrant(true, {
         create: true,
         edit: true,

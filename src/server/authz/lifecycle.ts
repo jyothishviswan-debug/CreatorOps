@@ -195,6 +195,39 @@ export const PAYMENT_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
   VOID: ["DRAFT", "RECORDED", "FAILED", "CONFIRMED"],
 };
 
+// Step 18A: the canonical Operations Task lifecycle. Keyed by target state -> allowed predecessor
+// states, same convention as every map above. OPEN is reachable only by an explicit reopen of a
+// terminal state (DONE/CANCELLED) - a Task is CREATED open (version 1), never "transitioned" into
+// it, so OPEN also has no predecessor-of-creation entry (mirrors every other module's own "created
+// state reachable by no transition" convention). BLOCKED sits between IN_PROGRESS and itself only -
+// unblocking returns to IN_PROGRESS. DONE and CANCELLED are each reachable from every active state
+// (OPEN/IN_PROGRESS/BLOCKED); reopening either back to OPEN is its own explicit action (section 5:
+// "Reopen DONE/CANCELLED only through explicit action if supported"). There is no hard delete
+// anywhere in the module.
+export const TASK_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  OPEN: ["DONE", "CANCELLED"],
+  IN_PROGRESS: ["OPEN", "BLOCKED"],
+  BLOCKED: ["IN_PROGRESS"],
+  DONE: ["OPEN", "IN_PROGRESS", "BLOCKED"],
+  CANCELLED: ["OPEN", "IN_PROGRESS", "BLOCKED"],
+};
+
+// Step 18A: the canonical Operations Reminder lifecycle. DUE is deliberately NOT a member of this
+// map - section 7 requires it be DERIVED at query time ("If no scheduler exists, due state may be
+// derived safely at query time. Do not invent cron infrastructure."), so it is never a value the
+// persisted `status` field itself takes; see reminder-lifecycle-service.ts's deriveReminderEffectiveStatus
+// for the read-time overlay. The persisted document only ever transitions among these four states.
+// SCHEDULED is reachable by no transition (a Reminder is CREATED scheduled); DISMISSED/COMPLETED/
+// CANCELLED are each reachable only from SCHEDULED and are all terminal - a dismissed, completed or
+// cancelled Reminder is never resurrected (create a new one instead, exactly like every other
+// module's own "no un-terminal" convention). There is no hard delete anywhere in the module.
+export const REMINDER_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  SCHEDULED: [],
+  DISMISSED: ["SCHEDULED"],
+  COMPLETED: ["SCHEDULED"],
+  CANCELLED: ["SCHEDULED"],
+};
+
 export function canTransitionLifecycle(currentState: string, nextState: string, transitions: LifecycleTransitionMap): boolean {
   const allowedFrom = transitions[nextState];
   if (!allowedFrom) return false;

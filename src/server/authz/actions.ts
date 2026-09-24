@@ -148,8 +148,20 @@ export const ACTIONS = [
   "void_payments",
   "override_payment_overage",
   // Operations
+  // Step 18A: Operations' own granular actions, same "granular rather than one generic manage"
+  // discipline as every other Finance-era module. Tasks split day-to-day authoring (manage_tasks:
+  // create/revise) from reassignment (assign_tasks) and from the lifecycle-closing transitions
+  // (complete_tasks: start/block/unblock/complete/reopen/cancel) - deliberately their own ids so a
+  // role can hold one without the others, mirroring Payments' own manage/confirm/void split.
+  // view_approval_queue gates the Approval Queue surface itself; there is deliberately no
+  // act_on_approval_queue in this step (see approval-queue-service.ts) - Step 18A's Approval Queue
+  // is read-only, so no routed-action permission exists to grant. "Viewing Operations at all" is
+  // the feature's own top-level `view` boolean (the same FeatureAccess stage every other module's
+  // plain view already uses) - there is deliberately no separate "view_operations" action id.
   "manage_tasks",
-  "manage_approvals",
+  "assign_tasks",
+  "complete_tasks",
+  "view_approval_queue",
   "manage_reminders",
   // Reports
   "run_reports",

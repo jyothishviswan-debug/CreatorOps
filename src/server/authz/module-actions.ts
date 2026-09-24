@@ -123,10 +123,14 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "override_payment_overage", label: "Override a payment overpayment block" },
     { id: "export", label: "Export finance data" },
   ],
+  // Step 18A: see actions.ts's own comment for why manage_tasks/assign_tasks/complete_tasks are
+  // three separate ids, and why there is no act_on_approval_queue yet.
   operations: [
-    { id: "manage_tasks", label: "Manage tasks" },
-    { id: "manage_approvals", label: "Manage approvals" },
-    { id: "manage_reminders", label: "Manage reminders" },
+    { id: "manage_tasks", label: "Create/revise tasks" },
+    { id: "assign_tasks", label: "Assign/reassign tasks" },
+    { id: "complete_tasks", label: "Start/block/unblock/complete/reopen/cancel tasks" },
+    { id: "view_approval_queue", label: "View the Approval Queue" },
+    { id: "manage_reminders", label: "Create/revise/reschedule/dismiss/complete/cancel reminders" },
   ],
   reports: [
     { id: "run_reports", label: "Run reports" },

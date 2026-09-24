@@ -653,6 +653,109 @@
         { "fieldPath": "vendorUid", "order": "ASCENDING" },
         { "fieldPath": "updatedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "operationsTasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assigneeUserRef", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsTasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assigneeUserRef", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsTasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assigneeUserRef", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dueAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsTasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "target.targetType", "order": "ASCENDING" },
+        { "fieldPath": "target.targetRef", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsTasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "target.targetType", "order": "ASCENDING" },
+        { "fieldPath": "target.targetRef", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsTasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsTasks",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "dueAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsReminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recipientUserRef", "order": "ASCENDING" },
+        { "fieldPath": "reminderAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsReminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "recipientUserRef", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "reminderAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsReminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "taskRef", "order": "ASCENDING" },
+        { "fieldPath": "reminderAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsReminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "taskRef", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "reminderAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "operationsReminders",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "reminderAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []
