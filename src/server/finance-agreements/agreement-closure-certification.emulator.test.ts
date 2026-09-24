@@ -536,8 +536,14 @@ describe("Payment implementation (Payables landed in Step 15A, Invoices landed i
   // read-only, bounded workspace-list function (never its Firestore/gate/write internals - proved
   // by src/server/operations/operations-static.test.ts's own "no source-module WRITE function"
   // guard) and never persists a second approval status (see approval-queue-service.ts's own top
-  // comment). Deliberately its own narrow directory, not a blanket Operations exception.
-  const OPERATIONS_APPROVAL_ADAPTERS = /^src\/server\/operations\/approval-queue\/adapters\//;
+  // comment). Deliberately its own narrow directory, not a blanket Operations exception - plus the
+  // one file OUTSIDE that directory that legitimately needs the same three words: target-ref.ts,
+  // Operations' own typed target-reference model (section 4), which names PAYABLE/INVOICE/PAYMENT
+  // only as three entries of its closed TargetType enum, alongside 8 other unrelated target types -
+  // never a Firestore write, collection name, or Finance service call (found and closed during
+  // Step 18A's own regression - this file's TARGET_TYPES literal was missed when the adapters-only
+  // exclusion was first added).
+  const OPERATIONS_APPROVAL_ADAPTERS = /^src\/server\/operations\/approval-queue\/adapters\/|^src\/server\/operations\/target-ref\.ts$/;
 
   it("every payment-named path belongs to the Payments module/routes, and every payable-/invoice-named path belongs to its own module or routes", () => {
     const paymentNamed = allSrc.map(relative).filter((file) => /(payment|settlement)/i.test(file));
