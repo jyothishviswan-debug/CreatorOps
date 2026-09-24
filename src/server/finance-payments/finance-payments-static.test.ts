@@ -269,21 +269,31 @@ describe("no approved Overview page is touched or referenced (UI freeze)", () =>
   });
 });
 
-describe("Step 17A: no Payment UI exists, and /finance/payments stays the frozen placeholder", () => {
-  it("no src/features/finance-payments directory exists", () => {
-    expect(existsSync(path.join(srcDir, "features", "finance-payments"))).toBe(false);
-  });
-
-  it("nothing under src/app/finance/payments/** other than the placeholder page.tsx exists", () => {
+describe("Step 17B: the Payment UI is wired only through the published client-dto/service contract", () => {
+  // The Step 17A tripwire this block replaces ("no Payment UI exists yet") is now obsolete by
+  // design: Step 17B's whole mandate is to build src/features/finance-payments and the three
+  // /finance/payments/** routes. Mirrors the equivalent guard's own fate in
+  // finance-invoices-static.test.ts / finance-payables-static.test.ts, neither of which keeps a
+  // "no UI exists" assertion once their own UI step closed - this block keeps the parts of the old
+  // guard that remain meaningful post-UI: exactly the three canonical routes exist (no
+  // /finance/payments/overview, no v2/experimental route), and every `.tsx` that imports the
+  // Payments backend does so ONLY through the published `@/server/finance-payments` barrel - never
+  // its Firestore/gate internals.
+  it("exactly the three canonical Payment routes exist under src/app/finance/payments/**", () => {
     const paymentsAppDir = path.join(appDir, "finance", "payments");
-    if (!existsSync(paymentsAppDir)) return;
-    const files = walk(paymentsAppDir, () => true).map((f) => path.relative(srcDir, f).split(path.sep).join("/"));
-    expect(files).toEqual(["app/finance/payments/page.tsx"]);
+    const files = walk(paymentsAppDir, (name) => name.endsWith(".tsx"))
+      .map((f) => path.relative(srcDir, f).split(path.sep).join("/"))
+      .sort();
+    expect(files).toEqual(["app/finance/payments/[paymentRef]/page.tsx", "app/finance/payments/new/page.tsx", "app/finance/payments/page.tsx"].sort());
   });
 
-  it("no component anywhere in src/app, src/features or src/ui imports the Payments backend", () => {
+  it("every .tsx that imports the Payments backend imports only the published @/server/finance-payments barrel (its client-dto types, or the generic resolveRequestActor in http.ts) - never Firestore/gate/lifecycle internals", () => {
     const componentFiles = [...walk(appDir, (name) => name.endsWith(".tsx")), ...(existsSync(path.join(srcDir, "features")) ? walk(path.join(srcDir, "features"), (name) => name.endsWith(".tsx")) : []), ...walk(path.join(srcDir, "ui"), (name) => name.endsWith(".tsx"))];
-    const wired = componentFiles.filter((file) => importsOf(readFileSync(file, "utf8")).some((spec) => spec.startsWith("@/server/finance-payments")));
-    expect(wired).toEqual([]);
+    for (const file of componentFiles) {
+      for (const spec of importsOf(readFileSync(file, "utf8"))) {
+        if (!spec.startsWith("@/server/finance-payments")) continue;
+        expect(spec, `${path.relative(srcDir, file)} imports ${spec}`).toMatch(/^@\/server\/finance-payments(\/client-dto|\/types|\/http)?$/);
+      }
+    }
   });
 });

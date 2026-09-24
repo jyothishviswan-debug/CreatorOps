@@ -252,20 +252,26 @@ describe("no approved Overview page is touched or referenced (UI freeze)", () =>
   // Step 16B built the Invoices UI (src/features/finance-invoices/** plus the three
   // src/app/finance/invoices/** routes). This guard keeps the wiring CONTAINED, exactly like
   // Payables' own equivalent guard: every component that imports the Invoices backend lives under
-  // one of those two trees - and none of them references an Overview surface (the file-content
-  // check above already proves this at the source level; this one proves it structurally, so a
-  // future Invoices component can never sneak Overview wiring in through a path the first check
-  // doesn't scan).
-  it("every component wired to the Invoices backend lives under the Invoices UI, and none of it touches an approved Overview surface", () => {
+  // one of those two trees, OR under the Payments UI - Step 17B's own Record Payment flow reads
+  // Invoices' published detail/workspace contract for its Source Invoice step (SourceInvoiceStep.tsx),
+  // the exact same cross-module HTTP-only pattern Invoices' own SourcePayableStep.tsx already uses
+  // to read Payables (never that module's Firestore/gate internals - the "public barrel only" guard
+  // above already proves that at the source level for every Payments file, backend included). None
+  // of these trees references an Overview surface (the file-content check above already proves this
+  // at the source level; this one proves it structurally, so a future component can never sneak
+  // Overview wiring in through a path the first check doesn't scan).
+  it("every component wired to the Invoices backend lives under the Invoices UI or the Payments UI, and none of it touches an approved Overview surface", () => {
     const componentFiles = [...walk(appDir, (name) => name.endsWith(".tsx")), ...walk(path.join(srcDir, "features"), (name) => name.endsWith(".tsx")).filter(() => existsSync(path.join(srcDir, "features"))), ...walk(path.join(srcDir, "ui"), (name) => name.endsWith(".tsx"))];
     const wired = componentFiles.filter((file) => importsOf(readFileSync(file, "utf8")).some((spec) => spec.startsWith("@/server/finance-invoices")));
     expect(wired.length).toBeGreaterThan(0);
 
     const invoicesAppDir = path.join(appDir, "finance", "invoices");
     const invoicesFeatureDir = path.join(srcDir, "features", "finance-invoices");
+    const paymentsAppDir = path.join(appDir, "finance", "payments");
+    const paymentsFeatureDir = path.join(srcDir, "features", "finance-payments");
     for (const file of wired) {
-      const contained = file.startsWith(invoicesAppDir + path.sep) || file.startsWith(invoicesFeatureDir + path.sep);
-      expect(contained, `${file} is wired to the Invoices backend but lives outside the Invoices UI`).toBe(true);
+      const contained = [invoicesAppDir, invoicesFeatureDir, paymentsAppDir, paymentsFeatureDir].some((dir) => file.startsWith(dir + path.sep));
+      expect(contained, `${file} is wired to the Invoices backend but lives outside the Invoices/Payments UI`).toBe(true);
       const source = readFileSync(file, "utf8");
       for (const pattern of OVERVIEW_SURFACES) expect(pattern.test(source), `${path.basename(file)} references ${pattern}`).toBe(false);
     }
