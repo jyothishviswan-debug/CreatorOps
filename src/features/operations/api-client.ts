@@ -187,10 +187,12 @@ export function cancelReminder(reminderRef: string, input: { expectedDocVersion:
   return postJson(`/api/operations/reminders/${encodeURIComponent(reminderRef)}/cancel`, input, options);
 }
 
-// --- Assignee picker: active/admitted CreatorOps users only (Administration's own published list) ----
+// --- Assignee picker: active/admitted CreatorOps users only, via Operations' own bounded user
+// search (never Administration's own /api/administration/users - that route requires manage_users,
+// which most Operations actors correctly do not hold; see server/operations/user-search.ts) ----
 export type AdminUserOption = { userRef: string; displayName: string | null; email: string; role: string; active: boolean };
 export function searchActiveUsers(emailPrefix: string, options?: OpsRequestOptions): Promise<OpsApiResult<{ users: AdminUserOption[] }>> {
-  return getJson(`/api/administration/users${queryString({ active: true, emailPrefix: emailPrefix || undefined, limit: 10 })}`, options);
+  return getJson(`/api/operations/users/search${queryString({ emailPrefix: emailPrefix || undefined, limit: 10 })}`, options);
 }
 
 // --- Target picker: bounded search against each supported target type's OWN authoritative module

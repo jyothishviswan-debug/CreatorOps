@@ -36,6 +36,7 @@ export async function listPendingInvoiceApprovals(actor: ActorContext | null): P
     title: `Approve or reject invoice - ${row.counterparty.displayName ?? row.counterparty.type} (${row.commercialPeriod})`,
     summary: `Reconciliation: ${row.reconciliationState}. External invoice number: ${row.externalInvoiceNumber ?? "none declared"}.`,
     requestedBy: null,
+    requestedByDisplayName: null,
     requestedAt: row.lastUpdatedAt,
     currentSourceStatus: row.status,
     allowedActions: [],

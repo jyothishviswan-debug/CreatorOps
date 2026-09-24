@@ -36,6 +36,7 @@ export async function listPendingPayableApprovals(actor: ActorContext | null): P
     title: `Finance review needed - ${row.counterparty.displayName ?? row.counterparty.type} (${row.commercialPeriod})`,
     summary: `${row.openReviewCount} open review item(s) block this payable from becoming ready for invoicing.`,
     requestedBy: null,
+    requestedByDisplayName: null,
     requestedAt: row.lastUpdatedAt,
     currentSourceStatus: row.status,
     allowedActions: [],

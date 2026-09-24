@@ -3,6 +3,7 @@ import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import { getAdminFirestore } from "@/server/firebase/admin";
 
 import { toReminderDto, toReminderEventDto, type ReminderDto, type ReminderEventDto } from "./client-dto";
+import { resolveDisplayName, resolveDisplayNames } from "./display-names";
 import {
   getReminderGenerationClaimDoc,
   getReminderHeadDoc,
@@ -52,7 +53,7 @@ export async function createReminder(actor: ActorContext | null, rawInput: unkno
     const existingClaim = await getReminderGenerationClaimDoc(input.sourceKey);
     if (existingClaim) {
       const existingHead = await getReminderHeadDoc(existingClaim.reminderRef);
-      if (existingHead) return { ok: true, data: { outcome: "existing", reminder: toReminderDto(existingHead, now) } };
+      if (existingHead) return { ok: true, data: { outcome: "existing", reminder: toReminderDto(existingHead, now, await resolveDisplayName(existingHead.recipientUserRef)) } };
     }
   }
 
@@ -102,13 +103,14 @@ export async function createReminder(actor: ActorContext | null, rawInput: unkno
     return { kind: "ok", head, outcome: "created" };
   });
 
-  return { ok: true, data: { outcome: result.outcome, reminder: toReminderDto(result.head, now) } };
+  return { ok: true, data: { outcome: result.outcome, reminder: toReminderDto(result.head, now, await resolveDisplayName(result.head.recipientUserRef)) } };
 }
 
 export async function getReminder(actor: ActorContext | null, rawReminderRef: unknown): Promise<OperationsServiceResult<ReminderDto>> {
   const loaded = await loadAuthorizedReminder(actor, typeof rawReminderRef === "string" ? rawReminderRef : "");
   if (!loaded.ok) return loaded.error;
-  return { ok: true, data: toReminderDto(loaded.authorized.head, new Date().toISOString()) };
+  const { head } = loaded.authorized;
+  return { ok: true, data: toReminderDto(head, new Date().toISOString(), await resolveDisplayName(head.recipientUserRef)) };
 }
 
 export async function listReminderEvents(actor: ActorContext | null, rawReminderRef: unknown, rawLimit?: unknown): Promise<OperationsServiceResult<{ events: ReminderEventDto[]; hasMore: boolean }>> {
@@ -140,5 +142,7 @@ export async function listReminders(actor: ActorContext | null, rawQuery: unknow
   const now = new Date().toISOString();
   const scoped = heads.filter((head) => isOperationsRecordInScope(grants, actor!, { ownerUid: head.ownerUid, regionIds: head.regionIds, teamIds: head.teamIds, createdByUserRef: head.createdByUserRef }));
   const filtered = query.dueOnly ? scoped.filter((head) => head.status === "SCHEDULED" && head.reminderAt <= now) : scoped;
-  return { ok: true, data: { reminders: filtered.slice(0, limit).map((head) => toReminderDto(head, now)) } };
+  const page = filtered.slice(0, limit);
+  const displayNames = await resolveDisplayNames(page.map((head) => head.recipientUserRef));
+  return { ok: true, data: { reminders: page.map((head) => toReminderDto(head, now, displayNames.get(head.recipientUserRef) ?? null)) } };
 }

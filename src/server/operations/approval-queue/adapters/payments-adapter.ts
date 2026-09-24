@@ -34,6 +34,7 @@ export async function listPendingPaymentApprovals(actor: ActorContext | null): P
     title: `Confirm payment - ${row.counterparty.displayName ?? row.counterparty.type}`,
     summary: `Recorded via ${row.method ?? "an unspecified method"}. Confirming will count it toward the invoice's settlement.`,
     requestedBy: null,
+    requestedByDisplayName: null,
     requestedAt: row.lastUpdatedAt,
     currentSourceStatus: row.status,
     allowedActions: [],

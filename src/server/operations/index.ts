@@ -8,6 +8,7 @@ export { blockTask, cancelTask, completeTask, reassignTask, reopenTask, startTas
 export { createReminder, getReminder, listReminderEvents, listReminders } from "./reminder-service";
 export { cancelReminder, completeReminder, dismissReminder, rescheduleReminder } from "./reminder-lifecycle-service";
 export { computeOperationsPermissions } from "./operations-permissions";
+export { searchActiveOperationsUsers, type OperationsUserOption } from "./user-search";
 export { getApprovalItem, listApprovalQueue, refreshApprovalItem } from "./approval-queue/approval-queue-service";
 export type { ApprovalActionType, ApprovalItemDto, ApprovalQueueListDto, ApprovalSourceModule } from "./approval-queue/types";
 export { APPROVAL_ACTION_TYPES, APPROVAL_SOURCE_MODULES } from "./approval-queue/types";

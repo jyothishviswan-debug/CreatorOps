@@ -9,7 +9,7 @@ import { Skeleton, EmptyState } from "@/ui/States";
 import type { ReminderDto, ReminderEventDto } from "@/server/operations/client-dto";
 
 import { listReminderEvents } from "@/features/operations/api-client";
-import { REMINDER_STATUS_LABEL, REMINDER_STATUS_TONE, TARGET_TYPE_LABEL, formatDateTime } from "@/features/operations/copy";
+import { displayNameOrRef, REMINDER_STATUS_LABEL, REMINDER_STATUS_TONE, TARGET_TYPE_LABEL, formatDateTime } from "@/features/operations/copy";
 import { targetHref, targetLabel } from "@/features/operations/target-links";
 
 import { ReminderLifecycleActions } from "./ReminderLifecycleActions";
@@ -75,7 +75,7 @@ export function ReminderDetail({ initialReminder, canManageReminders }: { initia
         </div>
         <div>
           <small>Owner</small>
-          <b style={{ overflowWrap: "anywhere" }}>{reminder.recipientUserRef}</b>
+          <b style={{ overflowWrap: "anywhere" }}>{displayNameOrRef(reminder.recipientDisplayName, reminder.recipientUserRef)}</b>
         </div>
         <div>
           <small>Source</small>

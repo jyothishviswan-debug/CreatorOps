@@ -95,11 +95,19 @@ describe("partner-reviews-adapter", () => {
         },
       }),
     }));
+    // requestedByDisplayName (Step 18B follow-up) is resolved via the shared, authz-free
+    // getUserDocByRef helper - stubbed here the same way the source module's own barrel is stubbed
+    // above, so this stays a pure unit test with no live Firestore pipeline.
+    vi.doMock("@/server/authz/firestore", () => ({
+      getUserDocByRef: vi.fn().mockResolvedValue({ uid: "uid_1", email: "requester@creatorops.com", role: "partnership_manager", active: true, displayName: "Requester Name", userRef: "user_1", version: 1 }),
+    }));
     const { listPendingPartnerReviewApprovals } = await import("./partner-reviews-adapter");
     const { items } = await listPendingPartnerReviewApprovals(actor);
     expect(items).toHaveLength(1);
     expect(items[0]!.currentSourceStatus).toBe("IN_REVIEW");
     expect(items[0]!.requestedBy).toBe("user_1");
+    expect(items[0]!.requestedByDisplayName).toBe("Requester Name");
     vi.doUnmock("@/server/partner-reviews/partner-review-list-service");
+    vi.doUnmock("@/server/authz/firestore");
   });
 });

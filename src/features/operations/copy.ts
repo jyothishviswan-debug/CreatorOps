@@ -123,6 +123,13 @@ export function formatDateTimeInputValue(iso: string | null): string {
   return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
 }
 
+// Step 18B follow-up: a safe display name resolved server-side always wins over the raw ref - the
+// raw ref is only ever a fallback for a lookup that failed (a since-removed user), never the
+// primary label.
+export function displayNameOrRef(displayName: string | null | undefined, ref: string): string {
+  return displayName?.trim() || ref;
+}
+
 export function toIsoFromLocalInput(value: string): string | null {
   if (!value) return null;
   const date = new Date(value);

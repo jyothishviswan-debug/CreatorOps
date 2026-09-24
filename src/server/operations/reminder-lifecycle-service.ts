@@ -3,6 +3,7 @@ import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
 
 import { toReminderDto, type ReminderDto } from "./client-dto";
+import { resolveDisplayName } from "./display-names";
 import { txGetReminderHead, txSetReminderHead } from "./firestore";
 import { loadAuthorizedReminder, requireOperationsAccess } from "./operations-gate";
 import { appendReminderEvent } from "./reminder-events";
@@ -60,7 +61,7 @@ export async function rescheduleReminder(actor: ActorContext | null, rawInput: u
   });
 
   if (result.kind !== "ok") return failureResult(result);
-  return { ok: true, data: toReminderDto(result.head, new Date().toISOString()) };
+  return { ok: true, data: toReminderDto(result.head, new Date().toISOString(), await resolveDisplayName(result.head.recipientUserRef)) };
 }
 
 export async function dismissReminder(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<OperationsServiceResult<ReminderDto>> {
@@ -86,7 +87,7 @@ export async function dismissReminder(actor: ActorContext | null, rawInput: unkn
   });
 
   if (result.kind !== "ok") return failureResult(result);
-  return { ok: true, data: toReminderDto(result.head, new Date().toISOString()) };
+  return { ok: true, data: toReminderDto(result.head, new Date().toISOString(), await resolveDisplayName(result.head.recipientUserRef)) };
 }
 
 export async function completeReminder(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<OperationsServiceResult<ReminderDto>> {
@@ -112,7 +113,7 @@ export async function completeReminder(actor: ActorContext | null, rawInput: unk
   });
 
   if (result.kind !== "ok") return failureResult(result);
-  return { ok: true, data: toReminderDto(result.head, new Date().toISOString()) };
+  return { ok: true, data: toReminderDto(result.head, new Date().toISOString(), await resolveDisplayName(result.head.recipientUserRef)) };
 }
 
 export async function cancelReminder(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<OperationsServiceResult<ReminderDto>> {
@@ -138,5 +139,5 @@ export async function cancelReminder(actor: ActorContext | null, rawInput: unkno
   });
 
   if (result.kind !== "ok") return failureResult(result);
-  return { ok: true, data: toReminderDto(result.head, new Date().toISOString()) };
+  return { ok: true, data: toReminderDto(result.head, new Date().toISOString(), await resolveDisplayName(result.head.recipientUserRef)) };
 }

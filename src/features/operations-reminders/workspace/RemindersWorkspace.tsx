@@ -11,7 +11,7 @@ import { REMINDER_EFFECTIVE_STATUSES } from "@/server/operations/types";
 import type { ReminderEffectiveStatus } from "@/server/operations/types";
 
 import { listReminders } from "@/features/operations/api-client";
-import { REMINDER_STATUS_LABEL, REMINDER_STATUS_TONE, TARGET_TYPE_LABEL, formatDateTime } from "@/features/operations/copy";
+import { displayNameOrRef, REMINDER_STATUS_LABEL, REMINDER_STATUS_TONE, TARGET_TYPE_LABEL, formatDateTime } from "@/features/operations/copy";
 import { targetLabel } from "@/features/operations/target-links";
 import { useNarrowViewport } from "@/features/operations/use-narrow-viewport";
 
@@ -185,7 +185,7 @@ function RemindersTable({ rows }: { rows: ReminderDto[] }) {
                 <small style={{ display: "block" }}>{r.reminderRef}</small>
               </td>
               <td style={{ overflowWrap: "anywhere" }}>{targetLabel(r.target)}</td>
-              <td style={{ overflowWrap: "anywhere" }}>{r.recipientUserRef}</td>
+              <td style={{ overflowWrap: "anywhere" }}>{displayNameOrRef(r.recipientDisplayName, r.recipientUserRef)}</td>
               <td>{formatDateTime(r.reminderAt)}</td>
               <td>
                 <Pill tone={REMINDER_STATUS_TONE[r.status]}>{REMINDER_STATUS_LABEL[r.status]}</Pill>

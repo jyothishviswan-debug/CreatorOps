@@ -10,7 +10,7 @@ import type { ApprovalItemDto } from "@/server/operations/approval-queue/types";
 import { APPROVAL_ACTION_TYPES, APPROVAL_SOURCE_MODULES } from "@/server/operations/approval-queue/types";
 
 import { listApprovalQueue } from "@/features/operations/api-client";
-import { APPROVAL_SOURCE_LABEL, formatDateTime } from "@/features/operations/copy";
+import { APPROVAL_SOURCE_LABEL, displayNameOrRef, formatDateTime } from "@/features/operations/copy";
 import { approvalSourceHref } from "@/features/operations/target-links";
 import { useNarrowViewport } from "@/features/operations/use-narrow-viewport";
 
@@ -52,7 +52,7 @@ export function ApprovalQueueWorkspace({ initial, canView }: { initial: { items:
     () =>
       items.filter((item) => {
         if (actionType !== ALL && item.actionType !== actionType) return false;
-        if (requestedBy.trim() && !(item.requestedBy ?? "").toLowerCase().includes(requestedBy.trim().toLowerCase())) return false;
+        if (requestedBy.trim() && !`${item.requestedBy ?? ""} ${item.requestedByDisplayName ?? ""}`.toLowerCase().includes(requestedBy.trim().toLowerCase())) return false;
         if (search.trim()) {
           const q = search.trim().toLowerCase();
           const haystack = `${item.title} ${item.summary} ${item.sourceRef}`.toLowerCase();
@@ -188,7 +188,7 @@ function ApprovalTable({ items }: { items: ApprovalItemDto[] }) {
                 <Pill tone="blue">{APPROVAL_SOURCE_LABEL[item.sourceModule]}</Pill>
               </td>
               <td>{item.actionType.replaceAll("_", " ")}</td>
-              <td style={{ overflowWrap: "anywhere" }}>{item.requestedBy ?? "—"}</td>
+              <td style={{ overflowWrap: "anywhere" }}>{item.requestedBy ? displayNameOrRef(item.requestedByDisplayName, item.requestedBy) : "—"}</td>
               <td>{formatDateTime(item.requestedAt)}</td>
               <td>{item.currentSourceStatus}</td>
               <td>

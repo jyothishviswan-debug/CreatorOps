@@ -38,6 +38,10 @@ export type ApprovalItemDto = {
   title: string;
   summary: string;
   requestedBy: string | null;
+  // Resolved by the adapter that sets `requestedBy` (a safe users/{uid} displayName lookup, same
+  // discipline as TaskDto.assigneeDisplayName) - null whenever requestedBy itself is null, or the
+  // lookup fails.
+  requestedByDisplayName: string | null;
   requestedAt: string | null;
   currentSourceStatus: string;
   allowedActions: string[];

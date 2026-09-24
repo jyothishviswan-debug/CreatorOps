@@ -23,6 +23,12 @@ export type TaskDto = {
   notes: string | null;
   target: TargetReference;
   assigneeUserRef: string;
+  // Resolved by the SERVICE layer (never here - see this file's own "never imports Firestore, the
+  // gate, or any business module's internals" boundary, proved by operations-static.test.ts) from
+  // assigneeUserRef via the same safe users/{uid} displayName every other module's own
+  // ownerDisplayName/partnerDisplayName field already resolves (see e.g. CampaignDto). Null only
+  // when the lookup itself fails (a since-removed user) - the UI falls back to the raw ref.
+  assigneeDisplayName: string | null;
   createdByUserRef: string;
   origin: TaskOrigin;
   priority: TaskPriority;
@@ -46,13 +52,14 @@ export function isTaskOverdue(head: Pick<OperationsTaskHeadDoc, "status" | "disp
   return head.display.dueAt < nowIso;
 }
 
-export function toTaskDto(head: OperationsTaskHeadDoc, nowIso: string): TaskDto {
+export function toTaskDto(head: OperationsTaskHeadDoc, nowIso: string, assigneeDisplayName: string | null = null): TaskDto {
   return {
     taskRef: head.taskRef,
     title: head.display.title,
     notes: null,
     target: head.target,
     assigneeUserRef: head.assigneeUserRef,
+    assigneeDisplayName,
     createdByUserRef: head.createdByUserRef,
     origin: head.origin,
     priority: head.display.priority,
@@ -68,8 +75,8 @@ export function toTaskDto(head: OperationsTaskHeadDoc, nowIso: string): TaskDto 
   };
 }
 
-export function toTaskDetailDto(head: OperationsTaskHeadDoc, version: TaskVersionDoc | null, nowIso: string): TaskDto {
-  const base = toTaskDto(head, nowIso);
+export function toTaskDetailDto(head: OperationsTaskHeadDoc, version: TaskVersionDoc | null, nowIso: string, assigneeDisplayName: string | null = null): TaskDto {
+  const base = toTaskDto(head, nowIso, assigneeDisplayName);
   return { ...base, notes: version?.notes ?? null };
 }
 
@@ -84,6 +91,8 @@ export type ReminderDto = {
   taskRef: string | null;
   approvalItemRef: string | null;
   recipientUserRef: string;
+  // Same resolved-by-the-service-layer discipline as TaskDto.assigneeDisplayName above.
+  recipientDisplayName: string | null;
   message: string;
   reminderAt: string;
   status: ReminderEffectiveStatus;
@@ -102,13 +111,14 @@ export function deriveReminderEffectiveStatus(head: Pick<OperationsReminderHeadD
   return head.status;
 }
 
-export function toReminderDto(head: OperationsReminderHeadDoc, nowIso: string): ReminderDto {
+export function toReminderDto(head: OperationsReminderHeadDoc, nowIso: string, recipientDisplayName: string | null = null): ReminderDto {
   return {
     reminderRef: head.reminderRef,
     target: head.target,
     taskRef: head.taskRef,
     approvalItemRef: head.approvalItemRef,
     recipientUserRef: head.recipientUserRef,
+    recipientDisplayName,
     message: head.message,
     reminderAt: head.reminderAt,
     status: deriveReminderEffectiveStatus(head, nowIso),

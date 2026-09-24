@@ -9,7 +9,7 @@ import { Skeleton, EmptyState } from "@/ui/States";
 import type { TaskDto, TaskEventDto } from "@/server/operations/client-dto";
 
 import { listTaskEvents } from "@/features/operations/api-client";
-import { deriveDueState, DUE_STATE_LABEL, DUE_STATE_TONE, TASK_PRIORITY_LABEL, TASK_PRIORITY_TONE, TASK_STATUS_LABEL, TASK_STATUS_TONE, TARGET_TYPE_LABEL, formatDateTime } from "@/features/operations/copy";
+import { deriveDueState, displayNameOrRef, DUE_STATE_LABEL, DUE_STATE_TONE, TASK_PRIORITY_LABEL, TASK_PRIORITY_TONE, TASK_STATUS_LABEL, TASK_STATUS_TONE, TARGET_TYPE_LABEL, formatDateTime } from "@/features/operations/copy";
 import { targetHref, targetLabel } from "@/features/operations/target-links";
 
 import { LifecycleActions } from "./LifecycleActions";
@@ -29,7 +29,7 @@ const EVENT_LABEL: Record<string, string> = {
   TASK_PRIORITY_CHANGED: "Priority changed",
 };
 
-export function TaskDetail({ initialTask, canCompleteTasks }: { initialTask: TaskDto; canCompleteTasks: boolean }) {
+export function TaskDetail({ initialTask, canCompleteTasks, canManageTasks }: { initialTask: TaskDto; canCompleteTasks: boolean; canManageTasks: boolean }) {
   const [task, setTask] = useState(initialTask);
   const [tab, setTab] = useState<"summary" | "activity">("summary");
   const [events, setEvents] = useState<TaskEventDto[] | null>(null);
@@ -88,7 +88,7 @@ export function TaskDetail({ initialTask, canCompleteTasks }: { initialTask: Tas
         </div>
         <div>
           <small>Assignee</small>
-          <b style={{ overflowWrap: "anywhere" }}>{task.assigneeUserRef}</b>
+          <b style={{ overflowWrap: "anywhere" }}>{displayNameOrRef(task.assigneeDisplayName, task.assigneeUserRef)}</b>
         </div>
       </div>
 
@@ -154,8 +154,8 @@ export function TaskDetail({ initialTask, canCompleteTasks }: { initialTask: Tas
               </div>
             </div>
             <div className="panelbody">
-              <LifecycleActions task={task} canComplete={canCompleteTasks} onUpdated={setTask} />
-              {!canCompleteTasks && <p className="foundationnote">You do not have permission to change this task&apos;s lifecycle.</p>}
+              <LifecycleActions task={task} canComplete={canCompleteTasks} canEdit={canManageTasks} onUpdated={setTask} />
+              {!canCompleteTasks && !canManageTasks && <p className="foundationnote">You do not have permission to change this task&apos;s lifecycle.</p>}
             </div>
           </section>
         </div>

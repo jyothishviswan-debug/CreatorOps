@@ -5,6 +5,7 @@ import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
 
 import { toTaskDetailDto, toTaskEventDto, type TaskDto, type TaskEventDto } from "./client-dto";
+import { resolveDisplayName, resolveDisplayNames } from "./display-names";
 import {
   getTaskGenerationClaimDoc,
   getTaskHeadDoc,
@@ -130,7 +131,7 @@ export async function createTask(actor: ActorContext | null, rawInput: unknown, 
     });
   });
 
-  return { ok: true, data: toTaskDetailDto(head, version, now) };
+  return { ok: true, data: toTaskDetailDto(head, version, now, await resolveDisplayName(head.assigneeUserRef)) };
 }
 
 export async function getTask(actor: ActorContext | null, rawTaskRef: unknown): Promise<OperationsServiceResult<TaskDto>> {
@@ -138,7 +139,7 @@ export async function getTask(actor: ActorContext | null, rawTaskRef: unknown): 
   if (!loaded.ok) return loaded.error;
   const { head } = loaded.authorized;
   const version = await getTaskVersionDoc(head.taskRef, head.latestVersion);
-  return { ok: true, data: toTaskDetailDto(head, version, new Date().toISOString()) };
+  return { ok: true, data: toTaskDetailDto(head, version, new Date().toISOString(), await resolveDisplayName(head.assigneeUserRef)) };
 }
 
 export async function listTaskEvents(actor: ActorContext | null, rawTaskRef: unknown, rawLimit?: unknown): Promise<OperationsServiceResult<{ events: TaskEventDto[]; hasMore: boolean }>> {
@@ -206,7 +207,7 @@ export async function reviseTask(actor: ActorContext | null, rawInput: unknown, 
   if (result.kind === "not_found") return operationsNotFoundResult();
   if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This task was changed elsewhere. Reload and try again." };
   if (result.kind === "conflict") return { ok: false, code: "conflict", message: result.message };
-  return { ok: true, data: toTaskDetailDto(result.head, result.version, result.version.createdAt) };
+  return { ok: true, data: toTaskDetailDto(result.head, result.version, result.version.createdAt, await resolveDisplayName(result.head.assigneeUserRef)) };
 }
 
 // --- Bounded scoped list (section 12/18) -----------------------------------------------------------
@@ -238,7 +239,9 @@ export async function listTasks(actor: ActorContext | null, rawQuery: unknown): 
   const now = new Date().toISOString();
   const scoped = heads.filter((head) => isOperationsRecordInScope(grants, actor!, { ownerUid: head.ownerUid, regionIds: head.regionIds, teamIds: head.teamIds, createdByUserRef: head.createdByUserRef }));
   const filtered = query.priority ? scoped.filter((head) => head.display.priority === query.priority) : scoped;
-  return { ok: true, data: { tasks: filtered.slice(0, limit).map((head) => toTaskDetailDto(head, null, now)) } };
+  const page = filtered.slice(0, limit);
+  const displayNames = await resolveDisplayNames(page.map((head) => head.assigneeUserRef));
+  return { ok: true, data: { tasks: page.map((head) => toTaskDetailDto(head, null, now, displayNames.get(head.assigneeUserRef) ?? null)) } };
 }
 
 // --- System generation (section 5/8) ---------------------------------------------------------------
@@ -329,7 +332,7 @@ export async function generateSystemTask(actor: ActorContext | null, rawInput: u
     return { kind: "ok", head, version, outcome: "created" };
   });
 
-  return { ok: true, data: { outcome: result.outcome, task: toTaskDetailDto(result.head, result.version, result.version.createdAt) } };
+  return { ok: true, data: { outcome: result.outcome, task: toTaskDetailDto(result.head, result.version, result.version.createdAt, await resolveDisplayName(result.head.assigneeUserRef)) } };
 }
 
 export type { OperationsErrorResult };

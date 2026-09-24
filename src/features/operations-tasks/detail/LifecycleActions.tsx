@@ -6,20 +6,26 @@ import type { TaskDto } from "@/server/operations/client-dto";
 
 import { blockTask, cancelTask, completeTask, reopenTask, startTask, unblockTask } from "@/features/operations/api-client";
 
+import { EditTaskDialog } from "./EditTaskDialog";
+
 // Step 18B: Task lifecycle action buttons. Every button calls the corresponding /api/operations/
 // tasks/[taskRef]/** endpoint with the task's own expectedDocVersion - the SERVER re-checks
-// complete_tasks and the lifecycle transition table (src/server/authz/lifecycle.ts) on every call;
-// these buttons are a convenience, never the authority. Reason-requiring transitions (block/cancel/
-// reopen) show an inline reason field before submitting, mirroring Payments' own fail/reopen/void
-// reason-capture pattern.
-export function LifecycleActions({ task, canComplete, onUpdated }: { task: TaskDto; canComplete: boolean; onUpdated: (next: TaskDto) => void }) {
+// complete_tasks/manage_tasks and the lifecycle transition table (src/server/authz/lifecycle.ts) on
+// every call; these buttons are a convenience, never the authority. Reason-requiring transitions
+// (block/cancel/reopen/revise) show an inline reason field or dialog before submitting, mirroring
+// Payments' own fail/reopen/void reason-capture pattern. `Edit` is gated on manage_tasks (the
+// reviseTask endpoint's own grant), separate from the complete_tasks-gated status transitions below -
+// a canManageTasks-only actor can still edit a Task they cannot start/complete, and vice versa.
+export function LifecycleActions({ task, canComplete, canEdit, onUpdated }: { task: TaskDto; canComplete: boolean; canEdit: boolean; onUpdated: (next: TaskDto) => void }) {
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [reasonPrompt, setReasonPrompt] = useState<"block" | "cancel" | "reopen" | null>(null);
   const [reason, setReason] = useState("");
+  const [editing, setEditing] = useState(false);
 
-  if (!canComplete) return null;
+  if (!canComplete && !canEdit) return null;
   if (task.status === "DONE" || task.status === "CANCELLED") {
+    if (!canComplete) return null;
     return (
       <div className="actions">
         <span className="pill gray">Read-only ({task.status === "DONE" ? "Done" : "Cancelled"})</span>
@@ -64,17 +70,17 @@ export function LifecycleActions({ task, canComplete, onUpdated }: { task: TaskD
 
   return (
     <div className="actions" style={{ flexWrap: "wrap" }}>
-      {task.status === "OPEN" && (
+      {canComplete && task.status === "OPEN" && (
         <button type="button" className="btn primary" disabled={pending !== null} onClick={() => void run("start")} data-testid="task-action-start">
           Start
         </button>
       )}
-      {(task.status === "OPEN" || task.status === "IN_PROGRESS") && (
+      {canComplete && (task.status === "OPEN" || task.status === "IN_PROGRESS") && (
         <button type="button" className="btn primary" disabled={pending !== null} onClick={() => void run("complete")} data-testid="task-action-complete">
           Complete
         </button>
       )}
-      {task.status === "BLOCKED" && (
+      {canComplete && task.status === "BLOCKED" && (
         <>
           <button type="button" className="btn primary" disabled={pending !== null} onClick={() => void run("unblock")} data-testid="task-action-unblock">
             Unblock / Resume
@@ -84,14 +90,21 @@ export function LifecycleActions({ task, canComplete, onUpdated }: { task: TaskD
           </button>
         </>
       )}
-      {task.status === "IN_PROGRESS" && (
+      {canComplete && task.status === "IN_PROGRESS" && (
         <button type="button" className="btn" disabled={pending !== null} onClick={() => setReasonPrompt("block")} data-testid="task-action-block">
           Block
         </button>
       )}
-      <button type="button" className="btn" disabled={pending !== null} onClick={() => setReasonPrompt("cancel")} data-testid="task-action-cancel">
-        Cancel
-      </button>
+      {canEdit && (
+        <button type="button" className="btn" disabled={pending !== null} onClick={() => setEditing(true)} data-testid="task-action-edit">
+          Edit
+        </button>
+      )}
+      {canComplete && (
+        <button type="button" className="btn" disabled={pending !== null} onClick={() => setReasonPrompt("cancel")} data-testid="task-action-cancel">
+          Cancel
+        </button>
+      )}
 
       {reasonPrompt === "block" && <ReasonBar label="Reason for blocking" reason={reason} setReason={setReason} onCancel={() => setReasonPrompt(null)} onConfirm={() => void run("block")} pending={pending === "block"} />}
       {reasonPrompt === "cancel" && <ReasonBar label="Reason for cancelling" reason={reason} setReason={setReason} onCancel={() => setReasonPrompt(null)} onConfirm={() => void run("cancel")} pending={pending === "cancel"} />}
@@ -101,6 +114,8 @@ export function LifecycleActions({ task, canComplete, onUpdated }: { task: TaskD
           {error}
         </div>
       )}
+
+      {canEdit && <EditTaskDialog task={task} open={editing} onClose={() => setEditing(false)} onUpdated={onUpdated} />}
     </div>
   );
 }

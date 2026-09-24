@@ -12,7 +12,7 @@ import type { TaskPriority, TaskStatus } from "@/server/operations/types";
 import { TASK_PRIORITIES, TASK_STATUSES } from "@/server/operations/types";
 
 import { listTasks } from "@/features/operations/api-client";
-import { deriveDueState, DUE_STATE_LABEL, DUE_STATE_TONE, TARGET_TYPE_LABEL, TASK_PRIORITY_LABEL, TASK_PRIORITY_TONE, TASK_STATUS_LABEL, TASK_STATUS_TONE, formatDateTime, type DueState } from "@/features/operations/copy";
+import { deriveDueState, displayNameOrRef, DUE_STATE_LABEL, DUE_STATE_TONE, TARGET_TYPE_LABEL, TASK_PRIORITY_LABEL, TASK_PRIORITY_TONE, TASK_STATUS_LABEL, TASK_STATUS_TONE, formatDateTime, type DueState } from "@/features/operations/copy";
 import { targetLabel } from "@/features/operations/target-links";
 import { useNarrowViewport } from "@/features/operations/use-narrow-viewport";
 
@@ -220,7 +220,7 @@ function TasksTable({ rows, nowIso }: { rows: TaskDto[]; nowIso: string }) {
                   <small style={{ display: "block" }}>{task.taskRef}</small>
                 </td>
                 <td style={{ overflowWrap: "anywhere" }}>{targetLabel(task.target)}</td>
-                <td style={{ overflowWrap: "anywhere" }}>{task.assigneeUserRef}</td>
+                <td style={{ overflowWrap: "anywhere" }}>{displayNameOrRef(task.assigneeDisplayName, task.assigneeUserRef)}</td>
                 <td>
                   <Pill tone={TASK_PRIORITY_TONE[task.priority]}>{TASK_PRIORITY_LABEL[task.priority]}</Pill>
                 </td>
@@ -261,7 +261,7 @@ function TaskCards({ rows, nowIso }: { rows: TaskDto[]; nowIso: string }) {
             </div>
             <div className="recordmeta">
               <span>{targetLabel(task.target)}</span>
-              <span>{task.assigneeUserRef}</span>
+              <span>{displayNameOrRef(task.assigneeDisplayName, task.assigneeUserRef)}</span>
             </div>
             <div style={{ marginTop: 12 }}>
               <Link className="btn" style={{ width: "100%" }} href={`/operations/tasks/${encodeURIComponent(task.taskRef)}`} data-testid="open-task">

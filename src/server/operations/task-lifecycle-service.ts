@@ -3,6 +3,7 @@ import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
 
 import { toTaskDetailDto, type TaskDto } from "./client-dto";
+import { resolveDisplayName } from "./display-names";
 import { taskHeadDisplaySchema } from "./types";
 import { getTaskVersionDoc, txGetTaskHead, txSetTaskHead } from "./firestore";
 import { loadAuthorizedTask, requireAdmittedActiveUser, requireOperationsAccess } from "./operations-gate";
@@ -58,8 +59,8 @@ async function runTransition(taskRef: string, expectedDocVersion: number, next: 
 
 async function respond(result: OkResult | Failure): Promise<OperationsServiceResult<TaskDto>> {
   if (result.kind !== "ok") return failureResult(result);
-  const version = await txlessVersion(result.head);
-  return { ok: true, data: toTaskDetailDto(result.head, version, new Date().toISOString()) };
+  const [version, assigneeDisplayName] = await Promise.all([txlessVersion(result.head), resolveDisplayName(result.head.assigneeUserRef)]);
+  return { ok: true, data: toTaskDetailDto(result.head, version, new Date().toISOString(), assigneeDisplayName) };
 }
 
 // A plain (non-transactional) read of the head's latest version for the response DTO - the mutation
@@ -220,6 +221,6 @@ export async function reassignTask(actor: ActorContext | null, rawInput: unknown
   });
 
   if (result.kind !== "ok") return failureResult(result);
-  const version = await txlessVersion(result.head);
-  return { ok: true, data: toTaskDetailDto(result.head, version, new Date().toISOString()) };
+  const [version, assigneeDisplayName] = await Promise.all([txlessVersion(result.head), resolveDisplayName(result.head.assigneeUserRef)]);
+  return { ok: true, data: toTaskDetailDto(result.head, version, new Date().toISOString(), assigneeDisplayName) };
 }
