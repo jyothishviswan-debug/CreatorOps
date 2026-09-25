@@ -150,7 +150,15 @@ export function formatCellValue(value: unknown): string {
   if (value === null || value === undefined) return NO_VALUE_TEXT;
   if (typeof value === "boolean") return value ? "Yes" : "No";
   if (typeof value === "number") return Number.isFinite(value) ? value.toLocaleString(DATE_LOCALE) : String(value);
-  if (typeof value === "string") return /^\d{4}-\d{2}$/.test(value) ? periodKeyLabel(value) : value;
+  if (typeof value === "string") {
+    if (/^\d{4}-\d{2}$/.test(value)) return periodKeyLabel(value);
+    // A full ISO-8601 timestamp (e.g. a raw source record's own createdAt/approvedAt field, passed
+    // straight through a section row) - formatted the same fixed-locale way as the result's own
+    // generatedAt/evidenceCutoff fields, never left as a raw machine string. An unrecognized shape
+    // (a plain label, a ref, etc.) is returned verbatim, never guessed.
+    if (/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/.test(value)) return formatDateTime(value);
+    return value;
+  }
   if (isTargetRefShape(value)) return `${humanizeKey(value.targetType).toUpperCase()} ${value.targetRef}`;
   if (Array.isArray(value)) {
     if (value.length === 0) return NO_VALUE_TEXT;
