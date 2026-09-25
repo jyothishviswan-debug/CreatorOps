@@ -586,6 +586,192 @@ export default function FoundationPage() {
         </div>
       </section>
 
+      <SectionLabel
+        n="08"
+        title="Reports execution pattern"
+        desc="Catalog → a report's own declared filters → a governed execution result. New in Step 19B: the golden master's own Reports entry (docs/reference/CreatorOps_UI_Golden_Master.html) is only the generic per-module overview-preview shape shared by every module - it has no catalog/filter/result pattern of its own, so this section documents the one /reports actually uses, built from the same tokens, panels and controls as everywhere else."
+      />
+      <div className="grid">
+        <DocPanel title="Catalog card" sub="One governed report definition, grouped by family" span={6}>
+          <div className="record" style={{ maxWidth: 340 }}>
+            <b>Monthly Partner Performance</b>
+            <p className="foundationnote" style={{ margin: "8px 0 12px" }}>
+              A per-Partner, per-month view of coverage, Analytics output and finalized Review evidence - Production/Compliance/Performance kept fully separate.
+            </p>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+              <Pill tone="gray">partners</Pill>
+              <Pill tone="gray">partner_reviews</Pill>
+              <Pill tone="gray">analytics</Pill>
+            </div>
+            <div className="recordmeta">
+              <span>Bounded to 200 rows</span>
+              <span>2 filters</span>
+            </div>
+          </div>
+        </DocPanel>
+        <DocPanel title="Filter controls" sub="Only the ONE report's own server-declared filters - never invented client-side" span={6}>
+          <div className="fields">
+            <div className="field">
+              <label>Platform</label>
+              <select disabled defaultValue="">
+                <option value="">Any platform</option>
+                <option>Instagram</option>
+                <option>YouTube</option>
+              </select>
+            </div>
+            <div className="field full">
+              <label>Periods (comma-separated YYYY-MM, max 6, required) *</label>
+              <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+                <input type="month" disabled style={{ width: 150 }} />
+                <button className="btn" type="button" disabled>
+                  <Icon name="plus" />
+                  Add period
+                </button>
+                <small className="muted">3 of 6 periods selected</small>
+              </div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 10 }}>
+                <Pill tone="blue">March 2026</Pill>
+                <Pill tone="blue">April 2026</Pill>
+                <Pill tone="blue">May 2026</Pill>
+              </div>
+            </div>
+          </div>
+        </DocPanel>
+      </div>
+
+      <div className="grid">
+        <DocPanel title="Execution result" sub="generatedAt ≠ evidenceCutoff · a missing metric is never 0 · limitations always visible" span={12}>
+          <div className="detailcontext" style={{ marginBottom: 18 }}>
+            <div>
+              <small>Generated</small>
+              <b>24 Sep 2026, 09:14</b>
+            </div>
+            <div>
+              <small>Evidence cutoff (older than the read)</small>
+              <b>21 Sep 2026, 18:02</b>
+            </div>
+            <div>
+              <small>Rows returned</small>
+              <b>25 of max 25</b>
+            </div>
+            <div>
+              <small>Scope</small>
+              <b>actor-scope, one bounded page</b>
+            </div>
+          </div>
+          <div className="banner">
+            <Icon name="alert" />
+            <span>
+              <b>This result was truncated.</b> 25 row(s) of at most 25 are shown - a larger scope exists than this bounded run can return in one pass.
+            </span>
+          </div>
+          <div className="kpis" style={{ gridTemplateColumns: "repeat(4,minmax(0,1fr))" }}>
+            <div className="kpi">
+              <div className="kpi-top">Finalized reviews</div>
+              <div className="value">18</div>
+            </div>
+            <div className="kpi">
+              <div className="kpi-top">Instagram views</div>
+              <div className="value" style={{ fontSize: 16, color: "var(--muted)" }}>
+                Not available
+              </div>
+              <div className="trend" style={{ color: "var(--muted)" }}>
+                Null (never 0) when no matched row reports views.
+              </div>
+            </div>
+            <div className="kpi">
+              <div className="kpi-top">Highest-views period (YouTube)</div>
+              <div className="value" style={{ fontSize: 20 }}>
+                April 2026
+              </div>
+            </div>
+            <div className="kpi">
+              <div className="kpi-top">Dropped periods</div>
+              <div className="value">0</div>
+            </div>
+          </div>
+          <div className="grid" style={{ marginTop: 18, marginBottom: 0 }}>
+            <div className="panel s6">
+              <div className="panelhead">
+                <div>
+                  <h2>Limitations</h2>
+                  <p>Always shown - never buried, never silently dropped.</p>
+                </div>
+              </div>
+              <div className="panelbody">
+                <ul className="checklist">
+                  <li>
+                    <Icon name="alert" />
+                    <span>No blended score is computed anywhere in this report.</span>
+                  </li>
+                  <li>
+                    <Icon name="alert" />
+                    <span>Bounded to a page of at most 25 Partners when no partnerRef filter is applied.</span>
+                  </li>
+                </ul>
+              </div>
+            </div>
+            <div className="panel s6">
+              <div className="panelhead">
+                <div>
+                  <h2>Provenance</h2>
+                  <p>Full run only - hidden on a viewer-safe run.</p>
+                </div>
+              </div>
+              <div className="panelbody">
+                <div className="tablewrap">
+                  <table className="compact">
+                    <thead>
+                      <tr>
+                        <th scope="col">Source module</th>
+                        <th scope="col">Function</th>
+                        <th scope="col">Records</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      <tr>
+                        <td>partners</td>
+                        <td>listPartners</td>
+                        <td>25</td>
+                      </tr>
+                      <tr>
+                        <td>analytics</td>
+                        <td>getPlatformAnalyticsView</td>
+                        <td>18</td>
+                      </tr>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          </div>
+        </DocPanel>
+      </div>
+
+      <div className="stategrid" style={{ marginTop: 18 }}>
+        <article className="statecard">
+          <span className="tile purple">
+            <Icon name="lock" />
+          </span>
+          <h3>Viewer-safe boundary</h3>
+          <p>Finance Status and Administration &amp; Security never run on the viewer-safe path - a Viewer sees a neutral &quot;not available on your access level&quot; message, never a broken fetch.</p>
+        </article>
+        <article className="statecard">
+          <span className="tile blue">
+            <Icon name="file" />
+          </span>
+          <h3>Finalized snapshot</h3>
+          <p>Finalize pins the exact result as an immutable snapshot. &quot;Your finalized reports&quot; lists only the acting user&apos;s own snapshots - never every actor&apos;s.</p>
+        </article>
+        <article className="statecard">
+          <span className="tile">
+            <Icon name="table" />
+          </span>
+          <h3>Section, not one mega-table</h3>
+          <p>Each report&apos;s own declared sections render as their own typed table - column headers come straight from the real field names a family projector returned, never invented.</p>
+        </article>
+      </div>
+
       <DialogShell
         open={dialogOpen}
         title="Review before saving"

@@ -152,13 +152,20 @@ describe("section 17: the Viewer-safe path never becomes a generic authorization
   });
 });
 
-describe("section 25: no final Reports UI build in 19A", () => {
-  it("no new .tsx file is added under src/app/reports beyond the two pre-existing placeholders", () => {
+describe("section 25: Reports UI build (Step 19B closes the 19A placeholder boundary)", () => {
+  // Step 19A deliberately left the two placeholder pages (fixture-fed, no real backend call) as the
+  // ONLY .tsx files under src/app/reports, and this test's own original assertion pinned that as a
+  // temporal boundary ("no final Reports UI build in 19A"). Step 19B's whole mission is to build the
+  // real governed UI over the now-closed backend, so that boundary is expected to move - this
+  // assertion is updated to the real route set the spec calls for (catalog, one report's own
+  // configure+run+result view, and finalized-snapshot browsing) rather than removed, so a future
+  // stray page can't be added under src/app/reports without this test being deliberately updated too.
+  it("src/app/reports contains exactly the Step 19B real-UI route set (no stray/orphaned page)", () => {
     const reportsAppDir = path.join(appDir, "reports");
     const files = walk(reportsAppDir, (name) => name.endsWith(".tsx"))
       .map((f) => path.relative(srcDir, f).split(path.sep).join("/"))
       .sort();
-    expect(files).toEqual(["app/reports/page.tsx", "app/reports/[reportRunId]/page.tsx"].sort());
+    expect(files).toEqual(["app/reports/[reportId]/page.tsx", "app/reports/page.tsx", "app/reports/snapshots/[snapshotRef]/page.tsx", "app/reports/snapshots/page.tsx"].sort());
   });
 
   it("no server/reports file imports a React/.tsx component or Next.js page convention", () => {
