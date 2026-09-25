@@ -79,6 +79,11 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // action behind it now that a real target exists).
       analytics: featureGrant(true, { explore: true, manage_analytics_data: true }),
       imports: featureGrant(true, { manage_imports: true }),
+      // Step 19A: Analyst may RUN and EXPORT (capability metadata only - no file is actually
+      // generated in 19A) governed reports, on top of the plain "reports" view every role in
+      // `featuresOf(...)` above already holds. Viewer deliberately holds neither action - it stays
+      // on the Viewer-safe run path only (see src/server/reports/reports-gate.ts's own comment).
+      reports: featureGrant(true, { run_reports: true, export: true }),
     },
   },
   partnership_manager: {
@@ -245,6 +250,8 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // day-to-day-but-not-governance split as Finance's approve_payables
       // and Partners'/Vendors'/Campaigns' own governance actions.
       partner_reviews: featureGrant(true, { create: true, submit_partner_review: true }),
+      // Step 19A: same explicit run/export grant as Analyst's own - see that grant's comment.
+      reports: featureGrant(true, { run_reports: true, export: true }),
     },
   },
   partnership_head: {
@@ -371,6 +378,8 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // Step 13A: the only role (besides Super Admin) trusted to
       // finalize a review, on top of everything Manager holds.
       partner_reviews: featureGrant(true, { create: true, submit_partner_review: true, finalize_approve: true }),
+      // Step 19A: same explicit run/export grant as Analyst's/Manager's own - see Analyst's comment.
+      reports: featureGrant(true, { run_reports: true, export: true }),
     },
   },
   super_admin: {

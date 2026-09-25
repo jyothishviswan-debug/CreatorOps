@@ -756,6 +756,14 @@
         { "fieldPath": "status", "order": "ASCENDING" },
         { "fieldPath": "reminderAt", "order": "ASCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "reportSnapshots",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdByUserRef", "order": "ASCENDING" },
+        { "fieldPath": "generatedAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

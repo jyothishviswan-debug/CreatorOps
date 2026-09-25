@@ -559,6 +559,27 @@ describe("firestore.indexes.json - Finance Agreements workspace (Step 14B)", () 
   });
 });
 
+// Step 19A (production query/index audit): the ONE Firestore query Reports issues against its own
+// collection - listReportSnapshotDocsByActor (src/server/reports/firestore.ts), a bounded actor-own-
+// snapshots-only read: `where("createdByUserRef", "==", actor.userRef).orderBy("generatedAt",
+// "desc").limit(...)`. An equality filter plus an orderBy on a DIFFERENT field always needs a
+// composite index in production (the emulator never enforces this) - this is the only Reports query
+// that does; getReportSnapshotDoc/createReportSnapshotDoc are plain single-document get/create, no
+// query at all.
+describe("firestore.indexes.json - Reports (Step 19A query audit)", () => {
+  const createdByUserRefAsc: IndexField = { fieldPath: "createdByUserRef", order: "ASCENDING" };
+  const generatedAtDesc: IndexField = { fieldPath: "generatedAt", order: "DESCENDING" };
+
+  it("has the createdByUserRef + generatedAt-desc composite for listReportSnapshotDocsByActor", () => {
+    expect(hasIndex("reportSnapshots", [createdByUserRefAsc, generatedAtDesc])).toBe(true);
+  });
+
+  it("no other reportSnapshots index exists - exactly one, no speculative extras", () => {
+    const mine = indexesFile.indexes.filter((index) => index.collectionGroup === "reportSnapshots");
+    expect(mine).toHaveLength(1);
+  });
+});
+
 // Step 15A (production query/index audit): EVERY Firestore query introduced in
 // src/server/finance-payables. The emulator never enforces composite indexes, so this certifies by
 // SOURCE SCAN what each query needs, and pins the inventory (exact-count style - a new query must be

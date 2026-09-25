@@ -544,6 +544,17 @@ describe("Payment implementation (Payables landed in Step 15A, Invoices landed i
   // Step 18A's own regression - this file's TARGET_TYPES literal was missed when the adapters-only
   // exclusion was first added).
   const OPERATIONS_APPROVAL_ADAPTERS = /^src\/server\/operations\/approval-queue\/adapters\/|^src\/server\/operations\/target-ref\.ts$/;
+  // Step 19A: Reports' own Finance Status family - the one place OUTSIDE Finance itself (besides the
+  // Operations Approval Queue adapters above) that legitimately names Payable/Invoice/Payment
+  // vocabulary. Exactly the same "legitimately pins and reads" shape as OPERATIONS_APPROVAL_ADAPTERS:
+  // families/finance-status.ts calls ONLY each module's own published, read-only, bounded
+  // listXWorkspace function (never Firestore/gate/write internals - proved by
+  // src/server/reports/reports-static.test.ts's own "no source-module WRITE function" guard), and
+  // catalog.ts names "payments"/"payables"/"invoices" only as report SECTION ids/titles and
+  // sourceModules metadata strings - never a Firestore collection name or a write function. Deliberately
+  // its own narrow file list, not a blanket Reports exception (every other Reports file - the seven
+  // other family projectors, report-service.ts, the routes, etc. - stays fully covered by this guard).
+  const REPORTS_FINANCE_COMPOSITION = /^src\/server\/reports\/catalog\.ts$|^src\/server\/reports\/families\/finance-status\.ts$/;
 
   it("every payment-named path belongs to the Payments module/routes, and every payable-/invoice-named path belongs to its own module or routes", () => {
     const paymentNamed = allSrc.map(relative).filter((file) => /(payment|settlement)/i.test(file));
@@ -600,8 +611,9 @@ describe("Payment implementation (Payables landed in Step 15A, Invoices landed i
       // see OPERATIONS_APPROVAL_ADAPTERS's own comment above) - excluded from all three checks
       // below the same way PAYMENT_OWNERS/PAYABLE_OWNERS/INVOICE_OWNERS already exclude each other.
       const isOperationsAdapter = OPERATIONS_APPROVAL_ADAPTERS.test(relative(file));
+      const isReportsFinanceComposition = REPORTS_FINANCE_COMPOSITION.test(relative(file));
 
-      if (!PAYMENT_OWNERS.some((owner) => owner.test(relative(file))) && !isOperationsAdapter) {
+      if (!PAYMENT_OWNERS.some((owner) => owner.test(relative(file))) && !isOperationsAdapter && !isReportsFinanceComposition) {
         expect(source, relative(file)).not.toMatch(/["'`](payments?|settlements?)["'`]/i);
         expect(source, relative(file)).not.toMatch(/\b(create|record|approve|settle|mark|issue|submit|generate)(Payment|Settlement)s?\b/);
         expect(source, relative(file)).not.toMatch(/\.(collection|collectionGroup)\(\s*["'`][^"'`]*(payment|settlement)/i);
@@ -609,7 +621,7 @@ describe("Payment implementation (Payables landed in Step 15A, Invoices landed i
 
       // Outside the Payables module and its routes, the Payable vocabulary is still forbidden -
       // no other module may declare a Payable collection or a Payable service function.
-      if (!PAYABLE_OWNERS.some((owner) => owner.test(relative(file))) && !isOperationsAdapter) {
+      if (!PAYABLE_OWNERS.some((owner) => owner.test(relative(file))) && !isOperationsAdapter && !isReportsFinanceComposition) {
         expect(source, relative(file)).not.toMatch(/["'`]payables?["'`]/i);
         expect(source, relative(file)).not.toMatch(/\b(create|record|approve|settle|mark|issue|submit|generate)Payables?\b/);
         expect(source, relative(file)).not.toMatch(/\.(collection|collectionGroup)\(\s*["'`][^"'`]*payable/i);
@@ -619,7 +631,7 @@ describe("Payment implementation (Payables landed in Step 15A, Invoices landed i
       // no other module may declare an Invoice collection or an Invoice service function. The
       // Finance placeholder pages import nothing server-side (proven separately above) so they
       // never reach this server/lib/api-scoped file set at all.
-      if (!INVOICE_OWNERS.some((owner) => owner.test(relative(file))) && !PAYMENT_OWNERS.some((owner) => owner.test(relative(file))) && !isOperationsAdapter) {
+      if (!INVOICE_OWNERS.some((owner) => owner.test(relative(file))) && !PAYMENT_OWNERS.some((owner) => owner.test(relative(file))) && !isOperationsAdapter && !isReportsFinanceComposition) {
         expect(source, relative(file)).not.toMatch(/["'`]invoices?["'`]/i);
         expect(source, relative(file)).not.toMatch(/\b(create|record|approve|reject|reopen|void|submit)Invoices?\b/);
         expect(source, relative(file)).not.toMatch(/\.(collection|collectionGroup)\(\s*["'`][^"'`]*invoice/i);
