@@ -52,10 +52,21 @@ const REPORT_CATALOG: Record<ReportId, ReportDefinition> = {
       { id: "campaignRef", type: "campaignRef", label: "Campaign" },
       { id: "platform", type: "platform", label: "Platform" },
     ],
+    // Step 19C fix: these ids previously read "matchedContentCount"/"viewsByPlatform"/
+    // "engagementByPlatform" - generic, unsuffixed ids that families/campaign-performance.ts's own
+    // runtime metrics object never actually emits (it always keys by platform, e.g.
+    // "matchedContentCount_instagram" - see that file). That mismatch meant the Metrics panel could
+    // never show a real value for this report even when matched evidence genuinely existed - every
+    // tile silently rendered "Not available", invisible until real Analytics fixture data existed to
+    // expose it. Corrected to the same per-platform-suffixed shape every sibling family already uses
+    // (see campaign_event_performance's own metrics below, or monthly_partner_performance's).
     metrics: [
-      { id: "matchedContentCount", label: "Matched content rows", meaning: "Content source records with matchState === MATCHED for the applied platform." },
-      { id: "viewsByPlatform", label: "Views (per platform)", meaning: "Sum of the `views` metric across matched rows, kept separate per platform - never combined across platforms.", unavailableMeaning: "A platform with no matched rows reports null (unavailable), never 0." },
-      { id: "engagementByPlatform", label: "Engagement (per platform)", meaning: "Sum of the `engagement` metric across matched rows, per platform.", unavailableMeaning: "Null when no matched row reports engagement for that platform - never 0." },
+      { id: "matchedContentCount_instagram", label: "Matched Instagram content", meaning: "Content source records with matchState === MATCHED for Instagram." },
+      { id: "matchedContentCount_youtube", label: "Matched YouTube content", meaning: "Content source records with matchState === MATCHED for YouTube." },
+      { id: "views_instagram", label: "Instagram views", meaning: "Sum of the `views` metric across matched Instagram rows.", unavailableMeaning: "Null (never 0) when no matched row reports views." },
+      { id: "views_youtube", label: "YouTube views", meaning: "Sum of the `views` metric across matched YouTube rows.", unavailableMeaning: "Null when no matched row reports views." },
+      { id: "engagement_instagram", label: "Instagram engagement", meaning: "Sum of the `engagement` metric across matched Instagram rows.", unavailableMeaning: "Null when no matched row reports engagement." },
+      { id: "engagement_youtube", label: "YouTube engagement", meaning: "Sum of the `engagement` metric across matched YouTube rows.", unavailableMeaning: "Null when no matched row reports engagement." },
     ],
     sections: [{ id: "contentByPlatform", title: "Content by platform" }],
     limitations: [

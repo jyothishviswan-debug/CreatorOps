@@ -42,10 +42,11 @@ import { generatePartnerReviewDraft } from "@/server/partner-reviews/partner-rev
 import { createPartner } from "@/server/partners/partner-service";
 import { partnersCollection } from "@/server/partners/firestore";
 
+import { getReportDefinition } from "./catalog";
 import { reportSnapshotsCollection } from "./firestore";
 import { getReportDefinitionForActor, listReportCatalogForActor, runReport } from "./report-service";
-import { finalizeReport, getFinalizedSnapshot } from "./snapshot-service";
-import type { ReportsServiceResult } from "./types";
+import { finalizeReport, getFinalizedSnapshot, listMyFinalizedSnapshots } from "./snapshot-service";
+import type { ReportId, ReportsServiceResult } from "./types";
 
 vi.setConfig({ testTimeout: 60_000 });
 
@@ -375,6 +376,113 @@ describe("Campaign Performance - exercised end to end (no Analytics fixture data
 });
 
 // ==================================================================================================
+// Step 19C closure: deep real-execution assertions against the GLOBAL deterministic Analytics seed
+// (src/server/analytics/seed-analytics-data.ts, written once per emulator reset by
+// resetEmulatorTestState - never re-seeded by this file) rather than the empty-fixture "wiring only"
+// coverage the 19A-era describe blocks above were limited to. Reuses that seed's own known fixture
+// identities verbatim: "seed-campaign-planned" (matchedCampaignRef of a real MATCHED Instagram
+// content row, matchedPartnerRef "seed-partner-archived", views/engagement genuinely null on that
+// row), and "creator-house" (a real MATCHED YouTube channel snapshot, profileFollowers 128000). The
+// acting actor throughout is partnership_manager, which independently holds Kerala/Maharashtra
+// (the matched content row's own regionIds) AND is that row's ownerUid (see seed-analytics-data.ts).
+describe("Step 19C: Campaign Performance against real, deterministic Analytics evidence (the global seed)", () => {
+  it("a campaignRef filter genuinely scopes to THAT Campaign - a different Campaign's matched content is excluded, not merely 'any campaign is known' (Step 19C fix - see families/campaign-performance.ts)", async () => {
+    const manager = await actorFor("partnership_manager");
+    // This file's own fixture Campaign has no Analytics evidence at all - before the 19C fix, ANY
+    // campaignRef filter merely required "some resolved Campaign label", so seed-campaign-planned's
+    // real MATCHED row leaked into this unrelated Campaign's own filtered result.
+    const unrelated = must(await runReport(manager, "campaign_performance", { campaignRef: fixtures.campaignRef }, {}), "campaign_performance (unrelated campaign)");
+    expect(unrelated.metrics.matchedContentCount_instagram).toBe(0);
+    expect(JSON.stringify(unrelated.rows)).not.toMatch(/South Programmes Launch/);
+
+    const real = must(await runReport(manager, "campaign_performance", { campaignRef: "seed-campaign-planned" }, {}), "campaign_performance (seed-campaign-planned)");
+    expect(real.metrics.matchedContentCount_instagram).toBe(1);
+    expect(real.scopeSummary.note).toMatch(/South Programmes Launch/);
+  });
+
+  it("honest-state: the real matched row's views/engagement are genuinely null in the seed - never fabricated to 0", async () => {
+    const manager = await actorFor("partnership_manager");
+    const result = must(await runReport(manager, "campaign_performance", { campaignRef: "seed-campaign-planned", platform: "instagram" }, {}), "campaign_performance (views/engagement honest-null)");
+    expect(result.metrics.matchedContentCount_instagram).toBe(1);
+    expect(result.metrics.views_instagram).toBeNull();
+    expect(result.metrics.engagement_instagram).toBeNull();
+    // Per-platform keys stay separate - no combined/blended key of any kind.
+    expect(Object.keys(result.metrics).some((key) => /combined|allplatforms|total/i.test(key))).toBe(false);
+  });
+});
+
+describe("Step 19C: Channel Growth & Freshness against a real matched YouTube channel snapshot", () => {
+  it("Head (holds the Karnataka region grant creator-house's channel record carries) sees the real followers figure, never a guessed unavailableAccountCount", async () => {
+    const head = await actorFor("partnership_head");
+    const result = must(await runReport(head, "channel_growth_freshness", { partnerRef: "creator-house", platform: "youtube" }, {}), "channel_growth_freshness (creator-house)");
+    expect(result.metrics.accountCount).toBeGreaterThanOrEqual(1);
+    expect(result.metrics.unavailableAccountCount).toBeNull(); // never a fabricated 0 - see the family's own comment
+    expect(JSON.stringify(result.rows)).toMatch(/128000/);
+  });
+});
+
+describe("Step 19C: the four management-scale families against real, deterministic Analytics evidence", () => {
+  it("Monthly Partner Performance for creator-house reflects the real YouTube account coverage, kept separate from Instagram", async () => {
+    const head = await actorFor("partnership_head");
+    const result = must(await runReport(head, "monthly_partner_performance", { partnerRef: "creator-house" }, {}), "monthly_partner_performance (creator-house)");
+    expect(result.metrics.accountCoverageCount_youtube).toBe(1);
+    expect(result.metrics.accountCoverageCount_instagram).toBe(0);
+    expect(JSON.stringify(result)).not.toMatch(/blendedScore|compositeScore|overallScore/i);
+  });
+
+  it("Cross-Platform Partner / Programme for creator-house keeps followers_youtube separate from followers_instagram and never sums them", async () => {
+    const head = await actorFor("partnership_head");
+    const result = must(await runReport(head, "cross_platform_partner_programme", { partnerRef: "creator-house" }, {}), "cross_platform_partner_programme (creator-house)");
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.followers_youtube).toBe(128000);
+    expect(result.rows[0]!.followers_instagram).toBeNull(); // no Instagram snapshot on file for creator-house - unavailable, never 0
+    // The one deliberate cross-platform sum is publishedContentTotalAcrossPlatforms - creator-house
+    // has zero matched Content on either platform, so it is genuinely 0 (a real count), not fabricated.
+    expect(result.metrics.publishedContentTotalAcrossPlatforms).toBe(0);
+  });
+
+  it("Campaign / Event Performance's campaignRef filter also genuinely scopes to that Campaign (same fix as Campaign Performance, shared getCampaign-then-compare idiom)", async () => {
+    const manager = await actorFor("partnership_manager");
+    const result = must(await runReport(manager, "campaign_event_performance", { campaignRef: "seed-campaign-planned" }, {}), "campaign_event_performance (seed-campaign-planned)");
+    expect(result.metrics.matchedContentCount_instagram).toBeGreaterThanOrEqual(1);
+    expect(result.scopeSummary.note).toMatch(/South Programmes Launch/);
+  });
+});
+
+// ==================================================================================================
+describe("Step 19C: catalog<->family metric-id correspondence - a general regression guard for the Campaign Performance defect this stage found and fixed", () => {
+  it("every metric key a real result genuinely returns is declared in that report's own catalog metrics list - otherwise the UI's Metrics panel silently has no tile for it at all (exactly how the Campaign Performance defect stayed invisible through 19A/19B)", async () => {
+    const manager = await actorFor("partnership_manager");
+    const head = await actorFor("partnership_head");
+    const superAdmin = await actorFor("super_admin");
+    const cases: { reportId: ReportId; actor: ActorContext; filters?: Record<string, string> }[] = [
+      { reportId: "campaign_delivery", actor: manager, filters: { campaignRef: fixtures.campaignRef } },
+      { reportId: "campaign_performance", actor: manager, filters: { campaignRef: "seed-campaign-planned" } },
+      { reportId: "channel_growth_freshness", actor: head, filters: { partnerRef: "creator-house" } },
+      { reportId: "partner_review_evidence", actor: head, filters: { partnerRef: fixtures.keralaPartnerRef } },
+      { reportId: "finance_status", actor: manager },
+      { reportId: "operations_attention", actor: manager },
+      { reportId: "discovery_funnel", actor: manager },
+      { reportId: "partner_portfolio", actor: manager },
+      { reportId: "administration_security", actor: superAdmin },
+      { reportId: "monthly_partner_performance", actor: head, filters: { partnerRef: "creator-house" } },
+      { reportId: "campaign_event_performance", actor: manager, filters: { campaignRef: "seed-campaign-planned" } },
+      { reportId: "cross_platform_partner_programme", actor: head, filters: { partnerRef: "creator-house" } },
+      { reportId: "long_period_partner_programme", actor: manager, filters: { partnerRef: fixtures.keralaPartnerRef, periods: PERIOD } },
+    ];
+    expect(cases).toHaveLength(13); // every governed report id, none skipped
+
+    for (const { reportId, actor, filters } of cases) {
+      const declaredIds = new Set(getReportDefinition(reportId).metrics.map((m) => m.id));
+      const result = must(await runReport(actor, reportId, filters, {}), reportId);
+      for (const key of Object.keys(result.metrics)) {
+        expect(declaredIds.has(key), `${reportId}: metric key "${key}" is not declared in its own catalog metrics list`).toBe(true);
+      }
+    }
+  });
+});
+
+// ==================================================================================================
 describe("Bounded execution (section 10/22): every result respects its own maxRows and carries a boolean truncated flag", () => {
   it("across every full-execution report Manager can reach, rowCount never exceeds maxRows", async () => {
     const manager = await actorFor("partnership_manager");
@@ -488,5 +596,57 @@ describe("Finalized snapshot (section 15/21)", () => {
 
     const fetched = must(await getFinalizedSnapshot(manager, finalized.snapshotRef), "get own snapshot");
     expect(fetched.result).toEqual(finalized.result);
+  });
+
+  // ------------------------------------------------------------------------------------------------
+  // Step 19C closure: source changes after finalization must never mutate the already-persisted
+  // snapshot, and a later valid finalization of the SAME report must create a DISTINCT snapshot
+  // rather than silently overwriting the earlier one (reportSnapshots is never mutable saved-report
+  // state - section 15/21's own "immutable" requirement, proven end to end here rather than only by
+  // the static "firestore.ts offers only a create" guard in reports-static.test.ts).
+  it("Step 19C: a real source change AFTER finalization is reflected in a fresh live run but never mutates the already-persisted snapshot", async () => {
+    const manager = await actorFor("partnership_manager");
+    const head = await actorFor("partnership_head");
+
+    const finalized = must(await finalizeReport(manager, { reportId: "partner_portfolio" }), "finalize partner_portfolio (pre-change)");
+    snapshotRefs.push(finalized.snapshotRef);
+    const snapshotOwnRows = finalized.result.rows.map((row) => row.partnerRef);
+
+    // A genuine new source record, created strictly AFTER finalization, inside Manager's own Kerala scope.
+    const extraPartner = await createPartner(head, { displayName: `Reports Fixture Snapshot Immutability Partner ${runId}`, regionIds: ["Kerala"] }, requestId());
+    if (!extraPartner.ok) throw new Error(`createPartner (snapshot-immutability) failed: ${extraPartner.code} - ${extraPartner.message}`);
+    const extraPartnerRef = (extraPartner.data as { partnerRef: string }).partnerRef;
+    partnerRefs.push(extraPartnerRef);
+
+    // A fresh LIVE run genuinely reflects the new Partner - proves the source change is real, not a no-op.
+    const liveAfterChange = must(await runReport(manager, "partner_portfolio", undefined, {}), "partner_portfolio (post-change, live)");
+    expect(liveAfterChange.rows.map((row) => row.partnerRef)).toContain(extraPartnerRef);
+
+    // The already-persisted snapshot is untouched: it was never silently re-executed, and the new
+    // Partner never appears inside its pinned rows/metrics.
+    const reFetched = must(await getFinalizedSnapshot(manager, finalized.snapshotRef), "get snapshot after source change");
+    expect(reFetched.result).toEqual(finalized.result);
+    expect(reFetched.result.rows.map((row) => row.partnerRef)).not.toContain(extraPartnerRef);
+    expect(reFetched.result.rows.map((row) => row.partnerRef)).toEqual(snapshotOwnRows);
+  });
+
+  it("Step 19C: finalizing the SAME report a second time creates a DISTINCT snapshot - never an overwrite, both independently listed", async () => {
+    const manager = await actorFor("partnership_manager");
+    const first = must(await finalizeReport(manager, { reportId: "discovery_funnel" }), "finalize discovery_funnel (first)");
+    snapshotRefs.push(first.snapshotRef);
+    const second = must(await finalizeReport(manager, { reportId: "discovery_funnel" }), "finalize discovery_funnel (second)");
+    snapshotRefs.push(second.snapshotRef);
+
+    expect(second.snapshotRef).not.toBe(first.snapshotRef);
+
+    const fetchedFirst = must(await getFinalizedSnapshot(manager, first.snapshotRef), "get first snapshot");
+    const fetchedSecond = must(await getFinalizedSnapshot(manager, second.snapshotRef), "get second snapshot");
+    expect(fetchedFirst.result).toEqual(first.result);
+    expect(fetchedSecond.result).toEqual(second.result);
+
+    const listed = must(await listMyFinalizedSnapshots(manager, undefined), "list manager's own finalized snapshots");
+    const listedRefs = listed.map((s) => s.snapshotRef);
+    expect(listedRefs).toContain(first.snapshotRef);
+    expect(listedRefs).toContain(second.snapshotRef);
   });
 });

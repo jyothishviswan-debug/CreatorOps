@@ -1,6 +1,6 @@
 import { expect as baseExpect, test, type Page } from "@playwright/test";
 
-import { collectBrowserErrors, noDocumentOverflow, waitForHydration } from "./helpers/finance-agreements-fixtures";
+import { collectBrowserErrors, collectResponseBodies, leaked, noDocumentOverflow, renderedDom, SENSITIVE_STRINGS, waitForHydration } from "./helpers/finance-agreements-fixtures";
 import { createOperationsFixtures, signInAs, VIEWPORTS, type OperationsFixtures } from "./helpers/operations-fixtures";
 
 import { listReportDefinitions } from "@/server/reports";
@@ -195,6 +195,112 @@ test.describe("Bounded periods picker (Long-Period Partner Programme)", () => {
     await page.getByRole("button", { name: "Run report" }).click();
     await expect(page.getByTestId("report-result")).toBeVisible({ timeout: 15_000 });
     await expect(page.locator('[data-testid="report-section"][data-section-id="periodCoverage"]')).toBeVisible();
+  });
+});
+
+// ==========================================================================================
+// Step 19C closure: scenarios the 19B suite above did not yet exercise - real execution against the
+// GLOBAL deterministic Analytics/Partners seed (src/server/analytics/seed-analytics-data.ts,
+// src/server/partners/seed-partners-data.ts - written once per emulator reset, before this file's own
+// beforeAll ever runs, by tests/e2e/auth.setup.ts's resetEmulatorTestState), drilldown
+// re-authorization, cross-actor snapshot inaccessibility, and a real-browser sensitive-data check.
+test.describe("Step 19C closure", () => {
+  test("11: Campaign Performance - the real matched Instagram row's views/engagement are honestly 'Not available' (never a fabricated 0), and the campaignRef filter genuinely scopes to that one Campaign (Step 19C fix)", async ({ page }) => {
+    const errors = collectBrowserErrors(page);
+    await signInAs(page, "head");
+    await page.goto("/reports/campaign_performance");
+    await waitForHydration(page, '[data-testid="report-run-button"]');
+    await page.getByTestId("filter-campaignRef").fill("seed-campaign-planned");
+    await page.getByRole("button", { name: "Run report" }).click();
+    await expect(page.getByTestId("report-result")).toBeVisible({ timeout: 15_000 });
+
+    await expect(page.locator('[data-testid="report-metric"][data-metric-id="matchedContentCount_instagram"]')).toContainText("1");
+    await expect(page.locator('[data-testid="report-metric"][data-metric-id="views_instagram"]')).toContainText("Not available");
+    await expect(page.locator('[data-testid="report-metric"][data-metric-id="engagement_instagram"]')).toContainText("Not available");
+    await expect(page.getByText('Filtered to Campaign "South Programmes Launch".')).toBeVisible();
+    expect(errors.errors).toEqual([]);
+  });
+
+  test("12: Channel Growth & Freshness shows the real seeded YouTube follower figure for creator-house", async ({ page }) => {
+    await signInAs(page, "head");
+    await page.goto("/reports/channel_growth_freshness");
+    await waitForHydration(page, '[data-testid="report-run-button"]');
+    await page.getByTestId("filter-partnerRef").fill("creator-house");
+    await page.getByTestId("filter-platform").selectOption("youtube");
+    await page.getByRole("button", { name: "Run report" }).click();
+    await expect(page.getByTestId("report-result")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="report-section"][data-section-id="accounts"]')).toContainText("128,000");
+  });
+
+  test("13: Cross-Platform Partner / Programme keeps followers_youtube separate from followers_instagram for creator-house - never blended", async ({ page }) => {
+    await signInAs(page, "head");
+    await page.goto("/reports/cross_platform_partner_programme");
+    await waitForHydration(page, '[data-testid="report-run-button"]');
+    await page.getByTestId("filter-partnerRef").fill("creator-house");
+    await page.getByRole("button", { name: "Run report" }).click();
+    await expect(page.getByTestId("report-result")).toBeVisible({ timeout: 15_000 });
+    await expect(page.locator('[data-testid="report-section"][data-section-id="byPartner"]')).toContainText("128,000");
+  });
+
+  test("14: drilldown closure - Campaign Delivery's Content row links into the real Content module, which re-authorizes normally (Reports is never an authorization bridge)", async ({ page }) => {
+    await signInAs(page, "head");
+    await page.goto("/reports/campaign_delivery");
+    await waitForHydration(page, '[data-testid="report-run-button"]');
+    await page.getByTestId("filter-campaignRef").fill("seed-campaign-planned");
+    await page.getByRole("button", { name: "Run report" }).click();
+    await expect(page.getByTestId("report-result")).toBeVisible({ timeout: 15_000 });
+
+    const drilldown = page.locator('[data-testid="report-section"][data-section-id="content"]').getByTestId("report-row-drilldown").first();
+    await expect(drilldown).toBeVisible();
+    const href = await drilldown.getAttribute("href");
+    expect(href).toMatch(/^\/content\//);
+
+    await drilldown.click();
+    await expect(page).toHaveURL(/\/content\//);
+    // Real re-authorization in the Content module itself - a genuine detail page (Head holds
+    // Kerala/Maharashtra, the fixture Content's own region), never a denial and never Reports
+    // granting access to a record the actor could not otherwise open directly.
+    await expect(page.getByText("Access denied")).toHaveCount(0);
+    await expect(page.locator("h1")).toBeVisible();
+  });
+
+  test("15: cross-actor snapshot inaccessibility via a direct URL - a different actor gets the exact same neutral 404 a non-existent snapshot would, never Head's real data", async ({ page }) => {
+    await signInAs(page, "head");
+    await page.goto("/reports/discovery_funnel");
+    await waitForHydration(page, '[data-testid="report-run-button"]');
+    await page.getByRole("button", { name: "Run report" }).click();
+    await expect(page.getByTestId("report-result")).toBeVisible({ timeout: 15_000 });
+    await page.getByRole("button", { name: "Finalize as snapshot" }).click();
+    await expect(page.getByTestId("finalize-success")).toBeVisible({ timeout: 15_000 });
+    const href = await page.getByRole("link", { name: "View this snapshot" }).getAttribute("href");
+    expect(href).toBeTruthy();
+
+    // Manager independently holds real Reports access too - this is not a permission gap, only a
+    // different actor's OWN snapshot list, which never includes Head's snapshot.
+    await signInAs(page, "manager");
+    await page.goto(href!);
+    await expect(page.getByRole("heading", { name: "This page could not be found." })).toBeVisible();
+    await expect(page.getByTestId("report-metrics-panel")).toHaveCount(0);
+  });
+
+  test("16: sensitive-data closure - Finance Status never leaks PAN/Aadhaar/bank/GST in page text, DOM, or any network response body, even when a real KYC-bearing active Agreement exists for the filtered Partner", async ({ page }) => {
+    const errors = collectBrowserErrors(page);
+    const bodies = collectResponseBodies(page);
+    const partner = await fx.finance.seedPartner({ displayName: `${TAG} Sensitive KYC Partner` });
+    await fx.finance.fullKyc(fx.finance.partnerSubject(partner));
+    await fx.finance.seedActive(fx.finance.partnerCp(partner));
+
+    await signInAs(page, "manager");
+    await page.goto("/reports/finance_status");
+    await waitForHydration(page, '[data-testid="report-run-button"]');
+    await page.getByTestId("filter-partnerRef").fill(partner.partnerRef);
+    await page.getByRole("button", { name: "Run report" }).click();
+    await expect(page.getByTestId("report-result")).toBeVisible({ timeout: 15_000 });
+
+    expect(leaked(await renderedDom(page), SENSITIVE_STRINGS)).toEqual([]);
+    expect(leaked(await page.content(), SENSITIVE_STRINGS)).toEqual([]);
+    for (const body of bodies.bodies) expect(leaked(body.text, SENSITIVE_STRINGS), body.url).toEqual([]);
+    expect(errors.errors).toEqual([]);
   });
 });
 
