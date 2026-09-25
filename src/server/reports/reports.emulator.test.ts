@@ -17,7 +17,9 @@
 //   - Bounded execution: every result's rowCount <= maxRows, truncated is a boolean, generatedAt and
 //     evidenceCutoff are both present.
 //   - Finalized snapshot (section 15): finalize -> immutable get, invisible to a different actor.
-//   - Management-scale stubs: explicit "unsupported", never a fabricated result.
+//   - Step 19A.1: the four management-scale families (Monthly Partner Performance, Campaign / Event
+//     Performance, Cross-Platform Partner / Programme, Long-Period Partner Programme) exercised end to
+//     end with real execution - never a stub, never "unsupported".
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 
 import { createTask } from "@/server/operations";
@@ -384,16 +386,73 @@ describe("Bounded execution (section 10/22): every result respects its own maxRo
       expect(result.evidenceCutoff, reportId).toBeTruthy();
     }
   });
+
+  it("Monthly Partner Performance and Cross-Platform Partner/Programme (no required filters) also respect maxRows and the bounded contract", async () => {
+    const manager = await actorFor("partnership_manager");
+    for (const reportId of ["monthly_partner_performance", "cross_platform_partner_programme"] as const) {
+      const result = must(await runReport(manager, reportId, undefined, {}), reportId);
+      expect(result.rowCount, reportId).toBeLessThanOrEqual(result.maxRows);
+      expect(typeof result.truncated, reportId).toBe("boolean");
+    }
+  });
 });
 
 // ==================================================================================================
-describe("Management-scale stubs (section 13): explicit unsupported, never a fabricated result", () => {
-  it("every one of the four stub families returns a typed 'unsupported' result for every role, never ok:true", async () => {
-    const superAdmin = await actorFor("super_admin");
-    for (const reportId of ["monthly_partner_performance", "campaign_event_performance", "cross_platform_partner_programme", "long_period_partner_programme"] as const) {
-      const result = failure(await runReport(superAdmin, reportId, undefined, {}));
-      expect(result.code, reportId).toBe("unsupported");
-    }
+describe("Step 19A.1: the four management-scale families have real governed execution - never a stub, never ok:false with code 'unsupported'", () => {
+  it("Monthly Partner Performance runs for the fixture Kerala Partner/period with no blended score and Production/Compliance/Performance kept separate", async () => {
+    const manager = await actorFor("partnership_manager");
+    const result = must(await runReport(manager, "monthly_partner_performance", { partnerRef: fixtures.keralaPartnerRef, period: PERIOD }, {}), "monthly_partner_performance");
+    expect(result.reportId).toBe("monthly_partner_performance");
+    expect(Object.keys(result.sections).sort()).toEqual(["compliance", "dataQualityWarnings", "performance", "production", "topContent"].sort());
+    expect(JSON.stringify(result)).not.toMatch(/blendedScore|compositeScore|overallScore/i);
+    expect(result.rowCount).toBeLessThanOrEqual(result.maxRows);
+  });
+
+  it("Campaign / Event Performance runs against the real fixture Campaign/Assignment/Content chain, platform metrics stay per-platform", async () => {
+    const manager = await actorFor("partnership_manager");
+    const result = must(await runReport(manager, "campaign_event_performance", { campaignRef: fixtures.campaignRef }, {}), "campaign_event_performance");
+    expect(result.rows.some((row) => row.assignmentRef === fixtures.assignmentRef)).toBe(true);
+    expect(result.rows.some((row) => row.contentRef === fixtures.contentRef)).toBe(true);
+    expect(Object.keys(result.metrics).some((key) => key.includes("_instagram"))).toBe(true);
+    expect(Object.keys(result.metrics).some((key) => key.includes("_youtube"))).toBe(true);
+    expect(Object.keys(result.metrics).some((key) => /combined|allplatforms/i.test(key))).toBe(false);
+  });
+
+  it("Cross-Platform Partner / Programme runs for one Partner, every platform metric stays side by side and bounded", async () => {
+    const manager = await actorFor("partnership_manager");
+    const result = must(await runReport(manager, "cross_platform_partner_programme", { partnerRef: fixtures.keralaPartnerRef }, {}), "cross_platform_partner_programme");
+    expect(result.metrics.partnerCount).toBe(1);
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.partnerRef).toBe(fixtures.keralaPartnerRef);
+  });
+
+  it("Long-Period Partner Programme requires both partnerRef and periods filters - invalid_input, never a fabricated empty success", async () => {
+    const manager = await actorFor("partnership_manager");
+    const missingPartner = failure(await runReport(manager, "long_period_partner_programme", { periods: PERIOD }, {}));
+    expect(missingPartner.code).toBe("invalid_input");
+    const missingPeriods = failure(await runReport(manager, "long_period_partner_programme", { partnerRef: fixtures.keralaPartnerRef }, {}));
+    expect(missingPeriods.code).toBe("invalid_input");
+  });
+
+  it("Long-Period Partner Programme runs for the fixture Partner + its real finalized-review period, and the finalized Review is reflected", async () => {
+    const manager = await actorFor("partnership_manager");
+    const result = must(await runReport(manager, "long_period_partner_programme", { partnerRef: fixtures.keralaPartnerRef, periods: PERIOD }, {}), "long_period_partner_programme");
+    expect(result.rows).toHaveLength(1);
+    expect(result.rows[0]!.periodKey).toBe(PERIOD);
+    expect(result.metrics.finalizedReviewCount).toBe(1);
+    expect(result.metrics.coveredPeriodCount).toBe(1);
+    expect(result.metrics.droppedPeriodCount).toBe(0);
+  });
+
+  it("Long-Period Partner Programme bounds a request beyond 6 periods, disclosing the drop rather than silently including everything", async () => {
+    const manager = await actorFor("partnership_manager");
+    const sevenPeriods = ["2020-01", "2020-02", "2020-03", "2020-04", "2020-05", "2020-06", "2020-07"].join(",");
+    const result = must(await runReport(manager, "long_period_partner_programme", { partnerRef: fixtures.keralaPartnerRef, periods: sevenPeriods }, {}), "long_period_partner_programme (bounded)");
+    expect(result.metrics.requestedPeriodCount).toBe(7);
+    expect(result.metrics.coveredPeriodCount).toBe(6);
+    expect(result.metrics.droppedPeriodCount).toBe(1);
+    expect(result.rows).toHaveLength(6);
+    expect(result.truncated).toBe(true);
   });
 });
 
@@ -421,9 +480,13 @@ describe("Finalized snapshot (section 15/21)", () => {
     expect(result.code).toBe("not_found");
   });
 
-  it("finalizing a management-scale stub fails the same way a live run of it does - never a fabricated snapshot", async () => {
-    const superAdmin = await actorFor("super_admin");
-    const result = failure(await finalizeReport(superAdmin, { reportId: "monthly_partner_performance" }));
-    expect(result.code).toBe("unsupported");
+  it("Step 19A.1: a management-scale family can now be finalized like any other real report - never a fabricated snapshot, never 'unsupported'", async () => {
+    const manager = await actorFor("partnership_manager");
+    const finalized = must(await finalizeReport(manager, { reportId: "cross_platform_partner_programme", filters: { partnerRef: fixtures.keralaPartnerRef } }), "finalize cross_platform_partner_programme");
+    snapshotRefs.push(finalized.snapshotRef);
+    expect(finalized.reportId).toBe("cross_platform_partner_programme");
+
+    const fetched = must(await getFinalizedSnapshot(manager, finalized.snapshotRef), "get own snapshot");
+    expect(fetched.result).toEqual(finalized.result);
   });
 });

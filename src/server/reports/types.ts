@@ -32,10 +32,11 @@ export const REPORT_IDS = [
   "discovery_funnel",
   "partner_portfolio",
   "administration_security",
-  // Section 13: "management-scale" families. None of these exist as real backend today (only as
-  // illustrative UI-placeholder fixture names) - catalog entries with a stable reportId are
-  // registered per section 4/13, but execution is an explicit, typed "not yet implemented in 19A"
-  // stub rather than fabricated computation (see families/management-scale-stubs.ts).
+  // Section 13: the four "management-scale" families. Catalog-only, explicit "not yet implemented"
+  // stubs in Step 19A (see families/management-scale-stubs.ts, since removed) - given real governed
+  // execution in Step 19A.1 (see families/monthly-partner-performance.ts,
+  // families/campaign-event-performance.ts, families/cross-platform-partner-programme.ts,
+  // families/long-period-partner-programme.ts). The catalog now reaches 13/13 real execution.
   "monthly_partner_performance",
   "campaign_event_performance",
   "cross_platform_partner_programme",

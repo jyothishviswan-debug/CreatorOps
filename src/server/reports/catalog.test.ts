@@ -5,7 +5,7 @@ import { REPORT_IDS, isReportId } from "./types";
 
 const HIGH_VALUE_IDS = ["campaign_delivery", "campaign_performance", "channel_growth_freshness", "partner_review_evidence", "finance_status", "operations_attention"];
 const ADDITIONAL_FULL_EXECUTION_IDS = ["discovery_funnel", "partner_portfolio", "administration_security"];
-const MANAGEMENT_SCALE_STUB_IDS = ["monthly_partner_performance", "campaign_event_performance", "cross_platform_partner_programme", "long_period_partner_programme"];
+const MANAGEMENT_SCALE_IDS = ["monthly_partner_performance", "campaign_event_performance", "cross_platform_partner_programme", "long_period_partner_programme"];
 
 describe("Reports catalog - exact ids", () => {
   it("has exactly 13 report ids, matching REPORT_IDS", () => {
@@ -34,19 +34,28 @@ describe("Reports catalog - execution support", () => {
     for (const id of ADDITIONAL_FULL_EXECUTION_IDS) expect(getReportDefinition(id as never).executionSupport, id).toBe("full");
   });
 
-  it("the four management-scale families are explicit, typed not-yet-implemented stubs - never fabricated as full", () => {
-    for (const id of MANAGEMENT_SCALE_STUB_IDS) {
+  it("Step 19A.1: the four management-scale families now have real, full execution - never a stub", () => {
+    for (const id of MANAGEMENT_SCALE_IDS) {
       const def = getReportDefinition(id as never);
-      expect(def.executionSupport, id).toBe("not_yet_implemented");
-      expect(def.maxRows, id).toBe(0);
-      expect(def.metrics, id).toEqual([]);
+      expect(def.executionSupport, id).toBe("full");
+      expect(def.maxRows, id).toBeGreaterThan(0);
+      expect(def.metrics.length, id).toBeGreaterThan(0);
+      expect(def.requiredSourceFeatures.length, id).toBeGreaterThan(0);
     }
   });
 
-  it("exactly 9 full + 4 stub = 13 total", () => {
+  it("exactly 13/13 catalog report entries have full execution - no stub anywhere", () => {
     const all = listReportDefinitions();
-    expect(all.filter((d) => d.executionSupport === "full")).toHaveLength(9);
-    expect(all.filter((d) => d.executionSupport === "not_yet_implemented")).toHaveLength(4);
+    expect(all.filter((d) => d.executionSupport === "full")).toHaveLength(13);
+    expect(all.filter((d) => d.executionSupport === "not_yet_implemented")).toHaveLength(0);
+  });
+
+  it("Monthly Partner Performance and Long-Period Partner Programme no longer claim a Finance source - the 19A.1 spec's own 'Use:' list for both never mentioned Finance", () => {
+    for (const id of ["monthly_partner_performance", "long_period_partner_programme"] as const) {
+      const def = getReportDefinition(id);
+      expect(def.sourceModules.some((m) => m.includes("finance")), id).toBe(false);
+      expect(def.requiredSourceFeatures.includes("finance" as never), id).toBe(false);
+    }
   });
 });
 
@@ -106,5 +115,36 @@ describe("Reports catalog - metric semantics (section 6)", () => {
   it("campaign_performance never declares a cross-platform combined metric id", () => {
     const def = getReportDefinition("campaign_performance");
     for (const metric of def.metrics) expect(metric.id.toLowerCase(), metric.id).not.toMatch(/combined|allplatforms|crossplatform/);
+  });
+
+  it("campaign_event_performance never declares a cross-platform combined metric id (per-platform only)", () => {
+    const def = getReportDefinition("campaign_event_performance");
+    for (const metric of def.metrics) expect(metric.id.toLowerCase(), metric.id).not.toMatch(/combined|allplatforms|crossplatform/);
+  });
+
+  it("cross_platform_partner_programme keeps every platform metric separate except the ONE documented, explicitly-defined exception (publishedContentTotalAcrossPlatforms)", () => {
+    const def = getReportDefinition("cross_platform_partner_programme");
+    const combined = def.metrics.filter((m) => /combined|allplatforms|crossplatform|acrossplatforms/i.test(m.id));
+    expect(combined.map((m) => m.id)).toEqual(["publishedContentTotalAcrossPlatforms"]);
+    const exception = def.metrics.find((m) => m.id === "publishedContentTotalAcrossPlatforms")!;
+    expect(exception.meaning.length).toBeGreaterThan(0);
+    // followers/views/engagement stay fully per-platform - never a summed/blended id for these.
+    for (const base of ["followers", "views", "engagement"]) {
+      expect(def.metrics.some((m) => m.id === base), `unexpected unqualified ${base} metric`).toBe(false);
+      expect(def.metrics.some((m) => m.id === `${base}_instagram`) || def.metrics.some((m) => m.id.startsWith(`${base}KnownCount_`)), base).toBe(true);
+    }
+  });
+
+  it("long_period_partner_programme requires an explicit, bounded periods filter - never an open-ended date range", () => {
+    const def = getReportDefinition("long_period_partner_programme");
+    const periodsFilter = def.supportedFilters.find((f) => f.id === "periods");
+    expect(periodsFilter).toBeDefined();
+    expect(def.limitations.some((l) => /maximum of 6/.test(l))).toBe(true);
+  });
+
+  it("monthly_partner_performance declares no blended score metric", () => {
+    const def = getReportDefinition("monthly_partner_performance");
+    const metricIds = def.metrics.map((m) => m.id.toLowerCase());
+    for (const forbidden of ["blendedscore", "compositescore", "overallscore"]) expect(metricIds.some((id) => id.includes(forbidden)), def.reportId).toBe(false);
   });
 });

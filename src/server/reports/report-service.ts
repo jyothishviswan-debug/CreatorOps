@@ -3,11 +3,14 @@ import type { ActorContext } from "@/server/authz/types";
 import { getReportDefinition, listReportDefinitions } from "./catalog";
 import { runAdministrationSecurityReport } from "./families/administration-security";
 import { runCampaignDeliveryReport } from "./families/campaign-delivery";
+import { runCampaignEventPerformanceReport } from "./families/campaign-event-performance";
 import { runCampaignPerformanceReport } from "./families/campaign-performance";
 import { runChannelGrowthFreshnessReport } from "./families/channel-growth-freshness";
+import { runCrossPlatformPartnerProgrammeReport } from "./families/cross-platform-partner-programme";
 import { runDiscoveryFunnelReport } from "./families/discovery-funnel";
 import { runFinanceStatusReport } from "./families/finance-status";
-import { isManagementScaleStub, runManagementScaleStub } from "./families/management-scale-stubs";
+import { runLongPeriodPartnerProgrammeReport } from "./families/long-period-partner-programme";
+import { runMonthlyPartnerPerformanceReport } from "./families/monthly-partner-performance";
 import { runOperationsAttentionReport } from "./families/operations-attention";
 import { runPartnerPortfolioReport } from "./families/partner-portfolio";
 import { runPartnerReviewEvidenceReport } from "./families/partner-review-evidence";
@@ -33,6 +36,10 @@ const FAMILY_RUNNERS: Partial<Record<ReportId, FamilyRunner>> = {
   discovery_funnel: runDiscoveryFunnelReport,
   partner_portfolio: runPartnerPortfolioReport,
   administration_security: runAdministrationSecurityReport,
+  monthly_partner_performance: runMonthlyPartnerPerformanceReport,
+  campaign_event_performance: runCampaignEventPerformanceReport,
+  cross_platform_partner_programme: runCrossPlatformPartnerProgrammeReport,
+  long_period_partner_programme: runLongPeriodPartnerProgrammeReport,
 };
 
 export type RunReportOptions = { viewerSafe?: boolean };
@@ -59,8 +66,6 @@ export async function runReport(actor: ActorContext | null, rawReportId: unknown
   if (!actor) return reportsUnauthorizedResult("not_authenticated");
 
   if (options.viewerSafe && VIEWER_SAFE_BLOCKED_REPORT_IDS.has(reportId)) return reportsUnauthorizedResult("action_denied");
-
-  if (isManagementScaleStub(reportId)) return runManagementScaleStub(reportId);
 
   const runner = FAMILY_RUNNERS[reportId];
   if (!runner) return reportsUnauthorizedResult("action_denied");

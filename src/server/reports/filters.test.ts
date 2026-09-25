@@ -27,10 +27,8 @@ describe("parseAppliedFilters (section 7: server-declared allowlist only)", () =
     expect(parseAppliedFilters(null as unknown as Record<string, unknown>, definition)).toEqual({});
   });
 
-  it("a report with no declared filters accepts nothing at all", () => {
-    const stub = getReportDefinition("monthly_partner_performance");
-    // still declares filters in the catalog (partnerRef/period) even though it never executes - the
-    // allowlist itself is independent of execution support.
-    expect(parseAppliedFilters({ partnerRef: "p1", notAllowed: "x" }, stub)).toEqual({ partnerRef: "p1" });
+  it("a report's allowlist is exactly its own declared supportedFilters - nothing else", () => {
+    const definition = getReportDefinition("monthly_partner_performance");
+    expect(parseAppliedFilters({ partnerRef: "p1", notAllowed: "x" }, definition)).toEqual({ partnerRef: "p1" });
   });
 });
