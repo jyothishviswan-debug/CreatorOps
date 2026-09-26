@@ -772,6 +772,152 @@ export default function FoundationPage() {
         </article>
       </div>
 
+      <SectionLabel
+        n="09"
+        title="Export Center execution pattern"
+        desc="Target → format + server-validated columns/filters → a created job → job lifecycle/history → private artifact delivery. New in the Export Center stage: the golden master has no Export Center entry at all (not even the generic per-module overview-preview shape Reports at least had), so this section documents the whole pattern from scratch, built from the same tokens, panels and controls as everywhere else - and deliberately its own shape, not a copy of section 08's Reports pattern: Export Center generates a downloadable FILE of RECORD ROWS from one target, it never composes a cross-domain analytical result."
+      />
+      <div className="grid">
+        <DocPanel title="Target card" sub="One governed export target - its own allowed formats/columns, never a generic collection dump" span={6}>
+          <div className="record" style={{ maxWidth: 340 }}>
+            <b>Partners</b>
+            <p className="foundationnote" style={{ margin: "8px 0 12px" }}>
+              Partner roster rows - status, tier, region and ownership - sourced from the Partners service&apos;s own actor-scoped listPartners.
+            </p>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+              <Pill tone="gray">partners</Pill>
+              <Pill tone="blue">CSV</Pill>
+              <Pill tone="blue">XLSX</Pill>
+              <Pill tone="blue">PDF</Pill>
+            </div>
+            <div className="recordmeta">
+              <span>Bounded to 500 rows</span>
+              <span>13 columns</span>
+            </div>
+          </div>
+        </DocPanel>
+        <DocPanel title="Configure - format, filters, columns" sub="The client PROPOSES a subset; the server re-validates every id before generating anything" span={6}>
+          <div className="fields">
+            <div className="field">
+              <label>Format</label>
+              <select disabled defaultValue="csv">
+                <option value="csv">CSV</option>
+                <option value="xlsx">XLSX</option>
+                <option value="pdf">PDF</option>
+              </select>
+            </div>
+            <div className="field">
+              <label>Region</label>
+              <input type="text" disabled placeholder="e.g. Kerala" />
+            </div>
+          </div>
+          <div style={{ marginTop: 14 }}>
+            <label style={{ display: "block", marginBottom: 8, fontWeight: 600 }}>Columns</label>
+            <ul className="checklist">
+              <li>
+                <Icon name="check" /> Partner ref, Display name, Status, Tier, Region (default columns)
+              </li>
+              <li>
+                <Icon name="check" /> Email, Phone, Owner, Created/updated at (optional)
+              </li>
+            </ul>
+            <small className="muted">A restricted field (e.g. bank/PAN/GSTIN) is never offered here - it is not on this target&apos;s own column allowlist at all, so there is nothing to uncheck.</small>
+          </div>
+        </DocPanel>
+      </div>
+
+      <div className="grid">
+        <DocPanel title="Job history" sub="PENDING → GENERATING → COMPLETED or FAILED - a real persisted transition, scoped to the acting user&apos;s own jobs only" span={12}>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Target</th>
+                  <th scope="col">Format</th>
+                  <th scope="col">Status</th>
+                  <th scope="col">Requested at</th>
+                  <th scope="col">Rows</th>
+                  <th scope="col">
+                    <span className="sr">Action</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>Partners</td>
+                  <td>XLSX</td>
+                  <td>
+                    <Pill tone="default">COMPLETED</Pill>
+                  </td>
+                  <td>24 Sep 2026, 09:14</td>
+                  <td>128</td>
+                  <td>
+                    <button className="btn" type="button" disabled>
+                      <Icon name="download" />
+                      Download
+                    </button>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Assignments</td>
+                  <td>PDF</td>
+                  <td>
+                    <Pill tone="blue">GENERATING</Pill>
+                  </td>
+                  <td>24 Sep 2026, 09:16</td>
+                  <td>—</td>
+                  <td>
+                    <span className="foundationnote">Not ready</span>
+                  </td>
+                </tr>
+                <tr>
+                  <td>Campaigns</td>
+                  <td>CSV</td>
+                  <td>
+                    <Pill tone="red">FAILED</Pill>
+                  </td>
+                  <td>23 Sep 2026, 17:02</td>
+                  <td>—</td>
+                  <td>
+                    <span className="foundationnote">Unavailable</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="banner" style={{ marginTop: 16 }}>
+            <Icon name="alert" />
+            <span>
+              <b>A failed job never shows a raw backend/provider error.</b> Only a safe, generic message (e.g. &quot;Export generation failed. Please try again.&quot;) is ever persisted or displayed.
+            </span>
+          </div>
+        </DocPanel>
+      </div>
+
+      <div className="stategrid" style={{ marginTop: 18 }}>
+        <article className="statecard">
+          <span className="tile purple">
+            <Icon name="table" />
+          </span>
+          <h3>Server-authoritative columns</h3>
+          <p>An unknown, duplicate, or out-of-target column id rejects the whole request outright - never silently dropped, never passed through to the generated file.</p>
+        </article>
+        <article className="statecard">
+          <span className="tile blue">
+            <Icon name="lock" />
+          </span>
+          <h3>Private artifact delivery</h3>
+          <p>The Download action re-authorizes at delivery time (actor + ownership + COMPLETED status). The raw Storage locator never becomes a browser field - only an opaque job reference does.</p>
+        </article>
+        <article className="statecard">
+          <span className="tile">
+            <Icon name="download" />
+          </span>
+          <h3>CSV/XLSX formula-injection guard</h3>
+          <p>A cell value beginning with =, +, -, @, tab or CR is neutralized with a leading apostrophe before it is written - the same mitigation applied to both formats.</p>
+        </article>
+      </div>
+
       <DialogShell
         open={dialogOpen}
         title="Review before saving"

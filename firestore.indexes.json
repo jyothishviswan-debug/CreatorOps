@@ -764,6 +764,14 @@
         { "fieldPath": "createdByUserRef", "order": "ASCENDING" },
         { "fieldPath": "generatedAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "exportJobs",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdByUserRef", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

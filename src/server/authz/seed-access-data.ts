@@ -84,6 +84,13 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // `featuresOf(...)` above already holds. Viewer deliberately holds neither action - it stays
       // on the Viewer-safe run path only (see src/server/reports/reports-gate.ts's own comment).
       reports: featureGrant(true, { run_reports: true, export: true }),
+      // Export Center stage: Analyst is the only non-Super-Admin role trusted to actually CREATE a
+      // governed export job (create_exports), on top of the plain "exports" view the pre-existing
+      // `featuresOf(...)` list above already grants - same Analyst/Super-Admin-only shape as Import
+      // Center's own manage_imports above. Partnership Manager/Head deliberately do NOT get this
+      // (see this file's own top comment on the non-monotonic imports/exports asymmetry) - widening
+      // that here would silently erase the established asymmetry the regression suite depends on.
+      exports: featureGrant(true, { create_exports: true }),
     },
   },
   partnership_manager: {
