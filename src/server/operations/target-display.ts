@@ -2,6 +2,7 @@ import type { ActorContext } from "@/server/authz/types";
 import { getAssignment } from "@/server/assignments/assignment-service";
 import { getCampaign } from "@/server/campaigns/campaign-service";
 import { getContent } from "@/server/content/content-service";
+import { getLead } from "@/server/discovery/lead-service";
 import { getPartner } from "@/server/partners/partner-service";
 import { getVendor } from "@/server/vendors/vendor-service";
 
@@ -40,6 +41,13 @@ async function resolveOne(actor: ActorContext | null, target: TargetReference): 
       case "CONTENT": {
         const r = await getContent(actor, target.targetRef);
         return r.ok ? [r.data.partnerDisplayName, r.data.campaignName].filter(Boolean).join(" · ") || null : null;
+      }
+      // Notes/Meetings Completion: a Task/Reminder promoted from a Discovery-Lead-owned Meeting
+      // Action Item needs a resolvable target name too - same gated-getter composition as every
+      // other case above.
+      case "DISCOVERY_LEAD": {
+        const r = await getLead(actor, target.targetRef);
+        return r.ok ? r.data.displayName : null;
       }
       default:
         return null;

@@ -772,6 +772,60 @@
         { "fieldPath": "createdByUserRef", "order": "ASCENDING" },
         { "fieldPath": "createdAt", "order": "DESCENDING" }
       ]
+    },
+    {
+      "collectionGroup": "noteEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "owner.ownerType", "order": "ASCENDING" },
+        { "fieldPath": "owner.ownerRef", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "noteEntries",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "owner.ownerType", "order": "ASCENDING" },
+        { "fieldPath": "owner.ownerRef", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "meetings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "owner.ownerType", "order": "ASCENDING" },
+        { "fieldPath": "owner.ownerRef", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "meetings",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "owner.ownerType", "order": "ASCENDING" },
+        { "fieldPath": "owner.ownerRef", "order": "ASCENDING" },
+        { "fieldPath": "status", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "meetingActionItems",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "meetingRef", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "ASCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "notesMeetingsAttachments",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "parentRef", "order": "ASCENDING" },
+        { "fieldPath": "uploadedAt", "order": "ASCENDING" }
+      ]
     }
   ],
   "fieldOverrides": []

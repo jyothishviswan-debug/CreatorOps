@@ -6,7 +6,9 @@ import Link from "next/link";
 import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import type { LeadDto } from "@/server/discovery/client-dto";
+import type { NotesMeetingsUiPermissions } from "@/server/notes-meetings";
 import type { ReadinessResult } from "@/server/discovery/types";
+import { NotesMeetingsSection } from "@/features/notes-meetings/NotesMeetingsSection";
 import { getLeadReadiness } from "./api-client";
 import { AlternativeOutcomes } from "./AlternativeOutcomes";
 import { absoluteTime, LIFECYCLE_LABELS, lifecycleTone } from "./format";
@@ -17,7 +19,7 @@ import { currentStageKey, isStageDone, STAGES, type StageKey } from "./workflow"
 
 type ReadinessDto = ReadinessResult & { leadRef: string; version: number; lifecycle: LeadDto["lifecycle"] };
 
-export function DiscoveryLeadDetail({ initialLead, initialReadiness }: { initialLead: LeadDto; initialReadiness: ReadinessDto | null }) {
+export function DiscoveryLeadDetail({ initialLead, initialReadiness, notesMeetingsPermissions }: { initialLead: LeadDto; initialReadiness: ReadinessDto | null; notesMeetingsPermissions: NotesMeetingsUiPermissions }) {
   const [lead, setLead] = useState(initialLead);
   const [readiness, setReadiness] = useState<ReadinessDto | null>(initialReadiness);
   const [selectedStage, setSelectedStage] = useState<StageKey>(() => currentStageKey(initialLead, initialReadiness?.blockers ?? []));
@@ -145,6 +147,19 @@ export function DiscoveryLeadDetail({ initialLead, initialReadiness }: { initial
           )}
         </>
       )}
+
+      {/* Notes/Meetings is a contextual SECTION here, not a stage-strip tab (spec section 14's other
+          allowed surface) - the strip above IS the Discovery lifecycle itself (lead/research/review/
+          .../converted), a closed, business-meaningful sequence; Notes/Meetings is orthogonal to it
+          and always visible regardless of which stage is selected, exactly like History below. */}
+      <PanelGrid>
+        <Panel span={12}>
+          <PanelHead title="Notes & meetings" description="Contextual notes, meetings and action items attached to this Lead." />
+          <PanelBody>
+            <NotesMeetingsSection ownerType="DISCOVERY_LEAD" ownerRef={lead.leadRef} permissions={notesMeetingsPermissions} />
+          </PanelBody>
+        </Panel>
+      </PanelGrid>
 
       <PanelGrid>
         <HistoryPanel leadRef={lead.leadRef} refreshKey={historyRefreshKey} />

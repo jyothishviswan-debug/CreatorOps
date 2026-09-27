@@ -7,6 +7,7 @@ import { resolveRequestActor } from "@/server/partners/http";
 import { getPartner } from "@/server/partners/partner-service";
 import { canAccessFeature } from "@/server/authz/capabilities";
 import { listCounterpartyAgreementDocuments } from "@/server/finance-agreements";
+import { computeNotesMeetingsUiPermissions } from "@/server/notes-meetings";
 
 export default async function PartnerDetailPage({ params }: { params: Promise<{ partnerId: string }> }) {
   const { partnerId } = await params;
@@ -35,10 +36,11 @@ export default async function PartnerDetailPage({ params }: { params: Promise<{ 
   // Finance feature - the projection re-checks the feature and this Partner's live scope itself, and includes a link only for a holder of the
   // contract-detail category. Profile access alone never reads it; a refusal or failure simply leaves the Finance tile as it was (null).
   const agreementDocuments = canOpenFinance ? await loadAgreementDocuments(actor, result.data.partnerRef) : null;
+  const notesMeetingsPermissions = await computeNotesMeetingsUiPermissions(actor, "PARTNER");
 
   return (
     <AppShell>
-      <PartnerDetail initialPartner={result.data} canOpenPartnerReviews={canOpenPartnerReviews} canOpenFinance={canOpenFinance} agreementDocuments={agreementDocuments} />
+      <PartnerDetail initialPartner={result.data} canOpenPartnerReviews={canOpenPartnerReviews} canOpenFinance={canOpenFinance} agreementDocuments={agreementDocuments} notesMeetingsPermissions={notesMeetingsPermissions} />
     </AppShell>
   );
 }

@@ -4,6 +4,7 @@ import { ContentDetail } from "@/features/content/ContentDetail";
 import { getContent } from "@/server/content/content-service";
 import { resolveRequestActor } from "@/server/content/http";
 import { canPerformAction } from "@/server/authz/capabilities";
+import { computeNotesMeetingsUiPermissions } from "@/server/notes-meetings";
 
 export default async function ContentDetailPage({ params }: { params: Promise<{ contentId: string }> }) {
   const { contentId } = await params;
@@ -28,10 +29,11 @@ export default async function ContentDetailPage({ params }: { params: Promise<{ 
   // only because the task explicitly calls out hiding the Review
   // submission action from actors who cannot review.
   const actorCanReview = actor ? await canPerformAction(actor, "content", "review_content") : false;
+  const notesMeetingsPermissions = await computeNotesMeetingsUiPermissions(actor, "CONTENT");
 
   return (
     <AppShell>
-      <ContentDetail initialContent={result.data} actorCanReview={actorCanReview} />
+      <ContentDetail initialContent={result.data} actorCanReview={actorCanReview} notesMeetingsPermissions={notesMeetingsPermissions} />
     </AppShell>
   );
 }

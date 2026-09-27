@@ -168,6 +168,17 @@ export const ACTIONS = [
   // Import / Export Center
   "manage_imports",
   "create_exports",
+  // Notes / Meetings / MoM - deliberately its own granular ids rather than reusing an owning module's
+  // own create/edit, since Notes/Meetings authorizes in TWO stages (the owning entity's own
+  // FeatureAccess via that module's own gated getter, composed exactly like target-display.ts, PLUS
+  // this module-level ActionPermission) - see notes-meetings-gate.ts. manage_notes and manage_meetings
+  // are deliberately separate (a role could be trusted with Notes but not Meetings, or vice versa).
+  // promote_action_item is its own id (not folded into manage_meetings) because it is the one
+  // consequential, cross-module action in this subsystem - it creates a real Operations Task - so a
+  // role can hold ordinary Meeting/action-item authoring without being trusted to promote.
+  "manage_notes",
+  "manage_meetings",
+  "promote_action_item",
 ] as const;
 
 export type ActionId = (typeof ACTIONS)[number];

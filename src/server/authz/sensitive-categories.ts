@@ -19,4 +19,9 @@ export const SENSITIVE_CATEGORIES: SensitiveCategoryDef[] = [
   // the restricted extraction record. Identity VALUES additionally require
   // the owning boundary's own category (payment_details / vendor_payment_details).
   { id: "finance_contracts", label: "Finance contracts", description: "Raw contract snippets and locators of extracted Agreement fields, and restricted extracted identity values." },
+  // Notes/Meetings Completion: a Note/Meeting explicitly marked RESTRICTED (section 5) hides its own
+  // body/summary/decisions/participants-beyond-count/attachments from an actor who lacks this
+  // category, even when that actor otherwise has full owner-record scope - visibility/sensitivity is
+  // a SEPARATE gate from Record Scope, never a substitute for it (see client-dto.ts's redaction).
+  { id: "notes_meetings_sensitive", label: "Sensitive notes & meetings", description: "The body/summary/decisions/attachments of a Note or Meeting explicitly marked sensitive." },
 ];

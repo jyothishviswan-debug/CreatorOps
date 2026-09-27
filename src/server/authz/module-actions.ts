@@ -31,6 +31,10 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "transition_lifecycle", label: "Transition lifecycle (watchlist/reject/archive/restore)" },
     { id: "convert_lead", label: "Convert lead" },
     { id: "export", label: "Export" },
+    // Notes/Meetings (contextual on this owner type - see notes-meetings-gate.ts).
+    { id: "manage_notes", label: "Add/revise notes on this record" },
+    { id: "manage_meetings", label: "Create/revise meetings and action items on this record" },
+    { id: "promote_action_item", label: "Promote a meeting action item to an Operations Task" },
   ],
   partners: [
     { id: "create", label: "Create Partner" },
@@ -41,6 +45,9 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "manage_partner_restricted_identity", label: "Manage restricted financial identity" },
     { id: "manage_relationships", label: "Manage accounts/relationships" },
     { id: "export", label: "Export" },
+    { id: "manage_notes", label: "Add/revise notes on this record" },
+    { id: "manage_meetings", label: "Create/revise meetings and action items on this record" },
+    { id: "promote_action_item", label: "Promote a meeting action item to an Operations Task" },
   ],
   vendors: [
     { id: "create", label: "Create Vendor" },
@@ -52,6 +59,9 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "restore_vendor", label: "Restore" },
     { id: "manage_vendor_restricted_identity", label: "Manage restricted financial identity" },
     { id: "export", label: "Export" },
+    { id: "manage_notes", label: "Add/revise notes on this record" },
+    { id: "manage_meetings", label: "Create/revise meetings and action items on this record" },
+    { id: "promote_action_item", label: "Promote a meeting action item to an Operations Task" },
   ],
   campaigns: [
     { id: "create", label: "Create Campaign" },
@@ -62,6 +72,9 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "archive_campaign", label: "Archive" },
     { id: "manage_campaign_resources", label: "Manage resources" },
     { id: "export", label: "Export" },
+    { id: "manage_notes", label: "Add/revise notes on this record" },
+    { id: "manage_meetings", label: "Create/revise meetings and action items on this record" },
+    { id: "promote_action_item", label: "Promote a meeting action item to an Operations Task" },
   ],
   // Step 10A: extends the earlier UI-skeleton-era stub (create/edit/
   // export only) with Assignment's real granular actions, same pattern
@@ -73,6 +86,9 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "cancel_assignment", label: "Cancel" },
     { id: "manage_assignment_external_submission", label: "Manage external submission links" },
     { id: "export", label: "Export" },
+    { id: "manage_notes", label: "Add/revise notes on this record" },
+    { id: "manage_meetings", label: "Create/revise meetings and action items on this record" },
+    { id: "promote_action_item", label: "Promote a meeting action item to an Operations Task" },
   ],
   // Step 11A.1: retires manage_content_production/submit_content_for_review/
   // manage_content_publication/complete_content - the simplified
@@ -85,6 +101,9 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "review_content", label: "Review (approve/request revision)" },
     { id: "cancel_content", label: "Cancel" },
     { id: "export", label: "Export" },
+    { id: "manage_notes", label: "Add/revise notes on this record" },
+    { id: "manage_meetings", label: "Create/revise meetings and action items on this record" },
+    { id: "promote_action_item", label: "Promote a meeting action item to an Operations Task" },
   ],
   analytics: [
     { id: "explore", label: "Explore" },

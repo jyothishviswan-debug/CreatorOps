@@ -7,6 +7,8 @@ import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import type { CampaignDto } from "@/server/campaigns/client-dto";
 import type { CampaignDownstreamSummaryDto } from "@/server/campaigns/detail-downstream-service";
+import type { NotesMeetingsUiPermissions } from "@/server/notes-meetings";
+import { NotesMeetingsSection } from "@/features/notes-meetings/NotesMeetingsSection";
 import { absoluteTime, dateLabel, platformLabel, REVIEW_POLICY_LABELS, STATUS_LABELS, statusTone } from "./format";
 import { CampaignHistoryPanel } from "./CampaignHistoryPanel";
 import { CampaignLifecyclePanel } from "./CampaignLifecyclePanel";
@@ -16,16 +18,17 @@ import { CampaignPlanEditPanel } from "./CampaignPlanEditPanel";
 import { CampaignReadinessPanel } from "./CampaignReadinessPanel";
 import { CampaignResourcesPanel } from "./CampaignResourcesPanel";
 
-type TabKey = "overview" | "plan" | "resources" | "history";
+type TabKey = "overview" | "plan" | "resources" | "notes" | "history";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
   { key: "plan", label: "Plan" },
   { key: "resources", label: "Resources" },
+  { key: "notes", label: "Notes & meetings" },
   { key: "history", label: "History" },
 ];
 
-export function CampaignDetail({ initialCampaign, initialDownstream }: { initialCampaign: CampaignDto; initialDownstream: CampaignDownstreamSummaryDto | null }) {
+export function CampaignDetail({ initialCampaign, initialDownstream, notesMeetingsPermissions }: { initialCampaign: CampaignDto; initialDownstream: CampaignDownstreamSummaryDto | null; notesMeetingsPermissions: NotesMeetingsUiPermissions }) {
   const [campaign, setCampaign] = useState(initialCampaign);
   // Held here (not inside the panel) so it survives tab switches; `key` is
   // the refreshKey the summary was derived at (see CampaignDownstreamPanel).
@@ -187,6 +190,17 @@ export function CampaignDetail({ initialCampaign, initialDownstream }: { initial
       {selectedTab === "resources" && (
         <PanelGrid>
           <CampaignResourcesPanel campaign={campaign} onSaved={handleCampaignUpdated} />
+        </PanelGrid>
+      )}
+
+      {selectedTab === "notes" && (
+        <PanelGrid>
+          <Panel span={12}>
+            <PanelHead title="Notes & meetings" description="Contextual notes, meetings and action items attached to this Campaign." />
+            <PanelBody>
+              <NotesMeetingsSection ownerType="CAMPAIGN" ownerRef={campaign.campaignRef} permissions={notesMeetingsPermissions} />
+            </PanelBody>
+          </Panel>
         </PanelGrid>
       )}
 

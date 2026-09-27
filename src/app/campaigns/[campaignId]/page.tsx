@@ -6,6 +6,7 @@ import { CampaignDetail } from "@/features/campaigns/CampaignDetail";
 import { resolveRequestActor } from "@/server/campaigns/http";
 import { getCampaign } from "@/server/campaigns/campaign-service";
 import { getCampaignDownstreamSummary } from "@/server/campaigns/detail-downstream-service";
+import { computeNotesMeetingsUiPermissions } from "@/server/notes-meetings";
 
 export default async function CampaignDetailPage({ params }: { params: Promise<{ campaignId: string }> }) {
   const { campaignId } = await params;
@@ -28,10 +29,11 @@ export default async function CampaignDetailPage({ params }: { params: Promise<{
   // whether the actor may create an Assignment here). A failure degrades
   // the cards to a truthful "not available" state, never blocks the page.
   const downstream = await getCampaignDownstreamSummary(actor, campaignId);
+  const notesMeetingsPermissions = await computeNotesMeetingsUiPermissions(actor, "CAMPAIGN");
 
   return (
     <AppShell>
-      <CampaignDetail initialCampaign={result.data} initialDownstream={downstream.ok ? downstream.data : null} />
+      <CampaignDetail initialCampaign={result.data} initialDownstream={downstream.ok ? downstream.data : null} notesMeetingsPermissions={notesMeetingsPermissions} />
     </AppShell>
   );
 }

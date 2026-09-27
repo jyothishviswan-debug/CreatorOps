@@ -7,6 +7,7 @@ import { resolveRequestActor } from "@/server/vendors/http";
 import { getVendor } from "@/server/vendors/vendor-service";
 import { canAccessFeature } from "@/server/authz/capabilities";
 import { listCounterpartyAgreementDocuments } from "@/server/finance-agreements";
+import { computeNotesMeetingsUiPermissions } from "@/server/notes-meetings";
 
 export default async function VendorDetailPage({ params }: { params: Promise<{ vendorId: string }> }) {
   const { vendorId } = await params;
@@ -32,10 +33,11 @@ export default async function VendorDetailPage({ params }: { params: Promise<{ v
   // Finance feature - the projection re-checks the feature and this Vendor's live scope itself, and includes a link only for a holder of the
   // contract-detail category. Profile access alone never reads it; a refusal or failure simply leaves the panel as it was (null).
   const agreementDocuments = canOpenFinance ? await loadAgreementDocuments(actor, result.data.vendorRef) : null;
+  const notesMeetingsPermissions = await computeNotesMeetingsUiPermissions(actor, "VENDOR");
 
   return (
     <AppShell>
-      <VendorDetail initialVendor={result.data} canOpenFinance={canOpenFinance} agreementDocuments={agreementDocuments} />
+      <VendorDetail initialVendor={result.data} canOpenFinance={canOpenFinance} agreementDocuments={agreementDocuments} notesMeetingsPermissions={notesMeetingsPermissions} />
     </AppShell>
   );
 }

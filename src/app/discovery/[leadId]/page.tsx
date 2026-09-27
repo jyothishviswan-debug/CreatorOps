@@ -6,6 +6,7 @@ import { DiscoveryLeadDetail } from "@/features/discovery/DiscoveryLeadDetail";
 import { getLeadReadiness } from "@/server/discovery/conversion-service";
 import { resolveRequestActor } from "@/server/discovery/http";
 import { getLead } from "@/server/discovery/lead-service";
+import { computeNotesMeetingsUiPermissions } from "@/server/notes-meetings";
 
 export default async function DiscoveryLeadDetailPage({ params }: { params: Promise<{ leadId: string }> }) {
   const { leadId } = await params;
@@ -25,10 +26,11 @@ export default async function DiscoveryLeadDetailPage({ params }: { params: Prom
   }
 
   const readiness = await getLeadReadiness(actor, leadId);
+  const notesMeetingsPermissions = await computeNotesMeetingsUiPermissions(actor, "DISCOVERY_LEAD");
 
   return (
     <AppShell>
-      <DiscoveryLeadDetail initialLead={result.data} initialReadiness={readiness.ok ? readiness.data : null} />
+      <DiscoveryLeadDetail initialLead={result.data} initialReadiness={readiness.ok ? readiness.data : null} notesMeetingsPermissions={notesMeetingsPermissions} />
     </AppShell>
   );
 }

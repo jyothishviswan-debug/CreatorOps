@@ -7,6 +7,8 @@ import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import type { VendorDto } from "@/server/vendors/client-dto";
 import type { CounterpartyAgreementDocumentsDto } from "@/server/finance-agreements/client-dto";
+import type { NotesMeetingsUiPermissions } from "@/server/notes-meetings";
+import { NotesMeetingsSection } from "@/features/notes-meetings/NotesMeetingsSection";
 import { absoluteTime, STATUS_LABELS, statusTone, VENDOR_TYPE_LABELS } from "./format";
 import { VendorHistoryPanel } from "./VendorHistoryPanel";
 import { VendorLifecyclePanel } from "./VendorLifecyclePanel";
@@ -16,12 +18,13 @@ import { VendorProfileEditPanel } from "./VendorProfileEditPanel";
 import { VendorRelationshipsPanel } from "./VendorRelationshipsPanel";
 import { VendorRestrictedIdentityPanel } from "./VendorRestrictedIdentityPanel";
 
-type TabKey = "overview" | "relationships" | "payee" | "restricted" | "history";
+type TabKey = "overview" | "relationships" | "payee" | "notes" | "restricted" | "history";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
   { key: "relationships", label: "Partner Relationships" },
   { key: "payee", label: "Payee / Commercial Context" },
+  { key: "notes", label: "Notes & meetings" },
   { key: "restricted", label: "Restricted Identity" },
   { key: "history", label: "History" },
 ];
@@ -29,7 +32,7 @@ const TABS: { key: TabKey; label: string }[] = [
 // `canOpenFinance` is computed by the server page from the actor's own `finance` feature grant; it only decides whether
 // the contextual Agreements link (Payee / Commercial Context tab) is RENDERED - the destination re-authorizes.
 // `agreementDocuments` (Step 14B.1) is the server projection of this Vendor's signed Agreement documents, passed only to an actor with the Finance feature.
-export function VendorDetail({ initialVendor, canOpenFinance = false, agreementDocuments = null }: { initialVendor: VendorDto; canOpenFinance?: boolean; agreementDocuments?: CounterpartyAgreementDocumentsDto | null }) {
+export function VendorDetail({ initialVendor, canOpenFinance = false, agreementDocuments = null, notesMeetingsPermissions }: { initialVendor: VendorDto; canOpenFinance?: boolean; agreementDocuments?: CounterpartyAgreementDocumentsDto | null; notesMeetingsPermissions: NotesMeetingsUiPermissions }) {
   const [vendor, setVendor] = useState(initialVendor);
   const [selectedTab, setSelectedTab] = useState<TabKey>("overview");
   // Bumped on every successful mutation - vendorRef alone never changes
@@ -137,6 +140,17 @@ export function VendorDetail({ initialVendor, canOpenFinance = false, agreementD
       )}
 
       {selectedTab === "payee" && <VendorPayeeContextPanel vendorRef={vendor.vendorRef} canOpenFinance={canOpenFinance} agreementDocuments={agreementDocuments} />}
+
+      {selectedTab === "notes" && (
+        <PanelGrid>
+          <Panel span={12}>
+            <PanelHead title="Notes & meetings" description="Contextual notes, meetings and action items attached to this Vendor." />
+            <PanelBody>
+              <NotesMeetingsSection ownerType="VENDOR" ownerRef={vendor.vendorRef} permissions={notesMeetingsPermissions} />
+            </PanelBody>
+          </Panel>
+        </PanelGrid>
+      )}
 
       {selectedTab === "restricted" && (
         <PanelGrid>

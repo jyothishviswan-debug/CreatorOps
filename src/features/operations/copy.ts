@@ -99,6 +99,8 @@ export const TARGET_TYPE_LABEL: Record<TargetType, string> = {
   PAYABLE: "Payable",
   INVOICE: "Invoice",
   PAYMENT: "Payment",
+  // Notes/Meetings Completion: additive - a Task promoted from a Discovery-Lead-owned Meeting Action Item.
+  DISCOVERY_LEAD: "Discovery Lead",
 };
 
 export const APPROVAL_SOURCE_LABEL: Record<ApprovalSourceModule, string> = {

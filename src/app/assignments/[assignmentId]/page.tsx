@@ -5,6 +5,7 @@ import { EmptyState } from "@/ui/States";
 import { AssignmentDetail } from "@/features/assignments/AssignmentDetail";
 import { resolveRequestActor } from "@/server/assignments/http";
 import { getAssignment } from "@/server/assignments/assignment-service";
+import { computeNotesMeetingsUiPermissions } from "@/server/notes-meetings";
 
 export default async function AssignmentDetailPage({ params }: { params: Promise<{ assignmentId: string }> }) {
   const { assignmentId } = await params;
@@ -23,9 +24,11 @@ export default async function AssignmentDetailPage({ params }: { params: Promise
     );
   }
 
+  const notesMeetingsPermissions = await computeNotesMeetingsUiPermissions(actor, "ASSIGNMENT");
+
   return (
     <AppShell>
-      <AssignmentDetail initialAssignment={result.data} />
+      <AssignmentDetail initialAssignment={result.data} notesMeetingsPermissions={notesMeetingsPermissions} />
     </AppShell>
   );
 }

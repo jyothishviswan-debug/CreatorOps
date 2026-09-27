@@ -25,6 +25,11 @@ export const TARGET_TYPES = [
   "PAYABLE",
   "INVOICE",
   "PAYMENT",
+  // Notes/Meetings Completion: additive only (every existing case above is unchanged). Lets a
+  // MeetingActionItem attached to a Discovery Lead promote to a real Task with a resolvable target,
+  // exactly like every other supported Notes/Meetings owner type - see target-display.ts's new case
+  // and notes-meetings/promotion.ts's own comment on this deliberate, documented choice.
+  "DISCOVERY_LEAD",
 ] as const;
 export const targetTypeSchema = z.enum(TARGET_TYPES);
 export type TargetType = z.infer<typeof targetTypeSchema>;

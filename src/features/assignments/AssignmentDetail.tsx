@@ -5,13 +5,13 @@ import Link from "next/link";
 
 import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
-import { EmptyState } from "@/ui/States";
 import { Icon } from "@/ui/icons";
 import type { AssignmentDto } from "@/server/assignments/client-dto";
+import type { NotesMeetingsUiPermissions } from "@/server/notes-meetings";
 import { ASSIGNMENT_STATUSES, type AssignmentStatus } from "@/server/assignments/types";
+import { NotesMeetingsDialog, NotesMeetingsPreviewCard } from "@/features/notes-meetings/NotesMeetingsSection";
 import { absoluteTime, dateLabel, platformLabel, SHARE_ELIGIBLE_STATUSES, STATUS_LABELS, statusTone } from "./format";
 import { AssignmentHistoryDialog } from "./AssignmentHistoryDialog";
-import { AssignmentNotesDialog } from "./AssignmentNotesDialog";
 import { AssignmentNextActionPanel } from "./AssignmentNextActionPanel";
 import { AssignmentShareDialog } from "./AssignmentShareDialog";
 import { AssignmentWorkflowPanel } from "./AssignmentWorkflowPanel";
@@ -33,7 +33,7 @@ import { AssignmentContentPanel } from "./AssignmentContentPanel";
 // point).
 const WORKFLOW_STEPS: AssignmentStatus[] = ["DRAFT", "ASSIGNED", "ACCEPTED", "IN_PROGRESS", "COMPLETED"];
 
-export function AssignmentDetail({ initialAssignment }: { initialAssignment: AssignmentDto }) {
+export function AssignmentDetail({ initialAssignment, notesMeetingsPermissions }: { initialAssignment: AssignmentDto; notesMeetingsPermissions: NotesMeetingsUiPermissions }) {
   const [assignment, setAssignment] = useState(initialAssignment);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -153,13 +153,13 @@ export function AssignmentDetail({ initialAssignment }: { initialAssignment: Ass
         <Panel span={4}>
           <PanelHead title="Notes & meetings" description="Keep the conversation with the record" />
           <PanelBody>
-            <EmptyState title="Not yet built" description="No real trusted source is wired to this Assignment yet." icon="clock" />
+            <NotesMeetingsPreviewCard ownerType="ASSIGNMENT" ownerRef={assignment.assignmentRef} permissions={notesMeetingsPermissions} onOpen={() => setNotesOpen(true)} />
           </PanelBody>
         </Panel>
       </div>
 
       <AssignmentHistoryDialog assignmentRef={assignment.assignmentRef} open={historyOpen} onClose={() => setHistoryOpen(false)} />
-      <AssignmentNotesDialog open={notesOpen} onClose={() => setNotesOpen(false)} />
+      <NotesMeetingsDialog open={notesOpen} onClose={() => setNotesOpen(false)} ownerType="ASSIGNMENT" ownerRef={assignment.assignmentRef} permissions={notesMeetingsPermissions} />
       {SHARE_ELIGIBLE_STATUSES.includes(assignment.status) && <AssignmentShareDialog assignment={assignment} open={shareOpen} onClose={() => setShareOpen(false)} />}
     </>
   );

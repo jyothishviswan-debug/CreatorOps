@@ -8,7 +8,9 @@ import { Pill } from "@/ui/Badge";
 import { EmptyState } from "@/ui/States";
 import type { PartnerDto } from "@/server/partners/client-dto";
 import type { CounterpartyAgreementDocumentsDto } from "@/server/finance-agreements/client-dto";
+import type { NotesMeetingsUiPermissions } from "@/server/notes-meetings";
 import { AgreementDocumentList } from "@/features/finance-agreements/components/AgreementDocumentList";
+import { NotesMeetingsSection } from "@/features/notes-meetings/NotesMeetingsSection";
 import { getPartner } from "./api-client";
 import { absoluteTime, STATUS_LABELS, statusTone } from "./format";
 import { HistoryPanel } from "./HistoryPanel";
@@ -18,12 +20,13 @@ import { PartnerOwnerTeamPanel } from "./PartnerOwnerTeamPanel";
 import { PartnerRestrictedIdentityPanel } from "./PartnerRestrictedIdentityPanel";
 import { PartnerVendorRelationshipsPanel } from "./PartnerVendorRelationshipsPanel";
 
-type TabKey = "overview" | "accounts" | "relationships" | "activity" | "restricted" | "context";
+type TabKey = "overview" | "accounts" | "relationships" | "notes" | "activity" | "restricted" | "context";
 
 const TABS: { key: TabKey; label: string }[] = [
   { key: "overview", label: "Overview" },
   { key: "accounts", label: "Accounts" },
   { key: "relationships", label: "Relationships" },
+  { key: "notes", label: "Notes & meetings" },
   { key: "activity", label: "Activity" },
   { key: "restricted", label: "Restricted Identity" },
   { key: "context", label: "Context" },
@@ -40,11 +43,13 @@ export function PartnerDetail({
   canOpenPartnerReviews = false,
   canOpenFinance = false,
   agreementDocuments = null,
+  notesMeetingsPermissions,
 }: {
   initialPartner: PartnerDto;
   canOpenPartnerReviews?: boolean;
   canOpenFinance?: boolean;
   agreementDocuments?: CounterpartyAgreementDocumentsDto | null;
+  notesMeetingsPermissions: NotesMeetingsUiPermissions;
 }) {
   const [partner, setPartner] = useState(initialPartner);
   const [selectedTab, setSelectedTab] = useState<TabKey>("overview");
@@ -203,6 +208,17 @@ export function PartnerDetail({
       {selectedTab === "relationships" && (
         <PanelGrid>
           <PartnerVendorRelationshipsPanel partnerRef={partner.partnerRef} />
+        </PanelGrid>
+      )}
+
+      {selectedTab === "notes" && (
+        <PanelGrid>
+          <Panel span={12}>
+            <PanelHead title="Notes & meetings" description="Contextual notes, meetings and action items attached to this Partner." />
+            <PanelBody>
+              <NotesMeetingsSection ownerType="PARTNER" ownerRef={partner.partnerRef} permissions={notesMeetingsPermissions} />
+            </PanelBody>
+          </Panel>
         </PanelGrid>
       )}
 

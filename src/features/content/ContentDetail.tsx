@@ -5,13 +5,13 @@ import Link from "next/link";
 
 import { Panel, PanelBody, PanelGrid, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
-import { EmptyState } from "@/ui/States";
 import { Icon } from "@/ui/icons";
 import type { ContentDto } from "@/server/content/client-dto";
+import type { NotesMeetingsUiPermissions } from "@/server/notes-meetings";
+import { NotesMeetingsDialog, NotesMeetingsPreviewCard } from "@/features/notes-meetings/NotesMeetingsSection";
 import { absoluteTime, contentDisplayTitle, dateLabel, STATUS_LABELS, statusTone } from "./format";
 import { CONTENT_MAINLINE_STEPS, reachedIndex, stepStates } from "./workflow";
 import { ContentHistoryDialog } from "./ContentHistoryDialog";
-import { ContentNotesDialog } from "./ContentNotesDialog";
 import { ContentNextActionPanel } from "./ContentNextActionPanel";
 import { ContentEvidencePanel } from "./ContentEvidencePanel";
 import { ContentWorkflowPanel } from "./ContentWorkflowPanel";
@@ -23,7 +23,7 @@ import { ContentWorkflowPanel } from "./ContentWorkflowPanel";
 // step strip -> first grid (Record context span8, Next action span4) ->
 // second grid (Content evidence, Content workflow, Notes & meetings).
 // No Edit page button anywhere (task doc's own explicit prohibition).
-export function ContentDetail({ initialContent, actorCanReview }: { initialContent: ContentDto; actorCanReview: boolean }) {
+export function ContentDetail({ initialContent, actorCanReview, notesMeetingsPermissions }: { initialContent: ContentDto; actorCanReview: boolean; notesMeetingsPermissions: NotesMeetingsUiPermissions }) {
   const [content, setContent] = useState(initialContent);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [notesOpen, setNotesOpen] = useState(false);
@@ -155,13 +155,13 @@ export function ContentDetail({ initialContent, actorCanReview }: { initialConte
         <Panel span={4}>
           <PanelHead title="Notes & meetings" description="Keep the conversation with the record" />
           <PanelBody>
-            <EmptyState title="Not yet built" description="No real trusted source is wired to this Content record yet." icon="clock" />
+            <NotesMeetingsPreviewCard ownerType="CONTENT" ownerRef={content.contentRef} permissions={notesMeetingsPermissions} onOpen={() => setNotesOpen(true)} />
           </PanelBody>
         </Panel>
       </div>
 
       <ContentHistoryDialog contentRef={content.contentRef} open={historyOpen} onClose={() => setHistoryOpen(false)} />
-      <ContentNotesDialog open={notesOpen} onClose={() => setNotesOpen(false)} />
+      <NotesMeetingsDialog open={notesOpen} onClose={() => setNotesOpen(false)} ownerType="CONTENT" ownerRef={content.contentRef} permissions={notesMeetingsPermissions} />
     </>
   );
 }

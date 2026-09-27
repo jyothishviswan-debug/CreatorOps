@@ -13,6 +13,7 @@ import { deriveDueState, displayNameOrRef, DUE_STATE_LABEL, DUE_STATE_TONE, TASK
 import { targetHref, targetLabel } from "@/features/operations/target-links";
 
 import { LifecycleActions } from "./LifecycleActions";
+import { MeetingOriginBanner } from "./MeetingOriginBanner";
 
 const EVENT_LABEL: Record<string, string> = {
   TASK_CREATED: "Created",
@@ -72,6 +73,8 @@ export function TaskDetail({ initialTask, canCompleteTasks, canManageTasks }: { 
           </Link>
         </div>
       </div>
+
+      <MeetingOriginBanner taskRef={task.taskRef} />
 
       <div className="detailcontext">
         <div>

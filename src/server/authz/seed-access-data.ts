@@ -148,6 +148,10 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // evidence-recording surface (manage_kyc included - see
       // SENSITIVE_GRANTS below for why that alone isn't enough to read
       // KYC values for Partnership Manager).
+      // Notes/Meetings Completion: manage_notes/manage_meetings/promote_action_item added to every
+      // one of Manager's six owning-feature grants below - no Manager-vs-Head split (like
+      // Operations' own manage_tasks/assign_tasks/complete_tasks above, Notes/Meetings authoring and
+      // promotion have no separate "approval"/governance step of their own).
       discovery: featureGrant(true, {
         create: true,
         edit: true,
@@ -160,6 +164,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_kyc: true,
         transition_lifecycle: true,
         convert_lead: true,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 7A: day-to-day Partner/account operation, but NOT governance
       // (blacklist/archive/restore) - Partnership Head only, same
@@ -175,6 +182,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_partner_ownership: true,
         manage_partner_restricted_identity: true,
         manage_partner_governance: false,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 8A: same day-to-day-but-not-governance split as Partners
       // above - Partnership Manager can create/edit Vendors, manage
@@ -192,6 +202,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_vendor_restricted_identity: true,
         archive_vendor: false,
         restore_vendor: false,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 9A: same day-to-day-but-not-governance split as Partners'/
       // Vendors' own - Partnership Manager can plan and run day-to-day
@@ -205,6 +218,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_campaign_resources: true,
         cancel_campaign: false,
         archive_campaign: false,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 10A: full operational Assignment access - this compact
       // execution lifecycle has no separate "approval" step the way
@@ -220,6 +236,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         transition_assignment_lifecycle: true,
         cancel_assignment: true,
         manage_assignment_external_submission: true,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 11B (explicit user correction to Step 11A's own initial
       // default): Manager now holds identical Content grants to Head,
@@ -236,6 +255,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         create: true,
         review_content: true,
         cancel_content: true,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 12A: non-monotonic on purpose, same day-to-day-but-not-
       // governance shape as Finance's approve_payables/Partners'/
@@ -312,6 +334,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_kyc: true,
         transition_lifecycle: true,
         convert_lead: true,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 7A: the only role (besides Super Admin) trusted with
       // governance (blacklist/archive/restore), matching Finance's
@@ -323,6 +348,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_partner_ownership: true,
         manage_partner_restricted_identity: true,
         manage_partner_governance: true,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 8A: the only role (besides Super Admin) trusted with Vendor
       // governance (archive/restore), matching Partners' own head-only
@@ -336,6 +364,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_vendor_restricted_identity: true,
         archive_vendor: true,
         restore_vendor: true,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 9A: the only role (besides Super Admin) trusted with
       // Campaign governance (cancel/archive), matching Partners'/
@@ -348,6 +379,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_campaign_resources: true,
         cancel_campaign: true,
         archive_campaign: true,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 10A: identical action set to partnership_manager's own
       // assignments grant above - see that grant's comment for why.
@@ -357,6 +391,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         transition_assignment_lifecycle: true,
         cancel_assignment: true,
         manage_assignment_external_submission: true,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 11A: the only role (besides Super Admin) trusted with
       // review_content - matching Finance's approve_payables/Partners'/
@@ -365,6 +402,9 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         create: true,
         review_content: true,
         cancel_content: true,
+        manage_notes: true,
+        manage_meetings: true,
+        promote_action_item: true,
       }),
       // Step 12A: the Head-vs-Manager governance split's "yes" side -
       // Partnership Head holds BOTH explore and manage_analytics_data,
@@ -434,8 +474,14 @@ const SENSITIVE_GRANTS: Record<Role, string[]> = {
   // Step 14A: "finance_contracts" (raw contract snippets/locators, restricted
   // extraction) is Head + Super Admin only; Manager holds manage_agreements
   // (the ACTION) without it, same action-vs-category independence.
-  partnership_head: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details", "finance_contracts"],
-  super_admin: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details", "finance_contracts"],
+  // Notes/Meetings Completion: "notes_meetings_sensitive" gates a RESTRICTED Note/Meeting's own
+  // body/summary/decisions/attachments - treated as restricted-identity-grade (Head + Super Admin
+  // only), same non-monotonic shape as discovery_kyc/payment_details/vendor_payment_details above.
+  // Manager holds the manage_notes/manage_meetings ACTIONS (can author ordinary notes/meetings, and
+  // can even mark one RESTRICTED) without this category, proving the same action-vs-category
+  // independence every other sensitive category above already proves.
+  partnership_head: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details", "finance_contracts", "notes_meetings_sensitive"],
+  super_admin: ["finance_amounts", "discovery_kyc", "payment_details", "vendor_payment_details", "finance_contracts", "notes_meetings_sensitive"],
 };
 
 // Every South/West Zone state (per REGION_ZONES, the canonical
