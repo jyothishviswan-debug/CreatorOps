@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 
 import { Pill } from "@/ui/Badge";
 import { EmptyState } from "@/ui/States";
 import type { ReportSectionModel } from "@/server/reports/report-sections/types";
-import type { ReportNarrativeSectionKey, ReportTemplateDefinition } from "@/server/reports";
+import type { ReportNarrativeSectionKey } from "@/server/reports";
 
 import {
   artifactDownloadUrl,
@@ -19,12 +19,13 @@ import {
   submitRunForReview,
   supersedeRun,
   type ReportsApiResult,
+  type ReportTemplateWithFilters,
 } from "../api-client";
 import { NARRATIVE_SECTION_LABELS } from "@/server/reports/report-templates";
 import type { ReportRunDetailDto } from "@/server/reports";
 import type { ReportArtifactDoc, ReportVersionSummary } from "@/server/reports";
 
-export type PublishWorkspaceProps = { templates: ReportTemplateDefinition[] };
+export type PublishWorkspaceProps = { templates: ReportTemplateWithFilters[] };
 
 function errorText(result: Extract<ReportsApiResult<unknown>, { ok: false }>): string {
   return result.message;
@@ -137,19 +138,54 @@ export function PublishWorkspace({ templates }: PublishWorkspaceProps) {
   const [narrativeDrafts, setNarrativeDrafts] = useState<Record<string, string>>({});
   const [artifacts, setArtifacts] = useState<ReportArtifactDoc[] | null>(null);
   const [versions, setVersions] = useState<ReportVersionSummary[] | null>(null);
+  // Spec section 12's "Parameters" workflow step - a plain text field per the chosen template's own
+  // underlying ReportDefinition.supportedFilters (server-declared allowlist; an unsupported key is
+  // silently dropped server-side regardless of what is typed here - see filters.ts's own
+  // parseAppliedFilters). Reset whenever the template selection changes.
+  const [filterValues, setFilterValues] = useState<Record<string, string>>({});
+  // A run in progress is deep-linkable (?runRef=...&version=...) so a real page reload restores it
+  // instead of silently losing the draft back to the template picker - a real, disclosed bug this
+  // stage's own Playwright verification found and fixed (spec section 14 expects "clear saved/
+  // unsaved state" to survive a reload, not merely a live React session). Restoration happens
+  // entirely inside the async lookup's own .then() callback (never a synchronous setState directly
+  // in the effect body, which both breaks server/client hydration parity for anything reading
+  // window.location and trips this codebase's own react-hooks/set-state-in-effect guard) - the
+  // template picker may render for one brief tick before the real run appears, which is the correct,
+  // standard trade-off for a client-only restoration rather than a server-rendered one.
+  function setUrlForRun(runRef: string | null, version?: number) {
+    if (typeof window === "undefined") return;
+    const url = runRef ? `/reports/publish?runRef=${encodeURIComponent(runRef)}${version ? `&version=${version}` : ""}` : "/reports/publish";
+    window.history.replaceState(null, "", url);
+  }
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const runRef = params.get("runRef");
+    if (!runRef) return;
+    const versionParam = params.get("version");
+    const version = versionParam ? Number(versionParam) : undefined;
+    getRunDetail(runRef, version).then((result) => {
+      if (result.ok) setRun(result.data);
+      else setError(errorText(result));
+    });
+    // Restoring an in-progress run from the URL is a one-time, mount-only action.
+  }, []);
 
   async function refresh(runRef: string, version?: number) {
     const result = await getRunDetail(runRef, version);
-    if (result.ok) setRun(result.data);
-    else setError(errorText(result));
+    if (result.ok) {
+      setRun(result.data);
+      setUrlForRun(result.data.runRef, result.data.version.version);
+    } else setError(errorText(result));
   }
 
   async function handleCreateDraft() {
     setBusy(true);
     setError(null);
-    const result = await createDraftRun(templateId, {});
+    const result = await createDraftRun(templateId, filterValues);
     if (result.ok) {
       setRun(result.data);
+      setUrlForRun(result.data.runRef, result.data.version.version);
       setArtifacts(null);
       setVersions(null);
       setNarrativeDrafts({});
@@ -196,6 +232,7 @@ export function PublishWorkspace({ templates }: PublishWorkspaceProps) {
     const result = await finalizeRun(run.runRef, run.headDocVersion);
     if (result.ok) {
       setRun(result.data);
+      setUrlForRun(result.data.runRef, result.data.version.version);
       const artifactsResult = await listRunArtifacts(result.data.runRef, result.data.version.version);
       if (artifactsResult.ok) setArtifacts(artifactsResult.data);
     } else setError(errorText(result));
@@ -216,6 +253,7 @@ export function PublishWorkspace({ templates }: PublishWorkspaceProps) {
     const result = await supersedeRun(run.runRef, run.headDocVersion);
     if (result.ok) {
       setRun(result.data);
+      setUrlForRun(result.data.runRef, result.data.version.version);
       setArtifacts(null);
     } else setError(errorText(result));
     setBusy(false);
@@ -228,7 +266,14 @@ export function PublishWorkspace({ templates }: PublishWorkspaceProps) {
       {!run && (
         <section className="panel">
           <h2>1. Choose a report template</h2>
-          <select value={templateId} onChange={(e) => setTemplateId(e.target.value)} data-testid="template-select">
+          <select
+            value={templateId}
+            onChange={(e) => {
+              setTemplateId(e.target.value);
+              setFilterValues({});
+            }}
+            data-testid="template-select"
+          >
             {templates.map((t) => (
               <option key={t.templateId} value={t.templateId}>
                 {t.title} ({t.treatment})
@@ -236,6 +281,24 @@ export function PublishWorkspace({ templates }: PublishWorkspaceProps) {
             ))}
           </select>
           {template && <p className="foundationnote">{template.referencePattern}</p>}
+
+          {template && template.supportedFilters.length > 0 && (
+            <div data-testid="parameters-form" style={{ marginTop: 12 }}>
+              <h3>2. Parameters</h3>
+              {template.supportedFilters.map((filter) => (
+                <div key={filter.id} style={{ marginBottom: 8 }}>
+                  <label>{filter.label}</label>
+                  <input
+                    type="text"
+                    value={filterValues[filter.id] ?? ""}
+                    onChange={(e) => setFilterValues((prev) => ({ ...prev, [filter.id]: e.target.value }))}
+                    data-testid={`filter-${filter.id}`}
+                  />
+                </div>
+              ))}
+            </div>
+          )}
+
           <button className="btn" disabled={busy} onClick={handleCreateDraft} data-testid="create-draft-button">
             Create draft
           </button>

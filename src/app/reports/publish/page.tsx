@@ -1,7 +1,7 @@
 import { AppShell } from "@/ui/AppShell";
 import { ModuleTabs } from "@/ui/ModuleTabs";
 import { EmptyState } from "@/ui/States";
-import { computeReportsPermissions, listReportTemplateDefinitions } from "@/server/reports";
+import { computeReportsPermissions, getReportDefinition, listReportTemplateDefinitions } from "@/server/reports";
 import { resolveRequestActor } from "@/server/reports/http";
 
 import { REPORTS_TABS } from "@/features/reports/reports-tabs";
@@ -33,7 +33,7 @@ export default async function ReportsPublishPage() {
     );
   }
 
-  const templates = listReportTemplateDefinitions();
+  const templates = listReportTemplateDefinitions().map((template) => ({ ...template, supportedFilters: getReportDefinition(template.reportId).supportedFilters }));
 
   return (
     <AppShell>

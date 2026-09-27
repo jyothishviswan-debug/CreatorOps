@@ -7,7 +7,7 @@ export { getReportDefinitionForActor, listReportCatalogForActor, runReport } fro
 export { computeReportsPermissions, type ReportsPermissionsDto } from "./reports-permissions";
 export { finalizeReport, getFinalizedSnapshot, listMyFinalizedSnapshots } from "./snapshot-service";
 export { toReportSnapshotDto, type ReportDefinitionDto, type ReportResultDto, type ReportSnapshotDto } from "./client-dto";
-export { REPORT_IDS, isReportId, type ReportArtifactDoc, type ReportDefinition, type ReportId, type ReportResult, type ReportSnapshotDoc, type ReportsServiceResult } from "./types";
+export { REPORT_IDS, isReportId, type ReportArtifactDoc, type ReportDefinition, type ReportFilterFieldDef, type ReportId, type ReportResult, type ReportSnapshotDoc, type ReportsServiceResult } from "./types";
 
 // Reports Final-Master: the publication lifecycle service surface.
 export {

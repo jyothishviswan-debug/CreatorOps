@@ -1,4 +1,6 @@
-import type { ReportArtifactDoc, ReportDefinitionDto, ReportId, ReportResultDto, ReportRunDetailDto, ReportSnapshotDoc, ReportTemplateDefinition, ReportVersionSummary } from "@/server/reports";
+import type { ReportArtifactDoc, ReportDefinitionDto, ReportFilterFieldDef, ReportId, ReportResultDto, ReportRunDetailDto, ReportSnapshotDoc, ReportTemplateDefinition, ReportVersionSummary } from "@/server/reports";
+
+export type ReportTemplateWithFilters = ReportTemplateDefinition & { supportedFilters: ReportFilterFieldDef[] };
 
 // NOTE: every /api/reports/snapshots** route (list/get/finalize) currently serializes the raw
 // ReportSnapshotDoc returned by snapshot-service.ts's own functions directly - none of them apply
@@ -115,7 +117,7 @@ export function getSnapshotDto(snapshotRef: string, options?: ReportsRequestOpti
 }
 
 // --- Reports Final-Master: the publication lifecycle -------------------------------------------------
-export function listReportTemplates(options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportTemplateDefinition[]>> {
+export function listReportTemplates(options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportTemplateWithFilters[]>> {
   return getJson(`/api/reports/templates`, options);
 }
 
