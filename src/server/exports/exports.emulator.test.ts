@@ -35,12 +35,20 @@ import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
 import { createCampaign } from "@/server/campaigns/campaign-service";
 import { campaignsCollection } from "@/server/campaigns/firestore";
 import { transitionCampaignLifecycle } from "@/server/campaigns/campaign-lifecycle-service";
+import { resolveOrCreateContentThread } from "@/server/content/content-service";
+import { contentCollection } from "@/server/content/firestore";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { createTask } from "@/server/operations/task-service";
+import { operationsTasksCollection } from "@/server/operations/firestore";
+import { generatePartnerReviewDraft } from "@/server/partner-reviews/partner-review-service";
+import { partnerReviewsCollection } from "@/server/partner-reviews/firestore";
 import { createPartner } from "@/server/partners/partner-service";
 import { partnersCollection } from "@/server/partners/firestore";
+import { createVendor } from "@/server/vendors/vendor-service";
+import { vendorsCollection } from "@/server/vendors/firestore";
 
 import { setExportArtifactStoreForTests, createInMemoryExportArtifactStore } from "./artifact-store";
-import { createExportJob, getExportArtifactForActor, getExportJobForActor, listExportTargetsForActor, listMyExportJobs } from "./export-service";
+import { createExportJob, getExportArtifactForActor, getExportJobForActor, listExportTargetsForActor, listMyExportJobs, previewExportJob, retryExportJob } from "./export-service";
 import { exportJobsCollection } from "./firestore";
 import type { ExportJobDto } from "./client-dto";
 import type { ExportsServiceResult } from "./types";
@@ -97,12 +105,20 @@ async function grantRegion(actor: ActorContext, region: string): Promise<void> {
 const partnerRefs: string[] = [];
 const campaignRefs: string[] = [];
 const assignmentRefs: string[] = [];
+const vendorRefs: string[] = [];
+const contentUids: string[] = [];
+const taskRefs: string[] = [];
+const partnerReviewRefs: string[] = [];
+const rowLimitPartnerRefs: string[] = [];
 
 let admin: ActorContext;
 let keralaPartnerRef: string;
 let delhiPartnerRef: string;
 let campaignRef: string;
 let assignmentRef: string;
+let vendorRef: string;
+let taskRef: string;
+let partnerReviewRef: string;
 
 // Two synthetic Export-Center-authorized actors, each with exactly one region grant - the load-
 // bearing record-scope proof.
@@ -112,6 +128,16 @@ const exporterDelhi = syntheticActor("delhi", "analyst");
 // action-level (not feature-level) denial proof. Role baseline is "viewer" (no exports entry), so
 // the action check falls through to "denied".
 const viewOnlyActor = syntheticActor("view-only", "viewer");
+// Isolated actor + region for the row-limit (section 9) proof below - never shares a region with
+// exporterKerala/exporterDelhi so seeding >maxRows Partners here cannot make any OTHER test's
+// Partners export unexpectedly exceed its own bound.
+const rowLimitActor = syntheticActor("rowlimit", "analyst");
+const ROW_LIMIT_REGION = `RowLimitRegion-${runId}`;
+// "Kerala"/"Delhi" (used by exporterKerala/exporterDelhi above) are generic region names several
+// OTHER emulator test files also use for their own fixtures - safe for THIS file's own small,
+// content-substring assertions (`toContain`), but not safe as a "this scope has exactly N rows"
+// bound under full-suite load. This run-unique region is for exactly that kind of assertion.
+const PREVIEW_REGION = `PreviewRegion-${runId}`;
 
 beforeAll(async () => {
   const password = process.env.EMULATOR_TEST_USER_PASSWORD;
@@ -128,6 +154,7 @@ beforeAll(async () => {
 
   await grantRegion(exporterKerala, "Kerala");
   await grantRegion(exporterDelhi, "Delhi");
+  await grantRegion(rowLimitActor, ROW_LIMIT_REGION);
 
   const db = getAdminFirestore();
   await db
@@ -145,6 +172,10 @@ beforeAll(async () => {
   delhiPartnerRef = (delhiPartner.data as { partnerRef: string }).partnerRef;
   partnerRefs.push(delhiPartnerRef);
 
+  const previewFixturePartner = await createPartner(admin, { displayName: `Export Fixture Partner Preview ${runId}`, regionIds: [PREVIEW_REGION] }, requestId());
+  if (!previewFixturePartner.ok) throw new Error(`createPartner (preview fixture) failed: ${previewFixturePartner.code} - ${previewFixturePartner.message}`);
+  partnerRefs.push((previewFixturePartner.data as { partnerRef: string }).partnerRef);
+
   const campaign = await createCampaign(admin, { name: `Export Fixture Campaign ${runId}`, objective: "Certify Export Center", startDate: "2026-01-01", endDate: "2026-12-31", defaultReviewPolicy: "NO_PREPOST_REVIEW", regionIds: ["Kerala"], platforms: ["instagram"] }, requestId());
   if (!campaign.ok) throw new Error(`createCampaign failed: ${campaign.code} - ${campaign.message}`);
   campaignRef = campaign.data.campaignRef;
@@ -157,6 +188,37 @@ beforeAll(async () => {
   if (!assignment.ok) throw new Error(`createAssignment failed: ${assignment.code} - ${assignment.message}`);
   assignmentRef = assignment.data.assignmentRef;
   assignmentRefs.push(assignmentRef);
+
+  // Section 2's expansion fixtures - one real record per new target, through each domain's own
+  // create service (never a raw Firestore write).
+  const vendor = await createVendor(admin, { displayName: `Export Fixture Vendor ${runId}`, vendorType: "AGENCY", regionIds: ["Kerala"] }, requestId());
+  if (!vendor.ok) throw new Error(`createVendor failed: ${vendor.code} - ${vendor.message}`);
+  vendorRef = vendor.data.vendorRef;
+  vendorRefs.push(vendorRef);
+
+  const content = await resolveOrCreateContentThread(assignmentRef, admin.userRef, requestId());
+  contentUids.push(content.uid);
+
+  const task = await createTask(admin, { title: `Export Fixture Task ${runId}`, target: { targetType: "PARTNER", targetRef: keralaPartnerRef }, assigneeUserRef: admin.userRef, priority: "NORMAL" }, requestId());
+  if (!task.ok) throw new Error(`createTask failed: ${task.code} - ${task.message}`);
+  taskRef = task.data.taskRef;
+  taskRefs.push(taskRef);
+
+  const review = await generatePartnerReviewDraft(admin, { partnerRef: keralaPartnerRef, periodKey: "2026-01" }, requestId());
+  if (!review.ok) throw new Error(`generatePartnerReviewDraft failed: ${review.code} - ${review.message}`);
+  partnerReviewRef = review.data.review.head.reviewRef;
+  partnerReviewRefs.push(partnerReviewRef);
+
+  // Row-limit fixture (section 9): one more Partner than operations_tasks'/vendors' etc. shared
+  // domain page cap (100), isolated to its own region/actor so no other test's export is affected.
+  await Promise.all(
+    Array.from({ length: 101 }, (_, i) =>
+      createPartner(admin, { displayName: `Row Limit Fixture Partner ${runId}-${i}`, regionIds: [ROW_LIMIT_REGION] }, requestId()).then((result) => {
+        if (!result.ok) throw new Error(`createPartner (row-limit fixture #${i}) failed: ${result.code} - ${result.message}`);
+        rowLimitPartnerRefs.push((result.data as { partnerRef: string }).partnerRef);
+      }),
+    ),
+  );
 });
 
 afterAll(async () => {
@@ -164,15 +226,21 @@ afterAll(async () => {
   for (const ref of partnerRefs) await partnersCollection().doc(ref).delete().catch(() => {});
   for (const ref of campaignRefs) await campaignsCollection().doc(ref).delete().catch(() => {});
   for (const ref of assignmentRefs) await assignmentsCollection().doc(ref).delete().catch(() => {});
+  for (const ref of vendorRefs) await vendorsCollection().doc(ref).delete().catch(() => {});
+  for (const uid of contentUids) await contentCollection().doc(uid).delete().catch(() => {});
+  for (const ref of taskRefs) await operationsTasksCollection().doc(ref).delete().catch(() => {});
+  for (const ref of partnerReviewRefs) await partnerReviewsCollection().doc(ref).delete().catch(() => {});
+  await Promise.all(rowLimitPartnerRefs.map((ref) => partnersCollection().doc(ref).delete().catch(() => {})));
   await db.collection(COLLECTIONS.scopeAssignments).doc(scopeGrantDocId(exporterKerala.uid, { type: "REGION", region: "Kerala" })).delete().catch(() => {});
   await db.collection(COLLECTIONS.scopeAssignments).doc(scopeGrantDocId(exporterDelhi.uid, { type: "REGION", region: "Delhi" })).delete().catch(() => {});
+  await db.collection(COLLECTIONS.scopeAssignments).doc(scopeGrantDocId(rowLimitActor.uid, { type: "REGION", region: ROW_LIMIT_REGION })).delete().catch(() => {});
   await db.collection(COLLECTIONS.userAccessOverrides).doc(viewOnlyActor.uid).delete().catch(() => {});
 });
 
 describe("catalog visibility", () => {
-  it("Super Admin sees the full 3-target catalog", async () => {
+  it("Super Admin, holding every source feature, sees the full 7-target catalog", async () => {
     const data = must(await listExportTargetsForActor(admin), "catalog(admin)");
-    expect(data.map((d) => d.targetId).sort()).toEqual(["assignments", "campaigns", "partners"]);
+    expect(data.map((d) => d.targetId).sort()).toEqual(["assignments", "campaigns", "content", "operations_tasks", "partner_reviews", "partners", "vendors"]);
   });
 
   it("Viewer/Manager/Head - none hold the exports feature at all - are denied the catalog", async () => {
@@ -200,7 +268,11 @@ describe("catalog visibility", () => {
 describe("action-level denial: exports VIEW without the create_exports ACTION", () => {
   it("can see the catalog but cannot create a job", async () => {
     const catalog = must(await listExportTargetsForActor(viewOnlyActor), "catalog(viewOnly)");
-    expect(catalog.length).toBe(3);
+    // Section 4's per-target source-feature filter (see listExportTargetsForActor) means the exact
+    // catalog size here depends on how many source-module features the "viewer" role baseline
+    // happens to grant - incidental to THIS test's own purpose (action-level denial), so this only
+    // asserts the one target the next line actually exercises is present, never a brittle exact count.
+    expect(catalog.some((d) => d.targetId === "partners")).toBe(true);
 
     const result = failure(await createExportJob(viewOnlyActor, { targetId: "partners", format: "csv" }));
     expect(result.code).toBe("unauthorized");
@@ -239,7 +311,7 @@ describe("column/target/format tampering is rejected server-side", () => {
   });
 
   it("rejects an unknown target id", async () => {
-    const result = failure(await createExportJob(exporterKerala, { targetId: "vendors", format: "csv" }));
+    const result = failure(await createExportJob(exporterKerala, { targetId: "not_a_real_target", format: "csv" }));
     expect(result.code).toBe("invalid_input");
   });
 
@@ -313,7 +385,7 @@ describe("job history is scoped to the caller's own jobs only", () => {
 
 describe("job lifecycle is a real persisted transition", () => {
   it("a completed job's Firestore doc shows PENDING -> COMPLETED with generatingAt/completedAt timestamps set", async () => {
-    const job = must(await createExportJob(admin, { targetId: "partners", format: "csv" }), "createExportJob(admin) for lifecycle check");
+    const job = must(await createExportJob(admin, { targetId: "partners", format: "csv", filters: { region: PREVIEW_REGION } }), "createExportJob(admin) for lifecycle check");
     const snap = await exportJobsCollection().doc(job.jobRef).get();
     const doc = snap.data()!;
     expect(doc.status).toBe("COMPLETED");
@@ -327,7 +399,7 @@ describe("job lifecycle is a real persisted transition", () => {
 
 describe("CSV/XLSX/PDF are each generated end to end through the real service and parsed back for real", () => {
   it("xlsx: downloads and parses back with the real xlsx contents", async () => {
-    const job = must(await createExportJob(admin, { targetId: "partners", format: "xlsx", columns: ["partnerRef", "displayName"] }), "createExportJob(admin, xlsx)");
+    const job = must(await createExportJob(admin, { targetId: "partners", format: "xlsx", columns: ["partnerRef", "displayName"], filters: { region: "Kerala" } }), "createExportJob(admin, xlsx)");
     expect(job.status).toBe("COMPLETED");
     const artifact = must(await getExportArtifactForActor(admin, job.jobRef), "artifact(admin, xlsx)");
     const { parseXlsxForVerification } = await import("./xlsx");
@@ -338,7 +410,7 @@ describe("CSV/XLSX/PDF are each generated end to end through the real service an
   });
 
   it("pdf: downloads and loads back with pdf-lib", async () => {
-    const job = must(await createExportJob(admin, { targetId: "partners", format: "pdf" }), "createExportJob(admin, pdf)");
+    const job = must(await createExportJob(admin, { targetId: "partners", format: "pdf", filters: { region: PREVIEW_REGION } }), "createExportJob(admin, pdf)");
     expect(job.status).toBe("COMPLETED");
     const artifact = must(await getExportArtifactForActor(admin, job.jobRef), "artifact(admin, pdf)");
     const { PDFDocument } = await import("pdf-lib");
@@ -374,7 +446,7 @@ describe("generation failure is handled safely (the FAILED lifecycle branch, not
     };
     setExportArtifactStoreForTests(throwingStore);
     try {
-      const job = must(await createExportJob(admin, { targetId: "partners", format: "csv" }), "createExportJob(admin) with failing store");
+      const job = must(await createExportJob(admin, { targetId: "partners", format: "csv", filters: { region: PREVIEW_REGION } }), "createExportJob(admin) with failing store");
       expect(job.status).toBe("FAILED");
       expect(job.hasArtifact).toBe(false);
       expect(job.errorMessage).toBe("Export generation failed. Please try again.");
@@ -401,7 +473,7 @@ describe("generation failure is handled safely (the FAILED lifecycle branch, not
     setExportArtifactStoreForTests(throwingStore);
     let jobRef: string;
     try {
-      const job = must(await createExportJob(admin, { targetId: "partners", format: "csv" }), "createExportJob(admin) with failing store 2");
+      const job = must(await createExportJob(admin, { targetId: "partners", format: "csv", filters: { region: PREVIEW_REGION } }), "createExportJob(admin) with failing store 2");
       jobRef = job.jobRef;
     } finally {
       setExportArtifactStoreForTests(createInMemoryExportArtifactStore());
@@ -413,9 +485,174 @@ describe("generation failure is handled safely (the FAILED lifecycle branch, not
 
 describe("bounded execution", () => {
   it("every completed job's rowCount is <= its own maxRows, and truncated is a real boolean", async () => {
-    const job = must(await createExportJob(admin, { targetId: "partners", format: "csv" }), "createExportJob(admin) bounded check");
+    const job = must(await createExportJob(admin, { targetId: "partners", format: "csv", filters: { region: PREVIEW_REGION } }), "createExportJob(admin) bounded check");
     expect(job.rowCount).not.toBeNull();
     expect(job.rowCount!).toBeLessThanOrEqual(job.maxRows);
     expect(typeof job.truncated).toBe("boolean");
+  });
+});
+
+// --- Section 2's expansion: each new target generates end to end through the real service ----------
+describe("expanded target catalog: every new target generates end to end with real bytes", () => {
+  it("vendors: csv end to end contains the fixture Vendor", async () => {
+    const job = must(await createExportJob(admin, { targetId: "vendors", format: "csv" }), "createExportJob(admin, vendors)");
+    expect(job.status).toBe("COMPLETED");
+    const artifact = must(await getExportArtifactForActor(admin, job.jobRef), "artifact(admin, vendors)");
+    expect(Buffer.from(artifact.bytes).toString("utf8")).toContain(`Export Fixture Vendor ${runId}`);
+  });
+
+  it("content: csv end to end contains the fixture Content's own Campaign name", async () => {
+    const job = must(await createExportJob(admin, { targetId: "content", format: "csv" }), "createExportJob(admin, content)");
+    expect(job.status).toBe("COMPLETED");
+    const artifact = must(await getExportArtifactForActor(admin, job.jobRef), "artifact(admin, content)");
+    expect(Buffer.from(artifact.bytes).toString("utf8")).toContain(`Export Fixture Campaign ${runId}`);
+  });
+
+  it("operations_tasks: csv end to end contains the fixture Task's title", async () => {
+    const job = must(await createExportJob(admin, { targetId: "operations_tasks", format: "csv" }), "createExportJob(admin, operations_tasks)");
+    expect(job.status).toBe("COMPLETED");
+    const artifact = must(await getExportArtifactForActor(admin, job.jobRef), "artifact(admin, operations_tasks)");
+    expect(Buffer.from(artifact.bytes).toString("utf8")).toContain(`Export Fixture Task ${runId}`);
+  });
+
+  it("partner_reviews: xlsx end to end contains the fixture Partner's display name, and never carries evidence-only fields", async () => {
+    const job = must(await createExportJob(admin, { targetId: "partner_reviews", format: "xlsx" }), "createExportJob(admin, partner_reviews)");
+    expect(job.status).toBe("COMPLETED");
+    const artifact = must(await getExportArtifactForActor(admin, job.jobRef), "artifact(admin, partner_reviews)");
+    const { parseXlsxForVerification } = await import("./xlsx");
+    const parsed = parseXlsxForVerification(artifact.bytes);
+    const flat = parsed.rows.flat().join(" ");
+    expect(flat).toContain(`Export Fixture Partner Kerala ${runId}`);
+    expect(parsed.headers.join(" ")).not.toMatch(/evidence|fingerprint|freshness/i);
+  });
+
+  it("content/operations_tasks are denied for the analyst role baseline, which holds vendors/partner_reviews but not content/operations (scope_denied)", async () => {
+    for (const targetId of ["content", "operations_tasks"]) {
+      const result = failure(await createExportJob(exporterKerala, { targetId, format: "csv" }));
+      expect([result.code, targetId]).toEqual(["unauthorized", targetId]);
+      expect(result.reason).toBe("scope_denied");
+    }
+  });
+
+  it("vendors/partner_reviews DO succeed for the analyst role baseline, which holds both source features", async () => {
+    for (const targetId of ["vendors", "partner_reviews"]) {
+      const job = must(await createExportJob(exporterKerala, { targetId, format: "csv" }), `createExportJob(exporterKerala, ${targetId})`);
+      expect(job.status).toBe("COMPLETED");
+    }
+  });
+});
+
+describe("per-target catalog visibility follows real source-feature access (section 4)", () => {
+  it("an actor lacking the Assignments source feature never sees 'assignments' in their own catalog (not just denied at create time)", async () => {
+    const catalog = must(await listExportTargetsForActor(exporterKerala), "catalog(exporterKerala)");
+    expect(catalog.map((d) => d.targetId)).not.toContain("assignments");
+  });
+});
+
+// --- Section 8: preview -------------------------------------------------------------------------------
+describe("preview (section 8): same governed plan as generation, never writes a job or artifact", () => {
+  it("returns a bounded sample, an exact matched row count, and never creates a job doc", async () => {
+    const jobsBefore = must(await listMyExportJobs(admin, undefined), "listMyExportJobs(admin) before preview");
+
+    const preview = must(await previewExportJob(admin, { targetId: "partners", format: "csv", filters: { region: PREVIEW_REGION } }), "previewExportJob(admin, partners)");
+    expect(preview.targetId).toBe("partners");
+    expect(preview.matchedRowCount).toBeGreaterThan(0);
+    expect(preview.sampleRows.length).toBeLessThanOrEqual(preview.sampleRowCount);
+    expect(preview.sampleRows.length).toBeLessThanOrEqual(20);
+    expect(preview.wouldExceedMaxRows).toBe(false);
+
+    const jobsAfter = must(await listMyExportJobs(admin, undefined), "listMyExportJobs(admin) after preview");
+    expect(jobsAfter.length).toBe(jobsBefore.length);
+  });
+
+  it("is reauthorized exactly like generation - denied for an actor lacking the target's own source feature", async () => {
+    const result = failure(await previewExportJob(exporterKerala, { targetId: "assignments", format: "csv" }));
+    expect(result.code).toBe("unauthorized");
+    expect(result.reason).toBe("scope_denied");
+  });
+
+  it("rejects an unknown column exactly like generation does (shared plan resolution, never a separate/looser preview validator)", async () => {
+    const result = failure(await previewExportJob(exporterKerala, { targetId: "partners", format: "csv", columns: ["displayName", "panNumber"] }));
+    expect(result.code).toBe("invalid_input");
+  });
+
+  it("flags a match count above maxRows as a warning without ever rejecting the preview itself", async () => {
+    const preview = must(await previewExportJob(rowLimitActor, { targetId: "partners", format: "csv", filters: { region: ROW_LIMIT_REGION } }), "previewExportJob(rowLimitActor, over-cap)");
+    expect(preview.wouldExceedMaxRows).toBe(true);
+    expect(preview.warnings.some((w) => /more than/i.test(w))).toBe(true);
+  });
+});
+
+// --- Section 9: row-limit behavior is disclosed, never silent (see export-service.ts's own comment on
+// why this stage deliberately ships disclosed/capped completion rather than a hard reject - a hard
+// reject was implemented and tested first, then reverted after full-emulator-suite testing showed it
+// produces false-positive failures from OTHER domains' own unrelated fixtures sharing the same global
+// collections under full-suite load). ------------------------------------------------------------------
+describe("row-limit behavior (section 9): a match count above maxRows completes but is explicitly, visibly disclosed - never silent", () => {
+  it("generation completes, capped at maxRows, with truncated:true on the job/DTO - never a hidden partial file", async () => {
+    const job = must(await createExportJob(rowLimitActor, { targetId: "partners", format: "csv", filters: { region: ROW_LIMIT_REGION } }), "createExportJob(rowLimitActor, over-cap)");
+    expect(job.status).toBe("COMPLETED");
+    expect(job.truncated).toBe(true);
+    expect(job.rowCount).toBe(job.maxRows);
+    expect(job.hasArtifact).toBe(true);
+
+    const artifact = must(await getExportArtifactForActor(rowLimitActor, job.jobRef), "artifact(rowLimitActor, over-cap)");
+    expect(artifact.bytes.byteLength).toBeGreaterThan(0);
+  });
+
+  it("a truncated PDF export still opens as a real, valid document end to end (pdf.test.ts's own unit test covers the truncated:true code path directly)", async () => {
+    const job = must(await createExportJob(rowLimitActor, { targetId: "partners", format: "pdf", filters: { region: ROW_LIMIT_REGION } }), "createExportJob(rowLimitActor, over-cap pdf)");
+    expect(job.status).toBe("COMPLETED");
+    expect(job.truncated).toBe(true);
+    const artifact = must(await getExportArtifactForActor(rowLimitActor, job.jobRef), "artifact(rowLimitActor, over-cap pdf)");
+    const { PDFDocument } = await import("pdf-lib");
+    const doc = await PDFDocument.load(artifact.bytes);
+    expect(doc.getPageCount()).toBeGreaterThanOrEqual(1);
+  });
+});
+
+// --- Section 14: retry/regenerate ----------------------------------------------------------------------
+describe("retry/regenerate (section 14): reauthorizes and reruns, never reuses a stale decision", () => {
+  it("retrying a COMPLETED job creates a NEW job with the same request shape, stamped with retryOfJobRef", async () => {
+    const original = must(await createExportJob(admin, { targetId: "partners", format: "csv", filters: { region: PREVIEW_REGION } }), "createExportJob(admin) to retry");
+    const retried = must(await retryExportJob(admin, original.jobRef), "retryExportJob(admin)");
+    expect(retried.jobRef).not.toBe(original.jobRef);
+    expect(retried.status).toBe("COMPLETED");
+    expect(retried.retryOfJobRef).toBe(original.jobRef);
+    expect(retried.targetId).toBe(original.targetId);
+    expect(retried.format).toBe(original.format);
+  });
+
+  it("retry is reauthorized fresh - denied for an actor who no longer holds the target's source feature, even though the original job succeeded under a different (privileged) actor", async () => {
+    const originalByAdmin = must(await createExportJob(admin, { targetId: "assignments", format: "csv" }), "createExportJob(admin, assignments) for cross-actor retry probe");
+    // exporterKerala can never see admin's own job at all (cross-actor neutral not_found) - proving
+    // retry never grants access to a job it doesn't already own, on top of reauthorizing the plan.
+    const result = failure(await retryExportJob(exporterKerala, originalByAdmin.jobRef));
+    expect(result.code).toBe("not_found");
+  });
+
+  it("retrying a job the caller does not own gets the same neutral not_found a guessed ref would", async () => {
+    const keralaOwn = must(await createExportJob(exporterKerala, { targetId: "partners", format: "csv" }), "createExportJob(exporterKerala) for ownership probe");
+    const result = failure(await retryExportJob(exporterDelhi, keralaOwn.jobRef));
+    expect(result.code).toBe("not_found");
+  });
+});
+
+// --- Section 13/15/27: artifact expiry -----------------------------------------------------------------
+describe("artifact expiry (section 13/15/27)", () => {
+  it("a COMPLETED job carries a real future expiresAt", async () => {
+    const job = must(await createExportJob(admin, { targetId: "partners", format: "csv", filters: { region: PREVIEW_REGION } }), "createExportJob(admin) for expiry check");
+    expect(job.expiresAt).toBeTruthy();
+    expect(new Date(job.expiresAt!).getTime()).toBeGreaterThan(Date.now());
+  });
+
+  it("an artifact past its own expiresAt fails delivery safely with a distinct 'expired' code, never a raw store lookup", async () => {
+    const job = must(await createExportJob(admin, { targetId: "partners", format: "csv", filters: { region: PREVIEW_REGION } }), "createExportJob(admin) for expiry enforcement");
+    await exportJobsCollection()
+      .doc(job.jobRef)
+      .update({ expiresAt: new Date(Date.now() - 1000).toISOString() });
+
+    const result = failure(await getExportArtifactForActor(admin, job.jobRef));
+    expect(result.code).toBe("expired");
   });
 });

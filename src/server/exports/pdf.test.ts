@@ -61,4 +61,20 @@ describe("generatePdf (real bytes, parsed back with pdf-lib)", () => {
   it("PDF_MAX_ROWS is a real, positive bound", () => {
     expect(PDF_MAX_ROWS).toBeGreaterThan(0);
   });
+
+  it("renders a real, loadable document when truncated:true (section 9's disclosed-truncation code path, exercised directly)", async () => {
+    const rows: ExportRow[] = [{ ref: "p_001", name: "Creator House" }];
+    const bytes = await generatePdf(columns, rows, {
+      targetTitle: "Partners",
+      format: "pdf",
+      appliedFilters: {},
+      generatedAt: new Date().toISOString(),
+      rowCount: 100,
+      maxRows: 100,
+      truncated: true,
+      pdfRowLimitApplied: false,
+    });
+    const doc = await PDFDocument.load(bytes);
+    expect(doc.getPageCount()).toBeGreaterThanOrEqual(1);
+  });
 });

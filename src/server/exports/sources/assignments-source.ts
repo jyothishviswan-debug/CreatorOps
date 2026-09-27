@@ -4,9 +4,9 @@ import type { AssignmentDto } from "@/server/assignments/client-dto";
 
 import { mapSourceError } from "../source-errors";
 import type { AppliedExportFilters, ExportRow, ExportsServiceResult } from "../types";
+import type { FetchRowsOptions } from "./types";
 
 // Composes ONLY Assignments' own published, already actor-scoped, already-bounded listAssignments.
-const PAGE_SIZE = 500;
 
 function joinArray(values: string[]): string {
   return values.join("; ");
@@ -28,9 +28,9 @@ function projectRow(assignment: AssignmentDto): ExportRow {
   };
 }
 
-export async function fetchAssignmentsRows(actor: ActorContext, appliedFilters: AppliedExportFilters): Promise<ExportsServiceResult<{ rows: ExportRow[]; rowCount: number; truncated: boolean }>> {
+export async function fetchAssignmentsRows(actor: ActorContext, appliedFilters: AppliedExportFilters, options: FetchRowsOptions): Promise<ExportsServiceResult<{ rows: ExportRow[]; rowCount: number; truncated: boolean }>> {
   const result = await listAssignments(actor, {
-    limit: PAGE_SIZE,
+    limit: options.limit,
     status: appliedFilters.status,
     campaignRef: appliedFilters.campaignRef,
     platform: appliedFilters.platform,

@@ -22,6 +22,7 @@ export function toExportsHttpResponse<T>(result: ExportsServiceResult<T>, succes
     unsupported: 501,
     source_unavailable: 424,
     size_exceeded: 409,
+    expired: 410,
     internal: 500,
   };
   return NextResponse.json({ error: result.message }, { status: statusByCode[result.code] });

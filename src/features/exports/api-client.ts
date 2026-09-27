@@ -1,11 +1,11 @@
-import type { ExportJobDto, ExportTargetDto } from "@/server/exports";
+import type { ExportJobDto, ExportPreviewDto, ExportTargetDto } from "@/server/exports";
 
 // Typed browser-side fetch wrappers for every /api/exports/** route this UI calls, mirroring
 // src/features/reports/api-client.ts's own contract exactly (never throws; a discriminated result).
 // This is the ONLY way an Export Center screen talks to the server - no target execution, column
 // selection, or file generation ever happens in the browser.
 
-export type ExportsApiErrorKind = "unauthorized" | "forbidden" | "not_found" | "invalid" | "unsupported" | "source_unavailable" | "size_exceeded" | "network" | "error";
+export type ExportsApiErrorKind = "unauthorized" | "forbidden" | "not_found" | "invalid" | "unsupported" | "source_unavailable" | "size_exceeded" | "expired" | "network" | "error";
 export type ExportsApiSuccess<T> = { ok: true; status: number; data: T };
 export type ExportsApiFailure = { ok: false; status: number; kind: ExportsApiErrorKind; message: string; aborted?: true };
 export type ExportsApiResult<T> = ExportsApiSuccess<T> | ExportsApiFailure;
@@ -24,6 +24,7 @@ function kindForStatus(status: number): ExportsApiErrorKind {
   if (status === 501) return "unsupported";
   if (status === 424) return "source_unavailable";
   if (status === 409) return "size_exceeded";
+  if (status === 410) return "expired";
   return "error";
 }
 
@@ -92,6 +93,17 @@ export function getExportJob(jobRef: string, options?: ExportsRequestOptions): P
   return getJson(`/api/exports/jobs/${encodeURIComponent(jobRef)}`, options);
 }
 
+export function retryExportJob(jobRef: string, options?: ExportsRequestOptions): Promise<ExportsApiResult<ExportJobDto>> {
+  return postJson(`/api/exports/jobs/${encodeURIComponent(jobRef)}/retry`, {}, options);
+}
+
 export function exportArtifactDownloadUrl(jobRef: string): string {
   return `/api/exports/jobs/${encodeURIComponent(jobRef)}/artifact`;
+}
+
+// --- Preview (section 8) ----------------------------------------------------------------------------
+export type PreviewExportJobInput = { targetId: string; format: string; columns?: string[]; filters?: Record<string, string> };
+
+export function previewExportJob(input: PreviewExportJobInput, options?: ExportsRequestOptions): Promise<ExportsApiResult<ExportPreviewDto>> {
+  return postJson(`/api/exports/preview`, input, options);
 }

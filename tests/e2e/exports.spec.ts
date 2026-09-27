@@ -29,13 +29,13 @@ async function expectNoOverflow(page: Page, label: string) {
 test.describe.configure({ mode: "serial" });
 
 test.describe("Governed journey", () => {
-  test("1: open Export Center, see the 3-target catalog", async ({ page }) => {
+  test("1: open Export Center, see the full 7-target catalog", async ({ page }) => {
     const errors = collectBrowserErrors(page);
     await signInAs(page, "admin");
     await page.goto("/exports");
     await expect(page.getByRole("heading", { level: 1, name: "Export Center" })).toBeVisible();
     await expect(page.getByTestId("export-target-grid")).toBeVisible();
-    for (const targetId of ["partners", "campaigns", "assignments"]) {
+    for (const targetId of ["partners", "campaigns", "assignments", "vendors", "content", "operations_tasks", "partner_reviews"]) {
       await expect(page.locator(`[data-testid="export-target-card"][data-target-id="${targetId}"]`)).toBeVisible();
     }
     expect(errors.errors).toEqual([]);
@@ -116,18 +116,76 @@ test.describe("Governed journey", () => {
     expect(status).toBe(400);
   });
 
-  test("5: an unauthorized target id is rejected server-side", async ({ page }) => {
+  test("5: an unknown target id is rejected server-side", async ({ page }) => {
     await signInAs(page, "admin");
     await page.goto("/exports");
     const status = await page.evaluate(async () => {
       const res = await fetch("/api/exports/jobs", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ targetId: "vendors", format: "csv" }),
+        body: JSON.stringify({ targetId: "not_a_real_target", format: "csv" }),
       });
       return res.status;
     });
     expect(status).toBe(400);
+  });
+
+  test("6: preview returns a real bounded sample and never creates a job, then Vendors/PDF generates and downloads real bytes", async ({ page }) => {
+    await signInAs(page, "admin");
+    await page.goto("/exports");
+    await waitForHydration(page, '[data-testid="select-export-target"]');
+
+    await page.locator('[data-testid="export-target-card"][data-target-id="vendors"]').getByTestId("select-export-target").click();
+    await expect(page.getByTestId("export-configure-panel")).toBeVisible();
+    await page.getByTestId("export-format-select").selectOption("pdf");
+
+    const jobsBefore = await page.evaluate(async () => (await (await fetch("/api/exports/jobs")).json()).length);
+
+    const previewResponse = page.waitForResponse((r) => r.url().includes("/api/exports/preview") && r.request().method() === "POST");
+    await page.getByTestId("preview-export-button").click();
+    const previewRes = await previewResponse;
+    expect(previewRes.status()).toBe(200);
+    await expect(page.getByTestId("export-preview-result")).toBeVisible();
+
+    const jobsAfterPreview = await page.evaluate(async () => (await (await fetch("/api/exports/jobs")).json()).length);
+    expect(jobsAfterPreview).toBe(jobsBefore);
+
+    const createResponse = page.waitForResponse((r) => r.url().includes("/api/exports/jobs") && r.request().method() === "POST");
+    await page.getByTestId("create-export-button").click();
+    const response = await createResponse;
+    const jobDto = (await response.json()) as { jobRef: string; status: string };
+    expect(jobDto.status).toBe("COMPLETED");
+
+    const row = page.locator(`[data-testid="export-job-row"][data-job-ref="${jobDto.jobRef}"]`);
+    await expect(row).toContainText("PDF");
+    await expect(row.getByTestId("export-job-expiry")).not.toContainText("—");
+
+    const downloadResponse = await page.request.get(`/api/exports/jobs/${jobDto.jobRef}/artifact`);
+    expect(downloadResponse.status()).toBe(200);
+    expect(downloadResponse.headers()["content-type"]).toContain("application/pdf");
+    const bytes = await downloadResponse.body();
+    expect(bytes.subarray(0, 5).toString("ascii")).toBe("%PDF-");
+  });
+
+  test("7: retry/regenerate creates a new job from history", async ({ page }) => {
+    await signInAs(page, "admin");
+    await page.goto("/exports");
+    await waitForHydration(page, '[data-testid="select-export-target"]');
+    await page.locator('[data-testid="export-target-card"][data-target-id="partners"]').getByTestId("select-export-target").click();
+    await expect(page.getByTestId("export-configure-panel")).toBeVisible();
+    const createResponse = page.waitForResponse((r) => r.url().includes("/api/exports/jobs") && r.request().method() === "POST");
+    await page.getByTestId("create-export-button").click();
+    const jobDto = (await (await createResponse).json()) as { jobRef: string };
+
+    const row = page.locator(`[data-testid="export-job-row"][data-job-ref="${jobDto.jobRef}"]`);
+    await expect(row).toBeVisible();
+    const retryResponse = page.waitForResponse((r) => r.url().includes("/retry") && r.request().method() === "POST");
+    await row.getByTestId("retry-export-job").click();
+    const retryRes = await retryResponse;
+    expect(retryRes.status()).toBe(201);
+    const retryJob = (await retryRes.json()) as { jobRef: string; retryOfJobRef: string };
+    expect(retryJob.retryOfJobRef).toBe(jobDto.jobRef);
+    await expect(page.locator(`[data-testid="export-job-row"][data-job-ref="${retryJob.jobRef}"]`)).toBeVisible();
   });
 });
 
@@ -139,7 +197,7 @@ test.describe("Denied actors", () => {
   // page component's OWN "You do not have access to Export Center" branch is an intentional,
   // unreachable-in-practice defense-in-depth fallback (both layers call the exact same
   // canAccessFeature check) - mirroring src/app/reports/page.tsx's identical shape.
-  test("6: Viewer is denied at the proxy Feature Access gate, never reaching the catalog or job history", async ({ page }) => {
+  test("8: Viewer is denied at the proxy Feature Access gate, never reaching the catalog or job history", async ({ page }) => {
     await signInAs(page, "viewer");
     await page.goto("/exports");
     await expect(page.locator("h1")).toHaveText("You don’t have access to this area");
@@ -148,7 +206,7 @@ test.describe("Denied actors", () => {
     await expect(page.getByTestId("export-job-history")).toHaveCount(0);
   });
 
-  test("7: Manager and Head - neither holds the exports feature - are also denied the page", async ({ page }) => {
+  test("9: Manager and Head - neither holds the exports feature - are also denied the page", async ({ page }) => {
     for (const role of ["manager", "head"] as const) {
       await signInAs(page, role);
       await page.goto("/exports");
@@ -156,13 +214,13 @@ test.describe("Denied actors", () => {
     }
   });
 
-  test("8: Analyst - role baseline grants exports, but this identity's own per-user override denies it - is denied too", async ({ page }) => {
+  test("10: Analyst - role baseline grants exports, but this identity's own per-user override denies it - is denied too", async ({ page }) => {
     await signInAs(page, "analyst");
     await page.goto("/exports");
     await expect(page.locator("h1")).toHaveText("You don’t have access to this area");
   });
 
-  test("9: a totally unauthorized actor hitting the artifact download route directly gets a closed response, never a file", async ({ page }) => {
+  test("11: a totally unauthorized actor hitting the artifact download route directly gets a closed response, never a file", async ({ page }) => {
     await signInAs(page, "viewer");
     const status = await page.evaluate(async () => {
       const res = await fetch("/api/exports/jobs/exp_00000000000000000000/artifact");
@@ -174,7 +232,7 @@ test.describe("Denied actors", () => {
 
 test.describe("Responsive", () => {
   for (const width of VIEWPORTS) {
-    test(`10: /exports renders with no horizontal overflow at ${width}px`, async ({ page }) => {
+    test(`12: /exports renders with no horizontal overflow at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await signInAs(page, "admin");
       await page.goto("/exports");
@@ -182,7 +240,7 @@ test.describe("Responsive", () => {
       await expectNoOverflow(page, `/exports @ ${width}`);
     });
 
-    test(`11: /foundation (Export Center section) renders with no horizontal overflow at ${width}px`, async ({ page }) => {
+    test(`13: /foundation (Export Center section) renders with no horizontal overflow at ${width}px`, async ({ page }) => {
       await page.setViewportSize({ width, height: 900 });
       await signInAs(page, "admin");
       await page.goto("/foundation");

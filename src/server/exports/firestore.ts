@@ -25,7 +25,7 @@ export async function markExportJobGenerating(jobRef: string, generatingAt: stri
   await exportJobsCollection().doc(jobRef).update({ status: "GENERATING", generatingAt });
 }
 
-export async function markExportJobCompleted(jobRef: string, fields: { completedAt: string; rowCount: number; truncated: boolean; artifactRef: string; fileName: string }): Promise<void> {
+export async function markExportJobCompleted(jobRef: string, fields: { completedAt: string; rowCount: number; truncated: boolean; artifactRef: string; fileName: string; expiresAt: string }): Promise<void> {
   await exportJobsCollection().doc(jobRef).update({ status: "COMPLETED", ...fields });
 }
 

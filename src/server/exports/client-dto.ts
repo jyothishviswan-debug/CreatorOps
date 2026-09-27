@@ -30,6 +30,13 @@ export type ExportJobDto = {
   // /api/exports/jobs/{jobRef}/artifact, which re-authorizes against the job's own actor scope before
   // ever touching the store.
   hasArtifact: boolean;
+  // Section 13/15/27: when the artifact expires - null until COMPLETED. The delivery route
+  // (getExportArtifactForActor) independently re-checks this server-side at download time; this field
+  // is purely for the UI to show/countdown, never itself an authorization decision.
+  expiresAt: string | null;
+  // Section 14: traces a retry back to the job it reran, so history can show lineage honestly ("retry
+  // of exp_...") rather than implying two unrelated jobs. Null for an ordinary (non-retry) job.
+  retryOfJobRef: string | null;
 };
 
 export function toExportJobDto(doc: ExportJobDoc): ExportJobDto {
@@ -49,5 +56,7 @@ export function toExportJobDto(doc: ExportJobDoc): ExportJobDto {
     truncated: doc.truncated ?? null,
     maxRows: doc.maxRows,
     hasArtifact: doc.status === "COMPLETED" && Boolean(doc.artifactRef),
+    expiresAt: doc.expiresAt ?? null,
+    retryOfJobRef: doc.retryOfJobRef ?? null,
   };
 }

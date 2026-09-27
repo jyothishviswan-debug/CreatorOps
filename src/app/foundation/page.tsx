@@ -775,7 +775,7 @@ export default function FoundationPage() {
       <SectionLabel
         n="09"
         title="Export Center execution pattern"
-        desc="Target → format + server-validated columns/filters → a created job → job lifecycle/history → private artifact delivery. New in the Export Center stage: the golden master has no Export Center entry at all (not even the generic per-module overview-preview shape Reports at least had), so this section documents the whole pattern from scratch, built from the same tokens, panels and controls as everywhere else - and deliberately its own shape, not a copy of section 08's Reports pattern: Export Center generates a downloadable FILE of RECORD ROWS from one target, it never composes a cross-domain analytical result."
+        desc="Target → filters/columns/format → preview (bounded sample, no artifact) → a created job → job lifecycle/history → private artifact delivery, with retry/regenerate and artifact expiry. Completed in the Export Center Completion stage: seven governed targets (Partners, Campaigns, Assignments, Vendors, Content, Operations Tasks, Partner Reviews), each backed by exactly one existing actor-scoped domain list service - built from the same tokens, panels and controls as everywhere else, and deliberately its own shape, not a copy of section 08's Reports pattern: Export Center generates a downloadable FILE of RECORD ROWS from one target, it never composes a cross-domain analytical result or carries report narrative/version/finalization semantics."
       />
       <div className="grid">
         <DocPanel title="Target card" sub="One governed export target - its own allowed formats/columns, never a generic collection dump" span={6}>
@@ -791,12 +791,15 @@ export default function FoundationPage() {
               <Pill tone="blue">PDF</Pill>
             </div>
             <div className="recordmeta">
-              <span>Bounded to 500 rows</span>
+              <span>Bounded to 100 rows (the underlying domain service&apos;s own page-size cap)</span>
               <span>13 columns</span>
             </div>
           </div>
+          <p className="foundationnote" style={{ marginTop: 10 }}>
+            The other six SUPPORTED targets (Campaigns, Assignments, Vendors, Content, Operations Tasks, Partner Reviews) render as identical cards. Partner Accounts (no bulk cross-Partner list service exists), Analytics evidence, Finance-safe outputs and Administration/Security were all explicitly audited and are documented, non-rendered exclusions (see docs/CREATOROPS_CONTINUITY.md) - never a silently-absent target.
+          </p>
         </DocPanel>
-        <DocPanel title="Configure - format, filters, columns" sub="The client PROPOSES a subset; the server re-validates every id before generating anything" span={6}>
+        <DocPanel title="Configure - filters, columns, format" sub="The client PROPOSES a subset; the server re-validates every id before generating or previewing anything" span={6}>
           <div className="fields">
             <div className="field">
               <label>Format</label>
@@ -815,14 +818,44 @@ export default function FoundationPage() {
             <label style={{ display: "block", marginBottom: 8, fontWeight: 600 }}>Columns</label>
             <ul className="checklist">
               <li>
-                <Icon name="check" /> Partner ref, Display name, Status, Tier, Region (default columns)
+                <Icon name="check" /> Partner ref, Display name, Status, Tier, Region (default/recommended columns)
               </li>
               <li>
-                <Icon name="check" /> Email, Phone, Owner, Created/updated at (optional)
+                <Icon name="check" /> Email, Phone, Owner, Created/updated at (optional - select all / reset to recommended)
               </li>
             </ul>
             <small className="muted">A restricted field (e.g. bank/PAN/GSTIN) is never offered here - it is not on this target&apos;s own column allowlist at all, so there is nothing to uncheck.</small>
           </div>
+        </DocPanel>
+      </div>
+
+      <div className="grid">
+        <DocPanel title="Preview - bounded sample, never a final artifact" sub="Shares the SAME target/format/column/filter/source-access validation as generation - reauthorized fresh every call" span={12}>
+          <div className="recordmeta" style={{ marginBottom: 10 }}>
+            <span>6 matching rows</span>
+            <span>Showing 6 sample rows</span>
+          </div>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th scope="col">Partner ref</th>
+                  <th scope="col">Display name</th>
+                  <th scope="col">Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>ptn_...</td>
+                  <td>Creator House</td>
+                  <td>ACTIVE</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p className="foundationnote" style={{ marginTop: 10 }}>
+            Preview queries at the SAME bound generation would (maxRows) - never a second/larger scan - so the matched-row-count and truncation signal shown here is exact, not a guess. It never writes a job doc or an artifact.
+          </p>
         </DocPanel>
       </div>
 
@@ -837,8 +870,9 @@ export default function FoundationPage() {
                   <th scope="col">Status</th>
                   <th scope="col">Requested at</th>
                   <th scope="col">Rows</th>
+                  <th scope="col">Expires</th>
                   <th scope="col">
-                    <span className="sr">Action</span>
+                    <span className="sr">Actions</span>
                   </th>
                 </tr>
               </thead>
@@ -850,11 +884,15 @@ export default function FoundationPage() {
                     <Pill tone="default">COMPLETED</Pill>
                   </td>
                   <td>24 Sep 2026, 09:14</td>
-                  <td>128</td>
+                  <td>100 (truncated)</td>
+                  <td>1 Oct 2026, 09:14</td>
                   <td>
                     <button className="btn" type="button" disabled>
                       <Icon name="download" />
                       Download
+                    </button>
+                    <button className="btn" type="button" disabled style={{ marginLeft: 6 }}>
+                      Regenerate
                     </button>
                   </td>
                 </tr>
@@ -865,6 +903,7 @@ export default function FoundationPage() {
                     <Pill tone="blue">GENERATING</Pill>
                   </td>
                   <td>24 Sep 2026, 09:16</td>
+                  <td>—</td>
                   <td>—</td>
                   <td>
                     <span className="foundationnote">Not ready</span>
@@ -878,8 +917,12 @@ export default function FoundationPage() {
                   </td>
                   <td>23 Sep 2026, 17:02</td>
                   <td>—</td>
+                  <td>—</td>
                   <td>
                     <span className="foundationnote">Unavailable</span>
+                    <button className="btn" type="button" disabled style={{ marginLeft: 6 }}>
+                      Retry
+                    </button>
                   </td>
                 </tr>
               </tbody>
@@ -888,7 +931,13 @@ export default function FoundationPage() {
           <div className="banner" style={{ marginTop: 16 }}>
             <Icon name="alert" />
             <span>
-              <b>A failed job never shows a raw backend/provider error.</b> Only a safe, generic message (e.g. &quot;Export generation failed. Please try again.&quot;) is ever persisted or displayed.
+              <b>A failed job never shows a raw backend/provider error.</b> Only a safe, generic message (e.g. &quot;Export generation failed. Please try again.&quot;) is ever persisted or displayed. A match count above maxRows completes rather than failing, but is always disclosed - <code>truncated: true</code>, a visible &quot;(truncated)&quot; label, and (for PDF) an explicit TRUNCATED marker in the document body - never a silent partial file.
+            </span>
+          </div>
+          <div className="banner" style={{ marginTop: 12 }}>
+            <Icon name="clock" />
+            <span>
+              <b>Retry/Regenerate reauthorizes and reruns from scratch</b> - it never reuses the original job&apos;s own authorization decision, and the new job is stamped with a <code>retryOfJobRef</code> back to the attempt it reran. Artifacts expire 7 days after generation; an expired download fails safely with a distinct, classified error, before the store is ever touched.
             </span>
           </div>
         </DocPanel>

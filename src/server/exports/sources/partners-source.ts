@@ -4,10 +4,10 @@ import type { PartnerDto } from "@/server/partners/client-dto";
 
 import { mapSourceError } from "../source-errors";
 import type { AppliedExportFilters, ExportRow, ExportsServiceResult } from "../types";
+import type { FetchRowsOptions } from "./types";
 
 // Composes ONLY Partners' own published, already actor-scoped, already-bounded listPartners - never
 // a raw Firestore read, never a second Partner query of this module's own invention.
-const PAGE_SIZE = 500;
 
 function joinArray(values: string[]): string {
   return values.join("; ");
@@ -31,9 +31,9 @@ function projectRow(partner: PartnerDto): ExportRow {
   };
 }
 
-export async function fetchPartnersRows(actor: ActorContext, appliedFilters: AppliedExportFilters): Promise<ExportsServiceResult<{ rows: ExportRow[]; rowCount: number; truncated: boolean }>> {
+export async function fetchPartnersRows(actor: ActorContext, appliedFilters: AppliedExportFilters, options: FetchRowsOptions): Promise<ExportsServiceResult<{ rows: ExportRow[]; rowCount: number; truncated: boolean }>> {
   const result = await listPartners(actor, {
-    limit: PAGE_SIZE,
+    limit: options.limit,
     status: appliedFilters.status,
     region: appliedFilters.region,
   });

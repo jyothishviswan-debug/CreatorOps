@@ -4,9 +4,9 @@ import type { CampaignDto } from "@/server/campaigns/client-dto";
 
 import { mapSourceError } from "../source-errors";
 import type { AppliedExportFilters, ExportRow, ExportsServiceResult } from "../types";
+import type { FetchRowsOptions } from "./types";
 
 // Composes ONLY Campaigns' own published, already actor-scoped, already-bounded listCampaigns.
-const PAGE_SIZE = 500;
 
 function joinArray(values: string[]): string {
   return values.join("; ");
@@ -29,9 +29,9 @@ function projectRow(campaign: CampaignDto): ExportRow {
   };
 }
 
-export async function fetchCampaignsRows(actor: ActorContext, appliedFilters: AppliedExportFilters): Promise<ExportsServiceResult<{ rows: ExportRow[]; rowCount: number; truncated: boolean }>> {
+export async function fetchCampaignsRows(actor: ActorContext, appliedFilters: AppliedExportFilters, options: FetchRowsOptions): Promise<ExportsServiceResult<{ rows: ExportRow[]; rowCount: number; truncated: boolean }>> {
   const result = await listCampaigns(actor, {
-    limit: PAGE_SIZE,
+    limit: options.limit,
     status: appliedFilters.status,
     region: appliedFilters.region,
     platform: appliedFilters.platform,

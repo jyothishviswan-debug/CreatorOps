@@ -11,5 +11,10 @@ function normalizeReason(reason: unknown): ExportsDenialReason {
 
 export function mapSourceError(source: { code: string; message: string; reason?: unknown }): ExportsErrorResult {
   if (source.code === "unauthorized") return { ok: false, code: "unauthorized", message: source.message, reason: normalizeReason(source.reason) };
+  // A source's own "invalid_input" (e.g. a malformed periodKey/status filter value it validates
+  // itself, like Partner Reviews' own derivePeriod check) is a genuine, actionable CONFIGURATION
+  // error (section 11) - surfaced as exactly that, never mislabeled as "source unavailable", which
+  // would wrongly suggest a transient outage the user cannot fix by correcting their own filter value.
+  if (source.code === "invalid_input") return { ok: false, code: "invalid_input", message: source.message };
   return { ok: false, code: "source_unavailable", message: `Source unavailable: ${source.message}` };
 }
