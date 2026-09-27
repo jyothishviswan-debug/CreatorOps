@@ -1178,7 +1178,7 @@ test.describe("Analytics six-tab row + Partners Analytics workspace", () => {
     const forbidden = await page.request.get(`/api/analytics/partners/search?q=12F%20E2E`);
     expect(forbidden.status()).toBe(403);
     expect(await forbidden.json()).toEqual({ error: "Forbidden." });
-    const anonymous = await playwright.request.newContext({ baseURL: "http://localhost:3100", storageState: { cookies: [], origins: [] } });
+    const anonymous = await playwright.request.newContext({ baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3100", storageState: { cookies: [], origins: [] } });
     const unauthenticated = await anonymous.get(`/api/analytics/partners/search?q=12F%20E2E`);
     expect(unauthenticated.status()).toBe(401);
     await anonymous.dispose();

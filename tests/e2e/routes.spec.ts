@@ -56,6 +56,8 @@ for (const route of STATIC_ROUTES) {
 
     const response = await page.goto(route);
     expect(response?.ok(), `${route} should respond OK`).toBeTruthy();
+    // The sign-in page also has an <h1> and returns 200: without this an unauthenticated run would pass vacuously.
+    expect(new URL(page.url()).pathname, `${route} redirected away (signed out?)`).toBe(route);
 
     await expect(page.locator("h1").first()).toBeVisible();
     expect(pageErrors, `${route} threw a client-side error: ${pageErrors[0]?.message}`).toHaveLength(0);

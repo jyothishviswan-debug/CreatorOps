@@ -36,8 +36,11 @@ export function targetHref(target: TargetReference): string | null {
   }
 }
 
-export function targetLabel(target: TargetReference): string {
-  return `${TARGET_TYPE_LABEL[target.targetType]} · ${target.targetRef}`;
+// A resolved display name leads; when none is available (not readable by this actor, a Finance/Agreement
+// target with no safe name, or a since-removed record) only the type is shown - the raw ref never dominates
+// the label (it stays available as an explicit secondary "Reference" line on the detail screens).
+export function targetLabel(target: TargetReference, displayName?: string | null): string {
+  return displayName ? `${TARGET_TYPE_LABEL[target.targetType]} · ${displayName}` : TARGET_TYPE_LABEL[target.targetType];
 }
 
 // The Approval Queue's own deep-link map (section 6/11): sourceModule + sourceType -> the item's

@@ -9,7 +9,7 @@ import { Skeleton, EmptyState } from "@/ui/States";
 import type { ReminderDto, ReminderEventDto } from "@/server/operations/client-dto";
 
 import { listReminderEvents } from "@/features/operations/api-client";
-import { displayNameOrRef, REMINDER_STATUS_LABEL, REMINDER_STATUS_TONE, TARGET_TYPE_LABEL, formatDateTime } from "@/features/operations/copy";
+import { displayNameOrRef, REMINDER_STATUS_LABEL, REMINDER_STATUS_TONE, formatDateTime } from "@/features/operations/copy";
 import { targetHref, targetLabel } from "@/features/operations/target-links";
 
 import { ReminderLifecycleActions } from "./ReminderLifecycleActions";
@@ -54,7 +54,7 @@ export function ReminderDetail({ initialReminder, canManageReminders }: { initia
           <div className="eyebrow">OPERATIONS / REMINDER DETAIL</div>
           <h1 style={{ overflowWrap: "anywhere" }}>{reminder.message}</h1>
           <p style={{ overflowWrap: "anywhere" }}>
-            {targetLabel(reminder.target)} · {reminder.reminderRef}
+            {targetLabel(reminder.target, reminder.targetDisplayName)}
           </p>
         </div>
         <div className="actions">
@@ -100,8 +100,12 @@ export function ReminderDetail({ initialReminder, canManageReminders }: { initia
                 <div className="kv">
                   <span>Target</span>
                   <b style={{ overflowWrap: "anywhere" }}>
-                    {TARGET_TYPE_LABEL[reminder.target.targetType]} · {reminder.target.targetRef}
+                    {targetLabel(reminder.target, reminder.targetDisplayName)}
                   </b>
+                </div>
+                <div className="kv">
+                  <span>Target reference</span>
+                  <b style={{ overflowWrap: "anywhere", fontWeight: 400 }}>{reminder.target.targetRef}</b>
                 </div>
                 {reminder.taskRef && (
                   <div className="kv">

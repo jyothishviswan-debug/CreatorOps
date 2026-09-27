@@ -30,8 +30,8 @@ export function PartiesKycStep() {
   const [dialog, setDialog] = useState<{ component: KycComponentKey; kind: KycDialogKind } | null>(null);
 
   if (!version || !counterparty) return null;
-  const payeeCount = version.parties.filter((p) => p.role === "PAYEE").length;
-  const primaryCount = version.parties.filter((p) => p.role === "PRIMARY_COUNTERPARTY").length;
+  const payeeCount = version.parties.filter(({ role: partyRole }) => partyRole === "PAYEE").length;
+  const primaryCount = version.parties.filter(({ role: partyRole }) => partyRole === "PRIMARY_COUNTERPARTY").length;
   const ambiguous = payeeCount > 1 || (payeeCount === 0 && primaryCount > 1);
   const accounts = accountViews(counterparty);
   const kycRows = buildKycRows({ counterpartyType: counterparty.type, kyc, canViewIdentity: flags.canViewIdentity, canManageKyc: flags.canManageCounterpartyKyc });

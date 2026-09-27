@@ -219,7 +219,7 @@ function TasksTable({ rows, nowIso }: { rows: TaskDto[]; nowIso: string }) {
                   <b>{task.title}</b>
                   <small style={{ display: "block" }}>{task.taskRef}</small>
                 </td>
-                <td style={{ overflowWrap: "anywhere" }}>{targetLabel(task.target)}</td>
+                <td style={{ overflowWrap: "anywhere" }}>{targetLabel(task.target, task.targetDisplayName)}</td>
                 <td style={{ overflowWrap: "anywhere" }}>{displayNameOrRef(task.assigneeDisplayName, task.assigneeUserRef)}</td>
                 <td>
                   <Pill tone={TASK_PRIORITY_TONE[task.priority]}>{TASK_PRIORITY_LABEL[task.priority]}</Pill>
@@ -260,7 +260,7 @@ function TaskCards({ rows, nowIso }: { rows: TaskDto[]; nowIso: string }) {
               <Pill tone={DUE_STATE_TONE[dueState]}>{DUE_STATE_LABEL[dueState]}</Pill>
             </div>
             <div className="recordmeta">
-              <span>{targetLabel(task.target)}</span>
+              <span>{targetLabel(task.target, task.targetDisplayName)}</span>
               <span>{displayNameOrRef(task.assigneeDisplayName, task.assigneeUserRef)}</span>
             </div>
             <div style={{ marginTop: 12 }}>

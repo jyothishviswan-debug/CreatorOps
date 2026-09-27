@@ -306,7 +306,7 @@ for (const role of ["viewer", "analyst"] as const) {
 }
 
 test("the workspace API is bounded and neutral: an unauthenticated call is one 403, a valid call returns opaque refs only", async ({ page, playwright }) => {
-  const anonymous = await playwright.request.newContext({ baseURL: "http://localhost:3100", storageState: { cookies: [], origins: [] } });
+  const anonymous = await playwright.request.newContext({ baseURL: process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3100", storageState: { cookies: [], origins: [] } });
   const denied = await anonymous.get("/api/finance/agreements/workspace");
   expect([401, 403]).toContain(denied.status());
   expect(await denied.json()).toEqual({ error: "Forbidden." });

@@ -36,8 +36,11 @@ describe("targetHref", () => {
 });
 
 describe("targetLabel", () => {
-  it("renders 'Type · ref' as the safe secondary label", () => {
-    expect(targetLabel({ targetType: "CAMPAIGN", targetRef: "cmp_1", targetVersion: null })).toBe("Campaign · cmp_1");
+  it("leads with the resolved display name, and never lets a raw ref dominate the label", () => {
+    const target = { targetType: "CAMPAIGN" as const, targetRef: "cmp_1", targetVersion: null };
+    expect(targetLabel(target, "Summer Launch")).toBe("Campaign · Summer Launch");
+    expect(targetLabel(target)).toBe("Campaign");
+    expect(targetLabel(target, null)).not.toContain("cmp_1");
   });
 });
 

@@ -571,7 +571,7 @@ export function collectResponseBodies(page: Page): { bodies: Array<{ url: string
   page.on("response", async (response) => {
     try {
       const url = response.url();
-      if (!url.startsWith("http://localhost:3100")) return;
+      if (!url.startsWith(process.env.PLAYWRIGHT_BASE_URL ?? "http://localhost:3100")) return;
       const type = response.headers()["content-type"] ?? "";
       if (!/json|text|html|javascript/i.test(type)) return;
       if (/_next\/static|hmr|\.map$/.test(url)) return;

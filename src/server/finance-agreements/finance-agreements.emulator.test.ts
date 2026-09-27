@@ -1441,6 +1441,10 @@ describe("commercial terms", () => {
       servicesMandated: "Creation and posting of short-form video content",
       incentive: SAMPLE_INCENTIVE,
       lfcSfc: { byFormat: { reel: "SFC" } },
+      // Emitted by confirmedAgreementTermsSchema (terms.ts): a confirmation with no content-obligation lines / no monetisation clause
+      // stores the schema defaults - an empty list and an explicit null - rather than omitting the keys.
+      contentObligations: [],
+      monetisationTerms: null,
     });
     expect(terms.dates).toEqual({ signedDate: "2023-12-20", effectiveFrom: "2024-01-01", effectiveTo: "2024-12-31" });
     expect(terms.performanceTargets).toEqual(SAMPLE_TARGETS);

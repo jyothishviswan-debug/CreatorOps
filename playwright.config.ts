@@ -19,12 +19,14 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   projects: [
-    { name: "setup", testMatch: /auth\.setup\.ts/ },
+    // Anchored to the basename: an unanchored /auth\.setup\.ts/ also matched a second "*-auth.setup.ts" file, which reset
+    // the emulator AFTER the shared admin sign-in and silently signed every later test out (see tests/e2e/routes.spec.ts).
+    { name: "setup", testMatch: /(^|[\\/])auth\.setup\.ts$/ },
     {
       name: "chromium",
       use: { ...devices["Desktop Chrome"], storageState: STORAGE_STATE },
       dependencies: ["setup"],
-      testIgnore: [/auth\.setup\.ts/, /auth\.spec\.ts/, /authorization\.spec\.ts/],
+      testIgnore: [/(^|[\\/])auth\.setup\.ts$/, /auth\.spec\.ts/, /authorization\.spec\.ts/],
     },
     {
       // Tests that sign in as a specific identity themselves (rather than

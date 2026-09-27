@@ -33,7 +33,13 @@ import { CONTENT_COLLECTIONS } from "@/server/content/firestore";
 import { seedContentData } from "@/server/content/seed-content-data";
 import { DISCOVERY_COLLECTIONS } from "@/server/discovery/firestore";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
+import { EXPORTS_COLLECTIONS } from "@/server/exports/firestore";
 import { FINANCE_AGREEMENT_COLLECTIONS } from "@/server/finance-agreements/firestore";
+import { FINANCE_INVOICE_COLLECTIONS } from "@/server/finance-invoices/firestore";
+import { FINANCE_PAYABLE_COLLECTIONS } from "@/server/finance-payables/firestore";
+import { FINANCE_PAYMENT_COLLECTIONS } from "@/server/finance-payments/firestore";
+import { OPERATIONS_COLLECTIONS } from "@/server/operations/firestore";
+import { REPORTS_COLLECTIONS } from "@/server/reports/firestore";
 import { PARTNER_REVIEWS_COLLECTIONS } from "@/server/partner-reviews/firestore";
 import { PARTNERS_COLLECTIONS } from "@/server/partners/firestore";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
@@ -265,6 +271,40 @@ async function deleteFinanceAgreementsCollectionWithSubcollections(): Promise<vo
   }
 }
 
+// Whole-product integration: Finance Payables/Invoices/Payments, Operations, Reports and Exports were never wiped by this reset,
+// so their documents (most visibly financeInvoiceNumberClaims - claim docs are create-only and tests never delete them) survived
+// across runs and leaked into tests that assert "no Finance collection exists" (campaign-detail-assignment.emulator.test.ts).
+// Generic head + named-subcollections delete, same explicit-cascade discipline as every helper above.
+async function deleteCollectionWithSubcollections(name: string, subcollections: string[]): Promise<void> {
+  const db = getAdminFirestore();
+  const ref = db.collection(name);
+  for (;;) {
+    const snapshot = await ref.limit(200).get();
+    if (snapshot.empty) return;
+    for (const doc of snapshot.docs) {
+      for (const sub of subcollections) await deleteCollection(doc.ref.collection(sub));
+    }
+    const batch = db.batch();
+    for (const doc of snapshot.docs) batch.delete(doc.ref);
+    await batch.commit();
+  }
+}
+
+async function deleteLaterModuleCollections(): Promise<void> {
+  await deleteCollectionWithSubcollections(FINANCE_PAYABLE_COLLECTIONS.financePayables, [FINANCE_PAYABLE_COLLECTIONS.versions, FINANCE_PAYABLE_COLLECTIONS.events]);
+  await deleteCollectionWithSubcollections(FINANCE_INVOICE_COLLECTIONS.financeInvoices, [FINANCE_INVOICE_COLLECTIONS.versions, FINANCE_INVOICE_COLLECTIONS.events]);
+  await deleteCollection(getAdminFirestore().collection(FINANCE_INVOICE_COLLECTIONS.financeInvoiceNumberClaims));
+  await deleteCollectionWithSubcollections(FINANCE_PAYMENT_COLLECTIONS.financePayments, [FINANCE_PAYMENT_COLLECTIONS.versions, FINANCE_PAYMENT_COLLECTIONS.events]);
+  await deleteCollection(getAdminFirestore().collection(FINANCE_PAYMENT_COLLECTIONS.financePaymentReferenceClaims));
+  await deleteCollection(getAdminFirestore().collection(FINANCE_PAYMENT_COLLECTIONS.financePaymentSettlements));
+  await deleteCollectionWithSubcollections(OPERATIONS_COLLECTIONS.operationsTasks, [OPERATIONS_COLLECTIONS.taskVersions, OPERATIONS_COLLECTIONS.taskEvents]);
+  await deleteCollection(getAdminFirestore().collection(OPERATIONS_COLLECTIONS.operationsTaskGenerationClaims));
+  await deleteCollectionWithSubcollections(OPERATIONS_COLLECTIONS.operationsReminders, [OPERATIONS_COLLECTIONS.reminderEvents]);
+  await deleteCollection(getAdminFirestore().collection(OPERATIONS_COLLECTIONS.operationsReminderGenerationClaims));
+  await deleteCollection(getAdminFirestore().collection(REPORTS_COLLECTIONS.reportSnapshots));
+  await deleteCollection(getAdminFirestore().collection(EXPORTS_COLLECTIONS.exportJobs));
+}
+
 // Wipes every Auth account and every Firestore collection this app
 // writes to, then reseeds the canonical baseline. Idempotent in effect
 // (running it twice in a row produces the same end state), but NOT a
@@ -308,6 +348,7 @@ export async function resetEmulatorTestState(password: string): Promise<void> {
   await deleteCollection(db.collection(FINANCE_AGREEMENT_COLLECTIONS.financeAgreementClaims));
   await deleteCollection(db.collection(FINANCE_AGREEMENT_COLLECTIONS.financeContractArtifacts));
   await deleteCollection(db.collection(FINANCE_AGREEMENT_COLLECTIONS.financeAgreementRestrictedExtractions));
+  await deleteLaterModuleCollections();
 
   await seedEmulatorTestUsers(password);
   await seedAccessControlData();

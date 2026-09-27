@@ -9,7 +9,7 @@ import { Skeleton, EmptyState } from "@/ui/States";
 import type { TaskDto, TaskEventDto } from "@/server/operations/client-dto";
 
 import { listTaskEvents } from "@/features/operations/api-client";
-import { deriveDueState, displayNameOrRef, DUE_STATE_LABEL, DUE_STATE_TONE, TASK_PRIORITY_LABEL, TASK_PRIORITY_TONE, TASK_STATUS_LABEL, TASK_STATUS_TONE, TARGET_TYPE_LABEL, formatDateTime } from "@/features/operations/copy";
+import { deriveDueState, displayNameOrRef, DUE_STATE_LABEL, DUE_STATE_TONE, TASK_PRIORITY_LABEL, TASK_PRIORITY_TONE, TASK_STATUS_LABEL, TASK_STATUS_TONE, formatDateTime } from "@/features/operations/copy";
 import { targetHref, targetLabel } from "@/features/operations/target-links";
 
 import { LifecycleActions } from "./LifecycleActions";
@@ -63,7 +63,7 @@ export function TaskDetail({ initialTask, canCompleteTasks, canManageTasks }: { 
           <div className="eyebrow">OPERATIONS / TASK DETAIL</div>
           <h1 style={{ overflowWrap: "anywhere" }}>{task.title}</h1>
           <p style={{ overflowWrap: "anywhere" }}>
-            {targetLabel(task.target)} · {task.taskRef}
+            {targetLabel(task.target, task.targetDisplayName)}
           </p>
         </div>
         <div className="actions">
@@ -109,8 +109,16 @@ export function TaskDetail({ initialTask, canCompleteTasks, canManageTasks }: { 
                 <div className="kv">
                   <span>Target</span>
                   <b style={{ overflowWrap: "anywhere" }}>
-                    {TARGET_TYPE_LABEL[task.target.targetType]} · {task.target.targetRef}
+                    {targetLabel(task.target, task.targetDisplayName)}
                   </b>
+                </div>
+                <div className="kv">
+                  <span>Target reference</span>
+                  <b style={{ overflowWrap: "anywhere", fontWeight: 400 }}>{task.target.targetRef}</b>
+                </div>
+                <div className="kv">
+                  <span>Task reference</span>
+                  <b style={{ overflowWrap: "anywhere", fontWeight: 400 }}>{task.taskRef}</b>
                 </div>
                 <div className="kv">
                   <span>Origin</span>

@@ -22,6 +22,8 @@ export type TaskDto = {
   title: string;
   notes: string | null;
   target: TargetReference;
+  // Resolved by the service layer through the owning module's own gated getter (see target-display.ts); null when unresolved/unreadable.
+  targetDisplayName?: string | null;
   assigneeUserRef: string;
   // Resolved by the SERVICE layer (never here - see this file's own "never imports Firestore, the
   // gate, or any business module's internals" boundary, proved by operations-static.test.ts) from
@@ -88,6 +90,7 @@ export function toTaskEventDto(event: TaskEvent): TaskEventDto {
 export type ReminderDto = {
   reminderRef: string;
   target: TargetReference;
+  targetDisplayName?: string | null;
   taskRef: string | null;
   approvalItemRef: string | null;
   recipientUserRef: string;

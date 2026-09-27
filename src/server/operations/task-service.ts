@@ -6,6 +6,7 @@ import { getAdminFirestore } from "@/server/firebase/admin";
 
 import { toTaskDetailDto, toTaskEventDto, type TaskDto, type TaskEventDto } from "./client-dto";
 import { resolveDisplayName, resolveDisplayNames } from "./display-names";
+import { resolveTargetDisplayNames, targetDisplayKey } from "./target-display";
 import {
   getTaskGenerationClaimDoc,
   getTaskHeadDoc,
@@ -139,7 +140,8 @@ export async function getTask(actor: ActorContext | null, rawTaskRef: unknown): 
   if (!loaded.ok) return loaded.error;
   const { head } = loaded.authorized;
   const version = await getTaskVersionDoc(head.taskRef, head.latestVersion);
-  return { ok: true, data: toTaskDetailDto(head, version, new Date().toISOString(), await resolveDisplayName(head.assigneeUserRef)) };
+  const targetNames = await resolveTargetDisplayNames(actor, [head.target]);
+  return { ok: true, data: { ...toTaskDetailDto(head, version, new Date().toISOString(), await resolveDisplayName(head.assigneeUserRef)), targetDisplayName: targetNames.get(targetDisplayKey(head.target)) ?? null } };
 }
 
 export async function listTaskEvents(actor: ActorContext | null, rawTaskRef: unknown, rawLimit?: unknown): Promise<OperationsServiceResult<{ events: TaskEventDto[]; hasMore: boolean }>> {
@@ -241,7 +243,8 @@ export async function listTasks(actor: ActorContext | null, rawQuery: unknown): 
   const filtered = query.priority ? scoped.filter((head) => head.display.priority === query.priority) : scoped;
   const page = filtered.slice(0, limit);
   const displayNames = await resolveDisplayNames(page.map((head) => head.assigneeUserRef));
-  return { ok: true, data: { tasks: page.map((head) => toTaskDetailDto(head, null, now, displayNames.get(head.assigneeUserRef) ?? null)) } };
+  const targetNames = await resolveTargetDisplayNames(actor, page.map((head) => head.target));
+  return { ok: true, data: { tasks: page.map((head) => ({ ...toTaskDetailDto(head, null, now, displayNames.get(head.assigneeUserRef) ?? null), targetDisplayName: targetNames.get(targetDisplayKey(head.target)) ?? null })) } };
 }
 
 // --- System generation (section 5/8) ---------------------------------------------------------------

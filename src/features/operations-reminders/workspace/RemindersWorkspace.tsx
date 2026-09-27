@@ -184,7 +184,7 @@ function RemindersTable({ rows }: { rows: ReminderDto[] }) {
                 <b>{r.message}</b>
                 <small style={{ display: "block" }}>{r.reminderRef}</small>
               </td>
-              <td style={{ overflowWrap: "anywhere" }}>{targetLabel(r.target)}</td>
+              <td style={{ overflowWrap: "anywhere" }}>{targetLabel(r.target, r.targetDisplayName)}</td>
               <td style={{ overflowWrap: "anywhere" }}>{displayNameOrRef(r.recipientDisplayName, r.recipientUserRef)}</td>
               <td>{formatDateTime(r.reminderAt)}</td>
               <td>
@@ -216,7 +216,7 @@ function ReminderCards({ rows }: { rows: ReminderDto[] }) {
             <Pill tone={REMINDER_STATUS_TONE[r.status]}>{REMINDER_STATUS_LABEL[r.status]}</Pill>
           </div>
           <div className="recordmeta">
-            <span>{targetLabel(r.target)}</span>
+            <span>{targetLabel(r.target, r.targetDisplayName)}</span>
             <span>{formatDateTime(r.reminderAt)}</span>
           </div>
           <div style={{ marginTop: 12 }}>

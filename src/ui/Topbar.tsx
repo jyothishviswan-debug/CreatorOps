@@ -28,13 +28,16 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         ☰
       </button>
       <div className="topactions" style={{ marginLeft: "auto" }}>
-        <button className="searchtrigger" type="button">
+        {/* Whole-product integration: no global-search subsystem exists (no bounded cross-module search service, and unrestricted
+            Firestore search is out of bounds), so this affordance is honestly inert rather than a dead-looking live control. */}
+        <button className="searchtrigger" type="button" disabled aria-disabled="true" title="Global search is not available yet" style={{ opacity: 0.6, cursor: "not-allowed" }}>
           <Icon name="search" />
           <span>Find a module or pattern</span>
           <kbd className="key">⌘ K</kbd>
         </button>
         <span className="sample">ILLUSTRATIVE DATA</span>
-        <button className="iconbutton" aria-label="Preview notifications" type="button">
+        {/* No Notifications subsystem exists yet (recipient-scoped in-app attention is a tracked master-scope gap); inert, not a live bell. */}
+        <button className="iconbutton" aria-label="Notifications (not available yet)" title="Notifications are not available yet" type="button" disabled aria-disabled="true" style={{ opacity: 0.6, cursor: "not-allowed" }}>
           <Icon name="bell" />
         </button>
         <button className="iconbutton" aria-label="Sign out" type="button" onClick={handleSignOut} disabled={signingOut}>

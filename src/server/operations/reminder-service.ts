@@ -4,6 +4,7 @@ import { getAdminFirestore } from "@/server/firebase/admin";
 
 import { toReminderDto, toReminderEventDto, type ReminderDto, type ReminderEventDto } from "./client-dto";
 import { resolveDisplayName, resolveDisplayNames } from "./display-names";
+import { resolveTargetDisplayNames, targetDisplayKey } from "./target-display";
 import {
   getReminderGenerationClaimDoc,
   getReminderHeadDoc,
@@ -110,7 +111,8 @@ export async function getReminder(actor: ActorContext | null, rawReminderRef: un
   const loaded = await loadAuthorizedReminder(actor, typeof rawReminderRef === "string" ? rawReminderRef : "");
   if (!loaded.ok) return loaded.error;
   const { head } = loaded.authorized;
-  return { ok: true, data: toReminderDto(head, new Date().toISOString(), await resolveDisplayName(head.recipientUserRef)) };
+  const targetNames = await resolveTargetDisplayNames(actor, [head.target]);
+  return { ok: true, data: { ...toReminderDto(head, new Date().toISOString(), await resolveDisplayName(head.recipientUserRef)), targetDisplayName: targetNames.get(targetDisplayKey(head.target)) ?? null } };
 }
 
 export async function listReminderEvents(actor: ActorContext | null, rawReminderRef: unknown, rawLimit?: unknown): Promise<OperationsServiceResult<{ events: ReminderEventDto[]; hasMore: boolean }>> {
@@ -144,5 +146,6 @@ export async function listReminders(actor: ActorContext | null, rawQuery: unknow
   const filtered = query.dueOnly ? scoped.filter((head) => head.status === "SCHEDULED" && head.reminderAt <= now) : scoped;
   const page = filtered.slice(0, limit);
   const displayNames = await resolveDisplayNames(page.map((head) => head.recipientUserRef));
-  return { ok: true, data: { reminders: page.map((head) => toReminderDto(head, now, displayNames.get(head.recipientUserRef) ?? null)) } };
+  const targetNames = await resolveTargetDisplayNames(actor, page.map((head) => head.target));
+  return { ok: true, data: { reminders: page.map((head) => ({ ...toReminderDto(head, now, displayNames.get(head.recipientUserRef) ?? null), targetDisplayName: targetNames.get(targetDisplayKey(head.target)) ?? null })) } };
 }

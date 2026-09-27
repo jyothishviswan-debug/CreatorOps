@@ -323,8 +323,11 @@ describe("the adapter contract on real Agreement data", () => {
       monthlyDeliverableRequirement: { requiredCount: 2, qualifyingUnit: SUPPORTED_UNIT, requirementSourceRef: `${ref}@1` },
       lfcSfcRule: { ruleRef: `${ref}@1:lfc-sfc`, byFormat: { reel: "SFC" }, affectsPayment: true },
       // targets carry NO payment flag at all (warning-only); the Agreement stored affectsPayment as the literal false
-      targets: SAMPLE_TARGETS.map(({ affectsPayment, ...target }) => {
+      // period/anchor are descriptive contract wording the Agreement stores (terms.ts), deliberately NOT part of the strict Partner Reviews
+      // policy target - the adapter projects only targetRef/metricId/targetValue/unit/comparison (policy-adapter.ts).
+      targets: SAMPLE_TARGETS.map(({ affectsPayment, period, anchor, ...target }) => {
         expect(affectsPayment).toBe(false);
+        expect([period, anchor]).toEqual([null, null]);
         return target;
       }),
     });

@@ -222,11 +222,13 @@ describe("Create Assignment from Campaign - trusted outcome-aware create", () =>
     const afterDto = await getCampaign(manager, campaign.campaignRef);
     expect(afterDto.ok && beforeDto.ok && afterDto.data).toEqual(beforeDto.ok && beforeDto.data);
     if (afterDto.ok) expect(afterDto.data.status).toBe("ACTIVE");
-    // Finance: Assignment creation never introduces a Payable / Invoice / Payment (or any other Finance-shaped) collection. The Step 14A
-    // Agreement foundation legitimately owns four roots (other files create them concurrently), so those are exempt here - a Campaign or
-    // Assignment writing Agreement data is separately barred by the Agreement module's static guards.
+    // Finance: Assignment creation never introduces an UNKNOWN Finance-shaped collection. The closed Finance modules legitimately own
+    // these roots (Agreements' four, Payables, Invoices + number claims, Payments + reference claims + settlements) and OTHER emulator
+    // test files create them concurrently in a full run (the reset script also wipes them before the run, see emulator-reset.ts), so
+    // exactly those known roots are exempt; anything else Finance-shaped still fails this check. A Campaign or Assignment writing
+    // Finance data is separately barred by each Finance module's static guards (no Finance document carries a campaign/assignment ref).
     const rootCollections = (await getAdminFirestore().listCollections()).map((c) => c.id);
-    expect(rootCollections.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name) && !/^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions)$/.test(name))).toEqual([]);
+    expect(rootCollections.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name) && !/^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions|Payables|Invoices|InvoiceNumberClaims|Payments|PaymentReferenceClaims|PaymentSettlements)$/.test(name))).toEqual([]);
   });
 
   it("a Campaign outside the actor's scope is denied (scope_denied), and no Assignment is written", async () => {
