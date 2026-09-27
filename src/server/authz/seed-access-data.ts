@@ -83,7 +83,11 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // generated in 19A) governed reports, on top of the plain "reports" view every role in
       // `featuresOf(...)` above already holds. Viewer deliberately holds neither action - it stays
       // on the Viewer-safe run path only (see src/server/reports/reports-gate.ts's own comment).
-      reports: featureGrant(true, { run_reports: true, export: true }),
+      // Reports Final-Master: Analyst is day-to-day publication staff - may draft, run evidence,
+      // author narrative, submit for review and download artifacts, same as Manager below - but NOT
+      // finalize or open a correcting/superseding version (Head/Super Admin only, the same
+      // day-to-day-vs-governance split as Finance's own activate_agreements/finalize_approve).
+      reports: featureGrant(true, { run_reports: true, export: true, edit_narrative: true, submit_for_review: true, download_artifact: true }),
       // Export Center stage: Analyst is the only non-Super-Admin role trusted to actually CREATE a
       // governed export job (create_exports), on top of the plain "exports" view the pre-existing
       // `featuresOf(...)` list above already grants - same Analyst/Super-Admin-only shape as Import
@@ -280,7 +284,10 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // and Partners'/Vendors'/Campaigns' own governance actions.
       partner_reviews: featureGrant(true, { create: true, submit_partner_review: true }),
       // Step 19A: same explicit run/export grant as Analyst's own - see that grant's comment.
-      reports: featureGrant(true, { run_reports: true, export: true }),
+      // Reports Final-Master: same day-to-day publication grant as Analyst's own (edit_narrative,
+      // submit_for_review, download_artifact) - Manager is NOT trusted to finalize or open a
+      // correcting version, same split as Finance's own manage_agreements/activate_agreements.
+      reports: featureGrant(true, { run_reports: true, export: true, edit_narrative: true, submit_for_review: true, download_artifact: true }),
     },
   },
   partnership_head: {
@@ -426,7 +433,11 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // finalize a review, on top of everything Manager holds.
       partner_reviews: featureGrant(true, { create: true, submit_partner_review: true, finalize_approve: true }),
       // Step 19A: same explicit run/export grant as Analyst's/Manager's own - see Analyst's comment.
-      reports: featureGrant(true, { run_reports: true, export: true }),
+      // Reports Final-Master: the only role besides Super Admin trusted with the governance-weight
+      // publication actions - finalize_report and create_superseding_version - on top of everything
+      // Manager holds (edit_narrative/submit_for_review/download_artifact), same head-only shape as
+      // Finance's own activate_agreements and Partner Reviews' own finalize_approve.
+      reports: featureGrant(true, { run_reports: true, export: true, edit_narrative: true, submit_for_review: true, download_artifact: true, finalize_report: true, create_superseding_version: true }),
     },
   },
   super_admin: {

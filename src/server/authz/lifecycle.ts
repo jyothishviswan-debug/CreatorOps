@@ -122,6 +122,20 @@ export const PARTNER_REVIEW_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
   SUPERSEDED: ["FINALIZED"],
 };
 
+// Reports Final-Master: the canonical ReportVersion lifecycle. Deliberately the SAME shape as
+// PARTNER_REVIEW_LIFECYCLE_TRANSITIONS immediately above (a proven, real precedent for exactly this
+// four-state "Draft -> In Review -> Finalized -> Superseded" model, with no send-back-to-DRAFT edge
+// either - a reviewer works from whatever the version currently holds; there is no in-place
+// "request changes" step in this stage, matching Partner Review's own real behavior) - kept as its
+// own named constant (never a re-export) so Reports and Partner Reviews can diverge independently
+// later without one module's edit silently changing the other's rules.
+export const REPORT_VERSION_LIFECYCLE_TRANSITIONS: LifecycleTransitionMap = {
+  DRAFT: [],
+  IN_REVIEW: ["DRAFT"],
+  FINALIZED: ["IN_REVIEW"],
+  SUPERSEDED: ["FINALIZED"],
+};
+
 // Step 14A: the canonical Finance Agreement VERSION lifecycle. Keyed by target
 // state -> allowed predecessor states, same convention as every map above.
 // A version is created DRAFT (a mutable working copy until it is CONFIRMED -

@@ -165,6 +165,18 @@ export const ACTIONS = [
   "manage_reminders",
   // Reports
   "run_reports",
+  // Reports Final-Master: the publication lifecycle's own granular actions, same "day-to-day vs
+  // governance-weight" discipline as every other module's own split (Partner Reviews'
+  // submit_partner_review/finalize_approve, Finance's manage_agreements/activate_agreements). Editing
+  // narrative and submitting a draft for review are day-to-day authoring; finalizing a version and
+  // opening a correction/superseding version are governance-weight (Head/Super Admin only - see
+  // seed-access-data.ts). download_artifact is its own id, deliberately distinct from run_reports,
+  // so artifact access can be reasoned about and tested as its own boundary (spec section 23).
+  "edit_narrative",
+  "submit_for_review",
+  "finalize_report",
+  "create_superseding_version",
+  "download_artifact",
   // Import / Export Center
   "manage_imports",
   "create_exports",

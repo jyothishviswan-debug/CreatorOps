@@ -1,4 +1,4 @@
-import type { ReportDefinitionDto, ReportId, ReportResultDto, ReportSnapshotDoc } from "@/server/reports";
+import type { ReportArtifactDoc, ReportDefinitionDto, ReportId, ReportResultDto, ReportRunDetailDto, ReportSnapshotDoc, ReportTemplateDefinition, ReportVersionSummary } from "@/server/reports";
 
 // NOTE: every /api/reports/snapshots** route (list/get/finalize) currently serializes the raw
 // ReportSnapshotDoc returned by snapshot-service.ts's own functions directly - none of them apply
@@ -112,4 +112,49 @@ export function listMySnapshots(limit: number | undefined, options?: ReportsRequ
 
 export function getSnapshotDto(snapshotRef: string, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportSnapshotDoc>> {
   return getJson(`/api/reports/snapshots/${encodeURIComponent(snapshotRef)}`, options);
+}
+
+// --- Reports Final-Master: the publication lifecycle -------------------------------------------------
+export function listReportTemplates(options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportTemplateDefinition[]>> {
+  return getJson(`/api/reports/templates`, options);
+}
+
+export function createDraftRun(templateId: string, filters: RunReportFilters, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportRunDetailDto>> {
+  return postJson(`/api/reports/runs`, { templateId, filters }, options);
+}
+
+export function getRunDetail(runRef: string, version: number | undefined, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportRunDetailDto>> {
+  return getJson(`/api/reports/runs/${encodeURIComponent(runRef)}${queryString({ version })}`, options);
+}
+
+export function runDraftEvidence(runRef: string, expectedDocVersion: number, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportRunDetailDto>> {
+  return postJson(`/api/reports/runs/${encodeURIComponent(runRef)}/evidence`, { expectedDocVersion }, options);
+}
+
+export function saveRunNarrative(runRef: string, input: { version: number; sectionKey: string; title?: string; body: string; expectedRevision: number }, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportRunDetailDto>> {
+  return postJson(`/api/reports/runs/${encodeURIComponent(runRef)}/narrative`, input, options);
+}
+
+export function submitRunForReview(runRef: string, expectedDocVersion: number, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportRunDetailDto>> {
+  return postJson(`/api/reports/runs/${encodeURIComponent(runRef)}/submit-review`, { expectedDocVersion }, options);
+}
+
+export function finalizeRun(runRef: string, expectedDocVersion: number, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportRunDetailDto>> {
+  return postJson(`/api/reports/runs/${encodeURIComponent(runRef)}/finalize`, { expectedDocVersion }, options);
+}
+
+export function supersedeRun(runRef: string, expectedDocVersion: number, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportRunDetailDto>> {
+  return postJson(`/api/reports/runs/${encodeURIComponent(runRef)}/supersede`, { expectedDocVersion }, options);
+}
+
+export function listRunVersions(runRef: string, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportVersionSummary[]>> {
+  return getJson(`/api/reports/runs/${encodeURIComponent(runRef)}/versions`, options);
+}
+
+export function listRunArtifacts(runRef: string, version: number, options?: ReportsRequestOptions): Promise<ReportsApiResult<ReportArtifactDoc[]>> {
+  return getJson(`/api/reports/runs/${encodeURIComponent(runRef)}/artifacts${queryString({ version })}`, options);
+}
+
+export function artifactDownloadUrl(artifactRef: string): string {
+  return `/api/reports/artifacts/${encodeURIComponent(artifactRef)}/download`;
 }

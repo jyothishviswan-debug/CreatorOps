@@ -16,7 +16,9 @@ import type { ReportsDenialReason } from "./types";
 // "run_reports"` below), which Viewer's role baseline deliberately does NOT hold (see
 // seed-access-data.ts's own comment on why) - so Viewer is sanctioned for the safer, restricted
 // surface only. This is a REAL, distinct, testable authorization boundary, not a naming convention.
-export type ReportsAction = "run_reports" | "export";
+// Reports Final-Master: extended with the publication-lifecycle's own granular actions (see
+// authz/actions.ts's own comment on the day-to-day/governance-weight split).
+export type ReportsAction = "run_reports" | "export" | "edit_narrative" | "submit_for_review" | "finalize_report" | "create_superseding_version" | "download_artifact";
 export type ReportsAccessResult = { ok: true } | { ok: false; reason: ReportsDenialReason };
 
 export async function requireReportsAccess(actor: ActorContext | null, action?: ReportsAction): Promise<ReportsAccessResult> {

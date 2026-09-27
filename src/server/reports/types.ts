@@ -212,3 +212,183 @@ export const snapshotRefSchema = z.string().regex(/^rsn_[0-9a-f]{20}$/, "Invalid
 
 export const MAX_SNAPSHOT_LIST_PAGE_SIZE = 50;
 export const DEFAULT_SNAPSHOT_LIST_PAGE_SIZE = 20;
+
+// =====================================================================================================
+// Reports Final-Master: the publication domain model (ReportRun/Draft -> Verified Evidence Snapshot ->
+// Narrative -> Review -> Finalized Version -> Artifacts -> Supersession).
+//
+// Shape precedent: mirrors src/server/finance-agreements/types.ts's own head+numbered-versions
+// pattern (the closest real precedent in this codebase for a Draft->Active->Superseded lifecycle with
+// a genuine correction/supersession path) - NOT Notes/Meetings' simpler linear-revision-only pattern,
+// which has no supersession at all. See the completion report's own disclosed reasoning.
+//
+// One `ReportRun` HEAD doc = one logical "report + template + owner" lineage. It owns an append-only
+// chain of numbered VERSION docs (immutable once FINALIZED) - exactly one may be OPEN (DRAFT or
+// IN_REVIEW) at a time; corrections open the next version only after the current one is FINALIZED.
+// =====================================================================================================
+export const REPORT_VERSION_STATUSES = ["DRAFT", "IN_REVIEW", "FINALIZED", "SUPERSEDED"] as const;
+export const reportVersionStatusSchema = z.enum(REPORT_VERSION_STATUSES);
+export type ReportVersionStatus = z.infer<typeof reportVersionStatusSchema>;
+
+export const MAX_REPORT_VERSIONS = 200; // Same bound discipline as Finance Agreement's MAX_AGREEMENT_VERSIONS - never an unbounded chain.
+
+// --- ReportMetricSnapshot (spec section 2) - the immutable verified-evidence payload embedded on a
+// version once evidence has been run. Re-running evidence while the version is still open OVERWRITES
+// this field (an explicit act, never automatic/silent - spec section 13) with a full new snapshot;
+// once the version is FINALIZED, firestore.ts's own txSetReportVersion refuses any further write to a
+// FINALIZED/SUPERSEDED version at all, freezing this field for good.
+export const reportEvidenceSnapshotSchema = z
+  .object({
+    capturedAt: isoTimestamp,
+    definitionVersion: z.number().int().min(1),
+    metricRegistryVersion: z.literal("report-metrics@1"),
+    appliedFilters: z.record(z.string(), z.string()),
+    sourceRevisionCutoff: isoTimestamp,
+    metrics: z.record(z.string(), z.union([z.number(), z.string(), z.null()])),
+    rows: z.array(z.record(z.string(), z.union([z.string(), z.number(), z.boolean(), z.null()]))),
+    rawSections: z.record(z.string(), z.unknown()),
+    sectionModels: z.array(z.unknown()), // Serialized ReportSectionModel[] - see report-sections/types.ts. Untyped here (Firestore-stored JSON); re-validated by consumers.
+    limitations: z.array(z.string()),
+    truncated: z.boolean(),
+    rowCount: z.number().int().min(0),
+    maxRows: z.number().int().min(1),
+    provenance: z.array(z.object({ sourceModule: nonEmpty, sourceFunction: nonEmpty, recordCount: z.number().int().min(0), scanned: z.number().int().min(0).optional() })),
+  })
+  .strict();
+export type ReportEvidenceSnapshot = z.infer<typeof reportEvidenceSnapshotSchema>;
+
+// --- Narrative pointer (spec section 2 ReportNarrativeSection) - the version doc holds only a
+// pointer to the LATEST revision per section key; the immutable revision rows themselves live in the
+// `narrative` subcollection under the version (see firestore.ts). The pointer's `revision` number is
+// the optimistic-concurrency precondition a narrative save must match (spec section 14's "stale/
+// conflict handling") - a save whose `expectedRevision` does not match is refused as stale, never
+// silently overwritten.
+export const REPORT_NARRATIVE_REVIEW_STATUSES = ["DRAFT", "REVIEWED"] as const;
+export const reportNarrativeReviewStatusSchema = z.enum(REPORT_NARRATIVE_REVIEW_STATUSES);
+export type ReportNarrativeReviewStatus = z.infer<typeof reportNarrativeReviewStatusSchema>;
+
+export const reportNarrativePointerSchema = z
+  .object({
+    revision: z.number().int().min(1),
+    title: z.string().min(1).max(200),
+    // Denormalized copy of the latest revision's body, for cheap reads (getReportRunDetail does not
+    // need a second subcollection read per section) - the narrative revision doc is still the
+    // authoritative append-only history; this is a read-optimization, never a second source of truth
+    // (both are written atomically in the same transaction - see report-lifecycle-service.ts).
+    body: z.string().max(20_000),
+    updatedAt: isoTimestamp,
+    updatedByUserRef: nonEmpty,
+    reviewStatus: reportNarrativeReviewStatusSchema,
+  })
+  .strict();
+export type ReportNarrativePointer = z.infer<typeof reportNarrativePointerSchema>;
+
+const MAX_NARRATIVE_BODY_CHARS = 20_000;
+export const reportNarrativeRevisionDocSchema = z
+  .object({
+    runRef: nonEmpty,
+    version: z.number().int().min(1),
+    sectionKey: nonEmpty,
+    revision: z.number().int().min(1),
+    title: z.string().min(1).max(200),
+    body: z.string().max(MAX_NARRATIVE_BODY_CHARS), // may be empty (a cleared draft), never restricted-data - see reports-static.test.ts's own guard.
+    evidenceRefs: z.array(z.string().max(200)).max(50).default([]),
+    reviewStatus: reportNarrativeReviewStatusSchema,
+    authorUserRef: nonEmpty,
+    createdAt: isoTimestamp,
+  })
+  .strict();
+export type ReportNarrativeRevisionDoc = z.infer<typeof reportNarrativeRevisionDocSchema>;
+
+// --- ReportVersion (spec section 2) ------------------------------------------------------------------
+export const reportVersionDocSchema = z
+  .object({
+    runRef: nonEmpty,
+    version: z.number().int().min(1),
+    reportId: reportIdSchema,
+    templateId: nonEmpty, // ReportTemplateId - kept as a plain string here to avoid a types.ts <-> report-templates.ts import cycle; validated at the service boundary.
+    definitionVersion: z.number().int().min(1),
+    status: reportVersionStatusSchema,
+    actorUserRef: nonEmpty, // who owns/authored this version (the drafter).
+    appliedFilters: z.record(z.string(), z.string()),
+    scopeSummary: z.object({ basis: nonEmpty, note: nonEmpty }),
+    evidence: reportEvidenceSnapshotSchema.nullable(),
+    narrativePointers: z.record(z.string(), reportNarrativePointerSchema),
+    requiredNarrativeSectionKeys: z.array(nonEmpty),
+    reviewerUserRef: nonEmpty.nullable().default(null),
+    submittedForReviewAt: isoTimestamp.nullable().default(null),
+    finalizedByUserRef: nonEmpty.nullable().default(null),
+    finalizedAt: isoTimestamp.nullable().default(null),
+    supersededByVersion: z.number().int().min(1).nullable().default(null),
+    supersededAt: isoTimestamp.nullable().default(null),
+    createdAt: isoTimestamp,
+    updatedAt: isoTimestamp,
+    updatedByUserRef: nonEmpty,
+    docVersion: z.number().int().min(1),
+  })
+  .strict();
+export type ReportVersionDoc = z.infer<typeof reportVersionDocSchema>;
+
+// --- ReportRun head (spec section 2 ReportRun/Draft) --------------------------------------------------
+export const reportRunHeadDocSchema = z
+  .object({
+    runRef: nonEmpty,
+    reportId: reportIdSchema,
+    templateId: nonEmpty,
+    latestVersion: z.number().int().min(1),
+    openVersion: z.number().int().min(1).nullable(), // the one DRAFT/IN_REVIEW version, if any.
+    currentFinalizedVersion: z.number().int().min(1).nullable(), // the current governing FINALIZED version, if any.
+    createdByUserRef: nonEmpty,
+    createdAt: isoTimestamp,
+    updatedAt: isoTimestamp,
+    updatedByUserRef: nonEmpty,
+    docVersion: z.number().int().min(1),
+  })
+  .strict();
+export type ReportRunHeadDoc = z.infer<typeof reportRunHeadDocSchema>;
+
+export const runRefSchema = z.string().regex(/^rrun_[0-9a-f]{20}$/, "Invalid report run reference.");
+export const artifactRefSchema = z.string().regex(/^rar_[0-9a-f]{32}$/, "Invalid report artifact reference.");
+
+// --- ReportArtifact (spec section 2) ------------------------------------------------------------------
+export const reportArtifactDocSchema = z
+  .object({
+    artifactRef: nonEmpty,
+    runRef: nonEmpty,
+    version: z.number().int().min(1),
+    reportId: reportIdSchema,
+    templateId: nonEmpty,
+    format: z.enum(REPORT_ARTIFACT_FORMATS),
+    templateVersion: z.number().int().min(1),
+    safeFilename: nonEmpty,
+    contentType: nonEmpty,
+    byteSize: z.number().int().min(0),
+    checksumSha256: z.string().regex(/^[0-9a-f]{64}$/),
+    createdAt: isoTimestamp,
+    createdByUserRef: nonEmpty,
+  })
+  .strict();
+export type ReportArtifactDoc = z.infer<typeof reportArtifactDocSchema>;
+
+// --- Service result plumbing for the lifecycle service -------------------------------------------------
+export type ReportLifecycleErrorCode = "unauthorized" | "not_found" | "invalid_input" | "stale" | "conflict" | "internal";
+export type ReportLifecycleResult<T> = { ok: true; data: T } | { ok: false; code: ReportLifecycleErrorCode; message: string; reason?: ReportsDenialReason };
+
+export function reportLifecycleUnauthorizedResult(reason: ReportsDenialReason): Extract<ReportLifecycleResult<unknown>, { ok: false }> {
+  return { ok: false, code: "unauthorized", message: "Reports access denied.", reason };
+}
+export function reportLifecycleNotFoundResult(message = "Not found."): Extract<ReportLifecycleResult<unknown>, { ok: false }> {
+  return { ok: false, code: "not_found", message };
+}
+export function reportLifecycleInvalidInputResult(message: string): Extract<ReportLifecycleResult<unknown>, { ok: false }> {
+  return { ok: false, code: "invalid_input", message };
+}
+export function reportLifecycleStaleResult(message = "This report was changed by someone else. Reload and try again."): Extract<ReportLifecycleResult<unknown>, { ok: false }> {
+  return { ok: false, code: "stale", message };
+}
+export function reportLifecycleConflictResult(message: string): Extract<ReportLifecycleResult<unknown>, { ok: false }> {
+  return { ok: false, code: "conflict", message };
+}
+export function reportLifecycleInternalResult(message = "Something went wrong."): Extract<ReportLifecycleResult<unknown>, { ok: false }> {
+  return { ok: false, code: "internal", message };
+}

@@ -154,6 +154,13 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
   reports: [
     { id: "run_reports", label: "Run reports" },
     { id: "export", label: "Export reports" },
+    // Reports Final-Master: publication-lifecycle actions - see actions.ts's own comment on the
+    // day-to-day/governance-weight split.
+    { id: "edit_narrative", label: "Edit report narrative" },
+    { id: "submit_for_review", label: "Submit report for review" },
+    { id: "finalize_report", label: "Finalize report version" },
+    { id: "create_superseding_version", label: "Create a correcting/superseding report version" },
+    { id: "download_artifact", label: "Download report artifact (PDF/XLSX/CSV)" },
   ],
   imports: [{ id: "manage_imports", label: "Run/manage imports" }],
   exports: [{ id: "create_exports", label: "Create/run exports" }],

@@ -114,15 +114,38 @@ describe("section 9/24: no sensitive-data leakage in a Reports DTO", () => {
   });
 });
 
-describe("section 16/24: no generic Export Center implementation, artifact metadata only", () => {
-  it("no file writer/PDF/XLSX generation library is imported anywhere - artifactFormats is descriptive metadata only", () => {
-    const FORBIDDEN_IMPORT = /from\s+["'](exceljs|pdfkit|xlsx|puppeteer|jspdf)["']|require\(\s*["'](exceljs|pdfkit|xlsx|puppeteer|jspdf)["']\s*\)/i;
-    for (const [name, source] of raw) expect(source, name).not.toMatch(FORBIDDEN_IMPORT);
-    for (const file of routeFiles) expect(readFileSync(file, "utf8"), path.basename(file)).not.toMatch(FORBIDDEN_IMPORT);
+describe("section 16/24 (superseded by Reports Final-Master's own spec section 17/18/19/22): Reports now owns REAL PDF/XLSX/CSV artifact generation", () => {
+  // Step 19A's original guard here asserted the OPPOSITE ("artifactFormats is descriptive metadata
+  // only, no generation library is ever imported") - that was correct for 19A's own scope, which
+  // explicitly deferred all real file generation. The Reports Final-Master stage's own mission
+  // statement makes the opposite an explicit CLOSURE CRITERION ("Report-owned PDF/XLSX/CSV artifacts
+  // work" - "do not move this work into Export Center"), so this guard is deliberately updated rather
+  // than left contradicting the shipped architecture. What is still enforced: generation libraries are
+  // confined to report-artifacts/ (never scattered into families/, the lifecycle service, or a UI
+  // file), and this module still creates no route under /api/exports.
+  const GENERATION_IMPORT = /from\s+["'](exceljs|pdfkit|xlsx|puppeteer|jspdf|pdf-lib)["']/i;
+
+  it("a PDF/XLSX generation library is imported ONLY from report-artifacts/ files", () => {
+    for (const [name, source] of raw) {
+      if (name.startsWith("report-artifacts" + path.sep) || name.startsWith("report-artifacts/")) continue;
+      expect(source, `${name} imports a generation library outside report-artifacts/`).not.toMatch(GENERATION_IMPORT);
+    }
+  });
+
+  it("no UI (.tsx) file anywhere in the app imports a PDF/XLSX generation library - generation only ever happens server-side", () => {
+    const featuresDir = path.resolve(moduleDir, "../../features/reports");
+    let tsxFiles: string[] = [];
+    try {
+      tsxFiles = walk(featuresDir, (name) => name.endsWith(".tsx"));
+    } catch {
+      tsxFiles = [];
+    }
+    for (const file of tsxFiles) expect(readFileSync(file, "utf8"), path.relative(srcDir, file)).not.toMatch(GENERATION_IMPORT);
   });
 
   it("no route under /api/exports is created or modified by this module", () => {
     for (const [name] of code) expect(name).not.toMatch(/exports/);
+    expect(routeFiles.every((f) => !f.includes(`${path.sep}exports${path.sep}`))).toBe(true);
   });
 });
 
@@ -160,12 +183,16 @@ describe("section 25: Reports UI build (Step 19B closes the 19A placeholder boun
   // assertion is updated to the real route set the spec calls for (catalog, one report's own
   // configure+run+result view, and finalized-snapshot browsing) rather than removed, so a future
   // stray page can't be added under src/app/reports without this test being deliberately updated too.
-  it("src/app/reports contains exactly the Step 19B real-UI route set (no stray/orphaned page)", () => {
+  //
+  // Reports Final-Master adds exactly ONE more real route on top of Step 19B's set:
+  // app/reports/publish/page.tsx - the new publication lifecycle workspace (spec section 12). Same
+  // "deliberately updated, never silently removed" discipline applies.
+  it("src/app/reports contains exactly the Step 19B + Reports Final-Master real-UI route set (no stray/orphaned page)", () => {
     const reportsAppDir = path.join(appDir, "reports");
     const files = walk(reportsAppDir, (name) => name.endsWith(".tsx"))
       .map((f) => path.relative(srcDir, f).split(path.sep).join("/"))
       .sort();
-    expect(files).toEqual(["app/reports/[reportId]/page.tsx", "app/reports/page.tsx", "app/reports/snapshots/[snapshotRef]/page.tsx", "app/reports/snapshots/page.tsx"].sort());
+    expect(files).toEqual(["app/reports/[reportId]/page.tsx", "app/reports/page.tsx", "app/reports/publish/page.tsx", "app/reports/snapshots/[snapshotRef]/page.tsx", "app/reports/snapshots/page.tsx"].sort());
   });
 
   it("no server/reports file imports a React/.tsx component or Next.js page convention", () => {

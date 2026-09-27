@@ -5,4 +5,7 @@ import type { ModuleTab } from "@/ui/ModuleTabs";
 export const REPORTS_TABS: ModuleTab[] = [
   { label: "Catalog", href: "/reports", activePrefixes: ["/reports/campaign_delivery", "/reports/campaign_performance", "/reports/channel_growth_freshness", "/reports/partner_review_evidence", "/reports/finance_status", "/reports/operations_attention", "/reports/discovery_funnel", "/reports/partner_portfolio", "/reports/administration_security", "/reports/monthly_partner_performance", "/reports/campaign_event_performance", "/reports/cross_platform_partner_programme", "/reports/long_period_partner_programme"] },
   { label: "Your finalized reports", href: "/reports/snapshots" },
+  // Reports Final-Master: the new publication lifecycle workspace (Choose Report -> Parameters -> Run
+  // -> Evidence Preview -> Narrative -> Review -> Finalize -> Artifacts -> Version History).
+  { label: "Publish", href: "/reports/publish", activePrefixes: ["/reports/publish"] },
 ];
