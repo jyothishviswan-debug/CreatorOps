@@ -197,16 +197,31 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
   }
   const colCount = Math.max(columns.length, 1);
   const colWidth = CONTENT_WIDTH / colCount;
-  const HEADER_ROW_HEIGHT = 16;
+  const MIN_HEADER_ROW_HEIGHT = 16;
+  const HEADER_LINE_HEIGHT = 10;
   const LINE_HEIGHT = 10.5;
 
+  // A narrow multi-column table (e.g. the 11-column Instagram/YouTube Partner Performance tables)
+  // routinely needs a column label wider than its own column - "Published Content Count",
+  // "Has Compliance Evidence" - so the header, like every data cell already does, must wrap onto
+  // multiple lines and the header row's own height must grow to fit that wrap. The PREVIOUS version
+  // of this function drew each header label as a single line inside a FIXED 16pt-tall box: pdf-lib's
+  // own `maxWidth` option on drawText silently wraps long text onto additional lines with no error,
+  // but this function never accounted for that extra height, so a wrapped 2-3-line header visually
+  // overlapped the first data row beneath it - a real overlap bug, caught during this stage's own
+  // independent PDF visual-inspection pass (spec section 29's own explicit "no ... overlap" check).
   function drawHeaderRow(): void {
-    ensureSpace(state, HEADER_ROW_HEIGHT + 4);
-    state.page.drawRectangle({ x: MARGIN, y: state.y - HEADER_ROW_HEIGHT + 4, width: CONTENT_WIDTH, height: HEADER_ROW_HEIGHT, color: GRAY_HEADER });
+    const wrappedHeaders = columns.map((col) => wrapText(state.bold, col.label, 8.5, colWidth - 8, 2));
+    const headerLineCount = Math.max(...wrappedHeaders.map((l) => l.length), 1);
+    const headerRowHeight = Math.max(MIN_HEADER_ROW_HEIGHT, headerLineCount * HEADER_LINE_HEIGHT + 6);
+    ensureSpace(state, headerRowHeight + 4);
+    state.page.drawRectangle({ x: MARGIN, y: state.y - headerRowHeight + 4, width: CONTENT_WIDTH, height: headerRowHeight, color: GRAY_HEADER });
     columns.forEach((col, i) => {
-      state.page.drawText(col.label, { x: MARGIN + i * colWidth + 4, y: state.y - 8, size: 8.5, font: state.bold, color: INK_NAVY, maxWidth: colWidth - 8 });
+      wrappedHeaders[i]!.forEach((line, li) => {
+        state.page.drawText(line, { x: MARGIN + i * colWidth + 4, y: state.y - 8 - li * HEADER_LINE_HEIGHT, size: 8.5, font: state.bold, color: INK_NAVY, maxWidth: colWidth - 8 });
+      });
     });
-    state.y -= HEADER_ROW_HEIGHT;
+    state.y -= headerRowHeight;
   }
 
   drawHeaderRow();
