@@ -5,15 +5,16 @@ import type { ExcludedExportTarget, ExportTargetDefinition, ExportTargetId } fro
 // src/server/reports/catalog.ts) - so a target's shape (filters, columns, limitations) is reviewable
 // and stable independent of what the source module happens to return today.
 //
-// Deliberately a SMALL set (three targets) rather than a broad one: depth and correctness over
-// breadth, per the spec's own explicit guidance. Each target composes exactly one existing,
-// already actor-scoped "list" service - never a raw collection, never a second source of truth.
+// Seven SUPPORTED targets (see EXCLUDED_EXPORT_TARGETS below for domains deliberately NOT added, and
+// why): depth and correctness over breadth, per the spec's own explicit guidance. Each target
+// composes exactly one existing, already actor-scoped "list" service - never a raw collection,
+// never a second source of truth.
 //
-// Column allowlists are intentionally narrow. None of the three source DTOs (PartnerDto,
-// CampaignDto, AssignmentDto) carry PAN/Aadhaar/bank/GSTIN/KYC/Drive-id/credential fields at all
-// (those live behind separate, more-restricted services this module never calls), but each target
-// still deliberately omits large/internal/nested fields that are not "columns" in any useful sense -
-// see the per-target comment below for exactly what was left out and why.
+// Column allowlists are intentionally narrow. None of the seven source DTOs carry PAN/Aadhaar/bank/
+// GSTIN/KYC/Drive-id/credential fields at all (those live behind separate, more-restricted services
+// this module never calls), but each target still deliberately omits large/internal/nested fields
+// that are not "columns" in any useful sense - see the per-target comment below for exactly what was
+// left out and why.
 const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
   partners: {
     targetId: "partners",
@@ -57,7 +58,8 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     // clamped `Math.min(options.limit, 100)` regardless of what was requested - meaning "truncated"
     // was already firing (and rows were already capped) at 100, not 500, and the UI's "bounded to 500
     // rows" claim was simply false. Fixed here: the advertised bound now matches the real one exactly,
-    // so a "size_exceeded" rejection at maxRows corresponds to an actual, enforced limit.
+    // so the "truncated" signal at maxRows corresponds to an actual, enforced limit (see export-service.ts's
+    // own disclosed-truncation policy comment).
     maxRows: 100,
   },
   campaigns: {
@@ -99,7 +101,8 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     // clamped `Math.min(options.limit, 100)` regardless of what was requested - meaning "truncated"
     // was already firing (and rows were already capped) at 100, not 500, and the UI's "bounded to 500
     // rows" claim was simply false. Fixed here: the advertised bound now matches the real one exactly,
-    // so a "size_exceeded" rejection at maxRows corresponds to an actual, enforced limit.
+    // so the "truncated" signal at maxRows corresponds to an actual, enforced limit (see export-service.ts's
+    // own disclosed-truncation policy comment).
     maxRows: 100,
   },
   assignments: {
@@ -133,7 +136,7 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     ],
     defaultColumnIds: ["assignmentRef", "campaignName", "partnerDisplayName", "status", "createdAt"],
     allowedFormats: ["csv", "xlsx", "pdf"],
-    limitations: ["Bounded to the first page listAssignments returns (see maxRows) - a scope with more Assignments than that is reported truncated.", "A match count above maxRows is rejected (size_exceeded), never silently truncated - narrow the filters and try again."],
+    limitations: ["Bounded to the first page listAssignments returns (see maxRows) - a scope with more Assignments than that is reported truncated."],
     // Section 9: this MUST equal the underlying domain service's own enforced page-size cap
     // (MAX_PARTNER_PAGE_SIZE / MAX_CAMPAIGN_PAGE_SIZE / MAX_ASSIGNMENT_PAGE_SIZE / MAX_VENDOR_PAGE_SIZE
     // / MAX_CONTENT_PAGE_SIZE / MAX_TASK_PAGE_SIZE / MAX_PARTNER_REVIEW_PAGE_SIZE - each is 100 today).
@@ -141,7 +144,8 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     // clamped `Math.min(options.limit, 100)` regardless of what was requested - meaning "truncated"
     // was already firing (and rows were already capped) at 100, not 500, and the UI's "bounded to 500
     // rows" claim was simply false. Fixed here: the advertised bound now matches the real one exactly,
-    // so a "size_exceeded" rejection at maxRows corresponds to an actual, enforced limit.
+    // so the "truncated" signal at maxRows corresponds to an actual, enforced limit (see export-service.ts's
+    // own disclosed-truncation policy comment).
     maxRows: 100,
   },
 
@@ -182,7 +186,7 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     ],
     defaultColumnIds: ["vendorRef", "displayName", "vendorType", "status", "regionIds", "ownerDisplayName"],
     allowedFormats: ["csv", "xlsx", "pdf"],
-    limitations: ["Bounded to the first page listVendors returns (see maxRows) - a match count above maxRows is rejected (size_exceeded), never silently truncated."],
+    limitations: ["Bounded to the first page listVendors returns (see maxRows) - a scope with more Vendors than that is reported truncated."],
     // Section 9: this MUST equal the underlying domain service's own enforced page-size cap
     // (MAX_PARTNER_PAGE_SIZE / MAX_CAMPAIGN_PAGE_SIZE / MAX_ASSIGNMENT_PAGE_SIZE / MAX_VENDOR_PAGE_SIZE
     // / MAX_CONTENT_PAGE_SIZE / MAX_TASK_PAGE_SIZE / MAX_PARTNER_REVIEW_PAGE_SIZE - each is 100 today).
@@ -190,7 +194,8 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     // clamped `Math.min(options.limit, 100)` regardless of what was requested - meaning "truncated"
     // was already firing (and rows were already capped) at 100, not 500, and the UI's "bounded to 500
     // rows" claim was simply false. Fixed here: the advertised bound now matches the real one exactly,
-    // so a "size_exceeded" rejection at maxRows corresponds to an actual, enforced limit.
+    // so the "truncated" signal at maxRows corresponds to an actual, enforced limit (see export-service.ts's
+    // own disclosed-truncation policy comment).
     maxRows: 100,
   },
   content: {
@@ -229,7 +234,7 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     ],
     defaultColumnIds: ["contentRef", "campaignName", "partnerDisplayName", "status", "dueAt", "approvedAt"],
     allowedFormats: ["csv", "xlsx", "pdf"],
-    limitations: ["Bounded to the first page listContent returns (see maxRows) - a match count above maxRows is rejected (size_exceeded), never silently truncated."],
+    limitations: ["Bounded to the first page listContent returns (see maxRows) - a scope with more Content than that is reported truncated."],
     // Section 9: this MUST equal the underlying domain service's own enforced page-size cap
     // (MAX_PARTNER_PAGE_SIZE / MAX_CAMPAIGN_PAGE_SIZE / MAX_ASSIGNMENT_PAGE_SIZE / MAX_VENDOR_PAGE_SIZE
     // / MAX_CONTENT_PAGE_SIZE / MAX_TASK_PAGE_SIZE / MAX_PARTNER_REVIEW_PAGE_SIZE - each is 100 today).
@@ -237,7 +242,8 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     // clamped `Math.min(options.limit, 100)` regardless of what was requested - meaning "truncated"
     // was already firing (and rows were already capped) at 100, not 500, and the UI's "bounded to 500
     // rows" claim was simply false. Fixed here: the advertised bound now matches the real one exactly,
-    // so a "size_exceeded" rejection at maxRows corresponds to an actual, enforced limit.
+    // so the "truncated" signal at maxRows corresponds to an actual, enforced limit (see export-service.ts's
+    // own disclosed-truncation policy comment).
     maxRows: 100,
   },
   operations_tasks: {
@@ -274,7 +280,7 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     defaultColumnIds: ["taskRef", "title", "assigneeDisplayName", "status", "priority", "dueAt"],
     allowedFormats: ["csv", "xlsx", "pdf"],
     limitations: [
-      "Bounded to the first page listTasks returns (see maxRows) - a match count above maxRows is rejected (size_exceeded), never silently truncated.",
+      "Bounded to the first page listTasks returns (see maxRows) - a scope with more Tasks than that is reported truncated.",
       "A non-global actor sees only their own assigned Tasks (listTasks' own scope rule), never a full board.",
       "listTasks has no pagination cursor (unlike every other target here), so this bound is deliberately one row below the domain's own page cap (100) - a full domain page back is conservatively treated as \"more rows exist\", which means an exact 100-row match is also rejected rather than risk an undetectable silent truncation.",
     ],
@@ -319,7 +325,7 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     ],
     defaultColumnIds: ["reviewRef", "partnerDisplayName", "periodKey", "latestStatus", "currentFinalizedVersion"],
     allowedFormats: ["csv", "xlsx", "pdf"],
-    limitations: ["Bounded to the first page listPartnerReviewHeads returns (see maxRows) - a match count above maxRows is rejected (size_exceeded), never silently truncated.", "Summary/bookkeeping only - no Production/Compliance/Performance evidence or extraction detail is ever included (see Partner Reviews' own list-service boundary)."],
+    limitations: ["Bounded to the first page listPartnerReviewHeads returns (see maxRows) - a scope with more Reviews than that is reported truncated.", "Summary/bookkeeping only - no Production/Compliance/Performance evidence or extraction detail is ever included (see Partner Reviews' own list-service boundary)."],
     // Section 9: this MUST equal the underlying domain service's own enforced page-size cap
     // (MAX_PARTNER_PAGE_SIZE / MAX_CAMPAIGN_PAGE_SIZE / MAX_ASSIGNMENT_PAGE_SIZE / MAX_VENDOR_PAGE_SIZE
     // / MAX_CONTENT_PAGE_SIZE / MAX_TASK_PAGE_SIZE / MAX_PARTNER_REVIEW_PAGE_SIZE - each is 100 today).
@@ -327,7 +333,8 @@ const EXPORT_CATALOG: Record<ExportTargetId, ExportTargetDefinition> = {
     // clamped `Math.min(options.limit, 100)` regardless of what was requested - meaning "truncated"
     // was already firing (and rows were already capped) at 100, not 500, and the UI's "bounded to 500
     // rows" claim was simply false. Fixed here: the advertised bound now matches the real one exactly,
-    // so a "size_exceeded" rejection at maxRows corresponds to an actual, enforced limit.
+    // so the "truncated" signal at maxRows corresponds to an actual, enforced limit (see export-service.ts's
+    // own disclosed-truncation policy comment).
     maxRows: 100,
   },
 };
