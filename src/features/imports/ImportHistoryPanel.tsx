@@ -54,6 +54,12 @@ export function ImportHistoryPanel() {
   function handleModuleChange(next: ImportModuleArg) {
     setBusy(true);
     setSelected(null);
+    // Clear the previous target's rows/error immediately - otherwise a
+    // denied or empty result for the NEW target briefly renders underneath
+    // the PREVIOUS target's still-visible batch rows, which reads as if
+    // those rows belong to the newly selected target.
+    setBatches(null);
+    setError(null);
     setModuleKey(next);
   }
 
