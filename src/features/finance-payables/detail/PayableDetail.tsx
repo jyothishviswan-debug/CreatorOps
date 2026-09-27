@@ -58,7 +58,7 @@ export function PayableDetail({ initial, permissions, initialTab, revision }: { 
       )}
       {detail.head.status === "READY_FOR_INVOICE" && (
         <p className="foundationnote" style={{ marginBottom: 14 }}>
-          This version is pinned for invoicing. Invoicing is not yet implemented in CreatorOps.
+          This version is pinned for invoicing. Create the Invoice from Finance / Invoices / New, selecting this Payable as its source.
         </p>
       )}
 

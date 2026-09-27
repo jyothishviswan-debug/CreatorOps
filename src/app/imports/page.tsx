@@ -42,7 +42,7 @@ export default function ImportsPage() {
                 <Icon name="check" /> Confirm the import run
               </li>
             </Checklist>
-            <div className="scopebox">Illustrative sequence only — no parsing or import execution in this preview.</div>
+            <div className="scopebox">This flow is real: files are parsed, dry-run validated, and — on execute — committed as an import batch. Currently scoped to Analytics imports (campaign/content posts and channel/account snapshots) uploaded one file at a time.</div>
           </div>
         </section>
       </div>
