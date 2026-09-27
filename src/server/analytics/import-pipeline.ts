@@ -11,9 +11,11 @@ import { sha256HexBuffer } from "./firestore";
 import { matchPartnerAccountSourceRow } from "./partner-account-matcher";
 import { parseWorkbookBuffer, type ParsedSheet } from "./xlsx-parser";
 import {
+  ANALYTICS_CLASSIFICATION_TO_OUTCOME,
   ANALYTICS_ROW_CLASSIFICATIONS,
   type AnalyticsContentSourceRecordDoc,
   type AnalyticsChannelSourceRecordDoc,
+  type AnalyticsImportRowSummaryDto,
   type AnalyticsReportingPeriod,
   type AnalyticsRowClassification,
   type AnalyticsSheetInventoryEntry,
@@ -51,6 +53,11 @@ export type PipelineRowOutcome = {
   content?: ContentRecordFields;
   channel?: ChannelRecordFields;
   ignoredColumns: string[];
+  // Import Center Completion (spec section 5) - set only when this row's
+  // classification was downgraded to "duplicate": the OTHER batch its
+  // identity already belongs to. Never set for "unchanged" (that IS this
+  // batch).
+  conflictingBatchRef?: string | null;
 };
 
 export type AnalyticsImportPipelineInput = {
@@ -325,11 +332,39 @@ export async function runAnalyticsImportPipeline(
 
     const existing = await checkExistingRow(row.rowIdentityKeyRaw);
     if (!existing.exists) continue;
-    row.classification = existing.batchRef === currentBatchRef ? "unchanged" : "duplicate";
+    if (existing.batchRef === currentBatchRef) {
+      row.classification = "unchanged";
+    } else {
+      row.classification = "duplicate";
+      row.conflictingBatchRef = existing.batchRef;
+    }
   }
 
   const counts = Object.fromEntries(ANALYTICS_ROW_CLASSIFICATIONS.map((c) => [c, 0])) as Record<AnalyticsRowClassification, number>;
   for (const row of rows) counts[row.classification] += 1;
 
   return { totalRows: rows.length, counts, sourceSheetInventory, safeErrorSummary, rows, sourceHash, sourceExtension };
+}
+
+// Import Center Completion (spec section 5): a bounded, browser-safe
+// per-row summary for the Review step - never the full raw record. Used
+// by both dry-run (preview) and the execute result (final outcomes),
+// which is why it lives next to the one shared pipeline rather than in
+// either caller.
+function identityLabelOf(row: PipelineRowOutcome): string | null {
+  if (row.content) return row.content.rawPostUrl ?? row.content.rawPostId ?? row.content.rawUsername ?? null;
+  if (row.channel) return row.channel.rawUsername ?? row.channel.rawProfileUrl ?? row.channel.rawPlatformAccountId ?? null;
+  return null;
+}
+
+export function summarizeRowOutcome(row: PipelineRowOutcome): AnalyticsImportRowSummaryDto {
+  return {
+    sheetName: row.sheetName,
+    sourceRowNumber: row.sourceRowNumber,
+    classification: row.classification,
+    outcome: ANALYTICS_CLASSIFICATION_TO_OUTCOME[row.classification],
+    recordKind: row.recordKind,
+    identityLabel: identityLabelOf(row),
+    conflictingBatchRef: row.conflictingBatchRef ?? null,
+  };
 }

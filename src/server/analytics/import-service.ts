@@ -2,7 +2,8 @@ import { randomUUID } from "node:crypto";
 
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
-import { registerImportTarget } from "@/server/imports/target-registry";
+import { classifyServiceErrorCode, classifySystemError } from "@/server/imports/error-taxonomy";
+import { ImportAdapterError, registerImportTarget } from "@/server/imports/target-registry";
 
 import { requireAnalyticsManageAccess, requireImportsModuleAccess } from "./analytics-gate";
 import {
@@ -18,7 +19,7 @@ import {
   getCompletedAnalyticsImportBatchBySourceHash,
   sha256HexBuffer,
 } from "./firestore";
-import { AnalyticsImportRejectedError, runAnalyticsImportPipeline, type AnalyticsImportPipelineInput, type PipelineRowOutcome } from "./import-pipeline";
+import { AnalyticsImportRejectedError, runAnalyticsImportPipeline, summarizeRowOutcome, type AnalyticsImportPipelineInput, type PipelineRowOutcome } from "./import-pipeline";
 import {
   ANALYTICS_ROW_CLASSIFICATIONS,
   ANALYTICS_TARGET_KINDS,
@@ -27,18 +28,27 @@ import {
   analyticsImportBatchClaimDocSchema,
   analyticsImportBatchDocSchema,
   analyticsInvalidInputResult,
+  analyticsNotFoundResult,
   analyticsUnauthorizedResult,
   analyticsConflictResult,
   type AnalyticsBatchStatus,
   type AnalyticsChannelSourceRecordDoc,
   type AnalyticsContentSourceRecordDoc,
+  type AnalyticsImportAttempt,
   type AnalyticsImportBatchDoc,
+  type AnalyticsImportRowSummaryDto,
   type AnalyticsReportingPeriod,
   type AnalyticsRowClassification,
   type AnalyticsServiceResult,
   type AnalyticsSheetInventoryEntry,
   type AnalyticsTargetKind,
 } from "./types";
+
+// Import Center Completion (spec section 3/5): row-level detail sent to
+// the browser for the File/Sheet Preview and Review steps is always
+// bounded - never the full row set, even though the pipeline itself
+// processes every row server-side.
+const MAX_ROW_DETAIL_ROWS = 500;
 
 // Step 12A section 7-10: dryRunAnalyticsImport / executeAnalyticsImport -
 // both call the exact same runAnalyticsImportPipeline function
@@ -73,6 +83,14 @@ export type AnalyticsImportResultDto = {
   safeErrorSummary: string[];
   status: AnalyticsBatchStatus | null;
   idempotentReplay: boolean;
+  // Import Center Completion (spec section 5/9/10): bounded row-level
+  // detail for Review (dry-run) and Results (execute), plus resume/
+  // quarantine provenance.
+  rows: AnalyticsImportRowSummaryDto[];
+  rowsTruncated: boolean;
+  quarantinedRows: number;
+  attempts: number;
+  attemptHistory: AnalyticsImportAttempt[];
 };
 
 function validateInput(rawInput: AnalyticsImportRawInput): AnalyticsServiceResult<AnalyticsImportPipelineInput> {
@@ -149,6 +167,11 @@ export async function dryRunAnalyticsImport(actor: ActorContext | null, rawInput
         safeErrorSummary: result.safeErrorSummary,
         status: null,
         idempotentReplay: false,
+        rows: result.rows.slice(0, MAX_ROW_DETAIL_ROWS).map(summarizeRowOutcome),
+        rowsTruncated: result.rows.length > MAX_ROW_DETAIL_ROWS,
+        quarantinedRows: 0,
+        attempts: 0,
+        attemptHistory: [],
       },
     };
   } catch (error) {
@@ -221,13 +244,14 @@ async function waitForTerminalBatch(batchUid: string): Promise<AnalyticsImportBa
   return null;
 }
 
-function batchToDto(doc: AnalyticsImportBatchDoc, idempotentReplay: boolean): AnalyticsImportResultDto {
+function batchToDto(doc: AnalyticsImportBatchDoc, idempotentReplay: boolean, rows: AnalyticsImportRowSummaryDto[] = []): AnalyticsImportResultDto {
   const counts = Object.fromEntries(ANALYTICS_ROW_CLASSIFICATIONS.map((c) => [c, 0])) as Record<AnalyticsRowClassification, number>;
   counts.matched = doc.matchedRows;
   counts.unmatched = doc.unmatchedRows;
   counts.ambiguous = doc.ambiguousRows;
   counts.invalid = doc.invalidRows;
   counts.duplicate = doc.duplicateUnchangedRows;
+  counts.quarantined = doc.quarantinedRows;
   return {
     batchRef: doc.batchRef,
     targetKind: doc.targetKind,
@@ -237,7 +261,23 @@ function batchToDto(doc: AnalyticsImportBatchDoc, idempotentReplay: boolean): An
     safeErrorSummary: doc.safeErrorSummary,
     status: doc.status,
     idempotentReplay,
+    rows: rows.slice(0, MAX_ROW_DETAIL_ROWS),
+    rowsTruncated: rows.length > MAX_ROW_DETAIL_ROWS,
+    quarantinedRows: doc.quarantinedRows,
+    attempts: doc.attempts,
+    attemptHistory: doc.attemptHistory,
   };
+}
+
+// Test-only fault seam (same idiom as onboarding-service.ts's
+// setOnboardingFaultHookForTests): lets an emulator test deterministically
+// force a per-row COMMIT failure (never a validation failure) so
+// quarantine/resume behavior can be proven end-to-end without depending
+// on a real, unreproducible Firestore transaction failure.
+let commitFaultHook: ((rowIdentityKeyRaw: string) => boolean) | null = null;
+export function setAnalyticsCommitFaultHookForTests(hook: ((rowIdentityKeyRaw: string) => boolean) | null): void {
+  if (process.env.NODE_ENV !== "test" && !process.env.VITEST) throw new Error("setAnalyticsCommitFaultHookForTests may only be called from a test run.");
+  commitFaultHook = hook;
 }
 
 async function commitContentRow(row: PipelineRowOutcome, batchRef: string): Promise<{ classification: AnalyticsRowClassification; failed: boolean }> {
@@ -249,6 +289,7 @@ async function commitContentRow(row: PipelineRowOutcome, batchRef: string): Prom
   const docRef = analyticsContentSourceRecordsCollection().doc(docId);
 
   try {
+    if (commitFaultHook?.(row.rowIdentityKeyRaw)) throw new Error("Injected test fault (setAnalyticsCommitFaultHookForTests).");
     const finalClassification = await db.runTransaction<AnalyticsRowClassification>(async (tx) => {
       const snap = await tx.get(docRef);
       if (snap.exists) {
@@ -262,7 +303,11 @@ async function commitContentRow(row: PipelineRowOutcome, batchRef: string): Prom
     });
     return { classification: finalClassification, failed: false };
   } catch {
-    return { classification: row.classification, failed: true };
+    // Import Center Completion (spec section 9): a per-row COMMIT failure
+    // (the row classified/validated fine; the write itself failed) is
+    // "quarantined", not silently left at its prior classification - it
+    // is now visibly retryable via resumeAnalyticsImportBatch.
+    return { classification: "quarantined", failed: true };
   }
 }
 
@@ -275,6 +320,7 @@ async function commitChannelRow(row: PipelineRowOutcome, batchRef: string): Prom
   const docRef = analyticsChannelSourceRecordsCollection().doc(docId);
 
   try {
+    if (commitFaultHook?.(row.rowIdentityKeyRaw)) throw new Error("Injected test fault (setAnalyticsCommitFaultHookForTests).");
     const finalClassification = await db.runTransaction<AnalyticsRowClassification>(async (tx) => {
       const snap = await tx.get(docRef);
       if (snap.exists) {
@@ -288,7 +334,7 @@ async function commitChannelRow(row: PipelineRowOutcome, batchRef: string): Prom
     });
     return { classification: finalClassification, failed: false };
   } catch {
-    return { classification: row.classification, failed: true };
+    return { classification: "quarantined", failed: true };
   }
 }
 
@@ -364,6 +410,7 @@ export async function executeAnalyticsImport(actor: ActorContext | null, rawInpu
 
     const finalCounts = Object.fromEntries(ANALYTICS_ROW_CLASSIFICATIONS.map((c) => [c, 0])) as Record<AnalyticsRowClassification, number>;
     for (const row of result.rows) finalCounts[row.classification] += 1;
+    const quarantinedRows = finalCounts.quarantined;
 
     const folded = foldCounts(finalCounts);
     const successCount = result.totalRows - folded.invalidRows - failedRows;
@@ -393,12 +440,15 @@ export async function executeAnalyticsImport(actor: ActorContext | null, rawInpu
       invalidRows: folded.invalidRows,
       duplicateUnchangedRows: folded.duplicateUnchangedRows,
       failedRows,
+      quarantinedRows,
+      attempts: 1,
+      attemptHistory: [{ attemptNumber: 1, kind: "EXECUTE", at: now, status, totalRows: result.totalRows, quarantinedRows }],
       sourceSheetInventory: result.sourceSheetInventory,
       safeErrorSummary: result.safeErrorSummary,
     });
     await analyticsImportBatchesCollection().doc(claim.batchUid).set(finalBatchDoc);
 
-    return { ok: true, data: { ...batchToDto(finalBatchDoc, false), counts: finalCounts } };
+    return { ok: true, data: { ...batchToDto(finalBatchDoc, false, result.rows.map(summarizeRowOutcome)), counts: finalCounts } };
   } catch (error) {
     const now = new Date().toISOString();
     const message = error instanceof AnalyticsImportRejectedError ? error.message : "The import could not be processed.";
@@ -434,37 +484,164 @@ export async function executeAnalyticsImport(actor: ActorContext | null, rawInpu
   }
 }
 
+// ---- Resume (Import Center Completion, spec section 9) --------------------
+// Retries ONLY the rows that were quarantined by a prior execute/resume
+// attempt against this exact batch - never a new batch, never a
+// duplicated row. The actor re-uploads the EXACT same source file (the
+// sourceHash must match the original batch's) so the pipeline can
+// deterministically recompute the exact same rows; rows already
+// committed under this batchRef are recognized as "unchanged" by the
+// SAME checkExistingRow lookup execute always uses (their commit is then
+// skipped, exactly as in a normal execute), so resume can safely reuse
+// runAnalyticsImportPipeline / commitContentRow / commitChannelRow
+// unchanged - there is no second, resume-specific commit path.
+export type AnalyticsResumeRawInput = {
+  batchRef: unknown;
+  fileBuffer: Buffer;
+  filename: unknown;
+  mimeType: unknown;
+  channelPlatform?: string | null;
+};
+
+export async function resumeAnalyticsImportBatch(actor: ActorContext | null, rawInput: AnalyticsResumeRawInput, requestId: string): Promise<AnalyticsServiceResult<AnalyticsImportResultDto>> {
+  void requestId;
+  const moduleGate = await requireImportsModuleAccess(actor);
+  if (!moduleGate.ok) return analyticsUnauthorizedResult(moduleGate.reason);
+  const targetGate = await requireAnalyticsManageAccess(actor);
+  if (!targetGate.ok) return analyticsUnauthorizedResult(targetGate.reason);
+
+  if (typeof rawInput.batchRef !== "string" || rawInput.batchRef.length === 0) return analyticsInvalidInputResult("Missing batchRef to resume.");
+  if (!Buffer.isBuffer(rawInput.fileBuffer)) return analyticsInvalidInputResult("Missing file.");
+  if (typeof rawInput.filename !== "string" || rawInput.filename.length === 0) return analyticsInvalidInputResult("Missing filename.");
+  if (typeof rawInput.mimeType !== "string" || rawInput.mimeType.length === 0) return analyticsInvalidInputResult("Missing MIME type.");
+
+  const original = await getAnalyticsImportBatchByRef(rawInput.batchRef);
+  if (!original) return analyticsNotFoundResult("Import batch not found.");
+  // A batch with EVERY row quarantined is classified FAILED (zero rows
+  // succeeded), not COMPLETED_WITH_ERRORS - both are resumable as long as
+  // there is at least one quarantined row; only a batch with none
+  // (nothing to retry) or a still-running batch is refused.
+  if ((original.status !== "COMPLETED_WITH_ERRORS" && original.status !== "FAILED") || original.quarantinedRows <= 0) {
+    return analyticsInvalidInputResult("This batch has no quarantined rows to resume - only a COMPLETED_WITH_ERRORS or FAILED batch with at least one quarantined row can be resumed.");
+  }
+
+  const sourceHash = sha256HexBuffer(rawInput.fileBuffer);
+  if (sourceHash !== original.sourceHash) {
+    return analyticsInvalidInputResult("The file you uploaded does not match the original import's file - resume requires re-uploading the exact same source file.");
+  }
+  if (original.targetKind === "channel_account" && !rawInput.channelPlatform) {
+    return analyticsInvalidInputResult("channelPlatform is required to resume a channel_account import.");
+  }
+
+  const input: AnalyticsImportPipelineInput = {
+    targetKind: original.targetKind,
+    fileBuffer: rawInput.fileBuffer,
+    filename: rawInput.filename,
+    mimeType: rawInput.mimeType,
+    reportingPeriod: original.reportingPeriod,
+    channelPlatform: rawInput.channelPlatform ?? null,
+  };
+
+  let result;
+  try {
+    result = await runAnalyticsImportPipeline(input, (key) => readOnlyExistingRowLookup(original.targetKind, key), original.batchRef);
+  } catch (error) {
+    if (error instanceof AnalyticsImportRejectedError) return analyticsInvalidInputResult(error.message);
+    throw error;
+  }
+
+  let failedRows = 0;
+  for (const row of result.rows) {
+    if (row.recordKind === "content") {
+      const outcome = await commitContentRow(row, original.batchRef);
+      row.classification = outcome.classification;
+      if (outcome.failed) failedRows += 1;
+    } else if (row.recordKind === "channel") {
+      const outcome = await commitChannelRow(row, original.batchRef);
+      row.classification = outcome.classification;
+      if (outcome.failed) failedRows += 1;
+    }
+  }
+
+  const finalCounts = Object.fromEntries(ANALYTICS_ROW_CLASSIFICATIONS.map((c) => [c, 0])) as Record<AnalyticsRowClassification, number>;
+  for (const row of result.rows) finalCounts[row.classification] += 1;
+  const quarantinedRows = finalCounts.quarantined;
+
+  const folded = foldCounts(finalCounts);
+  const successCount = result.totalRows - folded.invalidRows - failedRows;
+  const status: AnalyticsBatchStatus = result.totalRows === 0 || successCount === result.totalRows ? "COMPLETED" : successCount <= 0 ? "FAILED" : "COMPLETED_WITH_ERRORS";
+
+  const now = new Date().toISOString();
+  const attemptNumber = original.attempts + 1;
+  const updatedDoc: AnalyticsImportBatchDoc = analyticsImportBatchDocSchema.parse({
+    ...original,
+    completedAt: now,
+    status,
+    totalRows: result.totalRows,
+    actionableRows: result.totalRows - folded.invalidRows,
+    matchedRows: folded.matchedRows,
+    unmatchedRows: folded.unmatchedRows,
+    ambiguousRows: folded.ambiguousRows,
+    invalidRows: folded.invalidRows,
+    duplicateUnchangedRows: folded.duplicateUnchangedRows,
+    failedRows,
+    quarantinedRows,
+    attempts: attemptNumber,
+    attemptHistory: [...original.attemptHistory, { attemptNumber, kind: "RESUME" as const, at: now, status, totalRows: result.totalRows, quarantinedRows }],
+    sourceSheetInventory: result.sourceSheetInventory,
+    safeErrorSummary: result.safeErrorSummary,
+  });
+  await analyticsImportBatchesCollection().doc(original.uid).set(updatedDoc);
+
+  return { ok: true, data: { ...batchToDto(updatedDoc, false, result.rows.map(summarizeRowOutcome)), counts: finalCounts } };
+}
+
 // ---- Import Center target registration ---------------------------------
 // Registers Analytics under the generic Import Center target registry
 // (see @/server/imports/target-registry.ts). Called once, from a module
 // side-effect import in the API route wiring (see
 // src/app/api/imports/dry-run/route.ts) - idempotent to call more than
 // once (re-registering simply overwrites the same entry).
+function toGenericRows(rows: AnalyticsImportRowSummaryDto[]) {
+  return rows.map((row) => ({
+    sheetName: row.sheetName,
+    sourceRowNumber: row.sourceRowNumber,
+    classification: row.classification,
+    outcome: row.outcome,
+    identityLabel: row.identityLabel,
+    detail: row.conflictingBatchRef ? `Conflicts with batch ${row.conflictingBatchRef}` : null,
+  }));
+}
+
 export function registerAnalyticsImportTarget(): void {
   registerImportTarget({
     kind: "analytics",
     label: "Analytics",
     dryRun: async (actor, file, options, requestId) => {
       const result = await dryRunAnalyticsImport(actor, { ...(options as object), fileBuffer: file.buffer, filename: file.filename, mimeType: file.mimeType } as AnalyticsImportRawInput, requestId);
-      if (!result.ok) throw new Error(result.message);
+      if (!result.ok) throw new ImportAdapterError(classifyServiceErrorCode(result.code, result.message));
       return {
         batchRef: result.data.batchRef,
         totalRows: result.data.totalRows,
         counts: result.data.counts,
         safeErrorSummary: result.data.safeErrorSummary,
         sourceSheetInventory: result.data.sourceSheetInventory,
+        rows: toGenericRows(result.data.rows),
+        rowsTruncated: result.data.rowsTruncated,
       };
     },
     execute: async (actor, file, options, requestId) => {
       const result = await executeAnalyticsImport(actor, { ...(options as object), fileBuffer: file.buffer, filename: file.filename, mimeType: file.mimeType } as AnalyticsImportRawInput, requestId);
-      if (!result.ok) throw new Error(result.message);
-      if (!result.data.batchRef) throw new Error("Execute did not produce a batchRef.");
+      if (!result.ok) throw new ImportAdapterError(classifyServiceErrorCode(result.code, result.message));
+      if (!result.data.batchRef) throw new ImportAdapterError(classifySystemError());
       return {
         batchRef: result.data.batchRef,
         totalRows: result.data.totalRows,
         counts: result.data.counts,
         safeErrorSummary: result.data.safeErrorSummary,
         sourceSheetInventory: result.data.sourceSheetInventory,
+        rows: toGenericRows(result.data.rows),
+        rowsTruncated: result.data.rowsTruncated,
         status: result.data.status ?? "COMPLETED",
       };
     },

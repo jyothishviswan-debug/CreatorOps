@@ -1,10 +1,22 @@
+import { NextResponse } from "next/server";
+
 import { listAnalyticsImportBatches } from "@/server/analytics/import-history-service";
 import { resolveRequestActor, toAnalyticsHttpResponse } from "@/server/analytics/http";
+import { listContractBundleImportBatches } from "@/server/imports/contract-bundle-import";
 
-// GET /api/imports/batches - Import History list (Section 16).
+// GET /api/imports/batches?module=analytics|contract_bundle - Import
+// History list (Section 16 / Import Center Completion section 11).
 export async function GET(request: Request) {
   const actor = await resolveRequestActor();
   const url = new URL(request.url);
+  const moduleKey = url.searchParams.get("module") ?? "analytics";
+
+  if (moduleKey === "contract_bundle") {
+    const limitParam = url.searchParams.get("limit");
+    const result = await listContractBundleImportBatches(actor, limitParam ? Number(limitParam) : undefined);
+    if (!result.ok) return NextResponse.json({ error: result.message }, { status: 403 });
+    return NextResponse.json({ batches: result.data });
+  }
 
   const limitParam = url.searchParams.get("limit");
   const targetKind = url.searchParams.get("targetKind") ?? undefined;

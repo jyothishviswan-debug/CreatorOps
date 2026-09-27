@@ -1,6 +1,6 @@
 import * as XLSX from "xlsx";
 
-import { MAX_IMPORT_ROWS_PER_BATCH, MAX_IMPORT_SHEETS_PER_FILE } from "@/server/imports/file-safety";
+import { MAX_IMPORT_CELL_CHARS, MAX_IMPORT_DECOMPRESSED_CHARS, MAX_IMPORT_ROWS_PER_BATCH, MAX_IMPORT_SHEETS_PER_FILE } from "@/server/imports/file-safety";
 import type { RawSheetRow } from "./adapters/shared";
 
 // Step 12A: the one shared spreadsheet-parsing boundary. Reads cell
@@ -27,7 +27,7 @@ function readHeaders(worksheet: XLSX.WorkSheet): string[] {
   return headers;
 }
 
-export function parseWorkbookBuffer(buffer: Buffer): ParseWorkbookResult {
+export function parseWorkbookBuffer(buffer: Buffer, options: { includeBlankRows?: boolean } = {}): ParseWorkbookResult {
   let workbook: XLSX.WorkBook;
   try {
     // cellFormula: false - never retain/trust a cell's own formula text,
@@ -50,16 +50,45 @@ export function parseWorkbookBuffer(buffer: Buffer): ParseWorkbookResult {
 
   const sheets: ParsedSheet[] = [];
   let totalRows = 0;
+  // Decompression-bomb defense (Import Center Completion, spec section
+  // 14): a running total of every character read out of every cell in
+  // the workbook, across every sheet - independent of row/sheet COUNT,
+  // this is what actually catches a "few rows, gigantic cells" shape
+  // that the row/sheet caps below would otherwise miss entirely.
+  let decompressedChars = 0;
 
   for (const sheetName of sheetNames) {
     const worksheet = workbook.Sheets[sheetName];
     if (!worksheet) continue;
 
     const headers = readHeaders(worksheet);
+    for (const header of headers) decompressedChars += header.length;
+
     // defval: null - a blank cell always becomes `null`, never coerced
     // to "" or `0`; raw: true - cell VALUES only, never formatted
-    // display strings, and never a formula.
-    const rows = XLSX.utils.sheet_to_json<RawSheetRow>(worksheet, { defval: null, raw: true });
+    // display strings, and never a formula. blankrows defaults to false
+    // (SheetJS's own default: a wholly-blank row is silently dropped),
+    // which is exactly the behavior every existing caller (the Analytics
+    // pipeline) already depends on; the Import Center Completion
+    // File/Sheet Preview step (preview.ts) is the one caller that opts
+    // into `includeBlankRows: true`, since detecting/reporting blank and
+    // trailing rows is its own explicit job (spec section 3) and it
+    // would otherwise never see them at all.
+    const rows = XLSX.utils.sheet_to_json<RawSheetRow>(worksheet, { defval: null, raw: true, blankrows: options.includeBlankRows === true });
+
+    for (const row of rows) {
+      for (const key of Object.keys(row)) {
+        const value = (row as Record<string, unknown>)[key];
+        if (typeof value !== "string") continue;
+        if (value.length > MAX_IMPORT_CELL_CHARS) {
+          return { ok: false, reasonCode: "CELL_VALUE_TOO_LARGE", message: `A cell in sheet "${sheetName}" exceeds the ${MAX_IMPORT_CELL_CHARS.toLocaleString()}-character import limit.` };
+        }
+        decompressedChars += value.length;
+        if (decompressedChars > MAX_IMPORT_DECOMPRESSED_CHARS) {
+          return { ok: false, reasonCode: "DECOMPRESSION_LIMIT_EXCEEDED", message: "This file expands to far more data than the import limit allows (possible decompression bomb)." };
+        }
+      }
+    }
 
     totalRows += rows.length;
     sheets.push({ sheetName, headers, rows });

@@ -52,6 +52,28 @@ describe("parseWorkbookBuffer", () => {
     expect(result.sheets[0]!.rows[0]!.Comments).toBe(99);
   });
 
+  it("rejects a single cell exceeding the per-cell character limit (Import Center Completion, spec section 14)", () => {
+    const buffer = bufferFromRows("Posts", [["Caption"], ["x".repeat(20_001)]]);
+    const result = parseWorkbookBuffer(buffer);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reasonCode).toBe("CELL_VALUE_TOO_LARGE");
+  });
+
+  it("rejects a workbook whose total decompressed text exceeds the decompression-bomb ceiling", () => {
+    // Many rows, each with a large-but-individually-legal cell - the
+    // per-cell cap alone would pass every single cell; the RUNNING
+    // TOTAL across all of them is what must catch this shape.
+    const rows: unknown[][] = [["Caption"]];
+    const cell = "y".repeat(19_000);
+    for (let i = 0; i < 1400; i++) rows.push([cell]);
+    const buffer = bufferFromRows("Posts", rows);
+    const result = parseWorkbookBuffer(buffer);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reasonCode).toBe("DECOMPRESSION_LIMIT_EXCEEDED");
+  });
+
   it("rejects a corrupt zip-like buffer instead of throwing", () => {
     // A truncated/corrupt ZIP (the .xlsx container format) - the library
     // sniffs the "PK" magic bytes, attempts to unzip, and fails; a plain

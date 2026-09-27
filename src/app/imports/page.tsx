@@ -1,8 +1,9 @@
 import { AppShell } from "@/ui/AppShell";
-import { Icon } from "@/ui/icons";
-import { Checklist } from "@/ui/Form";
-import { ImportCenterPanel } from "@/features/imports/ImportCenterPanel";
+import { ImportCenterTabs } from "@/features/imports/ImportCenterTabs";
 
+// Import Center Completion: the governed Choose Data -> Upload -> Preview
+// -> Mapping (conditional) -> Review -> Import -> Results -> History flow.
+// See docs/CREATOROPS_CONTINUITY.md for the full feature status.
 export default function ImportsPage() {
   return (
     <AppShell>
@@ -15,34 +16,12 @@ export default function ImportsPage() {
       </div>
 
       <div className="grid">
-        <section className="panel s8">
+        <section className="panel s12">
           <div className="panelhead">
-            <h2>Analytics import</h2>
+            <h2>Import</h2>
           </div>
           <div className="panelbody">
-            <ImportCenterPanel />
-          </div>
-        </section>
-        <section className="panel s4">
-          <div className="panelhead">
-            <h2>Governed import steps</h2>
-          </div>
-          <div className="panelbody">
-            <Checklist>
-              <li>
-                <Icon name="check" /> Upload a source file
-              </li>
-              <li>
-                <Icon name="check" /> Validate against canonical fields
-              </li>
-              <li>
-                <Icon name="check" /> Review exceptions before committing
-              </li>
-              <li>
-                <Icon name="check" /> Confirm the import run
-              </li>
-            </Checklist>
-            <div className="scopebox">This flow is real: files are parsed, dry-run validated, and — on execute — committed as an import batch. Currently scoped to Analytics imports (campaign/content posts and channel/account snapshots) uploaded one file at a time.</div>
+            <ImportCenterTabs />
           </div>
         </section>
       </div>

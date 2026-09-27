@@ -69,6 +69,22 @@ export const analyticsSheetInventoryEntrySchema = z
   .strict();
 export type AnalyticsSheetInventoryEntry = z.infer<typeof analyticsSheetInventoryEntrySchema>;
 
+// Import Center Completion (spec section 9-11): one bounded attempt-
+// history entry per execute/resume call against this batch - preserved,
+// never overwritten, so a resumed batch's provenance shows every attempt
+// that ran against it, not just the latest.
+export const analyticsImportAttemptSchema = z
+  .object({
+    attemptNumber: z.number().int().min(1),
+    kind: z.enum(["EXECUTE", "RESUME"]),
+    at: z.string().min(1),
+    status: analyticsBatchStatusSchema,
+    totalRows: z.number().int().min(0),
+    quarantinedRows: z.number().int().min(0),
+  })
+  .strict();
+export type AnalyticsImportAttempt = z.infer<typeof analyticsImportAttemptSchema>;
+
 export const analyticsImportBatchDocSchema = z.object({
   uid: z.string().min(1),
   batchRef: z.string().min(1),
@@ -92,6 +108,17 @@ export const analyticsImportBatchDocSchema = z.object({
   invalidRows: z.number().int().min(0),
   duplicateUnchangedRows: z.number().int().min(0),
   failedRows: z.number().int().min(0),
+  // Import Center Completion (spec section 9): rows whose commit failed
+  // at execute time (a transient per-row write failure, NOT a validation
+  // failure) are "quarantined" - retryable via resumeAnalyticsImportBatch
+  // without re-processing rows already committed. Kept as its own counter
+  // alongside failedRows (which it is always equal to going forward) so
+  // older batch docs written before this field existed still parse
+  // (default 0) without implying every one of their failedRows was
+  // quarantine-eligible.
+  quarantinedRows: z.number().int().min(0).default(0),
+  attempts: z.number().int().min(1).default(1),
+  attemptHistory: z.array(analyticsImportAttemptSchema).max(50).default([]),
   sourceSheetInventory: z.array(analyticsSheetInventoryEntrySchema).max(50).default([]),
   // Bounded, safe/sanitized messages only - never a raw stack trace or
   // filesystem path.
@@ -285,8 +312,57 @@ export type AnalyticsReadModelSnapshotDoc = z.infer<typeof analyticsReadModelSna
 // recognized, non-duplicate row) - documented honestly here and in the
 // completion report, same treatment as the content-AMBIGUOUS branch (see
 // content-matcher.ts).
-export const ANALYTICS_ROW_CLASSIFICATIONS = ["ready", "warning", "unchanged", "duplicate", "invalid", "missing_dependency", "matched", "unmatched", "ambiguous"] as const;
+// Import Center Completion adds a tenth, genuinely new terminal value -
+// "quarantined" - for a row whose commit FAILED at execute time (a
+// per-row write failure after a successful classification, never a
+// validation failure; see import-service.ts's commitContentRow/
+// commitChannelRow). None of the original nine values covers this case:
+// it is not "invalid" (the row was valid and classified fine) and not
+// "missing_dependency" (nothing was missing) - it is its own retryable-
+// via-resume state. See resumeAnalyticsImportBatch.
+export const ANALYTICS_ROW_CLASSIFICATIONS = ["ready", "warning", "unchanged", "duplicate", "invalid", "missing_dependency", "matched", "unmatched", "ambiguous", "quarantined"] as const;
 export type AnalyticsRowClassification = (typeof ANALYTICS_ROW_CLASSIFICATIONS)[number];
+
+// --- UI-facing outcome taxonomy (spec section 5) ---------------------------
+// A pure DISPLAY-level grouping over the nine/ten real classifications
+// above - never stored, never used for matching/commit logic. Lets the
+// Review UI speak the frozen master's own vocabulary
+// (CREATE/UPDATE/UNCHANGED/SKIP/WARNING/ERROR/AMBIGUOUS/CONFLICT/
+// QUARANTINED) without renaming a single stored value.
+export const ANALYTICS_ROW_OUTCOME_GROUPS = ["CREATE", "UNCHANGED", "WARNING", "ERROR", "AMBIGUOUS", "QUARANTINED"] as const;
+export type AnalyticsRowOutcomeGroup = (typeof ANALYTICS_ROW_OUTCOME_GROUPS)[number];
+
+export const ANALYTICS_CLASSIFICATION_TO_OUTCOME: Record<AnalyticsRowClassification, AnalyticsRowOutcomeGroup> = {
+  ready: "CREATE",
+  matched: "CREATE",
+  unmatched: "WARNING",
+  warning: "WARNING",
+  duplicate: "UNCHANGED",
+  unchanged: "UNCHANGED",
+  ambiguous: "AMBIGUOUS",
+  invalid: "ERROR",
+  missing_dependency: "ERROR",
+  quarantined: "QUARANTINED",
+};
+
+// A bounded, browser-safe per-row summary for the Review step (spec
+// section 5) - never the full raw record (Analytics source records carry
+// no restricted/KYC data, but stay bounded/summarized regardless, per the
+// "never thousands of rows to the browser" preview discipline).
+export type AnalyticsImportRowSummaryDto = {
+  sheetName: string;
+  sourceRowNumber: number;
+  classification: AnalyticsRowClassification;
+  outcome: AnalyticsRowOutcomeGroup;
+  recordKind: "content" | "channel" | null;
+  // A short, human-safe identity label for the row (never a raw ref/uid) -
+  // e.g. the post URL/id, or the account handle.
+  identityLabel: string | null;
+  // Set only for "duplicate" rows - the OTHER batch this row's identity
+  // already belongs to, the closest safe stand-in for a current->proposed
+  // diff this append-only ingestion model supports.
+  conflictingBatchRef: string | null;
+};
 
 // --- Result/error plumbing - mirrors Content's/Assignments' own exactly --
 export type AnalyticsDenialReason = "not_authenticated" | "feature_denied" | "action_denied" | "scope_denied";

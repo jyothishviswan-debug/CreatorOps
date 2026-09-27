@@ -918,6 +918,101 @@ export default function FoundationPage() {
         </article>
       </div>
 
+      <SectionLabel
+        n="10"
+        title="Import Center governed flow pattern"
+        desc="Choose Data → Upload → File/Sheet Preview → Mapping (conditional) → Validation & Diff / Review → Import → Results → History/Provenance. New in the Import Center Completion stage: the golden master has no Import Center entry at all, so this section documents the whole pattern from scratch, built from the same tokens, panels and controls as everywhere else. One governed substrate (src/server/imports/target-registry.ts) with domain adapters - Analytics (the existing, preserved pipeline) and a higher-risk contract-bundle adapter that creates Partner/Vendor/Agreement records ONLY through the existing Agreement-led onboarding orchestration, never a bespoke write."
+      />
+      <div className="grid">
+        <DocPanel title="Choose Data" sub="Target/adapter, description, permission & sensitivity implications - never an internal adapter id as the primary label" span={6}>
+          <div className="fields">
+            <div className="field">
+              <label>Import target</label>
+              <select disabled>
+                <option>Analytics</option>
+              </select>
+              <small>Campaign/Content posts or Channel/Account snapshots, matched deterministically against canonical Content and Partner Account records.</small>
+            </div>
+          </div>
+        </DocPanel>
+        <DocPanel title="Upload → Preview" sub="Bounded sample rows, sheet inventory, parse warnings - never thousands of rows to the browser" span={6}>
+          <div className="tablewrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Post ID</th>
+                  <th>Post URL</th>
+                  <th>Comments</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td>—</td>
+                  <td>https://instagram.com/p/example</td>
+                  <td>12</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <div className="recordmeta" style={{ marginTop: 8 }}>
+            <span>1 sheet</span>
+            <span>Showing 1 of 240 rows</span>
+          </div>
+        </DocPanel>
+        <DocPanel title="Validation & Diff / Review" sub="Every classification a real, bounded row can end up as - filterable, never a raw count with no detail" span={12}>
+          <div className="fields">
+            <div className="field">
+              <Pill tone="blue">Will create: 118</Pill>
+            </div>
+            <div className="field">
+              <Pill tone="gray">Already imported: 40</Pill>
+            </div>
+            <div className="field">
+              <Pill tone="orange">Warning: 6</Pill>
+            </div>
+            <div className="field">
+              <Pill tone="purple">Needs review: 3</Pill>
+            </div>
+            <div className="field">
+              <Pill tone="red">Blocking error: 2</Pill>
+            </div>
+            <div className="field">
+              <Pill tone="orange">Retryable: 1</Pill>
+            </div>
+          </div>
+          <div className="banner" style={{ marginTop: 12 }}>
+            <Icon name="alert" />
+            <span>
+              <b>Review is mandatory before any mutation.</b> Import stays disabled until the counts above are explicitly acknowledged, and again disables itself the moment the selected file changes - a stale review always forces a new one.
+            </span>
+          </div>
+        </DocPanel>
+      </div>
+
+      <div className="stategrid" style={{ marginTop: 18 }}>
+        <article className="statecard">
+          <span className="tile purple">
+            <Icon name="shield" />
+          </span>
+          <h3>Classified errors, never a generic banner</h3>
+          <p>File / Structure / Row / Authorization / System - each with a safe, actionable message and a correctable flag. Never a raw Firebase error, stack trace, auth uid, or restricted value.</p>
+        </article>
+        <article className="statecard">
+          <span className="tile blue">
+            <Icon name="clock" />
+          </span>
+          <h3>Quarantine &amp; resume</h3>
+          <p>A per-row commit failure is quarantined, not silently dropped or re-attempted as a duplicate. Resume retries only the quarantined rows, under the SAME batch identity, re-authorizing and re-validating first.</p>
+        </article>
+        <article className="statecard">
+          <span className="tile">
+            <Icon name="lock" />
+          </span>
+          <h3>No name-only destructive merge</h3>
+          <p>The contract-bundle adapter identifies a Partner/Vendor through the same live duplicate/scope checks Agreement-led onboarding already uses - a likely-duplicate row is reported for manual review, never force-created or silently merged.</p>
+        </article>
+      </div>
+
       <DialogShell
         open={dialogOpen}
         title="Review before saving"

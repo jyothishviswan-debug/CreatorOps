@@ -25,10 +25,13 @@ describe("computeRowIdentityKey - deterministic row identity (Section 10)", () =
   });
 });
 
-describe("ANALYTICS_ROW_CLASSIFICATIONS - the closed nine-value set", () => {
-  it("is exactly the nine documented terminal classifications", () => {
+describe("ANALYTICS_ROW_CLASSIFICATIONS - the closed ten-value set", () => {
+  it("is exactly the ten documented terminal classifications", () => {
+    // Import Center Completion added "quarantined" (a per-row COMMIT
+    // failure at execute time, retryable via resumeAnalyticsImportBatch) -
+    // the one genuinely new state the original nine did not cover.
     expect([...ANALYTICS_ROW_CLASSIFICATIONS].sort()).toEqual(
-      ["ready", "warning", "unchanged", "duplicate", "invalid", "missing_dependency", "matched", "unmatched", "ambiguous"].sort(),
+      ["ready", "warning", "unchanged", "duplicate", "invalid", "missing_dependency", "matched", "unmatched", "ambiguous", "quarantined"].sort(),
     );
   });
 
@@ -37,7 +40,7 @@ describe("ANALYTICS_ROW_CLASSIFICATIONS - the closed nine-value set", () => {
     // except "ready" (see types.ts's own comment: not reachable under
     // the two shipped adapters today, same honest treatment as content
     // AMBIGUOUS).
-    const classifications = ["matched", "matched", "unmatched", "ambiguous", "invalid", "missing_dependency", "duplicate", "unchanged", "warning"] as const;
+    const classifications = ["matched", "matched", "unmatched", "ambiguous", "invalid", "missing_dependency", "duplicate", "unchanged", "warning", "quarantined"] as const;
     const counts = Object.fromEntries(ANALYTICS_ROW_CLASSIFICATIONS.map((c) => [c, 0])) as Record<string, number>;
     for (const c of classifications) counts[c] += 1;
     const total = Object.values(counts).reduce((sum, n) => sum + n, 0);

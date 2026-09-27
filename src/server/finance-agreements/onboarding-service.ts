@@ -167,7 +167,12 @@ function existingCounterpartyInput(input: OnboardingInput, partnerAccountRefs?: 
   return input.type === "PARTNER" ? { type: "PARTNER", partnerRef: input.duplicateDecision.ref, ...(partnerAccountRefs && partnerAccountRefs.length > 0 ? { partnerAccountRefs } : {}) } : { type: "VENDOR", vendorRef: input.duplicateDecision.ref };
 }
 
-async function validateNewOnboarding(actor: ActorContext, input: OnboardingInput, profile: NormalizedProfile, deps: OnboardingDuplicateDeps | undefined): Promise<FinanceAgreementsErrorResult | null> {
+// Exported (not just used internally) for the contract-bundle Import
+// Center adapter's own DRY-RUN preflight (spec section 12) - it needs the
+// exact same rights + live-scope + canonical duplicate-check logic this
+// command itself uses before ever touching the ledger, so a bulk import's
+// preview never re-derives (and risks drifting from) this decision.
+export async function validateNewOnboarding(actor: ActorContext, input: OnboardingInput, profile: NormalizedProfile, deps: OnboardingDuplicateDeps | undefined): Promise<FinanceAgreementsErrorResult | null> {
   const creating = input.duplicateDecision.kind === "CREATE_NEW";
   const accounts = input.accounts ?? [];
 

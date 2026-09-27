@@ -129,6 +129,9 @@ export async function seedAnalyticsData(): Promise<void> {
       invalidRows: 0,
       duplicateUnchangedRows: 0,
       failedRows: 0,
+      quarantinedRows: 0,
+      attempts: 1,
+      attemptHistory: [],
       sourceSheetInventory: [],
       safeErrorSummary: [],
     };

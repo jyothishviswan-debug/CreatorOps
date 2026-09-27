@@ -13,6 +13,25 @@ export const MAX_IMPORT_FILE_BYTES = 10 * 1024 * 1024; // 10 MB
 export const MAX_IMPORT_ROWS_PER_BATCH = 5000;
 export const MAX_IMPORT_SHEETS_PER_FILE = 20;
 
+// Import Center Completion (decompression-bomb / oversized-field defense -
+// see AGENTS spec section 14): a workbook is a ZIP container, so its
+// in-memory decompressed size can vastly exceed its on-disk (compressed)
+// size. MAX_IMPORT_FILE_BYTES already bounds the COMPRESSED upload; these
+// two additional limits bound what parsing is allowed to materialize -
+// enforced in xlsx-parser.ts, which is the only place cell text is ever
+// read out of a workbook.
+//
+// MAX_IMPORT_CELL_CHARS - a single cell's text is never trusted past this
+// length (defends against one enormous string cell used to blow up
+// memory/rendering/export without needing many rows at all).
+export const MAX_IMPORT_CELL_CHARS = 20_000;
+// MAX_IMPORT_DECOMPRESSED_CHARS - the running total of characters read out
+// of EVERY cell in the workbook. A conservative absolute ceiling
+// (independent of the row/sheet counts above, which only bound row/sheet
+// COUNT, not per-cell payload size) - this is what actually stops a
+// pathological "few rows, gigantic cells" decompression-bomb shape.
+export const MAX_IMPORT_DECOMPRESSED_CHARS = 25_000_000; // ~25 MB of text
+
 // Accepted spreadsheet extensions/MIME types - deliberately narrow. Any
 // macro-carrying workbook extension (.xlsm/.xlsb) is rejected outright at
 // this level, before a single byte is parsed by the xlsx library.
