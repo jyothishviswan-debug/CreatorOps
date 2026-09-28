@@ -3,7 +3,8 @@
 import { useRef, useState } from "react";
 
 import { formatFileSize, formatSignedMoneyMinor } from "../format";
-import { emptyTaxLine, payeeIdentityExtractionNote, type AppliedExtractionKey, type InvoiceDetailsForm, type TaxLineDraft } from "./create-view";
+import { emptyTaxLine, invoiceOcrStatusNote, payeeIdentityExtractionNote, type AppliedExtractionKey, type InvoiceDetailsForm, type TaxLineDraft } from "./create-view";
+import type { InvoiceExtractionSourceDto } from "@/server/finance-invoices/client-dto";
 import type { PreviewInvoiceEligibilityDto } from "@/server/finance-invoices/invoice-service";
 
 export type StagedDocument = { fileName: string; sizeBytes: number; contentBase64: string; previewUrl: string };
@@ -51,6 +52,8 @@ export function InvoiceDetailsStep({
   extractionStatus = "idle",
   appliedExtractionKeys = new Set(),
   extractionError = null,
+  extractionSource = null,
+  needsReviewKeys = new Set(),
 }: {
   form: InvoiceDetailsForm;
   onChange: (change: Partial<InvoiceDetailsForm>) => void;
@@ -65,6 +68,11 @@ export function InvoiceDetailsStep({
   // AppliedExtractionKey's own doc comment in create-view.ts).
   appliedExtractionKeys?: ReadonlySet<AppliedExtractionKey>;
   extractionError?: string | null;
+  // OCR Completion stage (spec section 21/22): real, safe provenance from the server - never a raw
+  // percentage, never raw OCR text.
+  extractionSource?: InvoiceExtractionSourceDto | null;
+  // Field keys the server capped at LOW/UNKNOWN confidence - never silently treated as verified.
+  needsReviewKeys?: ReadonlySet<string>;
 }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [uploadError, setUploadError] = useState<string | null>(null);
@@ -73,6 +81,7 @@ export function InvoiceDetailsStep({
   // claims a match/mismatch result itself, only that the check will run).
   const extractionCompleted = extractionStatus === "EXTRACTED" || extractionStatus === "PARTIAL" || extractionStatus === "MANUAL_REVIEW_REQUIRED";
   const payeeNote = payeeIdentityExtractionNote({ extractionCompleted, supplierNameApplied: appliedExtractionKeys.has("supplierName"), expectedCounterpartyName: preview?.counterpartyDisplayName ?? null });
+  const ocrNote = invoiceOcrStatusNote(extractionSource, extractionCompleted ? (extractionStatus as "EXTRACTED" | "PARTIAL" | "MANUAL_REVIEW_REQUIRED") : null);
 
   function updateTaxLine(key: string, change: Partial<TaxLineDraft>) {
     onChange({ taxLines: form.taxLines.map((line) => (line.key === key ? { ...line, ...change } : line)) });
@@ -102,12 +111,22 @@ export function InvoiceDetailsStep({
     onStageDocument({ fileName: file.name, sizeBytes: file.size, contentBase64, previewUrl });
   }
 
-  const extractedTag = (fieldKey: AppliedExtractionKey) =>
-    appliedExtractionKeys.has(fieldKey) ? (
-      <span className="pill" style={{ marginLeft: 6, fontSize: 10 }} data-testid={`extracted-tag-${fieldKey}`}>
-        Extracted
-      </span>
-    ) : null;
+  const extractedTag = (fieldKey: AppliedExtractionKey) => (
+    <>
+      {appliedExtractionKeys.has(fieldKey) && (
+        <span className="pill" style={{ marginLeft: 6, fontSize: 10 }} data-testid={`extracted-tag-${fieldKey}`}>
+          Extracted
+        </span>
+      )}
+      {/* OCR Completion stage (spec section 9/21): a LOW/UNKNOWN-confidence proposal is never
+          silently treated as verified - an explicit, non-color-only "Needs review" label. */}
+      {needsReviewKeys.has(fieldKey) && (
+        <span className="pill orange" style={{ marginLeft: 6, fontSize: 10 }} data-testid={`needs-review-${fieldKey}`}>
+          Needs review
+        </span>
+      )}
+    </>
+  );
 
   return (
     <div className="grid">
@@ -226,6 +245,11 @@ export function InvoiceDetailsStep({
           {banner && (
             <div className="banner" role={banner.tone === "red" ? "alert" : "status"} style={{ marginBottom: 10 }} data-testid="extraction-status-banner">
               <b>{banner.title}.</b> {banner.copy}
+            </div>
+          )}
+          {ocrNote && (
+            <div className="banner" role="status" style={{ marginBottom: 10 }} data-testid="ocr-status-note">
+              {ocrNote}
             </div>
           )}
           {extractionError && (

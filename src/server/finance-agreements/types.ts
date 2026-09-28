@@ -443,6 +443,14 @@ export const AGREEMENT_EVENT_KINDS = [
   // Step 14B.1: the original signed document was stored in Drive / a store attempt failed.
   "document_stored",
   "document_store_failed",
+  // OCR Completion stage (spec section 24): recorded ONLY when the run actually invoked real OCR
+  // (never for a native-text run - that is not an "OCR" event). Exactly one of these three per
+  // extraction call; whether it was a RETRY of a prior OCR attempt on the same artifact is metadata
+  // (`ocrRetried: true`), not a fourth mutually-exclusive kind - a single synchronous extraction
+  // call has no separate "invoked" moment distinct from its own outcome.
+  "ocr_completed",
+  "ocr_needs_review",
+  "ocr_failed",
 ] as const;
 export const agreementEventKindSchema = z.enum(AGREEMENT_EVENT_KINDS);
 export type AgreementEventKind = z.infer<typeof agreementEventKindSchema>;

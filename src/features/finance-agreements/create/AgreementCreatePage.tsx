@@ -459,6 +459,7 @@ function UploadExtractStep() {
         />
         <ExtractionReviewPane
           state={extractionState}
+          extraction={extraction}
           fields={fields}
           keyClauses={keyClauses}
           primaryParty={parties[0] ?? null}

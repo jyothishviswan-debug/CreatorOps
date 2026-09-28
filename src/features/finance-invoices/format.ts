@@ -14,6 +14,12 @@ export type ChipSpec = { label: string; tone: PillTone };
 export const NO_VALUE_TEXT = "—";
 export const AMOUNT_HIDDEN_TEXT = "Hidden";
 
+// --- OCR Completion stage copy (spec section 21) - same wording as Agreements' own format.ts, kept
+// as its own local copy per this module's established "no cross-feature format import" rule. -----
+export const OCR_COMPLETED_MESSAGE = "OCR completed. Review extracted fields carefully.";
+export const OCR_LOW_CONFIDENCE_MESSAGE = "Some text could not be read reliably. Manual review is required.";
+export const SCAN_COULD_NOT_READ_MESSAGE = "We couldn't reliably read this scanned document. You can continue with manual review.";
+
 // --- Lifecycle status -------------------------------------------------------------------------------------------------------------
 export const INVOICE_STATUS_CHIPS: Record<InvoiceStatus, ChipSpec> = {
   DRAFT: { label: "Draft", tone: "gray" },

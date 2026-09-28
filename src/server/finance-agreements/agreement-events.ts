@@ -41,6 +41,10 @@ const oneOf =
     typeof value === "string" && allowed.includes(value);
 const isOpaqueRef: ValueCheck = (value) => typeof value === "string" && /^[A-Za-z0-9_-]{1,200}$/.test(value);
 const isParserVersion: ValueCheck = (value) => typeof value === "string" && /^[A-Za-z0-9._+-]{1,100}$/.test(value);
+// OCR Completion stage: the OCR provider id/version strings (e.g. "tesseract.js", "7.0.0+eng-4.0.0_best_int")
+// use the same safe charset as isParserVersion plus underscore - a separate check rather than widening
+// isParserVersion itself, which stays exactly as narrow as it already was for the native pdf parser version.
+const isOcrVersionString: ValueCheck = (value) => typeof value === "string" && /^[A-Za-z0-9._+-]{1,100}$/.test(value.replace(/_/g, "-"));
 const isUtcDate: ValueCheck = (value) => typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
 
 const IDENTITY_SHAPED: RegExp[] = [
@@ -123,6 +127,12 @@ export const AGREEMENT_EVENT_METADATA_ALLOWLIST: Readonly<Record<string, ValueCh
   // flags
   resolutionAcknowledged: isBoolean,
   idempotentReplay: isBoolean,
+  // OCR Completion stage: provider id/version are fixed, safe, non-identity strings (never document
+  // content) - `isParserVersion`'s charset (dots/plus/hyphen) fits "tesseract.js" /
+  // "7.0.0+eng-4.0.0_best_int" exactly; ocrRetried is a plain flag; pageCount is already allowed above.
+  ocrProviderId: isOcrVersionString,
+  ocrProviderVersion: isOcrVersionString,
+  ocrRetried: isBoolean,
   // human justification text (also screened for identity/email/amount shapes)
   reason: isSafeNote,
   note: isSafeNote,

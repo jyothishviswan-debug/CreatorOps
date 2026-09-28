@@ -3,7 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { ExtractionResultDto } from "@/server/finance-agreements/client-dto";
 
 import { EXTRACTION_NOTE, SCAN_MANUAL_REVIEW_MESSAGE } from "../format";
-import { contractControls, extractionAnnouncement, pickContractFile, summarizeExtraction } from "./contract-source-logic";
+import { contractControls, extractionAnnouncement, ocrMessageFromSource, pickContractFile, summarizeExtraction } from "./contract-source-logic";
 
 function extraction(over: Partial<ExtractionResultDto> & { status?: ExtractionResultDto["run"]["status"] } = {}): ExtractionResultDto {
   const { status, ...rest } = over;
@@ -80,6 +80,17 @@ describe("extraction summary", () => {
     expect(summarizeExtraction(warned).warnings).toEqual(["Too few fields could be identified."]);
     const restrictedOnly = extraction({ fields: [{ fieldKey: "panNumber", normalizedValue: null, confidence: "HIGH", warnings: [], requiresHumanConfirmation: true, page: 1, valueState: "RESTRICTED" }] });
     expect(summarizeExtraction(restrictedOnly).attachable).toBe(false);
+  });
+});
+
+describe("ocrMessageFromSource (OCR Completion stage, spec section 20/22 - directly, not just via summarizeExtraction)", () => {
+  it("is null for native text and null while manual review is still required", () => {
+    expect(ocrMessageFromSource({ kind: "native" }, "EXTRACTED")).toBeNull();
+    expect(ocrMessageFromSource({ kind: "ocr", ocrProviderId: "tesseract.js", ocrProviderVersion: "7.0.0", ocrPageBands: [] }, "MANUAL_REVIEW_REQUIRED")).toBeNull();
+  });
+  it("is the completed message when every page is USABLE, the low-confidence variant otherwise", () => {
+    expect(ocrMessageFromSource({ kind: "ocr", ocrProviderId: "tesseract.js", ocrProviderVersion: "7.0.0", ocrPageBands: [{ page: 1, band: "USABLE" }] }, "EXTRACTED")).toBe("OCR completed. Review extracted fields carefully.");
+    expect(ocrMessageFromSource({ kind: "ocr", ocrProviderId: "tesseract.js", ocrProviderVersion: "7.0.0", ocrPageBands: [{ page: 1, band: "LOW" }] }, "PARTIAL")).toBe("Some text could not be read reliably. Manual review is required.");
   });
 });
 

@@ -7,7 +7,7 @@ import type { PayableRowDto } from "@/server/finance-payables/client-dto";
 import type { InvoiceDetailDto, InvoiceTaxLineDto } from "@/server/finance-invoices/client-dto";
 import type { PreviewInvoiceEligibilityDto } from "@/server/finance-invoices/invoice-service";
 
-import { commercialPeriodLabel, counterpartyTypeLabel, counterpartyTypeTone, formatMoneyMinor, formatSignedMoneyMinor, parseMoneyInputToMinor, parseRatePercentToBasisPoints, type PillTone } from "../format";
+import { commercialPeriodLabel, counterpartyTypeLabel, counterpartyTypeTone, formatMoneyMinor, formatSignedMoneyMinor, OCR_COMPLETED_MESSAGE, OCR_LOW_CONFIDENCE_MESSAGE, parseMoneyInputToMinor, parseRatePercentToBasisPoints, type PillTone } from "../format";
 
 // Re-exported so Stage 1's component (a .tsx file) never names `@/server/finance-payables` itself -
 // Invoices' OWN server module already reads Payables through its published, read-only contract
@@ -230,6 +230,15 @@ function minorToDecimalText(amountMinor: number): string {
   const major = text.slice(0, -2);
   const fraction = text.slice(-2);
   return fraction === "00" ? major : `${major}.${fraction}`;
+}
+
+// --- OCR status note (OCR Completion stage, spec section 21/22) ----------------------------------------------------------------------
+// Real, safe provenance only (never raw OCR text, never a raw percentage - the source DTO already
+// enforces that). Shown only once extraction has genuinely completed via OCR (never on native text,
+// never while manual review is still required - that failure path already has its own banner).
+export function invoiceOcrStatusNote(source: { kind: "native" } | { kind: "ocr"; ocrPageBands: Array<{ page: number; band: "USABLE" | "LOW" | "FAILED" }> } | null, status: "EXTRACTED" | "PARTIAL" | "MANUAL_REVIEW_REQUIRED" | null): string | null {
+  if (!source || source.kind !== "ocr" || status === "MANUAL_REVIEW_REQUIRED" || status === null) return null;
+  return source.ocrPageBands.some((page) => page.band !== "USABLE") ? OCR_LOW_CONFIDENCE_MESSAGE : OCR_COMPLETED_MESSAGE;
 }
 
 // --- Payee identity extraction note (Step 16C section 18) ----------------------------------------------------------------------------

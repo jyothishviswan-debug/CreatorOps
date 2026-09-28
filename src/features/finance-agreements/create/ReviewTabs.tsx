@@ -98,6 +98,15 @@ export function ReviewTabs({
                           {field.confidence !== "HIGH" && field.confidence !== "UNKNOWN" ? ` · Confidence: ${field.confidence.charAt(0)}${field.confidence.slice(1).toLowerCase()}` : ""}
                         </small>
                       )}
+                      {/* OCR Completion stage (spec section 9/22): a LOW-confidence proposal is never silently
+                          treated as verified - an explicit, non-color-only "Needs review" label, distinct from
+                          the draft-decision "Needs decision" pill above (that one is about an unresolved/
+                          needs-mapping value; this one is about evidence QUALITY, whatever the source). */}
+                      {field.confidence === "LOW" && (
+                        <span className="pill orange" style={{ marginTop: 4, display: "inline-block" }} data-testid={`needs-review-${field.key}`}>
+                          Needs review
+                        </span>
+                      )}
                       <button type="button" className="btn" style={{ marginTop: 8 }} onClick={() => onEditField(field.key)}>
                         Edit
                       </button>

@@ -111,6 +111,9 @@ export const EVENT_KIND_LABELS: Record<AgreementEventKind, string> = {
   kyc_updated_from_agreement: "KYC updated from Agreement",
   document_stored: "Agreement document stored",
   document_store_failed: "Agreement document not stored",
+  ocr_completed: "OCR completed",
+  ocr_needs_review: "OCR needs review",
+  ocr_failed: "OCR failed",
 };
 export const eventKindLabel = (kind: AgreementEventKind): string => EVENT_KIND_LABELS[kind] ?? "Activity";
 

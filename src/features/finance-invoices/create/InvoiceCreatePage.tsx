@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 
 import { attachInvoiceDocument, createInvoiceDraft, previewInvoiceEligibility, previewInvoiceExtraction, reconcileInvoice, reviseInvoiceDraft } from "../api-client";
 import { todayUtcDate } from "../format";
-import type { InvoiceDetailDto, InvoiceExtractedFieldProposalDto, InvoiceVersionDto } from "@/server/finance-invoices/client-dto";
+import type { InvoiceDetailDto, InvoiceExtractedFieldProposalDto, InvoiceExtractionSourceDto, InvoiceVersionDto } from "@/server/finance-invoices/client-dto";
 import type { InvoicePermissionsDto } from "@/server/finance-invoices/client-dto";
 import type { PreviewInvoiceEligibilityDto } from "@/server/finance-invoices/invoice-service";
 
@@ -64,6 +64,12 @@ export function InvoiceCreatePage({ permissions }: { permissions: InvoicePermiss
   // render, which is exactly where this value is consumed, in the JSX below).
   const [appliedExtractionKeys, setAppliedExtractionKeys] = useState<ReadonlySet<AppliedExtractionKey>>(new Set());
   const [extractionError, setExtractionError] = useState<string | null>(null);
+  // OCR Completion stage (spec section 21/22): the real, safe provenance/confidence the server
+  // already computed - never a client-side guess. `extractionFields` is kept ONLY to derive the
+  // per-field "needs review" set (LOW/UNKNOWN confidence); the raw proposals themselves already
+  // flow into the form via `applyExtractionPrefill` above.
+  const [extractionSource, setExtractionSource] = useState<InvoiceExtractionSourceDto | null>(null);
+  const [extractionFields, setExtractionFields] = useState<readonly InvoiceExtractedFieldProposalDto[]>([]);
 
   const [invoice, setInvoice] = useState<InvoiceDetailDto | null>(null);
   const [saving, setSaving] = useState(false);
@@ -155,6 +161,8 @@ export function InvoiceCreatePage({ permissions }: { permissions: InvoicePermiss
       return;
     }
     setExtractionStatus(result.data.status);
+    setExtractionSource(result.data.source);
+    setExtractionFields(result.data.fields);
     applyExtractionPrefill(result.data.fields);
   }
 
@@ -163,6 +171,8 @@ export function InvoiceCreatePage({ permissions }: { permissions: InvoicePermiss
     setExtractionStatus("idle");
     setAppliedExtractionKeys(new Set());
     setExtractionError(null);
+    setExtractionSource(null);
+    setExtractionFields([]);
   }
 
   // Stage 2 -> 3: create the Draft if it does not exist yet, save every declared field, attach a
@@ -300,6 +310,8 @@ export function InvoiceCreatePage({ permissions }: { permissions: InvoicePermiss
           extractionStatus={extractionStatus}
           appliedExtractionKeys={appliedExtractionKeys}
           extractionError={extractionError}
+          extractionSource={extractionSource}
+          needsReviewKeys={new Set(extractionFields.filter((field) => field.confidence === "LOW" || field.confidence === "UNKNOWN").map((field) => field.fieldKey))}
         />
       )}
 

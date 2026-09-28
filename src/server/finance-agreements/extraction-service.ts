@@ -3,6 +3,7 @@ import { z } from "zod";
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
 
+import { appendAgreementEvent } from "./agreement-events";
 import { txResolveDisplayVersions, withHeadDisplay } from "./agreement-head-display";
 import { ContractArtifactStoreError, getContractArtifactStore } from "./contract-artifacts/store";
 import { toExtractionResultDto, type ExtractionResultDto } from "./client-dto";
@@ -124,8 +125,10 @@ function artifactBelongsToHead(artifact: ContractArtifactDoc, head: AgreementHea
 // (no_extractable_text / unreadable_pdf / encrypted / too_many_pages / timeout) and no proposals.
 // Returns the result shaped for THIS actor's visibility (a manager sees ordinary proposals only).
 export async function extractContract(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<FinanceAgreementsServiceResult<ExtractionResultDto>> {
-  // requestId is accepted for parity with the mutation services; a run is recorded by its own document (createdBy/createdAt), not by an Agreement event.
-  void requestId;
+  // requestId is used only for the OCR-specific audit event below (a NATIVE-text run still records
+  // no Agreement event of its own - the run document itself is the record, exactly as before; only
+  // when this run genuinely invoked real OCR does an audit-trail entry get appended, per spec
+  // section 24 - see the transaction below).
   const command = await authorizeAgreementCommand(actor, "manage_agreements", extractContractInputSchema, rawInput);
   if (!command.ok) return command.error;
   const { input, authorized } = command;
@@ -176,6 +179,32 @@ export async function extractContract(actor: ActorContext | null, rawInput: unkn
       financeContractArtifactsCollection().doc(artifact.artifactRef),
       contractArtifactDocSchema.parse({ ...freshArtifact.data, status: docs.run.status === "MANUAL_REVIEW_REQUIRED" ? "MANUAL_REVIEW_REQUIRED" : "EXTRACTED" }),
     );
+    // OCR Completion stage (spec section 24): audit ONLY when this run genuinely invoked real OCR -
+    // a native-text run records no OCR event (there was no OCR to audit). Exactly one of
+    // completed/needs_review/failed per call; "retried" is a metadata flag (`ocrRetried`), not a
+    // 4th mutually-exclusive kind - true when this artifact already carried a PRIOR extraction
+    // outcome (its status was not still the initial "UPLOADED") before this run overwrote it.
+    if (docs.run.source.kind === "ocr") {
+      const ocrRetried = freshArtifact.data.status !== "UPLOADED";
+      const ocrFailed = docs.run.status === "MANUAL_REVIEW_REQUIRED" && docs.run.reasonCodes.some((code) => code.startsWith("ocr_") && code !== "ocr_used");
+      const anyLowConfidencePage = (docs.run.source.ocrPages ?? []).some((page) => page.band !== "USABLE");
+      const ocrEventKind = ocrFailed ? "ocr_failed" : docs.run.status === "MANUAL_REVIEW_REQUIRED" || anyLowConfidencePage ? "ocr_needs_review" : "ocr_completed";
+      appendAgreementEvent(tx, {
+        agreementRef: head.agreementRef,
+        kind: ocrEventKind,
+        version: version.version,
+        actorUserRef: actor!.userRef,
+        metadata: {
+          runRef: docs.run.runRef,
+          artifactRef: artifact.artifactRef,
+          ocrProviderId: docs.run.source.ocrProviderId ?? "unknown",
+          ocrProviderVersion: docs.run.source.ocrProviderVersion ?? "unknown",
+          ocrRetried,
+        },
+        requestId,
+        createdAt: now,
+      });
+    }
     return { kind: "ok" };
   });
 

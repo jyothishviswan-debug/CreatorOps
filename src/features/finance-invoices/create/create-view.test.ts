@@ -11,6 +11,7 @@ import {
   emptyInvoiceDetailsForm,
   emptyTaxLine,
   invoiceDetailsFormFromVersion,
+  invoiceOcrStatusNote,
   invoiceSummaryRows,
   payeeIdentityExtractionNote,
   reviseFieldsFromForm,
@@ -330,6 +331,25 @@ describe("applyInvoiceExtractionPrefill (Step 15C section 19/24/26 - the 'user-t
     const { form: next, appliedKeys } = applyInvoiceExtractionPrefill(emptyInvoiceDetailsForm("INR"), [{ fieldKey: "supplierName", value: "   " }], NO_TOUCH);
     expect(next.payeeName).toBe("");
     expect(appliedKeys.has("supplierName")).toBe(false);
+  });
+});
+
+describe("invoiceOcrStatusNote (OCR Completion stage, spec section 21/22)", () => {
+  it("is null for native text, whatever the status", () => {
+    expect(invoiceOcrStatusNote({ kind: "native" }, "EXTRACTED")).toBeNull();
+    expect(invoiceOcrStatusNote({ kind: "native" }, "MANUAL_REVIEW_REQUIRED")).toBeNull();
+  });
+  it("is null while extraction has not completed (status null)", () => {
+    expect(invoiceOcrStatusNote({ kind: "ocr", ocrPageBands: [{ page: 1, band: "USABLE" }] }, null)).toBeNull();
+  });
+  it("is null when OCR ran but the run still requires manual review (that failure has its own banner)", () => {
+    expect(invoiceOcrStatusNote({ kind: "ocr", ocrPageBands: [{ page: 1, band: "FAILED" }] }, "MANUAL_REVIEW_REQUIRED")).toBeNull();
+  });
+  it("is the OCR-completed message when every OCR'd page was USABLE", () => {
+    expect(invoiceOcrStatusNote({ kind: "ocr", ocrPageBands: [{ page: 1, band: "USABLE" }] }, "EXTRACTED")).toBe("OCR completed. Review extracted fields carefully.");
+  });
+  it("is the low-confidence variant when any OCR'd page was not USABLE", () => {
+    expect(invoiceOcrStatusNote({ kind: "ocr", ocrPageBands: [{ page: 1, band: "USABLE" }, { page: 2, band: "LOW" }] }, "PARTIAL")).toBe("Some text could not be read reliably. Manual review is required.");
   });
 });
 

@@ -1,4 +1,5 @@
-import type { ContractArtifactDto, ExtractionResultDto } from "@/server/finance-agreements/client-dto";
+import type { ContractArtifactDto, ExtractionResultDto, ExtractionSourceDto } from "@/server/finance-agreements/client-dto";
+import type { ExtractionRunStatus } from "@/server/finance-agreements/types";
 
 import { checkContractFile, EXTRACTION_NOTE, OCR_COMPLETED_MESSAGE, OCR_LOW_CONFIDENCE_MESSAGE, SCAN_MANUAL_REVIEW_MESSAGE, type ChipSpec, extractionStatusChip } from "../format";
 
@@ -26,13 +27,21 @@ export function extractionAnnouncement(input: { phase: "idle" | "uploading" | "e
   return { text: `Extraction finished: ${run.status === "PARTIAL" ? "partial" : "complete"}, ${fields.length} ${fields.length === 1 ? "value" : "values"} proposed.${suffix}`, tone: run.status === "PARTIAL" ? "warning" : "success" };
 }
 
+// OCR Completion stage (spec section 20/22): set only on a SUCCESSFUL OCR run (never on native
+// text, never while manual review is still required) - "OCR completed…" or, when any page's
+// confidence band was not USABLE, the low-confidence variant. Extracted as its own function so both
+// `summarizeExtraction` (Step 2 review) and `ExtractionReviewPane` (Step 1, right after extraction
+// returns) can share the exact same decision without duplicating it.
+export function ocrMessageFromSource(source: ExtractionSourceDto, status: ExtractionRunStatus): string | null {
+  if (source.kind !== "ocr" || status === "MANUAL_REVIEW_REQUIRED") return null;
+  return source.ocrPageBands.some((page) => page.band !== "USABLE") ? OCR_LOW_CONFIDENCE_MESSAGE : OCR_COMPLETED_MESSAGE;
+}
+
 export type ExtractionSummary = {
   chip: ChipSpec;
   // Reason messages to show as warnings. The no-text/ocr_used reasons are replaced by scanMessage/ocrMessage, never shown twice.
   warnings: string[];
   scanMessage: string | null;
-  // OCR Completion stage: set only on a SUCCESSFUL OCR run (never on native text) - "OCR completed…"
-  // or, when any page's confidence band was not USABLE, the low-confidence variant (spec section 20).
   ocrMessage: string | null;
   note: string;
   proposalCount: number;
@@ -45,12 +54,7 @@ export function summarizeExtraction(extraction: ExtractionResultDto): Extraction
   const scanMessage = extraction.run.status === "MANUAL_REVIEW_REQUIRED" && (noText || extraction.fields.length === 0) ? SCAN_MANUAL_REVIEW_MESSAGE : null;
   const warnings = extraction.reasons.filter((reason) => reason.code !== "no_extractable_text" && reason.code !== "ocr_used").map((reason) => reason.message);
   const attachable = extraction.fields.some((field) => field.valueState === "VISIBLE");
-  const ocrMessage =
-    extraction.run.source.kind === "ocr" && extraction.run.status !== "MANUAL_REVIEW_REQUIRED"
-      ? extraction.run.source.ocrPageBands.some((page) => page.band !== "USABLE")
-        ? OCR_LOW_CONFIDENCE_MESSAGE
-        : OCR_COMPLETED_MESSAGE
-      : null;
+  const ocrMessage = ocrMessageFromSource(extraction.run.source, extraction.run.status);
   return { chip: extractionStatusChip(extraction.run.status), warnings, scanMessage, ocrMessage, note: EXTRACTION_NOTE, proposalCount: extraction.fields.length, attachable };
 }
 
