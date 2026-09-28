@@ -105,7 +105,9 @@ function buildPlatformPerformanceTable(platform: Platform, rows: ReportRow[]): R
     sectionType: "partner_performance_table",
     mode: "EVIDENCE",
     title: `${label} Partner Performance`,
-    note: rows.length === 0 ? undefined : `${rows.length} Partner row(s) with a tracked ${label} account or matched content in this run.`,
+    // Spec section 16: no implementation-oriented "N Partner row(s) with a tracked..." caption in the
+    // finalized PDF - the table's own row count is already self-evident to a reader, and the prior
+    // wording read as query-log prose rather than management-report content.
     columns,
     rows: rows as TableRow[],
     totalsRow,

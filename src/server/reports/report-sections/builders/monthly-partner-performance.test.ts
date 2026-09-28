@@ -83,6 +83,14 @@ describe("buildMonthlyPartnerPerformanceSections", () => {
     expect(columnIds).not.toContain("openPartnerHref");
   });
 
+  it("the performance table's own note never contains implementation-oriented prose (spec section 16) - found live in a real generated PDF, not just a synthetic fixture", () => {
+    const result = baseResult({ rows: [performanceRow("p1", "Acme Creators", "instagram")] });
+    const sections = buildMonthlyPartnerPerformanceSections(definition, result, "Monthly Partner Performance");
+    const table = sections.find((s) => isTable(s) && s.title === "Instagram Partner Performance") as ReportTableSection;
+    expect(table.note ?? "").not.toContain("Partner row(s)");
+    expect(table.note ?? "").not.toMatch(/tracked .* account or matched content in this run/);
+  });
+
   it("omits the Followers/Subscribers column entirely when unavailable for every row - never renders an all-Not-available column", () => {
     const result = baseResult({ rows: [performanceRow("p1", "Acme Creators", "instagram", { followersSnapshot: null })] });
     const sections = buildMonthlyPartnerPerformanceSections(definition, result, "Monthly Partner Performance");
