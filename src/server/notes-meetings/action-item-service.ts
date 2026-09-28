@@ -18,6 +18,7 @@ import {
   cancelActionItemInputSchema,
   completeActionItemInputSchema,
   createActionItemInputSchema,
+  MAX_ACTION_ITEM_VERSIONS,
   notesMeetingsInvalidInputResult,
   notesMeetingsNotFoundResult,
   notesMeetingsStaleResult,
@@ -129,10 +130,19 @@ export async function listActionItems(actor: ActorContext | null, rawMeetingRef:
   return { ok: true, data: { actionItems: items } };
 }
 
+// Production hardening (base spec section 15 - query boundedness audit): this query previously had
+// no explicit `.limit()` - a genuinely unbounded read shape by construction, even though
+// actionItemVersionDocSchema's own `version` field (types.ts) already hard-caps at
+// MAX_ACTION_ITEM_VERSIONS via zod .max() (a version number beyond that value can never be written -
+// txCreateActionItemVersion's own schema.parse() rejects it first). That write-side invariant was
+// real but not provable from THIS read site, and not enforced by the query itself. Reusing the exact
+// same already-proven constant as the query's own `.limit()` satisfies base spec section 15's two
+// acceptable resolutions at once: an explicit safe limit, backed by the pre-existing hard schema
+// cardinality invariant (never a second, inconsistent cap invented here).
 export async function listActionItemVersions(actor: ActorContext | null, rawActionItemRef: unknown): Promise<NotesMeetingsServiceResult<{ versions: ActionItemVersionDto[] }>> {
   const loaded = await loadAuthorizedActionItem(actor, typeof rawActionItemRef === "string" ? rawActionItemRef : "");
   if (!loaded.ok) return loaded.error;
-  const snapshot = await actionItemsCollection().doc(loaded.authorized.head.actionItemRef).collection("versions").orderBy("version", "desc").get();
+  const snapshot = await actionItemsCollection().doc(loaded.authorized.head.actionItemRef).collection("versions").orderBy("version", "desc").limit(MAX_ACTION_ITEM_VERSIONS).get();
   const versions = snapshot.docs.map((d) => actionItemVersionDocSchema.parse(d.data()));
   const names = await resolveDisplayNames([...versions.map((v) => v.createdByUserRef), ...versions.map((v) => v.assigneeUserRef)]);
   return { ok: true, data: { versions: versions.map((v) => toActionItemVersionDto(v, names)) } };

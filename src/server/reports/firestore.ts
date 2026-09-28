@@ -1,6 +1,7 @@
 import { getAdminFirestore } from "@/server/firebase/admin";
 
 import {
+  MAX_REPORT_VERSIONS,
   reportArtifactDocSchema,
   reportNarrativeRevisionDocSchema,
   reportRunHeadDocSchema,
@@ -80,8 +81,15 @@ export async function getReportVersionDoc(runRef: string, version: number): Prom
   return parsed.success ? parsed.data : null;
 }
 
+// Production hardening (base spec section 15 - query boundedness audit): this query previously had
+// no explicit `.limit()` - a genuinely unbounded read shape by construction, even though
+// reportVersionDocSchema's own `version` field (types.ts) already hard-caps at MAX_REPORT_VERSIONS
+// via zod .max() (mirrors notes-meetings/action-item-service.ts's own identical fix for the sibling
+// carried debt item - see that file's comment for the full rationale). Reusing the exact same
+// already-proven constant as the query's own `.limit()` satisfies base spec section 15's two
+// acceptable resolutions at once, never a second, inconsistent cap invented here.
 export async function listReportVersionDocs(runRef: string): Promise<ReportVersionDoc[]> {
-  const snap = await reportRunVersionsCollection(runRef).orderBy("version", "desc").get();
+  const snap = await reportRunVersionsCollection(runRef).orderBy("version", "desc").limit(MAX_REPORT_VERSIONS).get();
   const docs: ReportVersionDoc[] = [];
   for (const doc of snap.docs) {
     const parsed = reportVersionDocSchema.safeParse(doc.data());
