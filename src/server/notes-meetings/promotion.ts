@@ -1,5 +1,6 @@
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { notifyActionItemPromoted } from "@/server/notifications";
 import { generateSystemTask } from "@/server/operations";
 import { buildSourceKey } from "@/server/operations/ids";
 
@@ -107,6 +108,15 @@ export async function promoteActionItem(actor: ActorContext | null, rawInput: un
 
   if (result.kind === "not_found") return notesMeetingsNotFoundResult();
   const finalHead = result.head;
+
+  // Notifications Completion (spec section 4/21): fires only on the genuinely NEW link (result.kind
+  // === "ok", i.e. this call is the one that actually recorded promotedTaskRef) - the "already"
+  // idempotent-fast-path re-hit does not re-emit. See this file's own header comment for why the
+  // generic "Task assigned" hook is deliberately absent from generateSystemTask's own call path,
+  // making this the ONE notification a promotion ever produces.
+  if (result.kind === "ok") {
+    await notifyActionItemPromoted({ actionItemRef: head.actionItemRef, taskRef, taskTitle: generated.data.task.title, assigneeUserRef, actorUserRef: actor!.userRef, requestId }).catch(() => undefined);
+  }
 
   const promotedTaskDisplayName = await resolvePromotedTaskDisplayName(actor, taskRef);
   const assignee = await latestAssignee(finalHead.actionItemRef, finalHead.latestVersion);

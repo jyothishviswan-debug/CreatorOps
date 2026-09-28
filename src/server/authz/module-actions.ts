@@ -171,6 +171,9 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "manage_sensitive", label: "Manage sensitive access" },
     { id: "view_audit", label: "View audit" },
   ],
+  // A recipient's own notification inbox is never gated by this feature (see
+  // src/server/notifications/notifications-gate.ts) - no meaningful actions to list here today.
+  notifications: [],
 };
 
 export function isValidModuleAction(feature: FeatureId, actionId: string): actionId is ActionId {

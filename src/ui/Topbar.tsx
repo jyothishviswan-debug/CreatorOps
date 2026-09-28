@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 
 import { Icon } from "./icons";
 import { signOutEverywhere } from "@/lib/auth/signOut";
+import { NotificationBell } from "@/features/notifications/NotificationBell";
 
 export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
   const router = useRouter();
@@ -36,10 +37,9 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
           <kbd className="key">⌘ K</kbd>
         </button>
         <span className="sample">ILLUSTRATIVE DATA</span>
-        {/* No Notifications subsystem exists yet (recipient-scoped in-app attention is a tracked master-scope gap); inert, not a live bell. */}
-        <button className="iconbutton" aria-label="Notifications (not available yet)" title="Notifications are not available yet" type="button" disabled aria-disabled="true" style={{ opacity: 0.6, cursor: "not-allowed" }}>
-          <Icon name="bell" />
-        </button>
+        {/* Recipient-Scoped Notifications Completion: a real, server-backed, recipient-scoped bell
+            (src/server/notifications) - never client-filtered, never a second design system. */}
+        <NotificationBell />
         <button className="iconbutton" aria-label="Sign out" type="button" onClick={handleSignOut} disabled={signingOut}>
           <Icon name="logout" />
         </button>

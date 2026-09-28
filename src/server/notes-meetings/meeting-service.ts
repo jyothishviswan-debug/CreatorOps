@@ -2,6 +2,7 @@ import type { z } from "zod";
 
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { notifyMeetingParticipants, notifyMeetingRevised } from "@/server/notifications";
 
 import { toAttachmentDto, toEventDto, toMeetingDto, toMeetingVersionDto, type MeetingDto, type MeetingVersionDto, type NotesMeetingsEventDto } from "./client-dto";
 import { resolveDisplayNames } from "./display-names";
@@ -110,6 +111,20 @@ export async function createMeeting(actor: ActorContext | null, rawInput: unknow
     });
   });
 
+  // Notifications Completion (spec section 4/21): participant notification, excluding the organizer
+  // (the actor who just scheduled it) - projection only, after the transaction above has already
+  // committed.
+  await notifyMeetingParticipants({
+    meetingRef,
+    meetingTitle: input.title,
+    ownerType: input.owner.ownerType,
+    ownerRef: input.owner.ownerRef,
+    participantUserRefs: participants.map((p) => p.userRef),
+    organizerUserRef: actor!.userRef,
+    actorUserRef: actor!.userRef,
+    requestId,
+  }).catch(() => undefined);
+
   const sensitiveVisible = await canViewSensitiveNotesMeetings(actor!);
   return { ok: true, data: await buildMeetingDto(head, version, sensitiveVisible, gate.ownerDisplayName) };
 }
@@ -157,7 +172,7 @@ export async function reviseMeeting(actor: ActorContext | null, rawInput: unknow
     }
   }
 
-  type Outcome = { kind: "ok"; head: MeetingHeadDoc; version: ReturnType<typeof meetingVersionDocSchema.parse> } | { kind: "not_found" } | { kind: "stale" } | { kind: "conflict"; message: string };
+  type Outcome = { kind: "ok"; head: MeetingHeadDoc; version: ReturnType<typeof meetingVersionDocSchema.parse>; material: boolean } | { kind: "not_found" } | { kind: "stale" } | { kind: "conflict"; message: string };
 
   const result = await getAdminFirestore().runTransaction<Outcome>(async (tx) => {
     const head = await txGetMeetingHead(tx, input.meetingRef);
@@ -184,12 +199,35 @@ export async function reviseMeeting(actor: ActorContext | null, rawInput: unknow
     txSetMeetingHead(tx, nextHead);
 
     appendEvent(tx, meetingEventsCollection(input.meetingRef), { kind: "MEETING_REVISED", actorUserRef: actor!.userRef, metadata: { previousVersion: head.latestVersion, newVersion: nextNumber, reason: input.reason, participantCount: nextParticipants.length, decisionCount: nextDecisions.length }, requestId, createdAt: now });
-    return { kind: "ok", head: nextHead, version };
+
+    // Notifications Completion (spec section 4/21): "materially revised" - a judgment call, documented
+    // here rather than left implicit - means the title, scheduled time, or participant roster
+    // changed; a pure agenda/summary/decisions text edit does not by itself re-notify every
+    // participant (avoids noisy duplicates for routine note-taking on an already-known meeting).
+    const currentParticipantRefs = new Set(current.participants.map((p) => p.userRef));
+    const nextParticipantRefs = new Set(nextParticipants.map((p) => p.userRef));
+    const participantsChanged = currentParticipantRefs.size !== nextParticipantRefs.size || [...nextParticipantRefs].some((ref) => !currentParticipantRefs.has(ref));
+    const material = nextTitle !== current.title || nextMeetingAt !== current.meetingAt || participantsChanged;
+
+    return { kind: "ok", head: nextHead, version, material };
   });
 
   if (result.kind === "not_found") return notesMeetingsNotFoundResult();
   if (result.kind === "stale") return notesMeetingsStaleResult();
   if (result.kind === "conflict") return { ok: false, code: "conflict", message: result.message };
+
+  if (result.material) {
+    await notifyMeetingRevised({
+      meetingRef: result.head.meetingRef,
+      meetingTitle: result.version.title,
+      ownerType: result.head.owner.ownerType,
+      ownerRef: result.head.owner.ownerRef,
+      participantUserRefs: result.version.participants.map((p) => p.userRef),
+      docVersion: result.head.docVersion,
+      actorUserRef: actor!.userRef,
+      requestId,
+    }).catch(() => undefined);
+  }
 
   const sensitiveVisible = await canViewSensitiveNotesMeetings(actor!);
   return { ok: true, data: await buildMeetingDto(result.head, result.version, sensitiveVisible, loaded.authorized.ownerDisplayName) };

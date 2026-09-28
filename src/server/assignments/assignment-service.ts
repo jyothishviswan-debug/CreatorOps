@@ -8,6 +8,7 @@ import { requireCampaignInScope } from "@/server/campaigns/campaigns-gate";
 import { getPartnerAccountDocByRef, getPartnerDocByRef } from "@/server/partners/firestore";
 import { requirePartnerInScope } from "@/server/partners/partners-gate";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { notifyAssignmentCreated } from "@/server/notifications";
 import { normalizePlatformIdentifier } from "@/server/shared/platform";
 import { isHttpUrl } from "@/server/shared/http-url";
 import { evaluatePartnerAccountEligibility, isCampaignStatusAllowingAssignmentCreation, PARTNER_ACCOUNT_UNAVAILABLE_INACTIVE } from "./create-eligibility";
@@ -316,6 +317,11 @@ async function createAssignmentInternal(
 
   if (txResult.kind === "created") {
     await writeAssignmentEvent({ assignmentUid: uid, kind: "created", actorUserRef: actor!.userRef, metadata: { campaignRef: campaign.campaignRef, partnerRef: partner.partnerRef }, requestId });
+
+    // Notifications Completion (spec section 4/22): recipient is the new Assignment's own ownerUid
+    // (inherited from its Campaign - see this function's own `ownerUid: campaign.ownerUid` above) -
+    // projection only, after the transaction above has already committed.
+    await notifyAssignmentCreated({ assignmentRef: doc.assignmentRef, ownerUid: doc.ownerUid, actorUserRef: actor!.userRef, requestId }).catch(() => undefined);
   }
 
   return { ok: true, data: { outcome: txResult.kind === "created" ? "created" : "existing", assignment: await toAssignmentDto(txResult.doc) } };

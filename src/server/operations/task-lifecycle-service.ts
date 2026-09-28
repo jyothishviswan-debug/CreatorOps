@@ -1,6 +1,7 @@
 import { canTransitionLifecycle, TASK_LIFECYCLE_TRANSITIONS } from "@/server/authz/lifecycle";
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { notifyTaskReassigned } from "@/server/notifications";
 
 import { toTaskDetailDto, type TaskDto } from "./client-dto";
 import { resolveDisplayName } from "./display-names";
@@ -222,5 +223,10 @@ export async function reassignTask(actor: ActorContext | null, rawInput: unknown
 
   if (result.kind !== "ok") return failureResult(result);
   const [version, assigneeDisplayName] = await Promise.all([txlessVersion(result.head), resolveDisplayName(result.head.assigneeUserRef)]);
+
+  // Notifications Completion (spec section 4/18): projection only, after the transaction above has
+  // already committed - see createTask's own comment in task-service.ts for the general discipline.
+  await notifyTaskReassigned({ taskRef: result.head.taskRef, taskTitle: version?.title ?? "Task", assigneeUserRef: result.head.assigneeUserRef, docVersion: result.head.docVersion, actorUserRef: actor!.userRef, requestId }).catch(() => undefined);
+
   return { ok: true, data: toTaskDetailDto(result.head, version, new Date().toISOString(), assigneeDisplayName) };
 }

@@ -38,6 +38,7 @@ import { FINANCE_AGREEMENT_COLLECTIONS } from "@/server/finance-agreements/fires
 import { FINANCE_INVOICE_COLLECTIONS } from "@/server/finance-invoices/firestore";
 import { FINANCE_PAYABLE_COLLECTIONS } from "@/server/finance-payables/firestore";
 import { FINANCE_PAYMENT_COLLECTIONS } from "@/server/finance-payments/firestore";
+import { NOTIFICATIONS_COLLECTIONS } from "@/server/notifications/firestore";
 import { OPERATIONS_COLLECTIONS } from "@/server/operations/firestore";
 import { REPORTS_COLLECTIONS } from "@/server/reports/firestore";
 import { PARTNER_REVIEWS_COLLECTIONS } from "@/server/partner-reviews/firestore";
@@ -303,6 +304,9 @@ async function deleteLaterModuleCollections(): Promise<void> {
   await deleteCollection(getAdminFirestore().collection(OPERATIONS_COLLECTIONS.operationsReminderGenerationClaims));
   await deleteCollection(getAdminFirestore().collection(REPORTS_COLLECTIONS.reportSnapshots));
   await deleteCollection(getAdminFirestore().collection(EXPORTS_COLLECTIONS.exportJobs));
+  // Notifications Completion.
+  await deleteCollectionWithSubcollections(NOTIFICATIONS_COLLECTIONS.notifications, [NOTIFICATIONS_COLLECTIONS.notificationEvents]);
+  await deleteCollection(getAdminFirestore().collection(NOTIFICATIONS_COLLECTIONS.notificationBulkEvents));
 }
 
 // Wipes every Auth account and every Firestore collection this app

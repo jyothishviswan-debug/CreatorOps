@@ -2,6 +2,7 @@ import type { z } from "zod";
 
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { notifyActionItemAssigned } from "@/server/notifications";
 
 import { toActionItemDto, toActionItemVersionDto, toEventDto, withAssignee, type ActionItemDto, type ActionItemVersionDto, type NotesMeetingsEventDto } from "./client-dto";
 import { resolveDisplayNames } from "./display-names";
@@ -89,6 +90,21 @@ export async function createActionItem(actor: ActorContext | null, rawInput: unk
     txSetActionItemHead(tx, head);
     appendEvent(tx, actionItemEventsCollection(actionItemRef), { kind: "ACTION_ITEM_CREATED", actorUserRef: actor!.userRef, metadata: { meetingRef: input.meetingRef, version: 1, assigneeUserRef: input.assigneeUserRef ?? undefined, dueAt: input.dueAt ?? undefined }, requestId, createdAt: now });
   });
+
+  // Notifications Completion (spec section 4/21): projection only, after the transaction above has
+  // already committed - fires only when this action item was created WITH an assignee (fail closed
+  // otherwise per spec section 6, never guessing one later).
+  if (input.assigneeUserRef) {
+    await notifyActionItemAssigned({
+      actionItemRef,
+      actionItemText: input.text,
+      ownerType: meeting.authorized.head.owner.ownerType,
+      ownerRef: meeting.authorized.head.owner.ownerRef,
+      assigneeUserRef: input.assigneeUserRef,
+      actorUserRef: actor!.userRef,
+      requestId,
+    }).catch(() => undefined);
+  }
 
   return { ok: true, data: await buildActionItemDto(actor, head, input.assigneeUserRef ?? null) };
 }

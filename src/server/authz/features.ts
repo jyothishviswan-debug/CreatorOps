@@ -18,6 +18,11 @@ export const FEATURES = [
   "imports",
   "exports",
   "administration",
+  // Recipient-Scoped Notifications Completion: NOT used to gate a recipient's own notification
+  // inbox (that is a personal resource, always visible to any admitted/active actor - see
+  // src/server/notifications/notifications-gate.ts's own header comment for why). Reserved for a
+  // possible future Administration-facing notifications surface only.
+  "notifications",
 ] as const;
 
 export type FeatureId = (typeof FEATURES)[number];
@@ -44,6 +49,7 @@ export const FEATURE_LABELS: Record<FeatureId, string> = {
   imports: "Import Center",
   exports: "Export Center",
   administration: "Administration",
+  notifications: "Notifications",
 };
 
 // Route path -> feature mapping, longest/most-specific prefix wins.

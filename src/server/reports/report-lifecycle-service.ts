@@ -26,6 +26,8 @@ import { assembleFullReportSections, buildEvidenceSections, type NarrativeAssemb
 import type { ReportSectionModel } from "./report-sections/types";
 import { getReportTemplateDefinition, isReportTemplateId, NARRATIVE_SECTION_LABELS, reportNarrativeSectionKeySchema, type ReportNarrativeSectionKey, type ReportTemplateId } from "./report-templates";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { notifyReportFinalized, notifyReportSuperseded } from "@/server/notifications";
+import { newRequestId } from "./http";
 import { requireReportsAccess, requireSourceFeatureAccess } from "./reports-gate";
 import {
   MAX_REPORT_VERSIONS,
@@ -459,6 +461,17 @@ export async function finalizeReportVersion(actor: ActorContext | null, rawInput
     if (result.error === "not_found") return reportLifecycleNotFoundResult();
     if (result.error === "stale") return reportLifecycleStaleResult();
     return reportLifecycleConflictResult(result.message ?? "Conflict.");
+  }
+
+  // Notifications Completion (spec section 4/22): projection only, after the transaction above has
+  // already committed. Skipped entirely on an idempotent retry (alreadyFinalized) - the first
+  // successful call already emitted (or intentionally skipped) both notifications; re-emitting on
+  // retry is harmless (dedupeKey converges on the same doc) but unnecessary work.
+  if (!result.alreadyFinalized) {
+    await notifyReportFinalized({ runRef: result.head.runRef, reportId: result.head.reportId, version: result.version.version, drafterUserRef: result.version.actorUserRef, finalizedByUserRef: actor.userRef, requestId: newRequestId() }).catch(() => undefined);
+    if (result.superseded) {
+      await notifyReportSuperseded({ runRef: result.head.runRef, reportId: result.head.reportId, supersededVersion: result.superseded.version, supersededDrafterUserRef: result.superseded.actorUserRef, supersedingActorUserRef: actor.userRef, requestId: newRequestId() }).catch(() => undefined);
+    }
   }
 
   // Spec section 15: "on finalization: ... generate declared artifacts." Runs AFTER the transaction

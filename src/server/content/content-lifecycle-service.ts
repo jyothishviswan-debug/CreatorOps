@@ -3,9 +3,10 @@ import { z } from "zod";
 import { CONTENT_LIFECYCLE_TRANSITIONS, canTransitionLifecycle } from "@/server/authz/lifecycle";
 import type { ActorContext } from "@/server/authz/types";
 import { assignmentDocSchema, type AssignmentDoc } from "@/server/assignments/types";
-import { assignmentsCollection } from "@/server/assignments/firestore";
+import { assignmentsCollection, getAssignmentDocByRef } from "@/server/assignments/firestore";
 import { writeAssignmentEvent } from "@/server/assignments/assignment-events";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { notifyContentReviewDecision } from "@/server/notifications";
 import { toContentDto, type ContentDto } from "./client-dto";
 import { writeContentEvent } from "./content-events";
 import { loadAuthorizedContent } from "./content-service";
@@ -28,7 +29,7 @@ const approveContentThreadInputSchema = z.object({ reviewedRevisionNumber: z.num
 export type ApproveContentThreadInput = z.input<typeof approveContentThreadInputSchema>;
 
 type ApproveTxResult =
-  | { kind: "ok"; doc: ContentDoc; assignmentCompleted: boolean; freshAssignment: AssignmentDoc | null }
+  | { kind: "ok"; doc: ContentDoc; assignmentCompleted: boolean; freshAssignment: AssignmentDoc | null; ownerUid: string | null }
   | { kind: "stale" }
   | { kind: "invalid" }
   | { kind: "not_found" }
@@ -112,7 +113,7 @@ export async function approveContentThread(actor: ActorContext | null, contentRe
       assignmentCompleted = true;
     }
 
-    return { kind: "ok", doc: updatedContent, assignmentCompleted, freshAssignment: assignmentCompleted ? freshAssignment : null };
+    return { kind: "ok", doc: updatedContent, assignmentCompleted, freshAssignment: assignmentCompleted ? freshAssignment : null, ownerUid: freshAssignment?.ownerUid ?? null };
   });
 
   if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Content not found." };
@@ -121,6 +122,14 @@ export async function approveContentThread(actor: ActorContext | null, contentRe
   if (result.kind === "invalid") return contentInvalidInputResult(`Cannot approve Content from ${content.status}.`);
 
   await writeContentEvent({ contentUid: content.uid, kind: "approved", actorUserRef: actor!.userRef, metadata: { revisionNumber: input.reviewedRevisionNumber }, requestId });
+
+  // Notifications Completion (spec section 4/22): recipient is the owning Assignment's ownerUid -
+  // projection only, after the transaction above has already committed. See projection.ts's own
+  // header comment for why this is framed as "a decision was made on an assignment you own" rather
+  // than the spec's literal "review requested/decision to the submitter" wording (Content submission
+  // is external-partner/token-driven; there is no internal submitter to notify - see
+  // docs/CREATOROPS_CONTINUITY.md).
+  await notifyContentReviewDecision({ contentRef: content.contentRef, ownerUid: result.ownerUid, decision: "approved", newVersion: result.doc.version, actorUserRef: actor!.userRef, requestId }).catch(() => undefined);
 
   // The ONE place Content is allowed to write into Assignment's own event
   // history - only as a direct, explained consequence of the same
@@ -209,6 +218,12 @@ export async function requestContentRevision(actor: ActorContext | null, content
     metadata: { revisionNumber: input.reviewedRevisionNumber, reason: input.reason },
     requestId,
   });
+
+  // Notifications Completion (spec section 4/22) - see approveContentThread's own comment above for
+  // the recipient-resolution reasoning. A plain (non-transactional) read after commit is fine here:
+  // this is display context for an already-committed decision, not a second source of truth.
+  const assignment = await getAssignmentDocByRef(content.assignmentRef);
+  await notifyContentReviewDecision({ contentRef: content.contentRef, ownerUid: assignment?.ownerUid ?? null, decision: "revision_requested", newVersion: result.doc.version, actorUserRef: actor!.userRef, requestId }).catch(() => undefined);
 
   return { ok: true, data: await toContentDto(result.doc) };
 }

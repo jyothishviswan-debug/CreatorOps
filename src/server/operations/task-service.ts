@@ -3,6 +3,7 @@ import type { z } from "zod";
 import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { notifyTaskAssigned } from "@/server/notifications";
 
 import { toTaskDetailDto, toTaskEventDto, type TaskDto, type TaskEventDto } from "./client-dto";
 import { resolveDisplayName, resolveDisplayNames } from "./display-names";
@@ -131,6 +132,14 @@ export async function createTask(actor: ActorContext | null, rawInput: unknown, 
       createdAt: now,
     });
   });
+
+  // Notifications Completion (spec section 4/17/18): a Notification is a projection of already-
+  // committed source truth, never able to affect it - this runs AFTER the transaction above has
+  // committed, and its own failure is swallowed so it can never turn an already-successful Task
+  // creation into a failed response. Deliberately MANUAL-origin-only: generateSystemTask (used by
+  // Notes/Meetings' promotion.ts) does NOT go through createTask, so a promoted Task never double-
+  // fires this hook (see projection.ts's notifyActionItemPromoted header comment).
+  await notifyTaskAssigned({ taskRef, taskTitle: input.title, assigneeUserRef: input.assigneeUserRef, actorUserRef: actor!.userRef, requestId }).catch(() => undefined);
 
   return { ok: true, data: toTaskDetailDto(head, version, now, await resolveDisplayName(head.assigneeUserRef)) };
 }
