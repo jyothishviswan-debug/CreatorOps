@@ -15,13 +15,24 @@ import { listTasks } from "@/features/operations/api-client";
 import { deriveDueState, displayNameOrRef, DUE_STATE_LABEL, DUE_STATE_TONE, TARGET_TYPE_LABEL, TASK_PRIORITY_LABEL, TASK_PRIORITY_TONE, TASK_STATUS_LABEL, TASK_STATUS_TONE, formatDateTime, type DueState } from "@/features/operations/copy";
 import { targetLabel } from "@/features/operations/target-links";
 import { useNarrowViewport } from "@/features/operations/use-narrow-viewport";
+import { useMounted } from "@/features/shared/use-mounted";
 
-export type TasksWorkspaceProps = { initialTasks: TaskDto[]; canManageTasks: boolean };
+// serverNowIso: production-hardening fix (base spec section 26) - a server-computed "now" baked
+// into the initial render as a prop, never `new Date()` evaluated inline during render. The prior
+// shape (`const nowIso = new Date().toISOString()` inside the component body) is a real, if narrow,
+// React hydration-mismatch risk: this is a client component whose first paint is still
+// server-rendered, and any wall-clock time elapses between that SSR pass and browser hydration. If a
+// task's due-state bucket (deriveDueState) sits exactly on a day boundary in that gap, the SSR HTML
+// and the client's first render can disagree, producing a visible due-state Pill mismatch and a React
+// hydration warning/repair. The fix: seed state from the deterministic server-supplied prop (which
+// SSR and the client's pre-hydration render both read identically), then refresh to the live client
+// clock in a `useEffect` AFTER mount - post-hydration updates are always safe.
+export type TasksWorkspaceProps = { initialTasks: TaskDto[]; canManageTasks: boolean; serverNowIso: string };
 
 const ALL = "ALL";
 type DueFilter = "ALL" | DueState;
 
-export function TasksWorkspace({ initialTasks, canManageTasks }: TasksWorkspaceProps) {
+export function TasksWorkspace({ initialTasks, canManageTasks, serverNowIso }: TasksWorkspaceProps) {
   const [tasks, setTasks] = useState(initialTasks);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -34,7 +45,8 @@ export function TasksWorkspace({ initialTasks, canManageTasks }: TasksWorkspaceP
   const [assigneeText, setAssigneeText] = useState("");
   const [search, setSearch] = useState("");
 
-  const nowIso = new Date().toISOString();
+  const mounted = useMounted();
+  const nowIso = mounted ? new Date().toISOString() : serverNowIso;
 
   async function reload(nextStatus: typeof ALL | TaskStatus, nextTargetType: string, nextAssignee: string) {
     setLoading(true);

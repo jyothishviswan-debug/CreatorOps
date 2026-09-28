@@ -11,6 +11,7 @@ import type { TaskDto, TaskEventDto } from "@/server/operations/client-dto";
 import { listTaskEvents } from "@/features/operations/api-client";
 import { deriveDueState, displayNameOrRef, DUE_STATE_LABEL, DUE_STATE_TONE, TASK_PRIORITY_LABEL, TASK_PRIORITY_TONE, TASK_STATUS_LABEL, TASK_STATUS_TONE, formatDateTime } from "@/features/operations/copy";
 import { targetHref, targetLabel } from "@/features/operations/target-links";
+import { useMounted } from "@/features/shared/use-mounted";
 
 import { LifecycleActions } from "./LifecycleActions";
 import { MeetingOriginBanner } from "./MeetingOriginBanner";
@@ -30,14 +31,28 @@ const EVENT_LABEL: Record<string, string> = {
   TASK_PRIORITY_CHANGED: "Priority changed",
 };
 
-export function TaskDetail({ initialTask, canCompleteTasks, canManageTasks }: { initialTask: TaskDto; canCompleteTasks: boolean; canManageTasks: boolean }) {
+// serverNowIso: production-hardening fix (base spec section 26) - see TasksWorkspace.tsx's own
+// comment on this exact prop for the full rationale (a server-computed, hydration-safe "now",
+// refreshed to the live client clock only after mount).
+export function TaskDetail({
+  initialTask,
+  canCompleteTasks,
+  canManageTasks,
+  serverNowIso,
+}: {
+  initialTask: TaskDto;
+  canCompleteTasks: boolean;
+  canManageTasks: boolean;
+  serverNowIso: string;
+}) {
   const [task, setTask] = useState(initialTask);
   const [tab, setTab] = useState<"summary" | "activity">("summary");
   const [events, setEvents] = useState<TaskEventDto[] | null>(null);
   const [eventsError, setEventsError] = useState<string | null>(null);
   const [eventsLoading, setEventsLoading] = useState(false);
 
-  const nowIso = new Date().toISOString();
+  const mounted = useMounted();
+  const nowIso = mounted ? new Date().toISOString() : serverNowIso;
   const dueState = deriveDueState(task, nowIso);
   const href = targetHref(task.target);
 

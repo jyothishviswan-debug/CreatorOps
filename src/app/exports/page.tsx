@@ -43,7 +43,7 @@ export default async function ExportsPage() {
       </div>
 
       {targetsResult.ok ? (
-        <ExportsWorkspace targets={targetsResult.data} canCreateExports={permissions.canCreateExports} initialJobs={jobsResult.ok ? jobsResult.data : []} />
+        <ExportsWorkspace targets={targetsResult.data} canCreateExports={permissions.canCreateExports} initialJobs={jobsResult.ok ? jobsResult.data : []} serverNowIso={new Date().toISOString()} />
       ) : (
         <section className="panel">
           <EmptyState title="Could not load the export catalog" description={targetsResult.message} icon="alert" />

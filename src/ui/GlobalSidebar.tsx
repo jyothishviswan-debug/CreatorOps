@@ -1,44 +1,23 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 
 import { Icon } from "./icons";
 import { NAV_GROUPS } from "./nav-items";
+import type { MeResponse } from "./current-actor";
 import { initialsOf } from "@/features/shared/types";
-import type { FeatureId } from "@/server/authz/features";
 import { ROLE_LABELS, isRole } from "@/server/authz/roles";
 
-type MeResponse =
-  | { authenticated: false }
-  | { authenticated: true; role: string; displayName: string; activeFeatures: FeatureId[] };
-
-export function GlobalSidebar({ open }: { open: boolean }) {
+export function GlobalSidebar({ open, me }: { open: boolean; me: MeResponse | null }) {
   const pathname = usePathname();
-  const [me, setMe] = useState<MeResponse | null>(null);
 
   // Presentational only - filters which nav items are worth showing. The
   // server independently re-checks feature access on every route via
   // proxy.ts regardless of what this fetch returns; losing or delaying
   // it can at worst show an item that then 404s-to-access-denied on
   // click, never grant anything.
-  useEffect(() => {
-    let cancelled = false;
-    fetch("/api/me")
-      .then((res) => res.json() as Promise<MeResponse>)
-      .then((data) => {
-        if (!cancelled) setMe(data);
-      })
-      .catch(() => {
-        if (!cancelled) setMe({ authenticated: false });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
   const activeFeatures = me?.authenticated ? new Set(me.activeFeatures) : null;
   const roleLabel = me?.authenticated && isRole(me.role) ? ROLE_LABELS[me.role] : "Illustrative workspace";
   const displayName = me?.authenticated ? me.displayName : "Super Admin";

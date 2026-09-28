@@ -58,7 +58,7 @@ export default async function OperationsPage() {
       <ModuleTabs tabs={OPERATIONS_TABS} />
 
       {result.ok ? (
-        <TasksWorkspace initialTasks={result.data.tasks} canManageTasks={permissions.canManageTasks} />
+        <TasksWorkspace initialTasks={result.data.tasks} canManageTasks={permissions.canManageTasks} serverNowIso={new Date().toISOString()} />
       ) : (
         <section className="panel">
           <EmptyState title="Could not load Tasks" description={result.message} icon="alert" />

@@ -33,7 +33,7 @@ export default async function TaskDetailPage({ params }: RouteParams) {
 
   return (
     <AppShell>
-      <TaskDetail initialTask={result.data} canCompleteTasks={permissions.canCompleteTasks} canManageTasks={permissions.canManageTasks} />
+      <TaskDetail initialTask={result.data} canCompleteTasks={permissions.canCompleteTasks} canManageTasks={permissions.canManageTasks} serverNowIso={new Date().toISOString()} />
     </AppShell>
   );
 }

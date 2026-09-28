@@ -6,8 +6,11 @@ import { useRouter } from "next/navigation";
 import { Icon } from "./icons";
 import { signOutEverywhere } from "@/lib/auth/signOut";
 import { NotificationBell } from "@/features/notifications/NotificationBell";
+import type { MeResponse } from "./current-actor";
+import { initialsOf } from "@/features/shared/types";
+import { ROLE_LABELS, isRole } from "@/server/authz/roles";
 
-export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
+export function Topbar({ onMenuClick, me }: { onMenuClick: () => void; me: MeResponse | null }) {
   const router = useRouter();
   const [signingOut, setSigningOut] = useState(false);
 
@@ -17,6 +20,18 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
     router.push("/sign-in");
     router.refresh();
   }
+
+  // Production hardening (base spec section 25): previously a hardcoded `<span
+  // className="avatar">SA</span>` never wired to the real signed-in user (carried debt, see
+  // docs/PRODUCTION_HARDENING.md). Now sourced from the same /api/me DTO GlobalSidebar's own
+  // identical avatar already uses (role-label initials, e.g. "Super Admin" -> "SA") - kept
+  // consistent with that existing convention rather than switching to personal-name initials, so
+  // the two avatars in the shell never disagree. `me` is presentational only (see /api/me's own
+  // comment) and is never the authorization boundary; before it resolves (or on any fetch failure)
+  // this renders the same neutral generic-account fallback the sidebar already uses, never a UID or
+  // email.
+  const roleLabel = me?.authenticated && isRole(me.role) ? ROLE_LABELS[me.role] : "Illustrative workspace";
+  const avatarInitials = initialsOf(roleLabel);
 
   return (
     <header className="topbar">
@@ -43,7 +58,7 @@ export function Topbar({ onMenuClick }: { onMenuClick: () => void }) {
         <button className="iconbutton" aria-label="Sign out" type="button" onClick={handleSignOut} disabled={signingOut}>
           <Icon name="logout" />
         </button>
-        <span className="avatar">SA</span>
+        <span className="avatar" aria-label={`Signed in as ${roleLabel}`}>{avatarInitials}</span>
       </div>
     </header>
   );

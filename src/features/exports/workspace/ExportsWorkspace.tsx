@@ -7,13 +7,18 @@ import { Button } from "@/ui/Button";
 import { Icon } from "@/ui/icons";
 import { EmptyState, Skeleton } from "@/ui/States";
 import type { ExportJobDto, ExportPreviewDto, ExportTargetDto } from "@/server/exports";
+import { useMounted } from "@/features/shared/use-mounted";
 
 import { createExportJob, exportArtifactDownloadUrl, listExportJobs, previewExportJob, retryExportJob, type ExportsApiResult } from "../api-client";
 
+// serverNowIso: production-hardening fix (base spec section 26) - see TasksWorkspace.tsx's own
+// comment on this exact prop for the full rationale (a server-computed, hydration-safe "now" for
+// isPastExpiry below, refreshed to the live client clock only after mount).
 export type ExportsWorkspaceProps = {
   targets: ExportTargetDto[];
   canCreateExports: boolean;
   initialJobs: ExportJobDto[];
+  serverNowIso: string;
 };
 
 type CreateState = { status: "idle" } | { status: "loading" } | { status: "error"; message: string } | { status: "done"; job: ExportJobDto };
@@ -40,10 +45,11 @@ function formatDateTime(iso: string | null): string {
   return date.toLocaleString(DATE_LOCALE, { year: "numeric", month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }
 
-function isPastExpiry(expiresAt: string | null): boolean {
+function isPastExpiry(expiresAt: string | null, nowIso: string): boolean {
   if (!expiresAt) return false;
   const t = Date.parse(expiresAt);
-  return Number.isFinite(t) && t < Date.now();
+  const now = Date.parse(nowIso);
+  return Number.isFinite(t) && Number.isFinite(now) && t < now;
 }
 
 function statusTone(status: ExportJobDto["status"]): "default" | "orange" | "blue" | "purple" | "red" | "gray" {
@@ -63,7 +69,9 @@ function canRetry(job: ExportJobDto): boolean {
 // authority), preview real bounded sample rows, generate a job, and review/download/retry from history.
 // Every number/state here comes straight from the server; this component computes nothing about scope,
 // authorization, or row counts of its own.
-export function ExportsWorkspace({ targets, canCreateExports, initialJobs }: ExportsWorkspaceProps) {
+export function ExportsWorkspace({ targets, canCreateExports, initialJobs, serverNowIso }: ExportsWorkspaceProps) {
+  const mounted = useMounted();
+  const nowIso = mounted ? new Date().toISOString() : serverNowIso;
   const [selectedTargetId, setSelectedTargetId] = useState<string | null>(null);
   const [format, setFormat] = useState<string>("");
   const [filterValues, setFilterValues] = useState<Record<string, string>>({});
@@ -459,7 +467,7 @@ export function ExportsWorkspace({ targets, canCreateExports, initialJobs }: Exp
                   </thead>
                   <tbody>
                     {filteredJobs.map((job) => {
-                      const expired = isPastExpiry(job.expiresAt);
+                      const expired = isPastExpiry(job.expiresAt, nowIso);
                       const downloadable = job.hasArtifact && !expired;
                       return (
                         <tr key={job.jobRef} data-testid="export-job-row" data-job-ref={job.jobRef} data-job-status={job.status}>
