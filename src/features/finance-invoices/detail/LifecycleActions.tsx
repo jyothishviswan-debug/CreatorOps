@@ -5,7 +5,7 @@ import { useState } from "react";
 import { DialogShell } from "@/ui/Dialog";
 import type { InvoiceDetailDto } from "@/server/finance-invoices/client-dto";
 
-import { formatMoneyMinor, formatSignedMoneyMinor } from "../format";
+import { counterpartyTypeLabel, formatMoneyMinor, formatSignedMoneyMinor } from "../format";
 import { rejectInvoice, reopenInvoice, submitInvoice, voidInvoice } from "../api-client";
 import type { DetailActionVisibility } from "./detail-view";
 import { ApproveDialog } from "./ApproveDialog";
@@ -178,7 +178,8 @@ export function LifecycleActions({ detail, visibility, onUpdated }: { detail: In
         </div>
         <div className="kv">
           <span>Counterparty</span>
-          <b>{detail.head.counterparty.displayName ?? detail.head.counterparty.ref}</b>
+          {/* Final Whole-Product Certification (raw-ID fallback sweep, spec section 16): safe generic label, never the raw ref. */}
+          <b>{detail.head.counterparty.displayName ?? counterpartyTypeLabel(detail.head.counterparty.type)}</b>
         </div>
         <div className="field full" style={{ marginTop: 12 }}>
           <label htmlFor="reject-reason">Reason</label>

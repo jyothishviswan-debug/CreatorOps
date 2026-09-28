@@ -105,8 +105,12 @@ test("every lifecycle appears with the right primary action: Continue draft / Re
   await gotoWorkspace(page);
   const expected: Array<[string, string, string]> = [
     [names_.draft, "Draft", "Continue draft"],
-    // Step 14C: a confirmed-but-not-yet-active Agreement is never worded as a bare "Draft".
-    [names_.confirmed, "Confirmed · awaiting activation", "Review"],
+    // Step 14C: a confirmed-but-not-yet-active Agreement is never worded as a bare "Draft" - the workspace row
+    // uses the short form ("Activation pending", format.ts's own CONFIRMED_AWAITING_ACTIVATION_LABEL, unit-
+    // tested in format.test.ts/workspace-view-model.test.ts); the Agreement detail page's own context strip
+    // uses the longer "Confirmed · awaiting activation" instead - two different, both-real, both-current copy
+    // contexts, not a contradiction.
+    [names_.confirmed, "Activation pending", "Review"],
     [names_.active, "Active", "Create revision"],
     [names_.suspended, "Suspended", "Open"],
     [names_.ended, "Ended", "Open"],

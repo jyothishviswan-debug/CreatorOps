@@ -6,7 +6,7 @@ import { DialogShell } from "@/ui/Dialog";
 import type { InvoicePaymentSettlementDto, PaymentDetailDto } from "@/server/finance-payments/client-dto";
 
 import { confirmPayment, failPayment, getInvoicePaymentSettlement, recordPayment, reopenPayment, voidPayment } from "../api-client";
-import { formatMoneyMinor, paymentMethodLabel, payeeIdentityStatusLabel } from "../format";
+import { counterpartyTypeLabel, formatMoneyMinor, paymentMethodLabel, payeeIdentityStatusLabel } from "../format";
 import type { DetailActionVisibility } from "./detail-view";
 
 // Step 17B section 15/16: the lifecycle actions rendered in the detail header (Record / Confirm /
@@ -270,7 +270,8 @@ export function LifecycleActions({ detail, visibility, canOverrideOverage, onUpd
         )}
         <div className="kv">
           <span>Counterparty</span>
-          <b>{head.counterparty.displayName ?? head.counterparty.ref}</b>
+          {/* Final Whole-Product Certification (raw-ID fallback sweep, spec section 16): safe generic label, never the raw ref. */}
+          <b>{head.counterparty.displayName ?? counterpartyTypeLabel(head.counterparty.type)}</b>
         </div>
         <div className="kv">
           <span>Invoice</span>

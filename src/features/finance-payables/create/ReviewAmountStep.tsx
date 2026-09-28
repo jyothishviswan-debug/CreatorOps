@@ -6,7 +6,7 @@ import type { PayableDetailDto, PayableSourcePreviewDto } from "@/server/finance
 import type { PayableReviewCode } from "@/server/finance-payables/types";
 
 import { addPayableAdjustment, confirmPayableTax } from "../api-client";
-import { commercialPeriodLabel, determinationChip } from "../format";
+import { commercialPeriodLabel, counterpartyTypeLabel, determinationChip } from "../format";
 import { agreementEvidenceSection, breakdownRows, breakdownTotalText, calculationSummaryRows, performanceTargetsSection, reviewEvidenceSection, warningsList, type BreakdownRowView } from "./create-view";
 import { ConfirmGstDialog, type ConfirmGstInput } from "./ConfirmGstDialog";
 import { ManualAdjustmentDialog, type ManualAdjustmentInput } from "./ManualAdjustmentDialog";
@@ -118,7 +118,8 @@ export function ReviewAmountStep({
           <div className="detailcontext" style={{ marginBottom: 18 }}>
             <div>
               <small>Counterparty</small>
-              <b>{preview.counterparty.displayName ?? preview.counterparty.ref}</b>
+              {/* Final Whole-Product Certification (raw-ID fallback sweep, spec section 16): safe generic label, never the raw ref. */}
+              <b>{preview.counterparty.displayName ?? counterpartyTypeLabel(preview.counterparty.type)}</b>
             </div>
             <div>
               <small>Commercial period</small>

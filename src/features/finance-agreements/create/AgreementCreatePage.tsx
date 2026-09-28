@@ -141,8 +141,19 @@ export function AgreementCreatePage({ title }: { title: string }) {
 
 // --- Party / Source choice (before a draft exists) ---------------------------------------------------------------------------------------
 function PartySourceChoice() {
-  const { permissions, onboarding, startDraft } = useIntake();
-  const [local, setLocal] = useState<AgreementForState>(EMPTY_AGREEMENT_FOR);
+  const { permissions, onboarding, startDraft, preview } = useIntake();
+  // Final Whole-Product Certification (base spec section 6/31): a deep link from a Partner/Vendor page
+  // (`?counterpartyType=&ref=`) already resolves its target through `loadIntakePageState` server-side - the
+  // route's own header comment documents this, and `AgreementForState.preselectedType` /
+  // `selectChoice`'s "keep the counterparty when the newly-chosen card is the SAME type" rule
+  // (`agreement-intake-logic/agreement-for-ui.ts`) were plainly built to consume it - but this component's own
+  // local state never read `preview` (already available in context from mount, from `initial.preview`) to seed
+  // it. Reproduced live: visiting `/finance/agreements/new?counterpartyType=PARTNER&ref=<realRef>` and then
+  // choosing a matching-type card left the Partner search box empty instead of preselected. Minimal, narrowly-
+  // scoped fix - seed the counterparty + its type ONCE from the already-resolved preview on first render;
+  // no change to the resolution/authorization path itself (an unauthorized/missing ref already yields no
+  // `preview`, so the form already starts empty for that case, unchanged).
+  const [local, setLocal] = useState<AgreementForState>(() => (preview ? { ...EMPTY_AGREEMENT_FOR, counterparty: { id: preview.ref, label: preview.displayName, description: preview.regions.length > 0 ? preview.regions.join(", ") : undefined }, preselectedType: preview.type } : EMPTY_AGREEMENT_FOR));
 
   const choiceType = local.choice ? AGREEMENT_FOR_OPTIONS.find((o) => o.value === local.choice)!.counterpartyType : null;
   const modeOptions = choiceType ? onboardingModeOptions(choiceType, permissions) : [];
@@ -160,7 +171,11 @@ function PartySourceChoice() {
         <p>What is this Agreement for, and who is the counterparty?</p>
       </div>
       <div className="panelbody">
-        <div className="grid">
+        {/* Final Whole-Product Certification (accessibility pass, spec section 21): the four choice cards below are
+            each `role="radio"` but had no enclosing group, an invalid/incomplete ARIA radio pattern (an assistive
+            technology cannot announce "1 of 4" or the group's own purpose). Minimal, narrowly-scoped fix - adds
+            the missing `role="radiogroup"` + accessible name only; no visual or behavioral change. */}
+        <div className="grid" role="radiogroup" aria-label="What is this Agreement for?">
           {AGREEMENT_FOR_OPTIONS.map((option) => (
             <div key={option.value} className="s3">
               <button
@@ -251,11 +266,14 @@ function ExistingCounterpartyPicker({ state, setState, startDraft }: { state: Ag
         <div className="grid" style={{ marginTop: 14 }}>
           {groupAccountsByPlatform(AGREEMENT_FOR_OPTIONS.find((o) => o.value === state.choice)!.platforms, accounts).map((group) => (
             <div key={group.platform} className="s6 field">
-              <label>{group.platformLabel} account</label>
+              {/* Final Whole-Product Certification (accessibility pass, spec section 21): this <label> had no
+                  `htmlFor`, so the <select> below it was an unlabeled form control to assistive technology.
+                  Minimal fix - id/htmlFor association only, no visual or behavioral change. */}
+              <label htmlFor={`account-select-${group.platform}`}>{group.platformLabel} account</label>
               {group.missing ? (
                 <p className="muted">No active {group.platformLabel} account on this Partner.</p>
               ) : (
-                <select value={state.selection[group.platform] ?? ""} onChange={(event) => setState((s) => selectAccount(s, group.platform, event.target.value))}>
+                <select id={`account-select-${group.platform}`} value={state.selection[group.platform] ?? ""} onChange={(event) => setState((s) => selectAccount(s, group.platform, event.target.value))}>
                   <option value="" disabled>
                     Choose an account
                   </option>

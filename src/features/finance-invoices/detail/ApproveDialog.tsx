@@ -5,7 +5,7 @@ import { useState } from "react";
 import { DialogShell } from "@/ui/Dialog";
 import type { InvoiceDetailDto } from "@/server/finance-invoices/client-dto";
 
-import { formatMoneyMinor, formatSignedMoneyMinor, reconciliationChip } from "../format";
+import { counterpartyTypeLabel, formatMoneyMinor, formatSignedMoneyMinor, reconciliationChip } from "../format";
 import { approveInvoice } from "../api-client";
 
 // Step 16B section 18: Approval is high-signal - an explicit confirmation dialog showing exactly
@@ -58,7 +58,9 @@ export function ApproveDialog({ open, detail, onClose, onUpdated }: { open: bool
       </div>
       <div className="kv">
         <span>Counterparty</span>
-        <b>{head.counterparty.displayName ?? head.counterparty.ref}</b>
+        {/* Final Whole-Product Certification (raw-ID fallback sweep, spec section 16): an unresolved counterparty
+            name no longer falls back to the raw opaque ref - a safe generic label instead. */}
+        <b>{head.counterparty.displayName ?? counterpartyTypeLabel(head.counterparty.type)}</b>
       </div>
       <div className="kv">
         <span>Declared total</span>

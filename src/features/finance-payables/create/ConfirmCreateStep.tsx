@@ -2,7 +2,7 @@
 
 import type { PayableDetailDto, PayableSourcePreviewDto } from "@/server/finance-payables/client-dto";
 
-import { commercialPeriodLabel, determinationChip, sourceRefLabel, sourceTypeLabel } from "../format";
+import { commercialPeriodLabel, counterpartyTypeLabel, determinationChip, sourceRefLabel, sourceTypeLabel } from "../format";
 import { breakdownRows, breakdownTotalText, confirmReadiness, DRAFT_LIFECYCLE_WORDING, type CreateStage } from "./create-view";
 
 // Step 15B: Create Payable - Stage 3 (Confirm). A balanced two-column review, never one long summary
@@ -46,7 +46,8 @@ export function ConfirmCreateStep({
         <div className="panelbody">
           <div className="kv">
             <span>Counterparty</span>
-            <b>{preview.counterparty.displayName ?? preview.counterparty.ref}</b>
+            {/* Final Whole-Product Certification (raw-ID fallback sweep, spec section 16): safe generic label, never the raw ref. */}
+            <b>{preview.counterparty.displayName ?? counterpartyTypeLabel(preview.counterparty.type)}</b>
           </div>
           <div className="kv">
             <span>Commercial period</span>

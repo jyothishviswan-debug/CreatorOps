@@ -8,6 +8,7 @@ import type { InvoiceDetailDto } from "@/server/finance-invoices/client-dto";
 import type { InvoicePaymentSettlementDto } from "@/server/finance-payments/client-dto";
 
 import { getInvoiceForPayment, getInvoicePaymentSettlement, loadEligibleInvoices } from "../api-client";
+import { counterpartyTypeLabel } from "../format";
 import { NEVER_SETTLED_NOTE, selectedInvoiceSummary, toEligibleInvoiceRowView, type EligibleInvoiceSource } from "./create-view";
 
 const SEARCH_DEBOUNCE_MS = 300;
@@ -218,7 +219,8 @@ function selectedInvoiceSummaryFor(detail: InvoiceDetailDto, settlement: Invoice
   const pin = selectedVersion?.payablePin ?? null;
   const bankField = selectedVersion?.payeeIdentity?.fields.find((field) => field.field === "BANK") ?? null;
   return selectedInvoiceSummary({
-    counterpartyName: head.counterparty.displayName ?? head.counterparty.ref,
+    // Final Whole-Product Certification (raw-ID fallback sweep, spec section 16): safe generic label, never the raw ref.
+    counterpartyName: head.counterparty.displayName ?? counterpartyTypeLabel(head.counterparty.type),
     invoiceNumber: head.externalInvoiceNumber,
     invoiceRef: head.invoiceRef,
     invoiceVersion: head.approvedVersion ?? head.latestVersion,

@@ -146,7 +146,9 @@ export function MeetingDetailDialog({ meetingRef, canManage, onClose, onChanged 
                 <>
                   <div className="kv">
                     <span>Participants</span>
-                    <b>{meeting.participants && meeting.participants.length > 0 ? meeting.participants.map((p) => p.displayName ?? p.userRef).join(", ") : "None recorded"}</b>
+                    {/* Final Whole-Product Certification (raw-ID fallback sweep, spec section 15/16): an unresolved
+                        participant name no longer falls back to their raw auth uid. */}
+                    <b>{meeting.participants && meeting.participants.length > 0 ? meeting.participants.map((p) => p.displayName ?? "Unknown participant").join(", ") : "None recorded"}</b>
                   </div>
                   {meeting.agenda && (
                     <div style={{ marginTop: 10 }}>
@@ -404,7 +406,9 @@ function ActionItemRow({ item, canManage, onChanged }: { item: ActionItemDto; ca
         <p className="foundationnote" style={{ marginTop: 6 }}>
           Promoted to Operations Task:{" "}
           <a href={`/operations/tasks/${encodeURIComponent(item.promotedTaskRef)}`} className="textlink">
-            {item.promotedTaskDisplayName ?? item.promotedTaskRef.slice(0, 8)}
+            {/* Final Whole-Product Certification (raw-ID fallback sweep, spec section 16): a safe generic label,
+                never a slice of the raw ref, when the Task's display name has not resolved. */}
+            {item.promotedTaskDisplayName ?? "Operations Task"}
           </a>
           {item.promotedByDisplayName ? ` · by ${item.promotedByDisplayName}` : ""}
         </p>

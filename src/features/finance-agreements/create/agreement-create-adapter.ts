@@ -81,8 +81,19 @@ export function extractionUiState(input: { hasArtifact: boolean; phase: "idle" |
   if (input.errored) return "error";
   if (input.phase !== "idle") return input.phase;
   if (!input.hasArtifact) return "idle";
-  if (!input.attached || !input.runStatus) return "idle";
+  if (!input.runStatus) return "idle";
+  // Final Whole-Product Certification (base spec section 31): a MANUAL_REVIEW_REQUIRED run must be shown
+  // immediately, never gated on `attached` - reproduced live (a genuine bug, not hypothetical): a scanned/
+  // no-text Agreement PDF (real local OCR runs, finds nothing usable) got a real 200 MANUAL_REVIEW_REQUIRED
+  // response from `/api/finance/contracts/extract`, but the page stayed on "Upload the signed Agreement to
+  // see extraction results here." forever - because a MANUAL_REVIEW_REQUIRED run can have zero fields
+  // (`classifyExtraction`'s own `few_fields`/PDF-unreadable branches), so `attachable` (and therefore
+  // `controls.showAttach`/`attached`) can never become true, and the OLD `!input.attached` check before this
+  // one made that state permanently unreachable. This is purely a visibility fix for an already-computed,
+  // already-safe status message - it does not change when a value may be attached into the draft (that gate
+  // is `contractControls`'s own `showAttach`/`canAttach`, unchanged) and does not touch extraction/OCR logic.
   if (input.runStatus === "MANUAL_REVIEW_REQUIRED") return "manual_review";
+  if (!input.attached) return "idle";
   if (input.runStatus === "PARTIAL") return "partial";
   return "complete";
 }
