@@ -55,7 +55,7 @@ describe("copy constants (binding wording)", () => {
   it("carries the exact Step 14B strings", () => {
     expect(TARGET_MONITORING_LABEL).toBe("Monitoring only · does not affect payment");
     expect(EXTRACTION_NOTE).toBe("Extraction suggests values only. Review every field before confirming the Agreement.");
-    expect(SCAN_MANUAL_REVIEW_MESSAGE).toBe("Manual review required — no extractable text was found.");
+    expect(SCAN_MANUAL_REVIEW_MESSAGE).toBe("We couldn't reliably read this scanned document. You can continue with manual review.");
     expect(MASTER_DATA_SOURCE_LABEL).toBe("CreatorOps master data");
     expect(KYC_AVAILABLE_NOTE).toBe("KYC available in Partner/Vendor record");
   });

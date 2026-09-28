@@ -26,7 +26,12 @@ export type ChipSpec = { label: string; tone: PillTone };
 // --- Copy constants (binding wording from the Step 14B design) -----------------------------------------------------------------------------
 export const TARGET_MONITORING_LABEL = "Monitoring only · does not affect payment";
 export const EXTRACTION_NOTE = "Extraction suggests values only. Review every field before confirming the Agreement.";
-export const SCAN_MANUAL_REVIEW_MESSAGE = "Manual review required — no extractable text was found.";
+// OCR Completion stage: a scanned/image-only PDF is no longer simply "no OCR adapter" - it is read
+// automatically, and this message is shown only once that has genuinely failed (spec section 20).
+export const SCAN_MANUAL_REVIEW_MESSAGE = "We couldn't reliably read this scanned document. You can continue with manual review.";
+export const SCAN_DETECTED_MESSAGE = "Scanned document detected. Reading document…";
+export const OCR_COMPLETED_MESSAGE = "OCR completed. Review extracted fields carefully.";
+export const OCR_LOW_CONFIDENCE_MESSAGE = "Some text could not be read reliably. Manual review is required.";
 export const CONTRACT_SOURCE_COPY = "Upload signed Agreement to extract and cross-check details";
 export const MASTER_DATA_SOURCE_LABEL = "CreatorOps master data";
 export const MASTER_DATA_SOURCE_NOTE = "Source: CreatorOps master data";

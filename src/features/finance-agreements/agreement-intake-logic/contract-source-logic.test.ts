@@ -50,14 +50,30 @@ describe("extraction summary", () => {
     expect(summary.attachable).toBe(true);
     expect(summarizeExtraction(extraction({ status: "PARTIAL" })).chip.label).toMatch(/partial/i);
   });
-  it("uses the required scan message - once - for a no-text PDF, with no OCR / cloud promise", () => {
-    const scan = extraction({ status: "MANUAL_REVIEW_REQUIRED", fields: [], reasons: [{ code: "no_extractable_text", message: "No readable text was found in the PDF. No OCR adapter is configured..." }] });
+  it("uses the required scan message - once - when OCR itself never ran / OCR could not read the document (spec section 20)", () => {
+    const scan = extraction({ status: "MANUAL_REVIEW_REQUIRED", fields: [], reasons: [{ code: "no_extractable_text", message: "No readable text was found in the PDF." }] });
     const summary = summarizeExtraction(scan);
     expect(summary.scanMessage).toBe(SCAN_MANUAL_REVIEW_MESSAGE);
-    expect(summary.scanMessage).toBe("Manual review required — no extractable text was found.");
+    expect(summary.scanMessage).toBe("We couldn't reliably read this scanned document. You can continue with manual review.");
     expect(summary.warnings).toEqual([]);
     expect(summary.attachable).toBe(false);
     expect(summary.chip.label).toMatch(/manual review/i);
+  });
+
+  it("OCR Completion: a successful OCR run shows the OCR-completed message (never the scan-failure message)", () => {
+    const ocrOk = extraction({ status: "EXTRACTED", run: { runRef: "run_1", artifactRef: "ca_1", status: "EXTRACTED", reasonCodes: ["ocr_used"], parserVersion: "p1", pageCount: 1, charCount: 200, source: { kind: "ocr", ocrProviderId: "tesseract.js", ocrProviderVersion: "7.0.0", ocrPageBands: [{ page: 1, band: "USABLE" }] }, createdAt: "2026-09-01T00:00:00.000Z", createdByUserRef: "u" } });
+    const summary = summarizeExtraction(ocrOk);
+    expect(summary.ocrMessage).toBe("OCR completed. Review extracted fields carefully.");
+    expect(summary.scanMessage).toBeNull();
+  });
+
+  it("OCR Completion: a successful OCR run with a non-USABLE page shows the low-confidence variant", () => {
+    const ocrLow = extraction({ status: "PARTIAL", run: { runRef: "run_1", artifactRef: "ca_1", status: "PARTIAL", reasonCodes: ["ocr_used"], parserVersion: "p1", pageCount: 1, charCount: 200, source: { kind: "ocr", ocrProviderId: "tesseract.js", ocrProviderVersion: "7.0.0", ocrPageBands: [{ page: 1, band: "LOW" }] }, createdAt: "2026-09-01T00:00:00.000Z", createdByUserRef: "u" } });
+    expect(summarizeExtraction(ocrLow).ocrMessage).toBe("Some text could not be read reliably. Manual review is required.");
+  });
+
+  it("OCR Completion: native (non-OCR) extraction never shows an ocrMessage", () => {
+    expect(summarizeExtraction(extraction()).ocrMessage).toBeNull();
   });
   it("lists other warnings and does not offer to attach a run with only restricted proposals", () => {
     const warned = extraction({ status: "PARTIAL", reasons: [{ code: "few_fields", message: "Too few fields could be identified." }] });

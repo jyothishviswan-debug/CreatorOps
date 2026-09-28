@@ -45,7 +45,7 @@ describe("preview summary", () => {
     const scanned = previewDto({ extraction: { status: "MANUAL_REVIEW_REQUIRED", reasons: [{ code: "no_extractable_text", message: "No text." }, { code: "other", message: "Something else." }], pageCount: 2 } }, NOTHING);
     const summary = summarizePreview(scanned);
     expect(summary.scanMessage).toBe(SCAN_MANUAL_REVIEW_MESSAGE);
-    expect(summary.scanMessage).toBe("Manual review required — no extractable text was found.");
+    expect(summary.scanMessage).toBe("We couldn't reliably read this scanned document. You can continue with manual review.");
     expect(summary.warnings).toEqual(["Something else."]);
     expect(summary.chip.label).toBe("Manual review required");
     expect(summary.foundValues).toBe(false);

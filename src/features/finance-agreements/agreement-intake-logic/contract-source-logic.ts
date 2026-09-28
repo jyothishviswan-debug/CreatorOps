@@ -1,6 +1,6 @@
 import type { ContractArtifactDto, ExtractionResultDto } from "@/server/finance-agreements/client-dto";
 
-import { checkContractFile, EXTRACTION_NOTE, SCAN_MANUAL_REVIEW_MESSAGE, type ChipSpec, extractionStatusChip } from "../format";
+import { checkContractFile, EXTRACTION_NOTE, OCR_COMPLETED_MESSAGE, OCR_LOW_CONFIDENCE_MESSAGE, SCAN_MANUAL_REVIEW_MESSAGE, type ChipSpec, extractionStatusChip } from "../format";
 
 // Step 14B intake, section 2 (`Contract source`): the pure decisions behind the upload / extract / attach controls.
 
@@ -28,9 +28,12 @@ export function extractionAnnouncement(input: { phase: "idle" | "uploading" | "e
 
 export type ExtractionSummary = {
   chip: ChipSpec;
-  // Reason messages to show as warnings. The no-text reason is replaced by the required scan message, never shown twice.
+  // Reason messages to show as warnings. The no-text/ocr_used reasons are replaced by scanMessage/ocrMessage, never shown twice.
   warnings: string[];
   scanMessage: string | null;
+  // OCR Completion stage: set only on a SUCCESSFUL OCR run (never on native text) - "OCR completed…"
+  // or, when any page's confidence band was not USABLE, the low-confidence variant (spec section 20).
+  ocrMessage: string | null;
   note: string;
   proposalCount: number;
   // Something could be attached: at least one proposal the actor may see.
@@ -40,9 +43,15 @@ export type ExtractionSummary = {
 export function summarizeExtraction(extraction: ExtractionResultDto): ExtractionSummary {
   const noText = extraction.reasons.some((reason) => reason.code === "no_extractable_text");
   const scanMessage = extraction.run.status === "MANUAL_REVIEW_REQUIRED" && (noText || extraction.fields.length === 0) ? SCAN_MANUAL_REVIEW_MESSAGE : null;
-  const warnings = extraction.reasons.filter((reason) => reason.code !== "no_extractable_text").map((reason) => reason.message);
+  const warnings = extraction.reasons.filter((reason) => reason.code !== "no_extractable_text" && reason.code !== "ocr_used").map((reason) => reason.message);
   const attachable = extraction.fields.some((field) => field.valueState === "VISIBLE");
-  return { chip: extractionStatusChip(extraction.run.status), warnings, scanMessage, note: EXTRACTION_NOTE, proposalCount: extraction.fields.length, attachable };
+  const ocrMessage =
+    extraction.run.source.kind === "ocr" && extraction.run.status !== "MANUAL_REVIEW_REQUIRED"
+      ? extraction.run.source.ocrPageBands.some((page) => page.band !== "USABLE")
+        ? OCR_LOW_CONFIDENCE_MESSAGE
+        : OCR_COMPLETED_MESSAGE
+      : null;
+  return { chip: extractionStatusChip(extraction.run.status), warnings, scanMessage, ocrMessage, note: EXTRACTION_NOTE, proposalCount: extraction.fields.length, attachable };
 }
 
 export function artifactSummaryText(artifact: Pick<ContractArtifactDto, "fileName" | "sizeBytes" | "status">, formatSize: (bytes: number) => string): string {

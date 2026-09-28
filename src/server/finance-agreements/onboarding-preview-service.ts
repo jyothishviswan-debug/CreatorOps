@@ -6,6 +6,7 @@ import { requireVendorsAccess } from "@/server/vendors/vendors-gate";
 
 import { REJECTION_MESSAGES, sanitizeContractFileName } from "./contract-service";
 import { sha256Hex, validateContractPdf } from "./contract-artifacts/validation";
+import { runOcrForAgreement } from "./extraction-ocr";
 import { redactIdentityFromText } from "./extraction-redaction";
 import { describeExtractionReason } from "./extraction-reasons";
 import { runExtractionPipeline, type PipelineOutcome } from "./extraction-run-builder";
@@ -152,8 +153,12 @@ export async function previewOnboardingFromContract(actor: ActorContext | null, 
     input.type === "PARTNER" ? requirePartnersAccess(actor, "manage_partner_accounts").then((result) => result.ok) : Promise.resolve(false),
   ]);
 
-  // Never throws for a bad PDF (a failure is a MANUAL_REVIEW_REQUIRED outcome). Nothing below writes anywhere.
-  const outcome = await runExtractionPipeline(input.bytes, sha256Hex(input.bytes));
+  // Never throws for a bad PDF (a failure is a MANUAL_REVIEW_REQUIRED outcome). Nothing below writes
+  // an Agreement/Partner/Vendor record anywhere - OCR Completion stage: runOcrForAgreement's own
+  // best-effort text CACHE (never a field value, never image bytes - see extraction-ocr.ts's own
+  // header) is the one exception, mirroring the same "cache the expensive OCR text, stay otherwise
+  // ephemeral" decision already made for Invoice extraction preview.
+  const outcome = await runExtractionPipeline(input.bytes, sha256Hex(input.bytes), runOcrForAgreement);
   return {
     ok: true,
     data: buildOnboardingPreviewDto({ type: input.type, fileName: sanitizeContractFileName(input.fileName), outcome, contractDetailVisible: contract.ok, canCreateCounterparty, canCreatePartnerAccounts: canManageAccounts }),
