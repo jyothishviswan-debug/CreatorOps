@@ -580,6 +580,34 @@ describe("firestore.indexes.json - Reports (Step 19A query audit)", () => {
   });
 });
 
+// Final Whole-Product Certification: `reportRuns` (the Reports Final-Master publication domain -
+// distinct from the legacy `reportSnapshots` above) had TWO real composite-index-shaped queries
+// (src/server/reports/firestore.ts's `listReportRunHeadDocsByActor` and
+// `listFinalizedReportRunHeadDocsByReportId`, both an equality filter combined with an `orderBy` on
+// a DIFFERENT field) with NO matching entry anywhere in firestore.indexes.json - masked entirely by
+// the emulator's own auto-index behavior (never enforced there), so nothing else in this suite would
+// have caught it before a real Firestore deployment hit `FAILED_PRECONDITION` on both calls. Found
+// and fixed during certification; this guard pins the fix the same way the reportSnapshots block
+// above does.
+describe("firestore.indexes.json - Report Runs (Final Whole-Product Certification query audit)", () => {
+  const createdByUserRefAsc: IndexField = { fieldPath: "createdByUserRef", order: "ASCENDING" };
+  const reportIdAsc: IndexField = { fieldPath: "reportId", order: "ASCENDING" };
+  const updatedAtDesc: IndexField = { fieldPath: "updatedAt", order: "DESCENDING" };
+
+  it("has the createdByUserRef + updatedAt-desc composite for listReportRunHeadDocsByActor", () => {
+    expect(hasIndex("reportRuns", [createdByUserRefAsc, updatedAtDesc])).toBe(true);
+  });
+
+  it("has the reportId + updatedAt-desc composite for listFinalizedReportRunHeadDocsByReportId", () => {
+    expect(hasIndex("reportRuns", [reportIdAsc, updatedAtDesc])).toBe(true);
+  });
+
+  it("no other reportRuns index exists - exactly the two real queries, no speculative extras", () => {
+    const mine = indexesFile.indexes.filter((index) => index.collectionGroup === "reportRuns");
+    expect(mine).toHaveLength(2);
+  });
+});
+
 // Step 15A (production query/index audit): EVERY Firestore query introduced in
 // src/server/finance-payables. The emulator never enforces composite indexes, so this certifies by
 // SOURCE SCAN what each query needs, and pins the inventory (exact-count style - a new query must be

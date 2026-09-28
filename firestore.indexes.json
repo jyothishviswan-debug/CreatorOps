@@ -766,6 +766,22 @@
       ]
     },
     {
+      "collectionGroup": "reportRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "createdByUserRef", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
+      "collectionGroup": "reportRuns",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "reportId", "order": "ASCENDING" },
+        { "fieldPath": "updatedAt", "order": "DESCENDING" }
+      ]
+    },
+    {
       "collectionGroup": "exportJobs",
       "queryScope": "COLLECTION",
       "fields": [

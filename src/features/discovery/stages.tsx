@@ -449,7 +449,11 @@ export function AgreementStage({ lead, onSaved }: StageProps) {
           {a.amount !== undefined && (
             <div className="kv">
               <span>Amount</span>
-              <b>{a.amount.toLocaleString()}</b>
+              {/* Final Whole-Product Certification (hydration sweep): a fixed locale, matching this
+                  codebase's own established convention (e.g. ExportsWorkspace.tsx's DATE_LOCALE) - the
+                  default Intl locale can differ between the server render and the browser, which is a
+                  real hydration-text-mismatch risk for a real server-passed value, not a hypothetical one. */}
+              <b>{a.amount.toLocaleString("en-GB")}</b>
             </div>
           )}
           {a.deliverableCount !== undefined && (
