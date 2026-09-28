@@ -203,6 +203,27 @@ function fitOneLine(font: PDFFont, text: string, size: number, maxWidth: number)
   return truncateToWidth(font, text, size, maxWidth);
 }
 
+type LaidLine = { text: string; x: number; y: number; width: number };
+
+// User-reported regression fix: both reference reports center every table cell's text horizontally
+// AND vertically within its cell - the design brief's rewrite instead drew every cell top-left (numeric
+// columns right-aligned), and because a row's height is set by its OWN tallest cell (see drawTable), a
+// short 1-line cell sitting next to a 3-line-wrapped sibling in the same row was pinned to the row's top
+// with visible dead space below it - the "unmatched"/uncentered look reported. This is the ONE place
+// that decides a cell's drawn (x, y) per wrapped line, given THAT cell's own line count (which may be
+// shorter than the row's tallest cell), so every cell centers within the row's actual full height, not
+// just within its own content height.
+function layoutCellLines(font: PDFFont, lines: string[], insetX: number, insetWidth: number, rowTop: number, rowHeight: number, fontSize: number, lineHeight: number, align: "left" | "center" | "right" = "center"): LaidLine[] {
+  const blockHeight = lines.length * lineHeight;
+  const topPad = Math.max(0, (rowHeight - blockHeight) / 2);
+  const firstBaselineY = rowTop - topPad - fontSize * 0.82;
+  return lines.map((text, i) => {
+    const width = font.widthOfTextAtSize(text, fontSize);
+    const x = align === "center" ? insetX + Math.max(0, (insetWidth - width) / 2) : align === "right" ? insetX + Math.max(0, insetWidth - width) : insetX;
+    return { text, x, y: firstBaselineY - i * lineHeight, width };
+  });
+}
+
 const URL_PATTERN = /^https?:\/\/\S+$/i;
 
 // Spec sections 17/20: "blue only for actual links" / "PDF should contain clickable links". A cell
@@ -428,11 +449,13 @@ function drawKpiBorderedGrid(state: DocState, items: { label: string; value: str
     const top = state.y;
     state.page.drawRectangle({ x: MARGIN, y: top - rowHeight, width: labelWidth, height: rowHeight, color: GRAY_LIGHT_FILL, borderColor: GRAY_BORDER, borderWidth: 0.5 });
     state.page.drawRectangle({ x: MARGIN + labelWidth, y: top - rowHeight, width: valueWidth, height: rowHeight, color: WHITE, borderColor: GRAY_BORDER, borderWidth: 0.5 });
-    state.page.drawText(fitOneLine(state.sans, item.label, 9, labelWidth - 12), { x: MARGIN + 6, y: top - 13, size: 9, font: state.sans, color: TEXT_DARK });
+    const labelText = fitOneLine(state.sans, item.label, 9, labelWidth - 12);
+    const labelTextWidth = state.sans.widthOfTextAtSize(labelText, 9);
+    state.page.drawText(labelText, { x: MARGIN + Math.max(6, (labelWidth - labelTextWidth) / 2), y: top - 13, size: 9, font: state.sans, color: TEXT_DARK });
     const valueText = item.unavailable ? "Not available" : item.value;
     const fittedValue = fitOneLine(state.sansBold, valueText, 9.5, valueWidth - 12);
     const valueTextWidth = state.sansBold.widthOfTextAtSize(fittedValue, 9.5);
-    state.page.drawText(fittedValue, { x: MARGIN + labelWidth + valueWidth - 6 - valueTextWidth, y: top - 13, size: 9.5, font: state.sansBold, color: item.unavailable ? TEXT_MUTED : INK_NAVY });
+    state.page.drawText(fittedValue, { x: MARGIN + labelWidth + Math.max(6, (valueWidth - valueTextWidth) / 2), y: top - 13, size: 9.5, font: state.sansBold, color: item.unavailable ? TEXT_MUTED : INK_NAVY });
     state.y -= rowHeight;
   }
   state.y -= 8;
@@ -488,8 +511,9 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
     const top = state.y;
     state.page.drawRectangle({ x: MARGIN, y: top - headerRowHeight + 4, width: CONTENT_WIDTH, height: headerRowHeight, color: headerColor });
     columns.forEach((col, i) => {
-      wrappedHeaders[i]!.forEach((line, li) => {
-        state.page.drawText(line, { x: colX[i]! + 4, y: top - 9 - li * HEADER_LINE_HEIGHT, size: 8.5, font: state.sansBold, color: WHITE, maxWidth: colWidths[i]! - 8 });
+      const laid = layoutCellLines(state.sansBold, wrappedHeaders[i]!, colX[i]! + 4, colWidths[i]! - 8, top + 4, headerRowHeight, 8.5, HEADER_LINE_HEIGHT, "center");
+      laid.forEach(({ text, x, y }) => {
+        state.page.drawText(text, { x, y, size: 8.5, font: state.sansBold, color: WHITE, maxWidth: colWidths[i]! - 8 });
       });
     });
     // Real cell borders (design brief: "real cell borders, thin gray grid, both horizontal and
@@ -514,19 +538,16 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
     if (rowIndex % 2 === 1) state.page.drawRectangle({ x: MARGIN, y: top - rowHeight + 2, width: CONTENT_WIDTH, height: rowHeight, color: GRAY_ROW_ALT });
     columns.forEach((col, i) => {
       const lines = wrapped[i]!;
-      const x = colX[i]! + 4;
-      const textWidth = colWidths[i]! - 8;
+      const insetX = colX[i]! + 4;
+      const insetWidth = colWidths[i]! - 8;
       const rawValue = row[col.id] ?? null;
       const link = isUrl(rawValue) ? rawValue : null;
-      lines.forEach((line, li) => {
-        const isNumeric = col.numeric === true;
-        const lineWidth = state.sans.widthOfTextAtSize(line, 8);
-        const drawX = isNumeric ? x + Math.max(0, textWidth - lineWidth) : x;
-        const lineY = top - 9 - li * LINE_HEIGHT;
-        state.page.drawText(line, { x: drawX, y: lineY, size: 8, font: state.sans, color: link ? LINK_BLUE : TEXT_DARK, maxWidth: textWidth });
+      const laid = layoutCellLines(state.sans, lines, insetX, insetWidth, top + 2, rowHeight, 8, LINE_HEIGHT, "center");
+      laid.forEach(({ text, x, y, width }) => {
+        state.page.drawText(text, { x, y, size: 8, font: state.sans, color: link ? LINK_BLUE : TEXT_DARK, maxWidth: insetWidth });
         if (link) {
-          state.page.drawLine({ start: { x: drawX, y: lineY - 1.5 }, end: { x: drawX + lineWidth, y: lineY - 1.5 }, thickness: 0.5, color: LINK_BLUE });
-          addLinkAnnotation(state.page, link, { x: drawX, y: lineY - 2, width: lineWidth, height: LINE_HEIGHT });
+          state.page.drawLine({ start: { x, y: y - 1.5 }, end: { x: x + width, y: y - 1.5 }, thickness: 0.5, color: LINK_BLUE });
+          addLinkAnnotation(state.page, link, { x, y: y - 2, width, height: LINE_HEIGHT });
         }
       });
     });
@@ -552,7 +573,7 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
     columns.forEach((col, i) => {
       const text = fitOneLine(state.sansBold, cellText(totalsRow[col.id] ?? null), 8.5, colWidths[i]! - 8);
       const textWidth = state.sansBold.widthOfTextAtSize(text, 8.5);
-      const x = col.numeric ? colX[i]! + colWidths[i]! - 4 - textWidth : colX[i]! + 4;
+      const x = colX[i]! + 4 + Math.max(0, (colWidths[i]! - 8 - textWidth) / 2);
       state.page.drawText(text, { x, y: top - 12, size: 8.5, font: state.sansBold, color: INK_NAVY });
     });
     state.y -= 18;
@@ -578,33 +599,6 @@ function drawNarrative(state: DocState, body: string, reviewStatus?: string): vo
       state.y -= 15;
     }
     state.y -= 7;
-  }
-}
-
-function drawDataQuality(state: DocState, items: ReportKpiItem[], warnings: string[]): void {
-  for (const item of items) {
-    const valueLines = wrapText(state.sans, item.value, 9, CONTENT_WIDTH - state.sansBold.widthOfTextAtSize(`${item.label}: `, 9), 3);
-    ensureSpace(state, 13 * valueLines.length);
-    state.page.drawText(`${item.label}: `, { x: MARGIN, y: state.y, size: 9, font: state.sansBold, color: INK_NAVY });
-    const labelWidth = state.sansBold.widthOfTextAtSize(`${item.label}: `, 9);
-    valueLines.forEach((line, i) => {
-      state.page.drawText(line, { x: i === 0 ? MARGIN + labelWidth : MARGIN + 12, y: state.y - i * 13, size: 9, font: state.sans, color: item.unavailable ? TEXT_MUTED : TEXT_DARK });
-    });
-    state.y -= 13 * valueLines.length;
-  }
-  if (warnings.length > 0) {
-    state.y -= 6;
-    ensureSpace(state, 12);
-    state.page.drawText("Limitations & disclosures:", { x: MARGIN, y: state.y, size: 9, font: state.sansBold, color: INK_NAVY });
-    state.y -= 13;
-    for (const warning of warnings) {
-      const lines = wrapText(state.sans, `• ${warning}`, 8.5, CONTENT_WIDTH, 6);
-      for (const line of lines) {
-        ensureSpace(state, 11);
-        state.page.drawText(line, { x: MARGIN, y: state.y, size: 8.5, font: state.sans, color: TEXT_MUTED });
-        state.y -= 11;
-      }
-    }
   }
 }
 
@@ -645,24 +639,10 @@ function drawCoverMagazine(state: DocState, section: Extract<ReportSectionModel,
   state.page.drawText("Summary Report", { x: MARGIN + (CONTENT_WIDTH - state.serifBold.widthOfTextAtSize("Summary Report", 13)) / 2, y, size: 13, font: state.serifBold, color: INK_NAVY });
   y -= 22;
 
-  const metaLines = [section.scopeLine, section.periodLine, section.generatedAtLine, section.evidenceCutoffLine, state.meta.versionLabel, state.meta.finalizedLine ?? "Status: DRAFT (not yet finalized)"];
-  for (const line of metaLines) {
-    const wrapped = wrapText(state.sans, line, 9.5, CONTENT_WIDTH, 3);
-    for (const l of wrapped) {
-      const width = state.sans.widthOfTextAtSize(l, 9.5);
-      state.page.drawText(l, { x: MARGIN + (CONTENT_WIDTH - width) / 2, y, size: 9.5, font: state.sans, color: TEXT_DARK });
-      y -= 14;
-    }
-  }
-  y -= 10;
-  state.page.drawText(`Generated on ${state.meta.generatedAtLine.replace(/^Generated:\s*/, "")}`, {
-    x: MARGIN + (CONTENT_WIDTH - state.serifItalic.widthOfTextAtSize(`Generated on ${state.meta.generatedAtLine.replace(/^Generated:\s*/, "")}`, 9)) / 2,
-    y,
-    size: 9,
-    font: state.serifItalic,
-    color: TEXT_MUTED,
-  });
-  y -= 24;
+  // User-directed content-scope decision: the reference reports carry no version/evidence-cutoff/
+  // generated-at text anywhere in the visible PDF - match that exactly on the cover (the same
+  // provenance data still lives on the ReportVersion doc and in the XLSX/CSV renderers, untouched).
+  y -= 6;
 
   state.page.drawRectangle({ x: 0, y: Math.max(y, MARGIN), width: PAGE_WIDTH, height: barHeight, color: INK_NAVY });
   state.y = Math.max(y - 20, MARGIN + FOOTER_HEIGHT + 20);
@@ -693,17 +673,12 @@ function drawCoverFormal(state: DocState, section: Extract<ReportSectionModel, {
   y -= subtitleLines.length * 14 + 16;
 
   state.page.drawLine({ start: { x: MARGIN, y }, end: { x: MARGIN + CONTENT_WIDTH, y }, thickness: 2, color: state.headingAccent });
-  y -= 26;
+  y -= 20;
 
-  const metaLines = [section.scopeLine, section.periodLine, section.generatedAtLine, section.evidenceCutoffLine, state.meta.versionLabel, state.meta.finalizedLine ?? "Status: DRAFT (not yet finalized)"];
-  for (const line of metaLines) {
-    const wrapped = wrapText(state.sans, line, 10, CONTENT_WIDTH, 3);
-    for (const l of wrapped) {
-      state.page.drawText(l, { x: MARGIN, y, size: 10, font: state.sans, color: TEXT_DARK });
-      y -= 15;
-    }
-  }
-  state.y = y - 10;
+  // User-directed content-scope decision: the reference reports carry no version/evidence-cutoff/
+  // generated-at text anywhere in the visible PDF - match that exactly on the cover (the same
+  // provenance data still lives on the ReportVersion doc and in the XLSX/CSV renderers, untouched).
+  state.y = y - 4;
 }
 
 function drawCover(state: DocState, section: Extract<ReportSectionModel, { kind: "cover" }>): void {
@@ -752,13 +727,18 @@ export async function generateReportPdf(sections: ReportSectionModel[], meta: Pd
       drawCover(state, section);
       continue;
     }
+    // User-directed content-scope decision: the reference reports show no version/evidence-cutoff
+    // metadata and no "Data Coverage & Quality"/"Limitations & disclosures" text anywhere in the PDF -
+    // match that exactly. The underlying evidence-provenance data itself is untouched (still pinned on
+    // the ReportVersion doc, still in the XLSX/CSV renderers and the API) - only this PDF's own visible
+    // section is skipped, entirely (no heading drawn, no page space consumed, no section-ordinal used).
+    if (section.kind === "data_quality") continue;
     state.sectionOrdinal += 1;
     drawSectionTitle(state, section.title, section.unavailableReason);
     if (section.kind === "kpi_summary") drawKpiGrid(state, section.items as ReportKpiItem[]);
     else if (section.kind === "kpi_cards") drawKpiGrid(state, section.cards as ReportKpiCard[]);
     else if (section.kind === "table") drawTable(state, section.columns, section.rows, section.totalsRow, section.emptyMessage, section.note, section.title);
     else if (section.kind === "narrative") drawNarrative(state, section.body, section.reviewStatus);
-    else if (section.kind === "data_quality") drawDataQuality(state, section.items, section.warnings);
     state.y -= 8;
   }
 
