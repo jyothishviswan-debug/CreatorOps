@@ -89,3 +89,22 @@ export function getFinanceInvoiceDriveEnv(): FinanceInvoiceDriveEnv {
     provider: process.env.FINANCE_INVOICE_DRIVE_PROVIDER?.trim() === "google_drive" ? "google_drive" : undefined,
   };
 }
+
+// Production hardening (base spec section 6 - Agreement/Finance privacy hardening, carried debt item
+// 7): the retention window for financeAgreementRestrictedExtractions (raw contract snippets/locators
+// and raw identity VALUES extracted from an uploaded contract - never the same thing as the
+// Agreement's own finalized, canonical field values, which live on the immutable
+// financeAgreements/{ref}/versions record and are NEVER purged). Deliberately absent by default
+// (`null`): this stage does not invent a legal/business retention period - it defines the
+// CONFIGURABLE BOUNDARY per the base spec's own explicit instruction ("If retention is
+// legally/business-required but not specified, define a configurable policy boundary rather than
+// inventing a legal retention period"). Until a real operator sets this, restricted extraction
+// records are retained indefinitely (today's actual behavior - unchanged unless explicitly
+// configured). See src/server/finance-agreements/restricted-extraction-retention.ts for the
+// eligibility rule and purge function this boundary feeds.
+export function getFinanceAgreementRestrictedExtractionRetentionDays(): number | null {
+  const raw = nonBlank(process.env.FINANCE_AGREEMENT_RESTRICTED_EXTRACTION_RETENTION_DAYS);
+  if (!raw) return null;
+  const parsed = Number(raw);
+  return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
