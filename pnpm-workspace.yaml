@@ -5,3 +5,13 @@ allowBuilds:
   sharp: false
   tesseract.js: true
   unrs-resolver: false
+
+# Production hardening (base spec section 31 - dependency/supply-chain review): a narrow, safe
+# transitive-dependency override. uuid <11.1.1 (GHSA-w5hq-g745-h8pq, "missing buffer bounds check in
+# v3/v5/v6 when buf is provided") is pulled in transitively by firebase-admin's own dependency chain
+# (gaxios/google-auth-library) - never a direct dependency of this app, and not reachable through any
+# code this app writes (nothing here calls uuid.v3/v5/v6 with a caller-supplied buf; that library
+# code almost certainly only ever calls uuid.v4()). A pure patch-version bump of a small, stable
+# utility with no breaking API change - regression-tested (full suite green) before being accepted.
+overrides:
+  uuid@<11.1.1: '>=11.1.1'
