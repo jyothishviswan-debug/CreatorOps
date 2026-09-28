@@ -755,3 +755,68 @@ describe("firestore.indexes.json - composition dependency guard (Step 14C query 
     expect(source).not.toMatch(/collectionGroup\s*\(|\.startAfter\(|\.offset\(/);
   });
 });
+
+// Production hardening (base spec sections 15/17/18 - carried debt item 9, "Analytics / Partner
+// Reviews still need production-scale query/index/cost/security validation"): EVERY Firestore query
+// introduced in src/server/analytics against its own collections, audited by direct source reading
+// (never from a comment) the same way every module audit above does. Partner Reviews itself was
+// independently re-checked against this SAME discipline and found already fully covered (the
+// "Partner Reviews" / "Assignments (Partner Reviews Needs Review candidate scan)" describe blocks
+// above, plus evidence-collector.ts's and review-scan.ts's own self-documented equality-only
+// queries - `where(field, "==", value).orderBy(FieldPath.documentId())` needs no composite index,
+// the same documented automatic-index behavior planAssignmentListQuery's un-narrowed GLOBAL branch
+// above already relies on) - no new index was needed there.
+//
+//   #  collection               filters                              orderBy                  limit  index need                       covered by
+//   1  analyticsImportBatches   (none)                                createdAt desc, uid asc  N+1    composite (2-field order)        new: createdAt-desc + uid-asc
+//   2  analyticsImportBatches   targetKind ==                         createdAt desc, uid asc  N+1    composite                         new: targetKind + createdAt-desc + uid-asc
+//   3  analyticsImportBatches   status ==                             createdAt desc, uid asc  N+1    composite                         new: status + createdAt-desc + uid-asc
+//   4  analyticsImportBatches   targetKind == AND status ==            createdAt desc, uid asc  N+1    composite                         new: targetKind + status + createdAt-desc + uid-asc
+//   5  analyticsImportBatches   sourceHash == AND status in [...]      (none)                   1      composite (2 different fields)   new: sourceHash + status
+//   6  analyticsImportBatches   batchRef ==                            (none)                   1      single-field equality             automatic single-field index
+//   7  analyticsImportBatches   supersedesBatchRef ==                  (none)                   1      single-field equality             automatic single-field index
+//   8  analyticsImportBatches   batchRef in [...] (chunked)            (none)                   N/A    single-field "in"                 automatic single-field index
+//   9  analyticsContentSourceRecords  sourceRef == / sourceRef in [...] (two call sites)         (none) 1/N/A  single-field               automatic single-field index
+//  10  analyticsChannelSourceRecords  sourceRef == / sourceRef in [...] (two call sites)         (none) 1/N/A  single-field               automatic single-field index
+//  11  analyticsContentSourceRecords  matchedContentRef in [...]        (none)                   N/A    single-field "in"                 automatic single-field index
+//  12  partnerAccounts                platform == (two call sites)      (none)                   N/A    single-field equality             automatic single-field index (partners-domain collection, already Partners' own to audit)
+//
+// #1-4 (listAnalyticsImportBatches, import-history-service.ts) previously had NO matching entry
+// anywhere in firestore.indexes.json - the exact same masked-by-the-emulator shape the prior stage's
+// reportRuns fix (above) found, now caught here instead of in production. #5
+// (getCompletedAnalyticsImportBatchBySourceHash, firestore.ts) combines two different fields with no
+// orderBy - Firestore still requires a composite index whenever more than one field is filtered,
+// even without an orderBy. "Production verification pending" for every "automatic single-field
+// index" row above, same caveat as every other module audit in this file.
+describe("firestore.indexes.json - Analytics (production hardening query audit)", () => {
+  const createdAtDesc2: IndexField = { fieldPath: "createdAt", order: "DESCENDING" };
+  const uidAsc: IndexField = { fieldPath: "uid", order: "ASCENDING" };
+  const targetKindAsc: IndexField = { fieldPath: "targetKind", order: "ASCENDING" };
+  const statusAsc: IndexField = { fieldPath: "status", order: "ASCENDING" };
+  const sourceHashAsc: IndexField = { fieldPath: "sourceHash", order: "ASCENDING" };
+
+  it("has the createdAt-desc + uid-asc composite for the un-narrowed listAnalyticsImportBatches page", () => {
+    expect(hasIndex("analyticsImportBatches", [createdAtDesc2, uidAsc])).toBe(true);
+  });
+
+  it("has the targetKind / status / targetKind+status narrowed composites, each still ordered createdAt-desc + uid-asc", () => {
+    expect(hasIndex("analyticsImportBatches", [targetKindAsc, createdAtDesc2, uidAsc])).toBe(true);
+    expect(hasIndex("analyticsImportBatches", [statusAsc, createdAtDesc2, uidAsc])).toBe(true);
+    expect(hasIndex("analyticsImportBatches", [targetKindAsc, statusAsc, createdAtDesc2, uidAsc])).toBe(true);
+  });
+
+  it("has the sourceHash + status composite for getCompletedAnalyticsImportBatchBySourceHash's idempotency lookup", () => {
+    expect(hasIndex("analyticsImportBatches", [sourceHashAsc, statusAsc])).toBe(true);
+  });
+
+  it("no other analyticsImportBatches index exists - exactly the five composite shapes above, no speculative extras", () => {
+    const mine = indexesFile.indexes.filter((index) => index.collectionGroup === "analyticsImportBatches");
+    expect(mine).toHaveLength(5);
+  });
+
+  it("no analyticsContentSourceRecords / analyticsChannelSourceRecords / analyticsImportBatchClaims composite index exists - every one of their own queries is single-field equality/in only", () => {
+    for (const collectionGroup of ["analyticsContentSourceRecords", "analyticsChannelSourceRecords", "analyticsImportBatchClaims"]) {
+      expect(indexesFile.indexes.filter((index) => index.collectionGroup === collectionGroup)).toHaveLength(0);
+    }
+  });
+});
