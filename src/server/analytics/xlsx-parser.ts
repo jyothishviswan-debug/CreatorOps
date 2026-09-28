@@ -35,7 +35,18 @@ export function parseWorkbookBuffer(buffer: Buffer, options: { includeBlankRows?
     // that we never want VBA project data materialized even if present
     // (file-safety.ts's own byte-level scan is the primary rejection for
     // that - this is defense in depth, not a substitute for it).
-    workbook = XLSX.read(buffer, { type: "buffer", cellFormula: false, bookVBA: false });
+    //
+    // Production hardening (base spec section 13): sheetRows bounds how many rows XLSX.read()
+    // itself materializes PER SHEET - previously every row/char limit below only applied
+    // downstream of this call, after the library had already parsed the entire workbook into
+    // memory. +1 (not the bare limit) so the TOO_MANY_ROWS check below still sees one row past the
+    // limit and can report the real overage, exactly like every other "+1 to detect the boundary"
+    // limit already in this codebase (finance-agreements/firestore.ts's own `.limit(bound + 1)`,
+    // for one). Combined with file-safety.ts's new preflightZipStructure (which rejects a ZIP
+    // decompression bomb from its own declared structure before this call ever runs), this closes
+    // the "XLSX.read() runs before downstream limiting" gap from both the container side and the
+    // row-count side.
+    workbook = XLSX.read(buffer, { type: "buffer", cellFormula: false, bookVBA: false, sheetRows: MAX_IMPORT_ROWS_PER_BATCH + 1 });
   } catch {
     return { ok: false, reasonCode: "UNREADABLE_WORKBOOK", message: "The file could not be read as a spreadsheet." };
   }
