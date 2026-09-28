@@ -177,8 +177,12 @@ describe("routes: thin, and exactly the documented surface", () => {
     }
   });
 
-  it("routes import only next/server and the Finance service surface (index, http, upload-request) - no Firestore, no Firebase, no docs / helpers", () => {
-    const allowed = new Set(["next/server", "@/server/finance-agreements", "@/server/finance-agreements/http", "@/server/finance-agreements/upload-request"]);
+  it("routes import only next/server and the Finance service surface (index, http, upload-request, the shared rate limiter) - no Firestore, no Firebase, no docs / helpers", () => {
+    // Production hardening (base spec section 21): @/server/shared/rate-limit is a deliberate,
+    // narrow widening for exactly this one specifier - a pure, generic, no-Firestore/no-Firebase
+    // abuse-throttling utility, checked at the route boundary (before the service call) the same
+    // way rate limiting is meant to work everywhere else in this codebase. Nothing broader.
+    const allowed = new Set(["next/server", "@/server/finance-agreements", "@/server/finance-agreements/http", "@/server/finance-agreements/upload-request", "@/server/shared/rate-limit"]);
     for (const file of routeFiles) {
       const specs = importsOf(read(file));
       for (const spec of specs) expect(allowed.has(spec), `${rel(file)} imports ${spec}`).toBe(true);

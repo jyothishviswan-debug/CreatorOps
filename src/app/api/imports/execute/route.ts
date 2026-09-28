@@ -5,13 +5,28 @@ import { newRequestId, parseJsonBody, resolveRequestActor, toAnalyticsHttpRespon
 import { classifySystemError } from "@/server/imports/error-taxonomy";
 import { registerImportTargets } from "@/server/imports/register-targets";
 import { getImportTarget, ImportAdapterError } from "@/server/imports/target-registry";
+import { checkRateLimit, requestIpKey } from "@/server/shared/rate-limit";
 
 registerImportTargets();
+
+// Production hardening (base spec section 21 - rate limiting / abuse control): Import execution is
+// explicitly named by example in the base spec ("expensive Reports runs/artifacts, Import, Export,
+// OCR"). Rate-limited PER ACTOR (never by IP alone, so a shared/rotating proxy IP can't dodge it)
+// before the file is even decoded. See src/server/shared/rate-limit.ts for the shared abstraction.
+const MAX_IMPORTS_PER_WINDOW = 30;
+const IMPORT_WINDOW_MS = 5 * 60 * 1000; // 5 minutes
 
 // POST /api/imports/execute
 // { module: "analytics" | "contract_bundle", targetKind?, filename, mimeType, fileBase64, ...adapter-specific options }
 export async function POST(request: Request) {
   const actor = await resolveRequestActor();
+
+  const dimension = actor ? actor.uid : requestIpKey(request);
+  const decision = checkRateLimit("imports_execute", dimension, MAX_IMPORTS_PER_WINDOW, IMPORT_WINDOW_MS);
+  if (!decision.allowed) {
+    return NextResponse.json({ error: "Too many import requests. Try again shortly." }, { status: 429, headers: { "Retry-After": String(decision.retryAfterSeconds) } });
+  }
+
   const body = await parseJsonBody(request);
   if (!body || typeof body !== "object") return NextResponse.json({ error: "Invalid body." }, { status: 400 });
 
