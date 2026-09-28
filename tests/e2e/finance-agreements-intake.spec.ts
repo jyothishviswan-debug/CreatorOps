@@ -325,6 +325,12 @@ test("draft creation is idempotent and resumable: a double click makes ONE Agree
   await choice(page, /^Instagram Partner/).click();
   await pickCounterparty(page, "Partner", N.idem);
   await scopeButton(page, "Account-specific").click();
+  // The sole eligible account is auto-suggested once the account-preview data has loaded, but the
+  // click above can land before that data arrives (the same disclosed render-order/data-load timing
+  // detail documented elsewhere in this file) - select explicitly so this never depends on that race.
+  const idemIgSelect = page.getByLabel("Instagram account");
+  await expect(idemIgSelect.locator("option")).toHaveCount(2, { timeout: 15_000 });
+  await idemIgSelect.selectOption(P.idem!.accounts.ig!);
   await expect(startDraft(page)).toBeEnabled();
   await startDraft(page).dblclick();
   await expect(page).toHaveURL(/agreementRef=agr_[0-9a-f]{20}&version=1/);
