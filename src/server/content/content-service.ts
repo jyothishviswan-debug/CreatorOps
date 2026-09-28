@@ -15,6 +15,7 @@ import {
   contentAssignmentThreadClaimDocSchema,
   contentDocSchema,
   contentInvalidInputResult,
+  contentNotFoundResult,
   contentUnauthorizedResult,
   type ContentDoc,
   type ContentEvent,
@@ -38,10 +39,12 @@ export async function loadAuthorizedContent(
 
   if (typeof contentRef !== "string" || contentRef.length === 0) return { ok: false, error: contentInvalidInputResult("Missing contentRef.") };
   const content = await getContentDocByRef(contentRef);
-  if (!content) return { ok: false, error: { ok: false, code: "not_found", message: "Content not found." } };
+  if (!content) return { ok: false, error: contentNotFoundResult() };
 
+  // Production hardening (base spec section 4): a scoped-out ref collapses into the SAME neutral
+  // not-found outcome as a missing one - see contentNotFoundResult's own comment.
   const scopeCheck = await requireContentInScope(actor!, content);
-  if (!scopeCheck.ok) return { ok: false, error: contentUnauthorizedResult(scopeCheck.reason) };
+  if (!scopeCheck.ok) return { ok: false, error: contentNotFoundResult() };
 
   return { ok: true, content };
 }
@@ -132,10 +135,11 @@ export async function getContent(actor: ActorContext | null, contentRef: unknown
 
   if (typeof contentRef !== "string" || contentRef.length === 0) return contentInvalidInputResult("Missing contentRef.");
   const content = await getContentDocByRef(contentRef);
-  if (!content) return { ok: false, code: "not_found", message: "Content not found." };
+  if (!content) return contentNotFoundResult();
 
+  // Production hardening (base spec section 4): see loadAuthorizedContent's own identical comment.
   const scopeCheck = await requireContentInScope(actor!, content);
-  if (!scopeCheck.ok) return contentUnauthorizedResult(scopeCheck.reason);
+  if (!scopeCheck.ok) return contentNotFoundResult();
 
   return { ok: true, data: await toContentDto(content) };
 }
@@ -188,10 +192,11 @@ export async function getContentHistory(
 
   if (typeof contentRef !== "string" || contentRef.length === 0) return contentInvalidInputResult("Missing contentRef.");
   const content = await getContentDocByRef(contentRef);
-  if (!content) return { ok: false, code: "not_found", message: "Content not found." };
+  if (!content) return contentNotFoundResult();
 
+  // Production hardening (base spec section 4): see loadAuthorizedContent's own identical comment.
   const scopeCheck = await requireContentInScope(actor!, content);
-  if (!scopeCheck.ok) return contentUnauthorizedResult(scopeCheck.reason);
+  if (!scopeCheck.ok) return contentNotFoundResult();
 
   const parsed = listContentHistoryInputSchema.safeParse(rawInput);
   if (!parsed.success) return contentInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));

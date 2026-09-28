@@ -487,17 +487,21 @@ describe("Authorization / scope", () => {
     const campaignItself = await getCampaign(head, "civic-voices");
     expect(campaignItself.ok).toBe(true);
 
+    // Production hardening (base spec section 4 - existence-leak normalization): a cross-scope ref
+    // is no longer a distinguishable "scope_denied" 403 - it collapses into the exact same neutral
+    // not_found outcome as a missing ref (assignmentsNotFoundResult()).
     const assignmentUnderIt = await getAssignment(head, "seed-assignment-assigned");
     expect(assignmentUnderIt.ok).toBe(false);
     if (assignmentUnderIt.ok) throw new Error("unreachable");
-    expect(assignmentUnderIt.reason).toBe("scope_denied");
+    expect(assignmentUnderIt.code).toBe("not_found");
+    expect(assignmentUnderIt.reason).toBeUndefined();
 
     const admin = await actorFor("super_admin");
     const asAdmin = await getAssignment(admin, "seed-assignment-assigned");
     expect(asAdmin.ok).toBe(true);
   });
 
-  it("cross-scope user (has the feature, lacks scope over this record) cannot read another-scope Assignment by direct ref, and gets the same safe denial as a nonexistent one", async () => {
+  it("cross-scope user (has the feature, lacks scope over this record) cannot read another-scope Assignment by direct ref, and gets the SAME not_found outcome as a nonexistent one - code and message both match", async () => {
     // Manager has real Assignments feature/action access but no scope
     // over seed-assignment-assigned (civic-voices' empty snapshot - see
     // the CAMPAIGN-grant-bridging test above) - a genuine SCOPE denial,
@@ -506,9 +510,16 @@ describe("Authorization / scope", () => {
     const real = await getAssignment(manager, "seed-assignment-assigned");
     const fake = await getAssignment(manager, "not-a-real-assignment-ref");
     expect(real.ok).toBe(false);
-    if (real.ok) throw new Error("unreachable");
-    expect(real.reason).toBe("scope_denied");
     expect(fake.ok).toBe(false);
+    if (real.ok || fake.ok) throw new Error("unreachable");
+    // The actual indistinguishability proof (base spec section 4: "Test both unknown ref and
+    // known-but-unauthorized ref") - not just that both fail, but that a caller literally cannot
+    // tell the two outcomes apart from the response shape.
+    expect(real.code).toBe("not_found");
+    expect(fake.code).toBe("not_found");
+    expect(real.message).toBe(fake.message);
+    expect(real.reason).toBeUndefined();
+    expect(fake.reason).toBeUndefined();
   });
 
   it("scoped list never returns an out-of-scope Assignment", async () => {

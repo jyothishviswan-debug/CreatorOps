@@ -209,6 +209,16 @@ export function contentUnauthorizedResult(reason: ContentDenialReason): ContentE
   return { ok: false, code: "unauthorized", message: `Content access denied (${reason}).`, reason };
 }
 
+// Production hardening (base spec section 4 - existence-leak normalization): the neutral outcome
+// for a specific Content ref, used for BOTH "no such Content" and "this Content exists but is out
+// of the actor's Record Scope" - mirrors assignmentsNotFoundResult()'s identical rationale (Content
+// is the same class of scoped/protected record as Assignment). Only requireContentInScope's
+// per-record "scope_denied" outcome collapses into this; feature_denied/action_denied stay a 403 via
+// contentUnauthorizedResult, since those are general capability grants independent of any one record.
+export function contentNotFoundResult(): ContentErrorResult {
+  return { ok: false, code: "not_found", message: "Content not found." };
+}
+
 export function contentInvalidInputResult(message: string): ContentErrorResult {
   return { ok: false, code: "invalid_input", message };
 }

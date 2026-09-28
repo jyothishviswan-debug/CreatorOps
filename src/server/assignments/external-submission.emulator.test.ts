@@ -869,10 +869,14 @@ describe("Revision loop", () => {
     await submitExternalLinks(session.data.rawToken, [{ platform: "instagram", url: uniqueUrl("cross-scope") }]);
 
     const thread = await threadFor(head, created.data.assignmentRef);
+    // Production hardening (base spec section 4 - existence-leak normalization): a cross-scope
+    // Content ref now collapses into the same neutral not_found outcome as a missing one
+    // (contentNotFoundResult()), never a distinguishable "unauthorized" 403 - see
+    // src/server/content/content-service.ts's loadAuthorizedContent.
     const denied = await approveContentThread(manager, thread.contentRef, { reviewedRevisionNumber: thread.reviewedRevisionNumber!, expectedVersion: thread.version }, "req");
     expect(denied.ok).toBe(false);
     if (denied.ok) throw new Error("unreachable");
-    expect(denied.code).toBe("unauthorized");
+    expect(denied.code).toBe("not_found");
 
     // The SAME Head who created it (with real scope over it) can.
     const allowed = await approveContentThread(head, thread.contentRef, { reviewedRevisionNumber: thread.reviewedRevisionNumber!, expectedVersion: thread.version }, "req");

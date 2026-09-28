@@ -171,6 +171,20 @@ export function assignmentsUnauthorizedResult(reason: AssignmentsDenialReason): 
   return { ok: false, code: "unauthorized", message: `Assignments access denied (${reason}).`, reason };
 }
 
+// Production hardening (base spec section 4 - existence-leak normalization): the neutral outcome
+// for a specific Assignment ref, used for BOTH "no such Assignment" and "this Assignment exists but
+// is out of the actor's Record Scope". Assignment is a scoped/protected record (Campaign/Partner
+// region-, team- and self-scoped visibility) where revealing that a specific ref exists at all is
+// itself sensitive - the same neutral-not-found shape Finance Agreements'
+// financeAgreementsNotFoundResult() and Operations' Task gate already use for the identical class of
+// record. Only requireAssignmentInScope's per-record "scope_denied" outcome collapses into this - a
+// missing feature/action grant (feature_denied/action_denied) is a general capability the actor
+// either has or doesn't, independent of any one record, and correctly stays a 403 via
+// assignmentsUnauthorizedResult.
+export function assignmentsNotFoundResult(): AssignmentsErrorResult {
+  return { ok: false, code: "not_found", message: "Assignment not found." };
+}
+
 export function assignmentsInvalidInputResult(message: string): AssignmentsErrorResult {
   return { ok: false, code: "invalid_input", message };
 }

@@ -32,6 +32,7 @@ import {
   assignmentPlatformsArraySchema,
   assignmentsConflictResult,
   assignmentsInvalidInputResult,
+  assignmentsNotFoundResult,
   assignmentsUnauthorizedResult,
   type AssignmentActiveClaimDoc,
   type AssignmentDoc,
@@ -61,10 +62,13 @@ export async function loadAuthorizedAssignment(
 
   if (typeof assignmentRef !== "string" || assignmentRef.length === 0) return { ok: false, error: assignmentsInvalidInputResult("Missing assignmentRef.") };
   const assignment = await getAssignmentDocByRef(assignmentRef);
-  if (!assignment) return { ok: false, error: { ok: false, code: "not_found", message: "Assignment not found." } };
+  if (!assignment) return { ok: false, error: assignmentsNotFoundResult() };
 
+  // Production hardening (base spec section 4): a scoped-out ref collapses into the SAME neutral
+  // not-found outcome as a missing one - see assignmentsNotFoundResult's own comment. Never a 403
+  // here; that would let a caller distinguish "exists but I can't see it" from "doesn't exist".
   const scopeCheck = await requireAssignmentInScope(actor!, assignment);
-  if (!scopeCheck.ok) return { ok: false, error: assignmentsUnauthorizedResult(scopeCheck.reason) };
+  if (!scopeCheck.ok) return { ok: false, error: assignmentsNotFoundResult() };
 
   return { ok: true, assignment };
 }
@@ -353,10 +357,12 @@ export async function getAssignment(actor: ActorContext | null, assignmentRef: u
 
   if (typeof assignmentRef !== "string" || assignmentRef.length === 0) return assignmentsInvalidInputResult("Missing assignmentRef.");
   const assignment = await getAssignmentDocByRef(assignmentRef);
-  if (!assignment) return { ok: false, code: "not_found", message: "Assignment not found." };
+  if (!assignment) return assignmentsNotFoundResult();
 
+  // Production hardening (base spec section 4): see loadAuthorizedAssignment's own identical
+  // comment - a scoped-out ref is indistinguishable from a missing one.
   const scopeCheck = await requireAssignmentInScope(actor!, assignment);
-  if (!scopeCheck.ok) return assignmentsUnauthorizedResult(scopeCheck.reason);
+  if (!scopeCheck.ok) return assignmentsNotFoundResult();
 
   return { ok: true, data: await toAssignmentDto(assignment) };
 }
@@ -514,10 +520,12 @@ export async function getAssignmentHistory(
 
   if (typeof assignmentRef !== "string" || assignmentRef.length === 0) return assignmentsInvalidInputResult("Missing assignmentRef.");
   const assignment = await getAssignmentDocByRef(assignmentRef);
-  if (!assignment) return { ok: false, code: "not_found", message: "Assignment not found." };
+  if (!assignment) return assignmentsNotFoundResult();
 
+  // Production hardening (base spec section 4): see loadAuthorizedAssignment's own identical
+  // comment - a scoped-out ref is indistinguishable from a missing one.
   const scopeCheck = await requireAssignmentInScope(actor!, assignment);
-  if (!scopeCheck.ok) return assignmentsUnauthorizedResult(scopeCheck.reason);
+  if (!scopeCheck.ok) return assignmentsNotFoundResult();
 
   const parsed = listAssignmentHistoryInputSchema.safeParse(rawInput);
   if (!parsed.success) return assignmentsInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));

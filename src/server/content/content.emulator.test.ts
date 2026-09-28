@@ -265,13 +265,18 @@ describe("Authorization / scope", () => {
     const asHead = await getContent(head, "community-story-reel-01");
     expect(asHead.ok).toBe(true);
 
+    // Production hardening (base spec section 4 - existence-leak normalization): a cross-scope ref
+    // is no longer a distinguishable "scope_denied" 403 - it collapses into the exact same neutral
+    // not_found outcome as a missing ref (contentNotFoundResult()), so a caller can never learn that
+    // community-story-reel-01 exists at all.
     const asManager = await getContent(manager, "community-story-reel-01");
     expect(asManager.ok).toBe(false);
     if (asManager.ok) throw new Error("unreachable");
-    expect(asManager.reason).toBe("scope_denied");
+    expect(asManager.code).toBe("not_found");
+    expect(asManager.reason).toBeUndefined();
   });
 
-  it("cross-scope user (has the feature, lacks scope over this record) gets scope_denied, same safe denial as a nonexistent contentRef", async () => {
+  it("cross-scope user (has the feature, lacks scope over this record) gets the SAME not_found outcome as a nonexistent contentRef - code and message both match", async () => {
     const manager = await actorFor("partnership_manager");
     // seed-content-revision-requested's own Assignment (seed-assignment-
     // in-progress) carries empty regionIds/teamIds/null-owner - reachable
@@ -280,9 +285,16 @@ describe("Authorization / scope", () => {
     const real = await getContent(manager, "seed-content-revision-requested");
     const fake = await getContent(manager, "not-a-real-content-ref");
     expect(real.ok).toBe(false);
-    if (real.ok) throw new Error("unreachable");
-    expect(real.reason).toBe("scope_denied");
     expect(fake.ok).toBe(false);
+    if (real.ok || fake.ok) throw new Error("unreachable");
+    // The actual indistinguishability proof (base spec section 4: "Test both unknown ref and
+    // known-but-unauthorized ref") - not just that both fail, but that a caller literally cannot
+    // tell the two outcomes apart from the response shape.
+    expect(real.code).toBe("not_found");
+    expect(fake.code).toBe("not_found");
+    expect(real.message).toBe(fake.message);
+    expect(real.reason).toBeUndefined();
+    expect(fake.reason).toBeUndefined();
   });
 
   it("review_content is allowed to both Manager and Head, in-scope - approve and request-revision both", async () => {
@@ -316,13 +328,19 @@ describe("Authorization / scope", () => {
   // distinct, independently-gated action permission (not merely folded
   // into generic Content access): Manager holds the action grant but is
   // still denied on a Content record outside their own scope - the scope
-  // gate fires before any status/lifecycle check.
+  // gate fires before any status/lifecycle check. Production hardening
+  // (base spec section 4): the denial is now the neutral not_found outcome
+  // (loadAuthorizedContent's own scope-collapse), never a distinguishable
+  // 403 - proving the gate still fires is now done by asserting the SAME
+  // not_found outcome community-story-reel-01 produces for every other
+  // out-of-scope lookup above, not by a scope-specific reason code.
   it("review_content is denied to Manager cross-scope even though the action grant itself is held", async () => {
     const manager = await actorFor("partnership_manager");
     const attempt = await approveContentThread(manager, "community-story-reel-01", { reviewedRevisionNumber: 1, expectedVersion: 1 }, "req");
     expect(attempt.ok).toBe(false);
     if (attempt.ok) throw new Error("unreachable");
-    expect(attempt.reason).toBe("scope_denied");
+    expect(attempt.code).toBe("not_found");
+    expect(attempt.reason).toBeUndefined();
   });
 
   it("Viewer/Analyst are denied review_content entirely (feature_denied, before any scope check)", async () => {

@@ -13,6 +13,7 @@ import {
   assignmentDocSchema,
   assignmentStatusSchema,
   assignmentsInvalidInputResult,
+  assignmentsNotFoundResult,
   assignmentsUnauthorizedResult,
   type AssignmentDoc,
   type AssignmentStatus,
@@ -95,10 +96,13 @@ export async function transitionAssignmentLifecycle(
   }
 
   const current = await getAssignmentDocByRef(assignmentRef);
-  if (!current) return { ok: false, code: "not_found", message: "Assignment not found." };
+  if (!current) return assignmentsNotFoundResult();
 
+  // Production hardening (base spec section 4): see assignment-service.ts's
+  // loadAuthorizedAssignment for the full rationale - a scoped-out ref is indistinguishable from a
+  // missing one.
   const scopeCheck = await requireAssignmentInScope(actor, current);
-  if (!scopeCheck.ok) return assignmentsUnauthorizedResult(scopeCheck.reason);
+  if (!scopeCheck.ok) return assignmentsNotFoundResult();
 
   if (!canTransitionLifecycle(current.status, input.to, ASSIGNMENT_LIFECYCLE_TRANSITIONS)) {
     return assignmentsInvalidInputResult(`Cannot move an Assignment from ${current.status} to ${input.to}.`);
