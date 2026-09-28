@@ -48,7 +48,11 @@ export const PARTNER_PUBLISHED_CONTENT_ROW_LIMIT = 10;
 // A content row of the Partner page: the 12D row minus its Partner label /
 // link (the whole page IS that Partner), plus the row's own platform (Instagram
 // and YouTube rows share these tables and stay visually distinguishable).
-export type PartnerContentRowDto = Omit<PlatformContentRowDto, "partnerLabel" | "partnerAnalyticsHref"> & { platform: PlatformViewId };
+// `postUrl` (added to the 12D row for Reports' own Top Content links - spec section 7 of the Reports
+// PDF Composition & Management-Publication Polish stage) is also dropped here: this DTO's own header
+// comment already documents "no post/media URL" as a deliberate actor-safety property of the Partner
+// Analytics drill-down page, unrelated to Reports.
+export type PartnerContentRowDto = Omit<PlatformContentRowDto, "partnerLabel" | "partnerAnalyticsHref" | "postUrl"> & { platform: PlatformViewId };
 export type PartnerTopContentRowDto = PartnerContentRowDto & { rank: number };
 
 export type PartnerAccountRowDto = {

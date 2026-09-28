@@ -1,4 +1,5 @@
 import type { ReportDefinition, ReportResult, ReportRow } from "../types";
+import { formatReportingPeriodLabel } from "./period-label";
 import type { ReportCoverSection, ReportKpiItem, ReportKpiSummarySection, ReportTableSection, TableColumn } from "./types";
 
 // Shared, small formatting/assembly helpers used by every template's section builder - kept here
@@ -14,7 +15,11 @@ export function formatMetricValue(value: number | string | null): string {
   return value;
 }
 
-export function buildCoverSection(params: { definition: ReportDefinition; templateTitle: string; result: ReportResult; scopeLine?: string }): ReportCoverSection {
+// Spec section 3: a human, management-facing cover - `platformsLine` is a genuinely source-backed
+// "platforms included"/region-portfolio line (e.g. "Instagram + YouTube", or "South Region · Instagram
+// + YouTube" if a real region parameter existed) and is OMITTED (not passed) unless a caller can back it
+// with a real report parameter/evidence fact - never fabricated here.
+export function buildCoverSection(params: { definition: ReportDefinition; templateTitle: string; result: ReportResult; scopeLine?: string; platformsLine?: string }): ReportCoverSection {
   return {
     kind: "cover",
     sectionType: "cover",
@@ -22,7 +27,8 @@ export function buildCoverSection(params: { definition: ReportDefinition; templa
     title: params.templateTitle,
     subtitle: params.definition.purpose,
     scopeLine: params.scopeLine ?? params.result.scopeSummary.note,
-    periodLine: params.result.appliedFilters.period ? `Period: ${params.result.appliedFilters.period}` : params.result.appliedFilters.periods ? `Periods: ${params.result.appliedFilters.periods}` : "Period: not filtered (full actor scope)",
+    periodLine: formatReportingPeriodLabel(params.result.appliedFilters.period, params.result.appliedFilters.periods),
+    platformsLine: params.platformsLine,
     generatedAtLine: `Generated: ${params.result.generatedAt}`,
     evidenceCutoffLine: `Evidence cutoff: ${params.result.evidenceCutoff}`,
   };
@@ -70,6 +76,36 @@ function isPrimitiveCellValue(value: unknown): value is string | number | boolea
   return value === null || typeof value === "string" || typeof value === "number" || typeof value === "boolean";
 }
 
+// Spec section 7: a column id ending in this suffix is a PAIRED link-target field (e.g. `postUrlHref`,
+// `partnerAnalyticsHref`) that supplies a cell's clickable URL while a sibling human-label column (e.g.
+// `postUrl` itself carrying the literal text "Open Post") supplies the cell's VISIBLE text - see
+// pdf-renderer.ts's drawTable. The Href field must never be rendered as its own column (it would either
+// show a raw URL as ordinary text, which spec section 7 forbids, or a meaningless duplicate), but it
+// does stay on the row object itself so drawTable can look it up.
+const HREF_SUFFIX = /Href$/;
+function isLinkTargetColumnId(id: string): boolean {
+  return HREF_SUFFIX.test(id);
+}
+
+// Spec section 6 ("Remove raw refs from all published PDFs ... main tables, appendices, footers, link
+// labels, case-study sections, data directories all included") and section 14 ("do not fill a
+// management PDF with an all-Not-available column if it contributes no information"): a column is
+// dropped ENTIRELY (not merely demoted to the end, which orderColumnsForDisplay already did and still
+// does for anything that slips through this) when it is a raw *Ref/*Id column with a real name/label
+// sibling already promoted to the primary column, or when every row's value for it is null. Both
+// checks are conservative: a *Ref/*Id column with NO name-shaped sibling (nothing to promote instead)
+// is still demoted-but-kept via orderColumnsForDisplay, since dropping the only identifying field would
+// leave a genuinely unlabeled row; an all-null column is only dropped when there is at least one row to
+// judge it by, and at least one OTHER column would remain (never dropped down to zero columns).
+function dropUninformativeColumns(columnIds: string[], bounded: ReportRow[]): string[] {
+  const nameId = columnIds.find(isNameColumnId);
+  const withoutLinkTargets = columnIds.filter((id) => !isLinkTargetColumnId(id));
+  const withoutRawRefs = nameId ? withoutLinkTargets.filter((id) => id === nameId || !isRawRefColumnId(id)) : withoutLinkTargets;
+  if (bounded.length === 0) return withoutRawRefs;
+  const withoutAllNull = withoutRawRefs.filter((id) => !bounded.every((r) => r[id] === null));
+  return withoutAllNull.length > 0 ? withoutAllNull : withoutRawRefs;
+}
+
 // Generic row->table conversion used by the baseline template treatment (see build-sections.ts) and
 // by any full builder that has an already-shaped ReportRow[] section it wants to show verbatim.
 export function buildGenericTable(title: string, rows: ReportRow[], options?: { note?: string; maxRows?: number; sectionType?: ReportTableSection["sectionType"] }): ReportTableSection {
@@ -85,7 +121,8 @@ export function buildGenericTable(title: string, rows: ReportRow[], options?: { 
   // (see families/finance-status.ts and families/operations-attention.ts) - this is a second,
   // independent guard, not a substitute for that fix.
   const safeColumnIds = rawColumnIds.filter((id) => bounded.every((r) => isPrimitiveCellValue(r[id])));
-  const columnIds = orderColumnsForDisplay(safeColumnIds);
+  const informativeColumnIds = dropUninformativeColumns(safeColumnIds, bounded);
+  const columnIds = orderColumnsForDisplay(informativeColumnIds);
   const columns: TableColumn[] = columnIds.map((id) => ({ id, label: titleCaseFromCamel(id), numeric: bounded.every((r) => typeof r[id] === "number" || r[id] === null) }));
   return {
     kind: "table",

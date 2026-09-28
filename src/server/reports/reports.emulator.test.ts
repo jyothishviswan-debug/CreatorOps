@@ -511,7 +511,13 @@ describe("Step 19A.1: the four management-scale families have real governed exec
     const manager = await actorFor("partnership_manager");
     const result = must(await runReport(manager, "monthly_partner_performance", { partnerRef: fixtures.keralaPartnerRef, period: PERIOD }, {}), "monthly_partner_performance");
     expect(result.reportId).toBe("monthly_partner_performance");
-    expect(Object.keys(result.sections).sort()).toEqual(["compliance", "dataQualityWarnings", "performance", "production", "topContent"].sort());
+    // Reports PDF Composition & Management-Publication Polish: three new `sections` keys were added -
+    // viewsByPartnerPlatform (per-Partner View-Band Distribution source, spec section 9),
+    // topContentCandidatesByPlatform (bounded multi-Partner Top Content source, spec section 10) and
+    // partnerRoster (Partner Account Directory source, spec section 13) - all still scalar-free/arbitrary
+    // `sections` payloads (buildReportResult's own contract), never surfaced as ordinary ReportRow[]
+    // tables by the generic baseline path.
+    expect(Object.keys(result.sections).sort()).toEqual(["compliance", "dataQualityWarnings", "partnerRoster", "performance", "production", "topContent", "topContentCandidatesByPlatform", "viewsByPartnerPlatform"].sort());
     expect(JSON.stringify(result)).not.toMatch(/blendedScore|compositeScore|overallScore/i);
     expect(result.rowCount).toBeLessThanOrEqual(result.maxRows);
   });

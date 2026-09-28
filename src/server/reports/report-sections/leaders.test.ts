@@ -31,4 +31,20 @@ describe("Source-Metric Leaders", () => {
     expect(section.title.toLowerCase()).not.toContain("overall performance");
     expect(section.sectionType).toBe("source_metric_leaders");
   });
+
+  it("omits the Context column entirely when no candidate carries one (spec section 14: no all-Not-available column)", () => {
+    const section = buildSourceMetricLeadersTable({ metricLabel: "Views", metricId: "views", candidates: [{ label: "A", value: 5 }, { label: "B", value: 10 }], limit: 10 });
+    expect(section.columns.map((c) => c.id)).not.toContain("context");
+    expect(JSON.stringify(section.rows)).not.toContain("context");
+  });
+
+  it("keeps the Context column when at least one candidate actually carries one", () => {
+    const section = buildSourceMetricLeadersTable({ metricLabel: "Views", metricId: "views", candidates: [{ label: "A", value: 5, context: "2026-08-01" }, { label: "B", value: 10 }], limit: 10 });
+    expect(section.columns.map((c) => c.id)).toContain("context");
+  });
+
+  it("no per-table 'blended score' design-rule prose is printed (spec section 8)", () => {
+    const section = buildSourceMetricLeadersTable({ metricLabel: "Views", metricId: "views", candidates: [{ label: "A", value: 5 }], limit: 10 });
+    expect(section.note ?? "").not.toContain("blended score");
+  });
 });

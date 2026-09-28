@@ -53,10 +53,21 @@ test.describe("Flagship: Monthly Partner Performance publication lifecycle", () 
 
     // Inspect executive evidence / Source-Metric Leaders / platform sections / Data Quality.
     await expect(page.getByTestId("section-kpi").first()).toBeVisible();
-    await expect(page.getByText(/Source-Metric Leaders - Views \(instagram\)/)).toBeVisible();
-    await expect(page.getByText(/Source-Metric Leaders - Engagement \(instagram\)/)).toBeVisible();
+    // Reports PDF Composition & Management-Publication Polish: Source-Metric Leaders' own
+    // platformOrContext is now the proper-cased platform label ("Instagram"/"YouTube" - management-
+    // facing, matching the reference reports) rather than the raw lowercase platform id, and the set of
+    // leaderboards was extended beyond Views/Engagement to also cover Likes/Comments/Output (spec
+    // section 8). Spec section 8 also requires a metric leaderboard to be OMITTED ENTIRELY (not shown as
+    // an empty "No candidates had a reported value" table) when no candidate has a reported value for
+    // it - confirmed live here: this deterministic seed's one Instagram Content item (Vikram Nair) has
+    // no reported Views/Engagement value (only Likes/Comments), so the Instagram Views/Engagement
+    // leaderboards are correctly absent while Output/Likes/Comments (which DO have real values) render.
+    await expect(page.getByText(/Source-Metric Leaders - Output \(Published Content\) \(Instagram\)/)).toBeVisible();
+    await expect(page.getByText(/Source-Metric Leaders - Likes \(Instagram\)/)).toBeVisible();
+    await expect(page.getByText(/Source-Metric Leaders - Comments \(Instagram\)/)).toBeVisible();
+    await expect(page.getByText(/Source-Metric Leaders - Views \(Instagram\)/)).not.toBeVisible();
     await expect(page.getByText(/Instagram Partner Performance/)).toBeVisible();
-    await expect(page.getByText(/Youtube Partner Performance/)).toBeVisible();
+    await expect(page.getByText(/YouTube Partner Performance/)).toBeVisible();
     await expect(page.getByText("Data Coverage & Quality")).toBeVisible();
     // Missing-metric honesty (spec section 10): the Instagram leaders table is real and non-empty
     // for the deterministic seed, but at least one evidence field somewhere in this run is honestly

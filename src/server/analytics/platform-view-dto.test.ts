@@ -106,6 +106,7 @@ describe("buildPublishedContentRowDtos - actor-safe rows", () => {
         engagement: null,
         likes: 30,
         comments: 3,
+        postUrl: null,
         source: "instagram-export.xlsx · sheet Posts · row 7",
       },
     ]);
@@ -130,6 +131,11 @@ describe("buildPublishedContentRowDtos - actor-safe rows", () => {
     expect(buildPublishedContentRowDtos([contentRecord({ matchedPartnerRef: null })], openable)[0]!.partnerAnalyticsHref).toBeNull();
     // A platform other than instagram|youtube opens the bare (All) path, never an arbitrary ?platform=.
     expect(buildPublishedContentRowDtos([contentRecord({ platform: "tiktok" })], openable)[0]!.partnerAnalyticsHref).toBe("/analytics/partner/partner-ref-1");
+  });
+  it("postUrl prefers normalizedUrl over rawPostUrl, and is null when neither is present (spec section 7: real Top Content links)", () => {
+    expect(buildPublishedContentRowDtos([contentRecord({})], inputs())[0]!.postUrl).toBeNull();
+    expect(buildPublishedContentRowDtos([contentRecord({ rawPostUrl: "https://instagram.com/p/raw123" })], inputs())[0]!.postUrl).toBe("https://instagram.com/p/raw123");
+    expect(buildPublishedContentRowDtos([contentRecord({ rawPostUrl: "https://instagram.com/p/raw123", normalizedUrl: "https://instagram.com/p/normalized123" })], inputs())[0]!.postUrl).toBe("https://instagram.com/p/normalized123");
   });
   it("missing metrics stay null (rendered Unavailable), never 0", () => {
     const [row] = buildPublishedContentRowDtos([contentRecord({ views: null, likes: null, comments: null, engagement: null })], inputs());

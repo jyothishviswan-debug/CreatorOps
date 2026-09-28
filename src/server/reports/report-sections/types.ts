@@ -53,7 +53,13 @@ export type ReportCoverSection = SectionBase & {
   mode: "EVIDENCE";
   subtitle: string;
   scopeLine: string;
+  // Human, management-facing reporting-period label (e.g. "Reporting Period: 1-31 August 2026") - see
+  // report-sections/period-label.ts. Drawn directly on the cover page (spec section 3).
   periodLine: string;
+  // Spec section 3: "platforms included" / region-portfolio line (e.g. "South Region · Instagram +
+  // YouTube"), drawn on the cover directly above periodLine - omitted (undefined) when the template has
+  // no real platform/region parameter to report, never fabricated.
+  platformsLine?: string;
   generatedAtLine: string;
   evidenceCutoffLine: string;
 };

@@ -4,6 +4,7 @@ import { createReportArtifactDoc, getReportArtifactDoc, listReportArtifactDocsFo
 import { generateArtifactRef } from "../ids";
 import { buildSafeArtifactFilename } from "../report-sections/filename";
 import { assembleFullReportSections } from "../report-sections/build-sections";
+import { formatReportingPeriodLabel } from "../report-sections/period-label";
 import type { ReportNarrativeSectionKey, ReportTemplateId } from "../report-templates";
 import { getReportTemplateDefinition, reportNarrativeSectionKeySchema } from "../report-templates";
 import type { ReportArtifactDoc, ReportArtifactFormat, ReportNarrativePointer, ReportVersionDoc } from "../types";
@@ -39,14 +40,23 @@ async function generateBytesForFormat(format: ReportArtifactFormat, version: Rep
   if (format === "pdf") {
     const bytes = await generateReportPdf(sections, {
       templateTitle: template.title,
-      reportPurpose: template.referencePattern,
+      // Spec section 18 (canonical PDF metadata): a genuine CreatorOps-authored Subject, never the
+      // template's own `referencePattern` (an internal build-provenance field recording which EXTERNAL
+      // reference report a template's design was modeled on - e.g. literally
+      // "Monthly_Creator_Productivity_Report_August_2026", the customer's own filename - never meant as
+      // end-user PDF metadata; this was the exact bug spec section 18 describes).
+      reportPurpose: `CreatorOps — ${template.title}`,
       scopeLine: version.scopeSummary.note,
-      periodLine: version.appliedFilters.period ? `Period: ${version.appliedFilters.period}` : "Period: full actor scope",
+      // Spec sections 3/16: a human, management-facing period label - never the old raw "Period:
+      // 2026-08" key display, and never the implementation-oriented "Period: full actor scope" fallback.
+      periodLine: formatReportingPeriodLabel(version.appliedFilters.period, version.appliedFilters.periods),
       generatedAtLine: `Generated: ${evidence.capturedAt}`,
       evidenceCutoffLine: `Evidence cutoff: ${evidence.sourceRevisionCutoff}`,
       versionLabel,
       finalizedLine: version.finalizedAt ? `Finalized ${version.finalizedAt}` : null,
       templateId,
+      // Spec section 2: page orientation is a per-TEMPLATE property, not a report-id conditional.
+      orientation: template.orientation,
     });
     return { bytes, contentType: "application/pdf" };
   }

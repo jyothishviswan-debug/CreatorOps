@@ -62,6 +62,12 @@ export type ReportTemplateDefinition = {
   // underlying family's existing ReportResult. Disclosed explicitly in the completion report - see
   // report-sections/build-sections.ts.
   treatment: "full" | "baseline";
+  // Reports PDF Composition & Management-Publication Polish (spec section 2): the PDF page orientation
+  // this template's publication is designed for. A single, deliberate, per-TEMPLATE property - never a
+  // report-id conditional scattered through the renderer (see pdf-renderer.ts's pageSizeFor). Defaults
+  // to "portrait" for every template except monthly_partner_performance, whose reference report (a wide
+  // multi-column analytical management document, confirmed via its own PDF mediabox) is landscape.
+  orientation: "portrait" | "landscape";
 };
 
 const REPORT_TEMPLATE_CATALOG: Record<ReportTemplateId, ReportTemplateDefinition> = {
@@ -74,6 +80,10 @@ const REPORT_TEMPLATE_CATALOG: Record<ReportTemplateId, ReportTemplateDefinition
     requiredNarrativeSectionKeys: ["executive_summary", "conclusion"],
     artifactFormats: ["pdf", "xlsx", "csv"],
     treatment: "full",
+    // Spec section 2: the reference Monthly report's own PDF mediabox is landscape (confirmed via
+    // pypdf) - a wide, many-column analytical management document. This is the ONE template with a
+    // non-default orientation.
+    orientation: "landscape",
   },
   campaign_event_performance_detailed: {
     templateId: "campaign_event_performance_detailed",
@@ -84,6 +94,7 @@ const REPORT_TEMPLATE_CATALOG: Record<ReportTemplateId, ReportTemplateDefinition
     requiredNarrativeSectionKeys: ["executive_summary", "conclusion"],
     artifactFormats: ["pdf", "xlsx", "csv"],
     treatment: "full",
+    orientation: "portrait",
   },
   campaign_event_performance_compact: {
     templateId: "campaign_event_performance_compact",
@@ -94,6 +105,7 @@ const REPORT_TEMPLATE_CATALOG: Record<ReportTemplateId, ReportTemplateDefinition
     requiredNarrativeSectionKeys: ["executive_summary"],
     artifactFormats: ["pdf", "xlsx"],
     treatment: "full",
+    orientation: "portrait",
   },
   weekly_rapid_response_programme: {
     templateId: "weekly_rapid_response_programme",
@@ -104,6 +116,7 @@ const REPORT_TEMPLATE_CATALOG: Record<ReportTemplateId, ReportTemplateDefinition
     requiredNarrativeSectionKeys: ["executive_summary", "strategic_editorial_insight", "conclusion"],
     artifactFormats: ["pdf", "xlsx"],
     treatment: "baseline",
+    orientation: "portrait",
   },
   cross_platform_partner_programme: {
     templateId: "cross_platform_partner_programme",
@@ -114,6 +127,7 @@ const REPORT_TEMPLATE_CATALOG: Record<ReportTemplateId, ReportTemplateDefinition
     requiredNarrativeSectionKeys: ["executive_summary", "conclusion"],
     artifactFormats: ["pdf", "xlsx", "csv"],
     treatment: "full",
+    orientation: "portrait",
   },
   long_period_partner_programme: {
     templateId: "long_period_partner_programme",
@@ -124,6 +138,7 @@ const REPORT_TEMPLATE_CATALOG: Record<ReportTemplateId, ReportTemplateDefinition
     requiredNarrativeSectionKeys: ["executive_summary"],
     artifactFormats: ["pdf", "xlsx", "csv"],
     treatment: "baseline",
+    orientation: "portrait",
   },
   partner_portfolio_coverage: {
     templateId: "partner_portfolio_coverage",
@@ -134,19 +149,20 @@ const REPORT_TEMPLATE_CATALOG: Record<ReportTemplateId, ReportTemplateDefinition
     requiredNarrativeSectionKeys: [],
     artifactFormats: ["pdf", "xlsx", "csv"],
     treatment: "baseline",
+    orientation: "portrait",
   },
   // --- Spec section 21 reconciliation: the remaining 7 original report families, given the SAME
   // lifecycle/narrative/artifact machinery via the generic baseline builder (see build-sections.ts) -
   // not bespoke management templates in their own right, but genuinely NOT isolated one-off executors
   // any more either: each can be drafted, reviewed, finalized, and produces real governed PDF/XLSX/CSV
   // artifacts through the exact same publication pipeline. ---
-  campaign_delivery: { templateId: "campaign_delivery", reportId: "campaign_delivery", title: "Campaign Delivery", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline" },
-  channel_growth_freshness: { templateId: "channel_growth_freshness", reportId: "channel_growth_freshness", title: "Channel Growth & Freshness", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline" },
-  partner_review_evidence: { templateId: "partner_review_evidence", reportId: "partner_review_evidence", title: "Partner Review Evidence", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline" },
-  finance_status: { templateId: "finance_status", reportId: "finance_status", title: "Finance Status", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline" },
-  operations_attention: { templateId: "operations_attention", reportId: "operations_attention", title: "Operations Attention", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline" },
-  discovery_funnel: { templateId: "discovery_funnel", reportId: "discovery_funnel", title: "Discovery Funnel", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline" },
-  administration_security: { templateId: "administration_security", reportId: "administration_security", title: "Administration & Security", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline" },
+  campaign_delivery: { templateId: "campaign_delivery", reportId: "campaign_delivery", title: "Campaign Delivery", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline", orientation: "portrait" },
+  channel_growth_freshness: { templateId: "channel_growth_freshness", reportId: "channel_growth_freshness", title: "Channel Growth & Freshness", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline", orientation: "portrait" },
+  partner_review_evidence: { templateId: "partner_review_evidence", reportId: "partner_review_evidence", title: "Partner Review Evidence", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline", orientation: "portrait" },
+  finance_status: { templateId: "finance_status", reportId: "finance_status", title: "Finance Status", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline", orientation: "portrait" },
+  operations_attention: { templateId: "operations_attention", reportId: "operations_attention", title: "Operations Attention", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline", orientation: "portrait" },
+  discovery_funnel: { templateId: "discovery_funnel", reportId: "discovery_funnel", title: "Discovery Funnel", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline", orientation: "portrait" },
+  administration_security: { templateId: "administration_security", reportId: "administration_security", title: "Administration & Security", referencePattern: "n/a - reconciled original family, spec section 21", variant: "standard", requiredNarrativeSectionKeys: [], artifactFormats: ["pdf", "xlsx", "csv"], treatment: "baseline", orientation: "portrait" },
 };
 
 export function getReportTemplateDefinition(templateId: ReportTemplateId): ReportTemplateDefinition {

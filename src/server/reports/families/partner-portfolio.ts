@@ -27,6 +27,16 @@ export async function runPartnerPortfolioReport(actor: ActorContext, appliedFilt
   // therefore the table's own primary column once buildBaselineSections turned this row into a visible
   // table (the user's own attached partner-portfolio-coverage-v1.pdf showed exactly this: a raw
   // partnerRef column, not a Partner name). No new service call - listPartners is already called above.
+  //
+  // Reports PDF Composition & Management-Publication Polish (spec section 14): partnerRef itself STAYS
+  // on this evidence row (reports.emulator.test.ts's own Record Scope assertions key off
+  // `result.rows[].partnerRef` - removing it here broke real, existing scope-enforcement test coverage,
+  // not just cosmetic PDF output). The requirement this stage actually needs - "Partner Ref must never
+  // appear in the PUBLISHED PDF" - is already satisfied one layer up, at the rendering boundary:
+  // buildGenericTable's raw-ref-drop guard (report-sections/helpers.ts) removes any *Ref/*Id column
+  // from the rendered table entirely whenever a name-shaped sibling column (partnerDisplayName here)
+  // exists, for every renderer (PDF/XLSX/CSV) that consumes this same section model. The evidence layer
+  // keeps full traceability; only the published artifact's own table columns are filtered.
   const rows: ReportRow[] = partners.map((p) => ({ partnerDisplayName: p.displayName, status: p.status, tier: p.tier ?? null, region: p.regionIds[0] ?? null, pendingPartnerAccountSetup: p.pendingPartnerAccountSetup, partnerRef: p.partnerRef }));
 
   return {

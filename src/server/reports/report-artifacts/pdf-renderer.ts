@@ -105,16 +105,32 @@ function kpiModeFor(templateId: string | undefined): KpiMode {
   return templateId && KPI_ACCENT_TILE_TEMPLATE_IDS.has(templateId) ? "accentTile" : "borderedGrid";
 }
 
-const PAGE_WIDTH = 595.28; // A4 portrait, points.
-const PAGE_HEIGHT = 841.89;
-const MARGIN = 48;
-const CONTENT_WIDTH = PAGE_WIDTH - MARGIN * 2;
+// A4 portrait, points - the historical/default page shape, still used for every template except those
+// that declare `orientation: "landscape"` on their ReportTemplateDefinition (report-templates.ts).
+// Spec section 2 (Reports PDF Composition & Management-Publication Polish): Monthly Partner Performance
+// needs A4 LANDSCAPE (a wide, many-column analytical table) - rather than scatter report-id
+// conditionals through this file, the document's actual page size lives on DocState
+// (pageWidth/pageHeight/contentWidth, computed ONCE in generateReportPdf from meta.orientation) and
+// every drawing function below reads ITS OWN state's dimensions rather than these bare module
+// constants. These two constants remain only as the portrait DEFAULT fed into that computation.
+const PORTRAIT_PAGE_WIDTH = 595.28;
+const PORTRAIT_PAGE_HEIGHT = 841.89;
+const MARGIN = 48; // Same margin in both orientations.
 const FOOTER_HEIGHT = 30;
 const HEADER_HEIGHT = 26;
 const MAX_LINES_PER_CELL = 3;
 
+function pageSizeFor(orientation: "portrait" | "landscape" | undefined): { pageWidth: number; pageHeight: number } {
+  if (orientation === "landscape") return { pageWidth: PORTRAIT_PAGE_HEIGHT, pageHeight: PORTRAIT_PAGE_WIDTH }; // A4 landscape = portrait's own width/height swapped.
+  return { pageWidth: PORTRAIT_PAGE_WIDTH, pageHeight: PORTRAIT_PAGE_HEIGHT };
+}
+
 export type PdfReportMeta = {
   templateTitle: string;
+  // Canonical CreatorOps-authored PDF Subject metadata (spec section 18) - never a template's own
+  // internal `referencePattern` build-provenance field (which is what this used to be wired to; that
+  // field documents which external reference report a template's DESIGN was modeled on, never meant as
+  // end-user PDF metadata - see generate-artifacts.ts).
   reportPurpose: string;
   scopeLine: string;
   periodLine: string;
@@ -128,6 +144,9 @@ export type PdfReportMeta = {
   // purely a rendering choice. Optional and defaults to the safe "borderedGrid" mode when absent (e.g.
   // existing unit tests that construct a PdfReportMeta directly without a template id).
   templateId?: string;
+  // Spec section 2: which page orientation this document uses. Optional, defaults to "portrait" (every
+  // existing caller/test that omits this keeps the historical A4-portrait behavior unchanged).
+  orientation?: "portrait" | "landscape";
 };
 
 // --- Text measurement / wrapping -------------------------------------------------------------------
@@ -330,31 +349,38 @@ type DocState = {
   romanNumbered: boolean;
   sectionOrdinal: number;
   headingAccent: Color;
+  // Spec section 2: per-DOCUMENT page dimensions (computed once from meta.orientation) - every drawing
+  // function below reads these rather than a bare module-level PAGE_WIDTH/PAGE_HEIGHT/CONTENT_WIDTH
+  // constant, so one document can genuinely be landscape while another (drawn by the same code) stays
+  // portrait, with no per-call-site report-id conditional anywhere in this file.
+  pageWidth: number;
+  pageHeight: number;
+  contentWidth: number;
 };
 
 function newPage(state: DocState): void {
-  state.page = state.doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  state.page = state.doc.addPage([state.pageWidth, state.pageHeight]);
   state.pageNumber += 1;
-  state.y = PAGE_HEIGHT - MARGIN - HEADER_HEIGHT;
+  state.y = state.pageHeight - MARGIN - HEADER_HEIGHT;
   drawRunningHeader(state);
 }
 
 function drawRunningHeader(state: DocState): void {
-  const { page, sans, sansBold, meta, headingAccent } = state;
-  page.drawText(fitOneLine(sans, meta.templateTitle, 9, CONTENT_WIDTH * 0.55), { x: MARGIN, y: PAGE_HEIGHT - MARGIN + 8, size: 9, font: sans, color: TEXT_MUTED });
-  const periodText = fitOneLine(sansBold, meta.periodLine, 9, CONTENT_WIDTH * 0.4);
+  const { page, sans, sansBold, meta, headingAccent, pageWidth, pageHeight, contentWidth } = state;
+  page.drawText(fitOneLine(sans, meta.templateTitle, 9, contentWidth * 0.55), { x: MARGIN, y: pageHeight - MARGIN + 8, size: 9, font: sans, color: TEXT_MUTED });
+  const periodText = fitOneLine(sansBold, meta.periodLine, 9, contentWidth * 0.4);
   const periodWidth = sansBold.widthOfTextAtSize(periodText, 9);
-  page.drawText(periodText, { x: PAGE_WIDTH - MARGIN - periodWidth, y: PAGE_HEIGHT - MARGIN + 8, size: 9, font: sansBold, color: headingAccent });
-  page.drawLine({ start: { x: MARGIN, y: PAGE_HEIGHT - MARGIN }, end: { x: PAGE_WIDTH - MARGIN, y: PAGE_HEIGHT - MARGIN }, thickness: 0.75, color: headingAccent });
+  page.drawText(periodText, { x: pageWidth - MARGIN - periodWidth, y: pageHeight - MARGIN + 8, size: 9, font: sansBold, color: headingAccent });
+  page.drawLine({ start: { x: MARGIN, y: pageHeight - MARGIN }, end: { x: pageWidth - MARGIN, y: pageHeight - MARGIN }, thickness: 0.75, color: headingAccent });
 }
 
 function drawFooter(state: DocState, totalPages: number): void {
-  const { page, sans, meta, pageNumber } = state;
-  page.drawLine({ start: { x: MARGIN, y: MARGIN }, end: { x: PAGE_WIDTH - MARGIN, y: MARGIN }, thickness: 0.5, color: GRAY_BORDER });
-  page.drawText(fitOneLine(sans, meta.templateTitle, 8, CONTENT_WIDTH * 0.6), { x: MARGIN, y: MARGIN - 14, size: 8, font: sans, color: TEXT_MUTED });
+  const { page, sans, meta, pageNumber, pageWidth, contentWidth } = state;
+  page.drawLine({ start: { x: MARGIN, y: MARGIN }, end: { x: pageWidth - MARGIN, y: MARGIN }, thickness: 0.5, color: GRAY_BORDER });
+  page.drawText(fitOneLine(sans, meta.templateTitle, 8, contentWidth * 0.6), { x: MARGIN, y: MARGIN - 14, size: 8, font: sans, color: TEXT_MUTED });
   const pageLabel = `Page ${pageNumber} of ${totalPages}`;
   const pageLabelWidth = sans.widthOfTextAtSize(pageLabel, 8);
-  page.drawText(pageLabel, { x: PAGE_WIDTH - MARGIN - pageLabelWidth, y: MARGIN - 14, size: 8, font: sans, color: TEXT_MUTED });
+  page.drawText(pageLabel, { x: pageWidth - MARGIN - pageLabelWidth, y: MARGIN - 14, size: 8, font: sans, color: TEXT_MUTED });
 }
 
 function ensureSpace(state: DocState, needed: number): void {
@@ -380,19 +406,30 @@ function toRoman(n: number): string {
   return out;
 }
 
+// Spec section 15 ("Headings: do not leave a heading at page bottom without meaningful body/table rows
+// below it"): the heading block itself (title line + rule + gap) is ~32pt, but ensureSpace is asked for
+// that PLUS a minimum reserve for whatever immediately follows (a KPI row, a table header + first row,
+// or a few lines of narrative) - so a heading that would otherwise land in the last ~32pt of a page (with
+// nothing real beneath it) now pushes itself, together with its first bit of body content, onto a fresh
+// page instead. This one lookahead also covers the reported "nearly empty Conclusion page" defect: that
+// symptom is a heading (Conclusion's own) landing near a page's bottom edge with no room left for its
+// narrative body - the same general rule fixes it with no Conclusion-specific special case needed.
+const HEADING_BLOCK_HEIGHT = 32;
+const MIN_BODY_AFTER_HEADING = 55;
+
 function drawSectionTitle(state: DocState, title: string, unavailableReason?: string): void {
-  ensureSpace(state, 32);
+  ensureSpace(state, HEADING_BLOCK_HEIGHT + MIN_BODY_AFTER_HEADING);
   const accent = resolveHeadingColor(title);
   const prefix = state.romanNumbered ? `${toRoman(state.sectionOrdinal)}. ` : "";
   const heading = `${prefix}${title}`;
-  const fitted = fitOneLine(state.serifBold, heading, 14, CONTENT_WIDTH);
+  const fitted = fitOneLine(state.serifBold, heading, 14, state.contentWidth);
   state.page.drawText(fitted, { x: MARGIN, y: state.y, size: 14, font: state.serifBold, color: accent });
   const headingWidth = state.serifBold.widthOfTextAtSize(fitted, 14);
   state.y -= 7;
-  state.page.drawLine({ start: { x: MARGIN, y: state.y }, end: { x: MARGIN + Math.min(headingWidth, CONTENT_WIDTH), y: state.y }, thickness: 1.5, color: accent });
+  state.page.drawLine({ start: { x: MARGIN, y: state.y }, end: { x: MARGIN + Math.min(headingWidth, state.contentWidth), y: state.y }, thickness: 1.5, color: accent });
   state.y -= 16;
   if (unavailableReason) {
-    const lines = wrapText(state.serifItalic, unavailableReason, 9.5, CONTENT_WIDTH, 6);
+    const lines = wrapText(state.serifItalic, unavailableReason, 9.5, state.contentWidth, 6);
     for (const line of lines) {
       ensureSpace(state, 12);
       state.page.drawText(line, { x: MARGIN, y: state.y, size: 9.5, font: state.serifItalic, color: TEXT_MUTED });
@@ -412,7 +449,7 @@ function drawSectionTitle(state: DocState, title: string, unavailableReason?: st
 function drawKpiAccentTiles(state: DocState, items: { label: string; value: string; sublabel?: string; unavailable?: boolean }[]): void {
   const cols = 3;
   const gap = 10;
-  const cardWidth = (CONTENT_WIDTH - (cols - 1) * gap) / cols;
+  const cardWidth = (state.contentWidth - (cols - 1) * gap) / cols;
   const accentBarHeight = 6;
   const cardHeight = 52;
   let col = 0;
@@ -442,8 +479,8 @@ function drawKpiAccentTiles(state: DocState, items: { label: string; value: stri
 // one pair per row. No color, real borders - the deliberate, simpler alternate mode.
 function drawKpiBorderedGrid(state: DocState, items: { label: string; value: string; sublabel?: string; unavailable?: boolean }[]): void {
   const rowHeight = 20;
-  const labelWidth = CONTENT_WIDTH * 0.42;
-  const valueWidth = CONTENT_WIDTH - labelWidth;
+  const labelWidth = state.contentWidth * 0.42;
+  const valueWidth = state.contentWidth - labelWidth;
   for (const item of items) {
     ensureSpace(state, rowHeight);
     const top = state.y;
@@ -468,17 +505,25 @@ function drawKpiGrid(state: DocState, items: { label: string; value: string; sub
 
 // --- Tables --------------------------------------------------------------------------------------------
 
+// Spec section 15 (pagination/keep-together): a SMALL table (roughly, one that would fit comfortably in
+// half a page) must never be allowed to split across pages just because it happens to start near the
+// bottom of the current one (the reported "Top-5 table split across pages" defect) - move it to a fresh
+// page as a whole instead. A LARGE table that genuinely cannot fit on one page still splits (repeating
+// its header, per the existing per-row logic below), but the tail-keep-together check inside the row
+// loop stops the split from ever stranding just the last 1-3 rows alone (the reported "only the final
+// 100M+ band row orphaned onto the next page" defect).
+const SMALL_TABLE_MAX_FRACTION = 0.5;
+const TAIL_KEEP_TOGETHER_MAX_ROWS = 3;
+
 function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], totalsRow: TableRow | undefined, emptyMessage: string | undefined, note: string | undefined, sectionTitle: string): void {
-  if (note) {
-    const lines = wrapText(state.sans, note, 8.5, CONTENT_WIDTH, 4);
-    for (const line of lines) {
+  const noteLines = note ? wrapText(state.sans, note, 8.5, state.contentWidth, 4) : [];
+  if (rows.length === 0) {
+    for (const line of noteLines) {
       ensureSpace(state, 11);
       state.page.drawText(line, { x: MARGIN, y: state.y, size: 8.5, font: state.sans, color: TEXT_MUTED });
       state.y -= 11;
     }
-    state.y -= 4;
-  }
-  if (rows.length === 0) {
+    if (noteLines.length > 0) state.y -= 4;
     ensureSpace(state, 14);
     state.page.drawText(emptyMessage ?? "No rows in this run.", { x: MARGIN, y: state.y, size: 9, font: state.sans, color: TEXT_MUTED });
     state.y -= 18;
@@ -486,7 +531,7 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
   }
   const headerColor = resolveTableAccentColor(sectionTitle);
   const colCount = Math.max(columns.length, 1);
-  const colWidths = allocateColumnWidths(columns, CONTENT_WIDTH);
+  const colWidths = allocateColumnWidths(columns, state.contentWidth);
   const colX: number[] = [];
   {
     let x = MARGIN;
@@ -499,19 +544,47 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
   const HEADER_LINE_HEIGHT = 10;
   const LINE_HEIGHT = 10.5;
 
+  // Wrapping is a pure function of column widths + each row's own text - computed ONCE up front (rather
+  // than re-wrapped inline while drawing, as the prior version did) so the SAME wrapped lines/row
+  // heights can be used both for the keep-together height calculations below and for the actual draw
+  // pass, with no risk of the two disagreeing.
+  const wrappedRows = rows.map((row) => columns.map((col, i) => wrapText(state.sans, cellText(row[col.id] ?? null), 8, colWidths[i]! - 8)));
+  const rowHeights = wrappedRows.map((wrapped) => Math.max(...wrapped.map((l) => l.length), 1) * LINE_HEIGHT + 5);
+
+  function headerRowHeight(): number {
+    const wrappedHeaders = columns.map((col, i) => wrapText(state.sansBold, col.label, 8.5, colWidths[i]! - 8, 2));
+    const headerLineCount = Math.max(...wrappedHeaders.map((l) => l.length), 1);
+    return Math.max(MIN_HEADER_ROW_HEIGHT, headerLineCount * HEADER_LINE_HEIGHT + 7);
+  }
+  const headerHeight = headerRowHeight();
+  const noteHeight = noteLines.length > 0 ? noteLines.length * 11 + 4 : 0;
+  const totalsHeight = totalsRow ? 18 : 0;
+  const totalTableHeight = noteHeight + headerHeight + rowHeights.reduce((a, b) => a + b, 0) + totalsHeight + 10;
+  const fullPageAvailable = state.pageHeight - MARGIN * 2 - HEADER_HEIGHT - FOOTER_HEIGHT;
+  const currentAvailable = state.y - (MARGIN + FOOTER_HEIGHT);
+  if (totalTableHeight <= fullPageAvailable * SMALL_TABLE_MAX_FRACTION && totalTableHeight > currentAvailable) {
+    newPage(state);
+  }
+
+  for (const line of noteLines) {
+    ensureSpace(state, 11);
+    state.page.drawText(line, { x: MARGIN, y: state.y, size: 8.5, font: state.sans, color: TEXT_MUTED });
+    state.y -= 11;
+  }
+  if (noteLines.length > 0) state.y -= 4;
+
   // A narrow multi-column table (e.g. an 11-column Instagram/YouTube Partner Performance table)
   // routinely needs a column label wider than its own column, so the header - like every data cell -
   // wraps onto multiple lines, and the header row's own height grows to fit that wrap (fixed in the
   // prior stage; kept here, adapted to the new per-column widths).
   function drawHeaderRow(): void {
     const wrappedHeaders = columns.map((col, i) => wrapText(state.sansBold, col.label, 8.5, colWidths[i]! - 8, 2));
-    const headerLineCount = Math.max(...wrappedHeaders.map((l) => l.length), 1);
-    const headerRowHeight = Math.max(MIN_HEADER_ROW_HEIGHT, headerLineCount * HEADER_LINE_HEIGHT + 7);
-    ensureSpace(state, headerRowHeight + 4);
+    const thisHeaderHeight = headerRowHeight();
+    ensureSpace(state, thisHeaderHeight + 4);
     const top = state.y;
-    state.page.drawRectangle({ x: MARGIN, y: top - headerRowHeight + 4, width: CONTENT_WIDTH, height: headerRowHeight, color: headerColor });
+    state.page.drawRectangle({ x: MARGIN, y: top - thisHeaderHeight + 4, width: state.contentWidth, height: thisHeaderHeight, color: headerColor });
     columns.forEach((col, i) => {
-      const laid = layoutCellLines(state.sansBold, wrappedHeaders[i]!, colX[i]! + 4, colWidths[i]! - 8, top + 4, headerRowHeight, 8.5, HEADER_LINE_HEIGHT, "center");
+      const laid = layoutCellLines(state.sansBold, wrappedHeaders[i]!, colX[i]! + 4, colWidths[i]! - 8, top + 4, thisHeaderHeight, 8.5, HEADER_LINE_HEIGHT, "center");
       laid.forEach(({ text, x, y }) => {
         state.page.drawText(text, { x, y, size: 8.5, font: state.sansBold, color: WHITE, maxWidth: colWidths[i]! - 8 });
       });
@@ -519,30 +592,48 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
     // Real cell borders (design brief: "real cell borders, thin gray grid, both horizontal and
     // vertical") - a vertical rule at every column boundary across the header's own height.
     for (let i = 0; i <= columns.length; i++) {
-      const x = i === 0 ? MARGIN : i === columns.length ? MARGIN + CONTENT_WIDTH : colX[i]!;
-      state.page.drawLine({ start: { x, y: top - headerRowHeight + 4 }, end: { x, y: top + 4 }, thickness: 0.5, color: GRAY_BORDER });
+      const x = i === 0 ? MARGIN : i === columns.length ? MARGIN + state.contentWidth : colX[i]!;
+      state.page.drawLine({ start: { x, y: top - thisHeaderHeight + 4 }, end: { x, y: top + 4 }, thickness: 0.5, color: GRAY_BORDER });
     }
-    state.y -= headerRowHeight;
+    state.y -= thisHeaderHeight;
   }
 
   drawHeaderRow();
   rows.forEach((row, rowIndex) => {
-    const wrapped = columns.map((col, i) => wrapText(state.sans, cellText(row[col.id] ?? null), 8, colWidths[i]! - 8));
-    const lineCount = Math.max(...wrapped.map((l) => l.length), 1);
-    const rowHeight = lineCount * LINE_HEIGHT + 5;
-    if (state.y - rowHeight < MARGIN + FOOTER_HEIGHT) {
+    const lines = wrappedRows[rowIndex]!;
+    const rowHeight = rowHeights[rowIndex]!;
+    const remainingCount = rows.length - rowIndex;
+    let broke = false;
+    if (remainingCount <= TAIL_KEEP_TOGETHER_MAX_ROWS) {
+      const remainingHeight = rowHeights.slice(rowIndex).reduce((a, b) => a + b, 0);
+      const availableNow = state.y - (MARGIN + FOOTER_HEIGHT);
+      if (remainingHeight > availableNow && remainingHeight <= fullPageAvailable) {
+        newPage(state);
+        drawHeaderRow();
+        broke = true;
+      }
+    }
+    if (!broke && state.y - rowHeight < MARGIN + FOOTER_HEIGHT) {
       newPage(state);
       drawHeaderRow();
     }
     const top = state.y;
-    if (rowIndex % 2 === 1) state.page.drawRectangle({ x: MARGIN, y: top - rowHeight + 2, width: CONTENT_WIDTH, height: rowHeight, color: GRAY_ROW_ALT });
+    if (rowIndex % 2 === 1) state.page.drawRectangle({ x: MARGIN, y: top - rowHeight + 2, width: state.contentWidth, height: rowHeight, color: GRAY_ROW_ALT });
     columns.forEach((col, i) => {
-      const lines = wrapped[i]!;
+      const cellLines = lines[i]!;
       const insetX = colX[i]! + 4;
       const insetWidth = colWidths[i]! - 8;
       const rawValue = row[col.id] ?? null;
-      const link = isUrl(rawValue) ? rawValue : null;
-      const laid = layoutCellLines(state.sans, lines, insetX, insetWidth, top + 2, rowHeight, 8, LINE_HEIGHT, "center");
+      // Spec section 7 (real PDF hyperlinks, human labels): a `<col.id>Href` sibling field on the row
+      // (never rendered as its own visible column - see buildGenericTable's column filter) supplies the
+      // authorized URL/deep-link for this cell, while the cell's OWN value stays a human label such as
+      // "Open Post"/"Open Partner" - never the raw URL. Falls back to the OLDER convention (the cell's
+      // own value already being a bare http(s) URL) for any table that hasn't adopted a paired label.
+      const hrefValue = row[`${col.id}Href`] ?? null;
+      const pairedLink = typeof hrefValue === "string" && isUrl(hrefValue) ? hrefValue : null;
+      const directLink = isUrl(rawValue) ? rawValue : null;
+      const link = pairedLink ?? directLink;
+      const laid = layoutCellLines(state.sans, cellLines, insetX, insetWidth, top + 2, rowHeight, 8, LINE_HEIGHT, "center");
       laid.forEach(({ text, x, y, width }) => {
         state.page.drawText(text, { x, y, size: 8, font: state.sans, color: link ? LINK_BLUE : TEXT_DARK, maxWidth: insetWidth });
         if (link) {
@@ -554,9 +645,9 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
     // Horizontal rule under the row plus vertical rules at each column boundary, spanning this row's
     // own height - drawn per-row (rather than once for the whole table) so pagination splits cleanly:
     // each page's own visible chunk of the table is fully gridded on its own.
-    state.page.drawLine({ start: { x: MARGIN, y: top - rowHeight + 2 }, end: { x: MARGIN + CONTENT_WIDTH, y: top - rowHeight + 2 }, thickness: 0.4, color: GRAY_BORDER });
+    state.page.drawLine({ start: { x: MARGIN, y: top - rowHeight + 2 }, end: { x: MARGIN + state.contentWidth, y: top - rowHeight + 2 }, thickness: 0.4, color: GRAY_BORDER });
     for (let i = 0; i <= columns.length; i++) {
-      const x = i === 0 ? MARGIN : i === columns.length ? MARGIN + CONTENT_WIDTH : colX[i]!;
+      const x = i === 0 ? MARGIN : i === columns.length ? MARGIN + state.contentWidth : colX[i]!;
       state.page.drawLine({ start: { x, y: top + 2 }, end: { x, y: top - rowHeight + 2 }, thickness: 0.4, color: GRAY_BORDER });
     }
     state.y -= rowHeight;
@@ -568,8 +659,8 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
       drawHeaderRow();
     }
     const top = state.y;
-    state.page.drawRectangle({ x: MARGIN, y: top - 18, width: CONTENT_WIDTH, height: 18, color: GRAY_LIGHT_FILL });
-    state.page.drawLine({ start: { x: MARGIN, y: top }, end: { x: MARGIN + CONTENT_WIDTH, y: top }, thickness: 1, color: headerColor });
+    state.page.drawRectangle({ x: MARGIN, y: top - 18, width: state.contentWidth, height: 18, color: GRAY_LIGHT_FILL });
+    state.page.drawLine({ start: { x: MARGIN, y: top }, end: { x: MARGIN + state.contentWidth, y: top }, thickness: 1, color: headerColor });
     columns.forEach((col, i) => {
       const text = fitOneLine(state.sansBold, cellText(totalsRow[col.id] ?? null), 8.5, colWidths[i]! - 8);
       const textWidth = state.sansBold.widthOfTextAtSize(text, 8.5);
@@ -584,15 +675,17 @@ function drawTable(state: DocState, columns: TableColumn[], rows: TableRow[], to
 
 // --- Narrative / data quality / cover ----------------------------------------------------------------
 
-function drawNarrative(state: DocState, body: string, reviewStatus?: string): void {
-  if (reviewStatus) {
-    ensureSpace(state, 12);
-    state.page.drawText(`[${reviewStatus}]`, { x: MARGIN, y: state.y, size: 8, font: state.sans, color: TEXT_MUTED });
-    state.y -= 12;
-  }
+// Spec section 4 ("finalized PDF may never contain [DRAFT]") and section 16 (no renderer/workflow-status
+// prose in finalized artifact content): generateReportPdf (this file's one entry point) is called ONLY
+// from generate-artifacts.ts's ensureArtifactsForFinalizedVersion, i.e. EVERY PDF this function ever
+// produces is a finalized artifact - so a narrative section's own reviewStatus ("DRAFT"/"REVIEWED", an
+// internal WORKFLOW field, not management content) is never drawn into the PDF body at all, regardless
+// of its value. The reviewStatus field itself is untouched on the section model - it still drives the
+// web Evidence Preview UI and XLSX/CSV, where showing a narrative's own review state is legitimate.
+function drawNarrative(state: DocState, body: string): void {
   const paragraphs = body.length > 0 ? body.split(/\n{2,}/) : ["(No narrative has been written for this section yet.)"];
   for (const paragraph of paragraphs) {
-    const lines = wrapText(state.serif, paragraph, 10.5, CONTENT_WIDTH, 200);
+    const lines = wrapText(state.serif, paragraph, 10.5, state.contentWidth, 200);
     for (const line of lines) {
       ensureSpace(state, 15);
       state.page.drawText(line, { x: MARGIN, y: state.y, size: 10.5, font: state.serif, color: TEXT_DARK });
@@ -605,46 +698,67 @@ function drawNarrative(state: DocState, body: string, reviewStatus?: string): vo
 // Reference 1's "magazine" cover: colored top/bottom bar strips, a large centered serif display title,
 // an italic serif subtitle, a small decorative divider (a short rule flanked by two dot ornaments), then
 // bold "Summary Report"-style meta lines. Used for the accentTile-mode templates.
+// Spec section 3 (canonical monthly cover / publication header): the reference management report's own
+// cover prominently shows a scope/platforms line (e.g. "South Region · Instagram + YouTube") and an
+// explicit human reporting-period line (e.g. "Reporting Period: 1-31 August 2026") directly on the
+// cover page - CreatorOps's own cover previously computed these on the section model (scopeLine/
+// periodLine) but never actually drew them here. Drawn ONLY when the caller actually supplied a
+// non-empty value (buildCoverSection omits platformsLine entirely when no real platform/region
+// parameter exists, per spec section 3's "if region/portfolio is not a real report parameter, omit it
+// instead of inventing it") - never a fabricated line.
+function drawCoverMeta(state: DocState, section: Extract<ReportSectionModel, { kind: "cover" }>, y: number, font: PDFFont, size: number, color: Color): number {
+  const lines = [section.platformsLine, section.periodLine].filter((v): v is string => typeof v === "string" && v.length > 0);
+  let cursor = y;
+  for (const line of lines) {
+    const width = font.widthOfTextAtSize(line, size);
+    state.page.drawText(line, { x: MARGIN + (state.contentWidth - width) / 2, y: cursor, size, font, color });
+    cursor -= size + 6;
+  }
+  return cursor;
+}
+
 function drawCoverMagazine(state: DocState, section: Extract<ReportSectionModel, { kind: "cover" }>): void {
+  const { pageWidth, pageHeight, contentWidth } = state;
   const barHeight = 8;
-  state.page.drawRectangle({ x: 0, y: PAGE_HEIGHT - 40, width: PAGE_WIDTH, height: barHeight, color: INK_NAVY });
-  state.page.drawText("CREATOROPS", { x: MARGIN, y: PAGE_HEIGHT - 66, size: 10, font: state.sansBold, color: ORANGE });
+  state.page.drawRectangle({ x: 0, y: pageHeight - 40, width: pageWidth, height: barHeight, color: INK_NAVY });
+  state.page.drawText("CREATOROPS", { x: MARGIN, y: pageHeight - 66, size: 10, font: state.sansBold, color: ORANGE });
 
   const titleSize = 24;
-  const titleLines = wrapText(state.serifBold, section.title.toUpperCase(), titleSize, CONTENT_WIDTH, 2);
-  let y = PAGE_HEIGHT - 130;
+  const titleLines = wrapText(state.serifBold, section.title.toUpperCase(), titleSize, contentWidth, 2);
+  let y = pageHeight - 130;
   titleLines.forEach((line, i) => {
     const width = state.serifBold.widthOfTextAtSize(line, titleSize);
     const color = i === 0 ? INK_NAVY : PLATFORM_COLORS.instagram!;
-    state.page.drawText(line, { x: MARGIN + (CONTENT_WIDTH - width) / 2, y: y - i * (titleSize + 6), size: titleSize, font: state.serifBold, color });
+    state.page.drawText(line, { x: MARGIN + (contentWidth - width) / 2, y: y - i * (titleSize + 6), size: titleSize, font: state.serifBold, color });
   });
   y -= titleLines.length * (titleSize + 6) + 6;
 
-  const subtitleLines = wrapText(state.serifItalic, section.subtitle, 11, CONTENT_WIDTH, 2);
+  const subtitleLines = wrapText(state.serifItalic, section.subtitle, 11, contentWidth, 2);
   subtitleLines.forEach((line, i) => {
     const width = state.serifItalic.widthOfTextAtSize(line, 11);
-    state.page.drawText(line, { x: MARGIN + (CONTENT_WIDTH - width) / 2, y: y - i * 15, size: 11, font: state.serifItalic, color: TEXT_MUTED });
+    state.page.drawText(line, { x: MARGIN + (contentWidth - width) / 2, y: y - i * 15, size: 11, font: state.serifItalic, color: TEXT_MUTED });
   });
   y -= subtitleLines.length * 15 + 18;
 
   // Decorative divider: a short centered rule flanked by two small filled dots - a "section break"
   // ornament, not a real ruled line.
   const dividerWidth = 90;
-  const dividerX = MARGIN + (CONTENT_WIDTH - dividerWidth) / 2;
+  const dividerX = MARGIN + (contentWidth - dividerWidth) / 2;
   state.page.drawLine({ start: { x: dividerX, y }, end: { x: dividerX + dividerWidth, y }, thickness: 1, color: ORANGE });
   state.page.drawCircle({ x: dividerX - 6, y, size: 2.2, color: ORANGE });
   state.page.drawCircle({ x: dividerX + dividerWidth + 6, y, size: 2.2, color: ORANGE });
   y -= 26;
 
-  state.page.drawText("Summary Report", { x: MARGIN + (CONTENT_WIDTH - state.serifBold.widthOfTextAtSize("Summary Report", 13)) / 2, y, size: 13, font: state.serifBold, color: INK_NAVY });
+  state.page.drawText("Summary Report", { x: MARGIN + (contentWidth - state.serifBold.widthOfTextAtSize("Summary Report", 13)) / 2, y, size: 13, font: state.serifBold, color: INK_NAVY });
   y -= 22;
 
-  // User-directed content-scope decision: the reference reports carry no version/evidence-cutoff/
-  // generated-at text anywhere in the visible PDF - match that exactly on the cover (the same
-  // provenance data still lives on the ReportVersion doc and in the XLSX/CSV renderers, untouched).
-  y -= 6;
+  // Spec section 3: real, source-backed scope/platforms + human reporting-period lines - never the
+  // removed version/evidence-cutoff block (spec section 19, still preserved: no version/evidence text
+  // on the cover).
+  y = drawCoverMeta(state, section, y, state.sansBold, 11, INK_NAVY);
+  y -= 4;
 
-  state.page.drawRectangle({ x: 0, y: Math.max(y, MARGIN), width: PAGE_WIDTH, height: barHeight, color: INK_NAVY });
+  state.page.drawRectangle({ x: 0, y: Math.max(y, MARGIN), width: pageWidth, height: barHeight, color: INK_NAVY });
   state.y = Math.max(y - 20, MARGIN + FOOTER_HEIGHT + 20);
 }
 
@@ -652,32 +766,34 @@ function drawCoverMagazine(state: DocState, section: Extract<ReportSectionModel,
 // a smaller plain gray centered subtitle, then a thicker colored rule spanning the full width. Used for
 // the borderedGrid-mode templates (Roman-numeral campaign reports and every baseline template).
 function drawCoverFormal(state: DocState, section: Extract<ReportSectionModel, { kind: "cover" }>): void {
+  const { pageWidth, pageHeight, contentWidth } = state;
   const breadcrumb = `CreatorOps · ${section.title}`;
-  const breadcrumbWidth = state.sans.widthOfTextAtSize(fitOneLine(state.sans, breadcrumb, 8.5, CONTENT_WIDTH), 8.5);
-  state.page.drawText(fitOneLine(state.sans, breadcrumb, 8.5, CONTENT_WIDTH), { x: PAGE_WIDTH - MARGIN - breadcrumbWidth, y: PAGE_HEIGHT - 56, size: 8.5, font: state.sans, color: TEXT_MUTED });
+  const breadcrumbWidth = state.sans.widthOfTextAtSize(fitOneLine(state.sans, breadcrumb, 8.5, contentWidth), 8.5);
+  state.page.drawText(fitOneLine(state.sans, breadcrumb, 8.5, contentWidth), { x: pageWidth - MARGIN - breadcrumbWidth, y: pageHeight - 56, size: 8.5, font: state.sans, color: TEXT_MUTED });
 
   const titleSize = 22;
-  const titleLines = wrapText(state.serifBold, section.title, titleSize, CONTENT_WIDTH, 2);
-  let y = PAGE_HEIGHT - 130;
+  const titleLines = wrapText(state.serifBold, section.title, titleSize, contentWidth, 2);
+  let y = pageHeight - 130;
   titleLines.forEach((line, i) => {
     const width = state.serifBold.widthOfTextAtSize(line, titleSize);
-    state.page.drawText(line, { x: MARGIN + (CONTENT_WIDTH - width) / 2, y: y - i * (titleSize + 6), size: titleSize, font: state.serifBold, color: INK_NAVY });
+    state.page.drawText(line, { x: MARGIN + (contentWidth - width) / 2, y: y - i * (titleSize + 6), size: titleSize, font: state.serifBold, color: INK_NAVY });
   });
   y -= titleLines.length * (titleSize + 6) + 8;
 
-  const subtitleLines = wrapText(state.sans, section.subtitle, 10.5, CONTENT_WIDTH, 2);
+  const subtitleLines = wrapText(state.sans, section.subtitle, 10.5, contentWidth, 2);
   subtitleLines.forEach((line, i) => {
     const width = state.sans.widthOfTextAtSize(line, 10.5);
-    state.page.drawText(line, { x: MARGIN + (CONTENT_WIDTH - width) / 2, y: y - i * 14, size: 10.5, font: state.sans, color: TEXT_MUTED });
+    state.page.drawText(line, { x: MARGIN + (contentWidth - width) / 2, y: y - i * 14, size: 10.5, font: state.sans, color: TEXT_MUTED });
   });
   y -= subtitleLines.length * 14 + 16;
 
-  state.page.drawLine({ start: { x: MARGIN, y }, end: { x: MARGIN + CONTENT_WIDTH, y }, thickness: 2, color: state.headingAccent });
+  state.page.drawLine({ start: { x: MARGIN, y }, end: { x: MARGIN + contentWidth, y }, thickness: 2, color: state.headingAccent });
   y -= 20;
 
-  // User-directed content-scope decision: the reference reports carry no version/evidence-cutoff/
-  // generated-at text anywhere in the visible PDF - match that exactly on the cover (the same
-  // provenance data still lives on the ReportVersion doc and in the XLSX/CSV renderers, untouched).
+  // Spec section 3: real, source-backed scope/platforms + human reporting-period lines - never the
+  // removed version/evidence-cutoff block (spec section 19, still preserved: no version/evidence text
+  // on the cover).
+  y = drawCoverMeta(state, section, y, state.sans, 10, TEXT_DARK);
   state.y = y - 4;
 }
 
@@ -690,8 +806,19 @@ function drawCover(state: DocState, section: Extract<ReportSectionModel, { kind:
 
 export async function generateReportPdf(sections: ReportSectionModel[], meta: PdfReportMeta): Promise<Uint8Array> {
   const doc = await PDFDocument.create();
+  // Spec section 18 (canonical PDF metadata): Title/Subject are both now genuinely CreatorOps-authored
+  // (meta.reportPurpose is the canonical Subject text generate-artifacts.ts computes - never a
+  // template's old `referencePattern` build-provenance/external-filename string). Author/Creator/
+  // Producer/dates are set for every template (not just Monthly/Portfolio) since they cost nothing extra
+  // and are equally wrong (absent) otherwise.
   doc.setTitle(meta.templateTitle);
   doc.setSubject(meta.reportPurpose);
+  doc.setAuthor("CreatorOps");
+  doc.setCreator("CreatorOps Reports");
+  doc.setProducer("CreatorOps");
+  const now = new Date();
+  doc.setCreationDate(now);
+  doc.setModificationDate(now);
   // Design brief point 1: pdf-lib ships all 14 standard PDF fonts with NO embedding required. Serif
   // (Times) for display titles/section headings, matching both reference styles' serif/bold-serif
   // heading treatment; sans (Helvetica) stays for dense tabular data, matching both references' clean
@@ -703,7 +830,9 @@ export async function generateReportPdf(sections: ReportSectionModel[], meta: Pd
     doc.embedFont(StandardFonts.TimesRomanBold),
     doc.embedFont(StandardFonts.TimesRomanItalic),
   ]);
-  const page = doc.addPage([PAGE_WIDTH, PAGE_HEIGHT]);
+  const { pageWidth, pageHeight } = pageSizeFor(meta.orientation);
+  const contentWidth = pageWidth - MARGIN * 2;
+  const page = doc.addPage([pageWidth, pageHeight]);
   const kpiMode = kpiModeFor(meta.templateId);
   const state: DocState = {
     doc,
@@ -713,13 +842,16 @@ export async function generateReportPdf(sections: ReportSectionModel[], meta: Pd
     serifBold,
     serifItalic,
     page,
-    y: PAGE_HEIGHT - MARGIN,
+    y: pageHeight - MARGIN,
     pageNumber: 1,
     meta,
     kpiMode,
     romanNumbered: meta.templateId !== undefined && ROMAN_NUMBERED_TEMPLATE_IDS.has(meta.templateId),
     sectionOrdinal: 0,
     headingAccent: kpiMode === "accentTile" ? PLATFORM_COLORS.instagram! : INK_NAVY,
+    pageWidth,
+    pageHeight,
+    contentWidth,
   };
 
   for (const section of sections) {
@@ -738,7 +870,7 @@ export async function generateReportPdf(sections: ReportSectionModel[], meta: Pd
     if (section.kind === "kpi_summary") drawKpiGrid(state, section.items as ReportKpiItem[]);
     else if (section.kind === "kpi_cards") drawKpiGrid(state, section.cards as ReportKpiCard[]);
     else if (section.kind === "table") drawTable(state, section.columns, section.rows, section.totalsRow, section.emptyMessage, section.note, section.title);
-    else if (section.kind === "narrative") drawNarrative(state, section.body, section.reviewStatus);
+    else if (section.kind === "narrative") drawNarrative(state, section.body);
     state.y -= 8;
   }
 

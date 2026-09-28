@@ -40,6 +40,12 @@ export type PlatformContentRowDto = {
   engagement: number | null;
   likes: number | null;
   comments: number | null;
+  // Reports PDF Composition & Management-Publication Polish (spec section 7): the record's own
+  // authorized external post URL when the source supplied one (normalizedUrl preferred, falling back to
+  // rawPostUrl) - `null` when neither is present. This lets a Top Content table give a genuine "Open
+  // Post" clickable link instead of an indirect Partner Analytics drill-down link, matching the
+  // reference reports exactly. Never a fabricated/derived URL.
+  postUrl: string | null;
   // Same "{file} · sheet {sheet} · row {n}" provenance wording as the Data Explorer.
   source: string;
 };
@@ -135,6 +141,7 @@ export function buildPublishedContentRowDtos(records: AnalyticsContentSourceReco
       engagement: record.engagement,
       likes: record.likes,
       comments: record.comments,
+      postUrl: record.normalizedUrl ?? record.rawPostUrl ?? null,
       source: sourceLabel(record, batchLabels),
     };
   });
