@@ -229,26 +229,91 @@ currently justified, design path documented for if/when it becomes so).
 
 ## 11. Security headers
 
-Implemented this stage (`4666bf0`, `next.config.ts`): `X-Frame-Options: DENY`,
+Implemented this stage (`next.config.ts` + `src/proxy.ts`): `X-Frame-Options: DENY`,
 `X-Content-Type-Options: nosniff`, `Referrer-Policy: strict-origin-when-cross-origin`,
 `Permissions-Policy` (denies camera/microphone/geolocation/payment/usb/interest-cohort outright),
-`Content-Security-Policy` (real, non-wildcard - see the file's own comment for the exact directive
-reasoning), `Strict-Transport-Security` (production builds only), `Cache-Control: no-store` on every
-`/api/*` response.
+`Content-Security-Policy` (real, non-wildcard, nonce-based - see below), `Strict-Transport-Security`
+(production builds only), `Cache-Control: no-store` on every `/api/*` response.
 
-Verified: `security-headers.test.ts` (4 automated assertions against the real `headers()` function);
-`curl` against a real `next dev` instance confirms every header is actually present on both a page
-route and an API route; a real `next build` (`NODE_ENV=production`) succeeds cleanly with the config.
+### CSP: a real defect found by independent live-browser verification, root-caused, and fixed
 
-**Not done this stage, disclosed honestly**: a live cross-browser walkthrough (sign-in through
-dashboard) checking for actual CSP console violations. An attempt to do this via the session's
-browser/preview tooling was aborted after it mis-resolved a relative path against the **original**
-CreatorOps checkout instead of this worktree and started a stray `next dev` there - see
-`docs/CREATOROPS_CONTINUITY.md` and the stage completion report for the full account and the cleanup
-this stage could not safely self-perform under its own permissions. The CSP is reasoned from direct
-source reading (confirmed via grep: the only client-side Firebase SDK surface is Auth; zero
-`firebase/firestore`/`firebase/storage` client imports anywhere in `src/`), not guessed - but
-real-browser verification is **Staging verification required**, not claimed done.
+This stage's own first attempt at a CSP (a static `next.config.ts` `headers()` entry, `script-src
+'self'` with no nonce) was **not** verified in a real browser before being reported closed - only
+`curl` header presence and a `next build` success were checked. The supervising session's own
+independent re-verification caught this: navigating a real browser to `/sign-in` produced a real
+console error ("Executing inline script violates... script-src 'self' 'unsafe-eval'"), because
+Next.js's own framework-injected inline `<script>` tags (RSC payload embedding, hydration data) were
+blocked outright - completely independent of whether this app's own code injects an inline script
+(it doesn't). This was a real regression, not a hardening improvement, and is disclosed here as
+exactly that rather than smoothed over.
+
+**Root cause (confirmed by reading `node_modules/next/dist/server/app-render/app-render.js`
+directly, not guessed)**: Next reads a nonce out of the CSP header already present on the *incoming
+request* (`getScriptNonceFromHeader`) and threads it into every inline script it generates during
+render - but only a request-scoped mechanism (middleware) can set that; a `next.config.ts`
+`headers()` entry only ever touches the outgoing response, so it can never reach this mechanism.
+
+**Fix, in two parts, both live-browser-verified**:
+
+1. `src/proxy.ts` now generates a real per-request nonce (`node:crypto`'s `randomBytes`), sets the
+   CSP (with that nonce in `script-src`) on **both** the outgoing request (so Next's render pipeline
+   reads it and nonces its own scripts) and the response (so the browser enforces it) - Next's own
+   documented CSP pattern, not a bespoke workaround. `next.config.ts` no longer sets CSP at all.
+2. A second, more subtle issue surfaced during this same live verification: several routes
+   (`/sign-in`, `/dashboard`, and others) were statically prerenderable, so their cached HTML was
+   generated once at *build* time - before any request, and therefore before any nonce, existed. The
+   nonce baked into that static HTML's inline scripts was permanently stale/absent, while every
+   response's CSP header demanded a fresh one - a real, live-browser-confirmed mismatch, distinct
+   from the first issue. Fixed by making `src/app/layout.tsx`'s root layout `async` and calling
+   `await headers()` - one of Next's own documented dynamic APIs; using it anywhere in a layout
+   forces every route under that layout (the whole app) out of static generation and into
+   per-request dynamic rendering, guaranteeing the nonce in each page's HTML always matches that
+   same response's CSP header. Confirmed via `next build`: every route changed from `○` (static) to
+   `ƒ` (dynamic) after this change. This does not alter any frozen Overview file's own content
+   (`src/app/dashboard/page.tsx`/`src/ui/Overview.tsx`/`src/ui/overview.css` are still byte-identical
+   against `44a401a`) - it changes *when* the surrounding layout renders, not what any page renders,
+   disclosed explicitly per the freeze's own "any edit requires explicit justification" rule even
+   though no frozen file's content changed.
+
+**A third, independent gap found by the real Playwright run performed to verify all of the above**
+(`finance-agreements-intake.spec.ts`'s own "zero console errors" assertion caught it): the Agreement/
+Invoice document preview panes render an uploaded PDF in an `<iframe>` via a same-origin
+`URL.createObjectURL` (`blob:`) URL (`SourceDocumentPane.tsx`/`DocumentTab.tsx`/
+`InvoiceDetailsStep.tsx`) - blocked by `default-src 'self'` (frame-src's own fallback) with no
+explicit `frame-src` allowance. Fixed: `frame-src 'self' blob:` added to the policy.
+
+### What was actually verified, and how
+
+- `src/proxy.test.ts` (+10 unit tests): the `buildCsp()` policy-string logic - nonce inclusion, dev-
+  vs-production `'unsafe-eval'`/connect-src branching, the `frame-src` fix, no bare wildcard source.
+- Real `next dev` (private port, this worktree only), fresh browser tab, `/sign-in`: zero console
+  CSP violations; a real sign-in (real seeded credentials, real Firebase Auth emulator) completed
+  through to a fully rendered `/dashboard` with real data.
+- Real `next build` + `next start` (`NODE_ENV=production`), fresh browser tab, `/sign-in`: zero
+  console CSP violations (confirms the fix holds under the *stricter* production policy - no
+  `'unsafe-eval'` at all). Attempting sign-in against the local emulator correctly hit a
+  `connect-src` block (the production policy only allows the real
+  `identitytoolkit.googleapis.com`/`securetoken.googleapis.com`, by design, never a local address) -
+  an expected artifact of testing a production policy against a local emulator, not a defect; a real
+  production Firebase project would reach the allowed real endpoint instead.
+- A real Playwright run (untracked `playwright.private.config.ts`, this worktree's own private ports,
+  deleted before this stage finished) against `next dev`: **107 of 108 tests passed** across
+  `finance-agreements-intake.spec.ts` (16/16), `finance-agreements-workspace.spec.ts` +
+  `finance-agreements-workspace-empty.spec.ts` (18/19 together, the one "empty" test failing only
+  because it ran concurrently with sibling specs that had just populated the Agreements collection -
+  **2/2 clean when re-run in isolation**, confirming test-ordering/parallel-worker contention, not a
+  CSP or product defect), `finance-ocr-completion.spec.ts` (6/6, real local OCR), `notifications.spec.ts`
+  (15/15), `routes.spec.ts` (40/40 - essentially every route in the app, rendered fresh, zero console
+  errors), `authorization.spec.ts` (11/11).
+
+`security-headers.test.ts` no longer asserts CSP (it isn't set by `next.config.ts` at all anymore) -
+its own remaining assertions (baseline headers, `/api/*` no-store) still pass; CSP coverage moved to
+`proxy.test.ts` where the policy is actually built.
+
+**Classification: Closed** - implemented, root-caused after a real defect was found, fixed, and
+verified with a real browser in both dev and production modes plus a real, non-trivial Playwright
+run, not merely header-presence or a static-analysis argument as the first pass in this stage
+mistakenly reported.
 
 ## 12. Logging / observability
 
@@ -529,7 +594,7 @@ CI pipeline - documented as a design recommendation only.
 ## 29. Security regression corpus
 
 New/extended test suites added or extended this stage, all passing as part of the full unit run
-(4098/4098):
+(**4102/4102** final, baseline 4059, +43):
 
 - `src/server/shared/drive-error.test.ts` (+7) - error-leakage / classification.
 - `src/server/assignments/assignments.emulator.test.ts`, `content.emulator.test.ts`,
@@ -538,10 +603,13 @@ New/extended test suites added or extended this stage, all passing as part of th
 - `src/server/shared/firestore-indexes.test.ts` (+5) - Analytics index-parity pins.
 - `src/server/finance-agreements/restricted-extraction-retention.test.ts` (+5) - retention-policy
   eligibility.
-- `src/server/shared/security-headers.test.ts` (+4) - header-policy assertions.
+- `src/server/shared/security-headers.test.ts` (+4 net) - header-policy assertions (CSP assertions
+  later moved out to `proxy.test.ts` once CSP moved to middleware - see section 11).
 - `src/app/api/health/route.test.ts`, `src/app/api/ready/route.test.ts` (+4) - health/readiness
   failure-mode assertions (no leaked config/stack).
 - `src/server/shared/rate-limit.test.ts` (+7) - rate-limit abstraction behavior.
+- `src/proxy.test.ts` (+6 net) - the real nonce-based CSP policy logic (section 11), including the
+  `frame-src`/blob: regression found by the real Playwright run.
 
 This is a real, durable, CI-reusable corpus (all plain `vitest` unit tests except the
 assignments/content emulator updates, which need the emulator like every other `.emulator.test.ts`
@@ -749,22 +817,34 @@ library migration - both explicitly out of this stage's "no mass upgrades" scope
 9. Agreement restricted-extraction retention policy boundary + eligibility rule
 10. Finance DTO minimization (verified, no gap)
 11. Security headers (X-Frame-Options, X-Content-Type-Options, Referrer-Policy, Permissions-Policy,
-    CSP, HSTS-in-prod, `/api/*` no-store)
-12. Health (`/api/health`) and readiness (`/api/ready`) endpoints
-13. Application-level rate-limit abstraction + 3 representative wired endpoints
-14. Dependency audit + `uuid` fix
-15. CSRF/CORS posture (verified `sameSite: "lax"` + no CORS headers)
-16. Error taxonomy (pre-existing, re-confirmed + extended to new routes)
-17. Environment/secret validation (pre-existing, re-confirmed, one new var documented)
-18. Cache/privacy headers (`/api/*` no-store)
-19. Migration/bootstrap procedure (documented, every step verified)
-20. Encryption assessment (documented conclusion: managed-platform encryption sufficient for current
+    HSTS-in-prod, `/api/*` no-store)
+12. Nonce-based Content-Security-Policy - implemented, a real defect found by independent live-
+    browser verification (script-src blocking Next's own inline scripts on static pages), root-caused
+    against Next's own source, fixed in two parts (`src/proxy.ts` request-nonce propagation +
+    `src/app/layout.tsx` forcing dynamic rendering), and re-verified with a real browser in both dev
+    and production modes plus a real 107/108 Playwright run (section 11)
+13. Health (`/api/health`) and readiness (`/api/ready`) endpoints
+14. Application-level rate-limit abstraction + 3 representative wired endpoints
+15. Dependency audit + `uuid` fix
+16. CSRF/CORS posture (verified `sameSite: "lax"` + no CORS headers)
+17. Error taxonomy (pre-existing, re-confirmed + extended to new routes)
+18. Environment/secret validation (pre-existing, re-confirmed, one new var documented)
+19. Cache/privacy headers (`/api/*` no-store)
+20. Migration/bootstrap procedure (documented, every step verified)
+21. Encryption assessment (documented conclusion: managed-platform encryption sufficient for current
     scope)
-21. Real Google Drive remains disabled-by-default, fail-closed (verified, not changed)
-22. Rules review (verified deny-all, no exploitable logic - no dedicated test suite built)
-23. Concurrency/idempotency (re-verified via full emulator suite, not rebuilt)
-24. Security regression corpus additions (8 new/extended test files, +46 tests total this stage)
-25. Overview freeze (verified byte-identical against `44a401a`)
+22. Real Google Drive remains disabled-by-default, fail-closed (verified, not changed)
+23. Rules review (verified deny-all, no exploitable logic - no dedicated test suite built)
+24. Concurrency/idempotency (re-verified via full emulator suite, not rebuilt)
+25. Security regression corpus additions (9 new/extended test files, +43 tests total this stage:
+    4059 baseline -> 4102 final)
+26. Overview freeze (verified byte-identical against `44a401a`; `src/app/layout.tsx` was changed to
+    force dynamic rendering app-wide for the CSP nonce fix above - no frozen file's own content
+    changed, but disclosed explicitly per the freeze's own rule)
+27. A real, non-trivial Playwright run: 107/108 across
+    finance-agreements-intake/finance-agreements-workspace(-empty)/finance-ocr-completion/
+    notifications/routes/authorization.spec.ts (the one failure confirmed test-ordering contention,
+    not a defect, by a clean isolated re-run)
 
 ### Staging verification required (design/implementation ready, needs real infrastructure)
 
@@ -774,7 +854,9 @@ library migration - both explicitly out of this stage's "no mass upgrades" scope
 4. Real backup/restore rehearsal (design-ready, section 30)
 5. Real rollback rehearsal (design-ready, section 31)
 6. Real monitoring/alerting connection (observability contract documented, section 12)
-7. Live cross-browser CSP/accessibility/device walkthrough (sections 11, 33)
+7. Live cross-browser accessibility/device walkthrough beyond Chromium (section 33) - CSP itself
+   IS now live-verified in both dev and production modes (section 11), including a real 107/108-test
+   Playwright run; Firefox/WebKit and full accessibility remain unverified
 8. Approved non-prod Google Drive test (remains not authorized this stage)
 9. A dedicated Firestore/Storage Rules automated test suite (low priority given the rule's triviality,
    but not built)

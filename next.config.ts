@@ -2,47 +2,21 @@ import type { NextConfig } from "next";
 
 // Production hardening (base spec section 10 - security headers).
 //
-// CSP connect-src: 'self' for the app's own API routes, plus Firebase Auth's real endpoints in
-// production - the ONLY Firebase client SDK surface this app ever calls from the browser (see
-// src/lib/firebase/auth.ts's own comment: Firestore/Storage are read exclusively through the
-// trusted Admin SDK, server-side - grep confirms no `firebase/firestore` or `firebase/storage`
-// client import anywhere in src/). In non-production (emulator-backed dev/test), the local Auth
-// emulator origin is additionally allowed - never reachable in a production build, since `isProd`
-// is read once at server-start from NODE_ENV, the same signal Next.js's own build/start already
-// authoritatively sets.
+// Content-Security-Policy is NOT set here. A static, config-level CSP cannot carry a per-request
+// nonce, and Next.js's own framework-injected inline <script> tags (RSC payload embedding,
+// hydration data - confirmed by reading node_modules/next/dist/server/app-render/app-render.js:
+// it reads a nonce straight out of the REQUEST's own `content-security-policy` header via
+// getScriptNonceFromHeader and threads it into every script tag it generates) need that nonce to
+// ever be allowed to run - completely independent of whether THIS APP'S OWN code injects an inline
+// script (it doesn't; the earlier version of this comment checked only that and was wrong). A
+// `script-src` with neither a nonce nor 'unsafe-inline' - what a next.config.ts-only CSP can ever
+// produce - blocks Next's own bootstrap and breaks the app outright (found via a real live-browser
+// check: `next dev`, navigate to /sign-in, real CSP console errors, sign-in never completes).
+// src/proxy.ts generates a real per-request nonce, sets it on both the outgoing request (so Next's
+// render pipeline reads it and nonces its own scripts) and the response (so the browser enforces
+// it), and is the ONLY place the CSP header is set. See that file's own comment for the exact
+// mechanism, and docs/PRODUCTION_HARDENING.md section 11 for the live-verification evidence.
 const isProd = process.env.NODE_ENV === "production";
-
-const authConnectSrc = isProd
-  ? "https://identitytoolkit.googleapis.com https://securetoken.googleapis.com"
-  : "http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*";
-
-// script-src carries 'unsafe-eval' ONLY outside production (Next's own dev-mode Fast
-// Refresh/HMR client needs it). style-src keeps 'unsafe-inline': Next.js/React inject component
-// styles as inline <style> tags by design; there is no inline <script> requirement (grep confirms
-// no dangerouslySetInnerHTML script injection anywhere in src/), so script-src stays nonce-free and
-// 'unsafe-inline'-free.
-//
-// NOT live-verified in a real browser against a running app + Auth emulator in this stage (an
-// attempt to do so via the preview/browser tooling was aborted after it resolved a relative path
-// against the MAIN checkout instead of this worktree, per its own comment in the continuity doc /
-// completion report - see there for the full account and the cleanup this stage could not safely
-// self-perform). This CSP is reasoned from actual source (src/lib/firebase/auth.ts's own comment:
-// the only client-side Firebase SDK surface is Auth; grep confirms zero `firebase/firestore` /
-// `firebase/storage` client imports anywhere in src/) rather than guessed, but a real cross-browser
-// sign-in-to-dashboard walkthrough against a running instance is explicitly STAGING VERIFICATION
-// REQUIRED, not claimed done here.
-const CSP = [
-  "default-src 'self'",
-  `script-src 'self'${isProd ? "" : " 'unsafe-eval'"}`,
-  "style-src 'self' 'unsafe-inline'",
-  "img-src 'self' data:",
-  "font-src 'self' data:",
-  `connect-src 'self' ${authConnectSrc}`,
-  "frame-ancestors 'none'",
-  "base-uri 'self'",
-  "form-action 'self'",
-  "object-src 'none'",
-].join("; ");
 
 const SECURITY_HEADERS = [
   // Clickjacking: this app is never meant to be framed by anyone, including itself.
@@ -53,7 +27,6 @@ const SECURITY_HEADERS = [
   { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
   // No browser feature this app uses needs any of these; deny them all outright.
   { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=()" },
-  { key: "Content-Security-Policy", value: CSP },
 ];
 
 const nextConfig: NextConfig = {

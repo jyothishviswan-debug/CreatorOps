@@ -27,27 +27,10 @@ describe("next.config.ts headers()", () => {
     expect(headers.get("Permissions-Policy")).toMatch(/geolocation=\(\)/);
   });
 
-  it("sets a real Content-Security-Policy with the expected directives, never a permissive wildcard", async () => {
-    const headers = await headerMap("/:path*");
-    const csp = headers.get("Content-Security-Policy");
-    expect(csp).toBeDefined();
-    expect(csp).toMatch(/default-src 'self'/);
-    expect(csp).toMatch(/frame-ancestors 'none'/);
-    expect(csp).toMatch(/object-src 'none'/);
-    expect(csp).toMatch(/base-uri 'self'/);
-    // Never a bare `*` source token (as opposed to a scoped `http://127.0.0.1:*` port wildcard,
-    // which the dev-mode connect-src directive intentionally uses).
-    expect(csp).not.toMatch(/(^|\s)\*(?=[\s;]|$)/);
-    expect(csp).not.toContain("unsafe-inline' 'unsafe-eval");
-  });
-
-  it("never sets 'unsafe-eval' in script-src when built for production", async () => {
-    // headers() reads process.env.NODE_ENV once at module load - this test only proves the
-    // CURRENT process's value; the dedicated is-production assertion below re-derives the policy
-    // string directly to prove the conditional logic itself, independent of test-run NODE_ENV.
-    const csp = (await headerMap("/:path*")).get("Content-Security-Policy")!;
-    if (process.env.NODE_ENV === "production") expect(csp).not.toContain("'unsafe-eval'");
-  });
+  // Content-Security-Policy is deliberately NOT asserted here - it is not set by next.config.ts's
+  // headers() at all (a static, config-level CSP cannot carry the per-request nonce Next's own
+  // framework-injected inline scripts need - see next.config.ts's and src/proxy.ts's own comments
+  // for the full mechanism/rationale). See proxy.test.ts's own CSP/nonce coverage instead.
 
   it("marks every /api/* response no-store - never cached with real user/business data", async () => {
     const headers = await headerMap("/api/:path*");
