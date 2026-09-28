@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { google } from "googleapis";
 
 import { getServerEnv } from "@/lib/env/server";
+import { friendlyDriveError } from "@/server/shared/drive-error";
 
 // Step 6B.1: real (never simulated) Google Drive uploads for KYC
 // evidence. There is no Drive emulator, so unlike the rest of this
@@ -49,18 +50,6 @@ export function leadDriveFolderName(platformCode: string, proposalNumber: number
   return `${platformCode}_${proposalNumber}_${sanitizeFolderNamePart(displayName)}`;
 }
 
-function friendlyDriveError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("GOOGLE_APPLICATION_CREDENTIALS")) return message;
-  if (message.includes("403") || /insufficient|forbidden/i.test(message)) {
-    return "Drive denied access - confirm the target folder is shared with the service account as Editor/Content Manager, and that the Drive API is enabled for the project.";
-  }
-  if (message.includes("404")) {
-    return "The Drive folder could not be found - it may have been moved, deleted, or was never shared with the service account.";
-  }
-  return `Drive request failed: ${message}`;
-}
-
 // Finds the Lead's own KYC subfolder by name under the root shared
 // folder, creating it only if it doesn't already exist - looked up by
 // name (not just trusted from a cached id) so a manually-deleted or
@@ -88,7 +77,7 @@ export async function ensureLeadDriveFolder(name: string): Promise<DriveResult<{
     if (!created.data.id) return { ok: false, message: "Drive did not return a folder id." };
     return { ok: true, data: { folderId: created.data.id } };
   } catch (error) {
-    return { ok: false, message: friendlyDriveError(error) };
+    return { ok: false, message: friendlyDriveError("discovery/drive-client", error) };
   }
 }
 
@@ -107,6 +96,6 @@ export async function uploadFileToDriveFolder(
     if (!res.data.id || !res.data.webViewLink) return { ok: false, message: "Drive did not return a file id/link." };
     return { ok: true, data: { fileId: res.data.id, webViewLink: res.data.webViewLink } };
   } catch (error) {
-    return { ok: false, message: friendlyDriveError(error) };
+    return { ok: false, message: friendlyDriveError("discovery/drive-client", error) };
   }
 }

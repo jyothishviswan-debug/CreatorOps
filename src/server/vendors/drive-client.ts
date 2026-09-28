@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import { google } from "googleapis";
 
 import { getServerEnv } from "@/lib/env/server";
+import { friendlyDriveError } from "@/server/shared/drive-error";
 
 // Mirrors Discovery's own drive-client.ts (Step 6B.1) exactly - real
 // (never simulated) Google Drive uploads for Vendor restricted-identity
@@ -52,18 +53,6 @@ export function vendorDriveFolderName(sequenceNumber: number, displayName: strin
   return `V${String(sequenceNumber).padStart(2, "0")}_${sanitizeFolderNamePart(displayName)}_`;
 }
 
-function friendlyDriveError(error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  if (message.includes("GOOGLE_APPLICATION_CREDENTIALS")) return message;
-  if (message.includes("403") || /insufficient|forbidden/i.test(message)) {
-    return "Drive denied access - confirm the target folder is shared with the service account as Editor/Content Manager, and that the Drive API is enabled for the project.";
-  }
-  if (message.includes("404")) {
-    return "The Drive folder could not be found - it may have been moved, deleted, or was never shared with the service account.";
-  }
-  return `Drive request failed: ${message}`;
-}
-
 // Finds the Vendor's own evidence subfolder by name under the root
 // shared folder, creating it only if it doesn't already exist - looked
 // up by name (not just trusted from a cached id) so a manually-deleted
@@ -91,7 +80,7 @@ export async function ensureVendorDriveFolder(name: string): Promise<DriveResult
     if (!created.data.id) return { ok: false, message: "Drive did not return a folder id." };
     return { ok: true, data: { folderId: created.data.id } };
   } catch (error) {
-    return { ok: false, message: friendlyDriveError(error) };
+    return { ok: false, message: friendlyDriveError("vendors/drive-client", error) };
   }
 }
 
@@ -110,6 +99,6 @@ export async function uploadFileToVendorDriveFolder(
     if (!res.data.id || !res.data.webViewLink) return { ok: false, message: "Drive did not return a file id/link." };
     return { ok: true, data: { fileId: res.data.id, webViewLink: res.data.webViewLink } };
   } catch (error) {
-    return { ok: false, message: friendlyDriveError(error) };
+    return { ok: false, message: friendlyDriveError("vendors/drive-client", error) };
   }
 }
