@@ -70,7 +70,12 @@ export async function runCampaignDeliveryReport(actor: ActorContext, appliedFilt
       scopeSummary: { basis: "actor-scope (listAssignments/listContent)", note: campaignName ? `Scoped to Campaign "${campaignName}".` : "Scoped to every Campaign the actor's own grants permit." },
       metrics: { assignmentCount: assignments.length, completedAssignmentCount, overdueAssignmentCount, contentApprovedCount, contentUnderReviewCount },
       rows,
-      sections: { assignments: assignmentRows, content: content.map((c) => ({ contentRef: c.contentRef, status: c.status, dueAt: c.dueAt, approvedAt: c.approvedAt })) },
+      // Bug class B fix: this row projection previously kept only contentRef (a raw internal ref) with
+      // no resolved display-name sibling at all - ContentDto already carries both campaignName and
+      // partnerDisplayName (used two lines above for the combined `rows` array; simply not copied into
+      // this section's own row shape), so this is exactly the "row already has the data, just wasn't
+      // projecting it" class of gap.
+      sections: { assignments: assignmentRows, content: content.map((c) => ({ partnerDisplayName: c.partnerDisplayName, campaignName: c.campaignName, status: c.status, dueAt: c.dueAt, approvedAt: c.approvedAt, contentRef: c.contentRef })) },
       truncated,
       rowCount: rows.length,
       provenance: [

@@ -21,7 +21,13 @@ export async function runPartnerPortfolioReport(actor: ActorContext, appliedFilt
   const blacklistedCount = partners.filter((p) => p.status === "BLACKLISTED").length;
   const pendingAccountSetupCount = partners.filter((p) => p.pendingPartnerAccountSetup).length;
 
-  const rows: ReportRow[] = partners.map((p) => ({ partnerRef: p.partnerRef, status: p.status, tier: p.tier ?? null, region: p.regionIds[0] ?? null, pendingPartnerAccountSetup: p.pendingPartnerAccountSetup }));
+  // Bug class B fix (this stage's completion report): listPartners' own PartnerDto already carries
+  // displayName (confirmed: Export Center's own partners-source.ts already resolves it from this exact
+  // DTO) - it was simply never included here, which left partnerRef as the ONLY identifying field and
+  // therefore the table's own primary column once buildBaselineSections turned this row into a visible
+  // table (the user's own attached partner-portfolio-coverage-v1.pdf showed exactly this: a raw
+  // partnerRef column, not a Partner name). No new service call - listPartners is already called above.
+  const rows: ReportRow[] = partners.map((p) => ({ partnerDisplayName: p.displayName, status: p.status, tier: p.tier ?? null, region: p.regionIds[0] ?? null, pendingPartnerAccountSetup: p.pendingPartnerAccountSetup, partnerRef: p.partnerRef }));
 
   return {
     ok: true,

@@ -46,6 +46,7 @@ async function generateBytesForFormat(format: ReportArtifactFormat, version: Rep
       evidenceCutoffLine: `Evidence cutoff: ${evidence.sourceRevisionCutoff}`,
       versionLabel,
       finalizedLine: version.finalizedAt ? `Finalized ${version.finalizedAt}` : null,
+      templateId,
     });
     return { bytes, contentType: "application/pdf" };
   }

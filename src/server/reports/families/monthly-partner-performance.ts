@@ -124,6 +124,12 @@ export async function runMonthlyPartnerPerformanceReport(actor: ActorContext, ap
       const viewsSum = matchedContent.reduce<number | null>((acc, r) => (r.views === null ? acc : (acc ?? 0) + r.views), null);
       const engagementSum = matchedContent.reduce<number | null>((acc, r) => (r.engagement === null ? acc : (acc ?? 0) + r.engagement), null);
 
+      // partnerAnalyticsHref (a real, already-computed same-origin link to this Partner's own Analytics
+      // drill-down page - see platform-view-dto.ts) is included here so the rendered PDF table can show
+      // a genuine clickable link column, same discipline as every other real hyperlink in this report
+      // (never a fabricated "Open Post" URL this product has no data for).
+      const analyticsLink = accounts.find((a) => a.partnerAnalyticsHref !== null)?.partnerAnalyticsHref ?? matchedContent.find((c) => c.partnerAnalyticsHref !== null)?.partnerAnalyticsHref ?? null;
+
       rows.push({
         partnerRef: partner.partnerRef,
         partnerDisplayName: partner.displayName,
@@ -137,6 +143,7 @@ export async function runMonthlyPartnerPerformanceReport(actor: ActorContext, ap
         hasFinalizedReview: reviewFlags !== null,
         hasComplianceEvidence: reviewFlags?.hasCompliance ?? null,
         hasPerformanceEvidence: reviewFlags?.hasPerformance ?? null,
+        partnerAnalytics: analyticsLink,
       });
     }
 

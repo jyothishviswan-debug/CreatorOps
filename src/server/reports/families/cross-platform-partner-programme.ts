@@ -65,12 +65,17 @@ export async function runCrossPlatformPartnerProgrammeReport(actor: ActorContext
       const engagementSum = matched.reduce<number | null>((acc, r) => (r.engagement === null ? acc : (acc ?? 0) + r.engagement), null);
       const staleCount = accounts.filter((a) => isStaleSnapshot(a.snapshotAt, generatedAt)).length;
 
+      // A real, already-computed same-origin Partner Analytics drill-down link (see platform-view-dto.ts)
+      // - never a fabricated post URL this product has no data for.
+      const analyticsLink = accounts.find((a) => a.partnerAnalyticsHref !== null)?.partnerAnalyticsHref ?? matched.find((r) => r.partnerAnalyticsHref !== null)?.partnerAnalyticsHref ?? null;
+
       const entry = perPartner.get(partner.partnerRef)!;
       entry[`followers_${platform}`] = followers;
       entry[`publishedContentCount_${platform}`] = matched.length;
       entry[`views_${platform}`] = viewsSum;
       entry[`engagement_${platform}`] = engagementSum;
       entry[`staleAccountCount_${platform}`] = staleCount;
+      entry[`partnerAnalytics_${platform}`] = analyticsLink;
 
       platformPublished += matched.length;
       if (viewsSum !== null) platformViews = (platformViews ?? 0) + viewsSum;

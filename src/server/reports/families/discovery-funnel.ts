@@ -24,7 +24,12 @@ export async function runDiscoveryFunnelReport(actor: ActorContext, appliedFilte
   const watchlistCount = byLifecycle["WATCHLIST"] ?? 0;
   const rejectedOrArchivedCount = (byLifecycle["REJECTED"] ?? 0) + (byLifecycle["ARCHIVED"] ?? 0);
 
-  const rows: ReportRow[] = leads.map((lead) => ({ leadRef: lead.leadRef, lifecycle: lead.lifecycle, region: lead.regionIds[0] ?? null, sourceType: lead.source?.type ?? null }));
+  // Bug class B fix: LeadDto already carries displayName - included here so leadRef is never the only
+  // identifying field on this row (this array is not currently surfaced as its own baseline table since
+  // `sections.byLifecycle` below is a count map rather than an array-of-rows, but the row projection
+  // itself must still carry a resolved name, consistent with every other family's rows array, in case a
+  // future change surfaces per-lead rows here).
+  const rows: ReportRow[] = leads.map((lead) => ({ displayName: lead.displayName, lifecycle: lead.lifecycle, region: lead.regionIds[0] ?? null, sourceType: lead.source?.type ?? null, leadRef: lead.leadRef }));
 
   return {
     ok: true,

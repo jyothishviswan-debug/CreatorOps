@@ -36,6 +36,47 @@ export async function runOperationsAttentionReport(actor: ActorContext, appliedF
     ...approvals.map((a) => ({ kind: "approval" as const, ref: a.approvalItemRef, title: a.title, status: a.currentSourceStatus, sourceModule: a.sourceModule, overdue: false })),
   ];
 
+  // Bug class B fix (this stage's completion report): TaskDto/ReminderDto both carry `target` as a
+  // NESTED OBJECT ({targetType, targetRef, targetVersion}), and ApprovalItemDto carries
+  // `safeDisplayData` as a nested Record - the RAW `tasks`/`reminders`/`approvals` arrays were being
+  // passed straight into `sections` below (not the already-flat `rows` array above, which itself never
+  // included target info at all), which would hand buildGenericTable an object-valued column and crash
+  // the PDF renderer's text layout exactly like the finance-status.ts case. Each section below is its
+  // own flat, scalar-only projection - `title`/`assigneeDisplayName`/`targetDisplayName` are already
+  // resolved labels (never a raw ref) from TaskDto/ReminderDto itself; the raw `target.targetRef` is
+  // kept as a demoted, secondary field alongside its own `targetType`, never the primary column.
+  const taskSectionRows: ReportRow[] = tasks.map((t) => ({
+    title: t.title,
+    status: t.status,
+    priority: t.priority,
+    assigneeDisplayName: t.assigneeDisplayName,
+    dueAt: t.dueAt,
+    overdue: t.isOverdue,
+    targetType: t.target.targetType,
+    targetDisplayName: t.targetDisplayName ?? null,
+    targetRef: t.target.targetRef,
+    taskRef: t.taskRef,
+  }));
+  const reminderSectionRows: ReportRow[] = reminders.map((r) => ({
+    message: r.message,
+    status: r.status,
+    recipientDisplayName: r.recipientDisplayName,
+    reminderAt: r.reminderAt,
+    targetType: r.target.targetType,
+    targetDisplayName: r.targetDisplayName ?? null,
+    targetRef: r.target.targetRef,
+    reminderRef: r.reminderRef,
+  }));
+  const approvalSectionRows: ReportRow[] = approvals.map((a) => ({
+    title: a.title,
+    summary: a.summary,
+    sourceModule: a.sourceModule,
+    currentSourceStatus: a.currentSourceStatus,
+    requestedByDisplayName: a.requestedByDisplayName,
+    requestedAt: a.requestedAt,
+    approvalItemRef: a.approvalItemRef,
+  }));
+
   return {
     ok: true,
     data: buildReportResult({
@@ -46,7 +87,7 @@ export async function runOperationsAttentionReport(actor: ActorContext, appliedF
       scopeSummary: { basis: "actor-scope (listTasks/listReminders/listApprovalQueue)", note: "Every actor-scoped Task/Reminder plus every Approval Queue item the actor's own source-module grants already permit." },
       metrics: { openTaskCount, overdueTaskCount, pendingApprovalCount: approvals.length, dueReminderCount },
       rows,
-      sections: { tasks, approvalQueue: approvals, reminders },
+      sections: { tasks: taskSectionRows, approvalQueue: approvalSectionRows, reminders: reminderSectionRows },
       truncated: false,
       rowCount: rows.length,
       provenance: [

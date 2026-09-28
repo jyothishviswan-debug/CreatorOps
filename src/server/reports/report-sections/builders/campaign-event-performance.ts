@@ -58,7 +58,12 @@ export function buildCampaignEventPerformanceSections(definition: ReportDefiniti
   const trajectoryByPlatform = (sectionsObj.trajectoryByPlatform as Record<string, ReportRow[]>) ?? {};
   for (const platform of PLATFORMS) {
     const points = trajectoryByPlatform[platform] ?? [];
-    const items: TopNItem[] = points.map((p) => ({ label: `${p.partnerLabel ?? "Unknown Partner"} (${p.publishedAt ?? "undated"})`, metricValue: typeof p.views === "number" ? p.views : null, context: typeof p.engagement === "number" ? `Engagement: ${p.engagement}` : null }));
+    const items: TopNItem[] = points.map((p) => ({
+      label: `${p.partnerLabel ?? "Unknown Partner"} (${p.publishedAt ?? "undated"})`,
+      metricValue: typeof p.views === "number" ? p.views : null,
+      context: typeof p.engagement === "number" ? `Engagement: ${p.engagement}` : null,
+      url: typeof p.partnerAnalyticsHref === "string" ? p.partnerAnalyticsHref : null,
+    }));
     sections.push(buildTopNContentTable({ title: "Top Performing Content", metricLabel: "Views", items, n: variant === "compact" ? 5 : 10, platformOrContext: titleCaseFromCamel(platform) }));
   }
 

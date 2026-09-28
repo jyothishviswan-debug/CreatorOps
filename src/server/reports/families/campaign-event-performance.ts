@@ -83,7 +83,9 @@ export async function runCampaignEventPerformanceReport(actor: ActorContext, app
     byPlatform[platform] = { matchedContentCount: matched.length, views: viewsSum, engagement: engagementSum };
 
     const ordered = [...matched].sort((a, b) => ((a.publishedAt ?? "") < (b.publishedAt ?? "") ? -1 : 1));
-    trajectoryByPlatform[platform] = ordered.map((row) => ({ publishedAt: row.publishedAt, partnerLabel: row.partnerLabel, views: row.views, engagement: row.engagement }));
+    // partnerAnalyticsHref carried through so Top Performing Content can show a real, already-computed
+    // hyperlink (never a fabricated post URL - this product has no per-post external link field).
+    trajectoryByPlatform[platform] = ordered.map((row) => ({ publishedAt: row.publishedAt, partnerLabel: row.partnerLabel, views: row.views, engagement: row.engagement, partnerAnalyticsHref: row.partnerAnalyticsHref }));
 
     const viewsByPartner = new Map<string, number>();
     const engagementByPartner = new Map<string, number>();

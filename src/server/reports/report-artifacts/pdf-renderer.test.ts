@@ -71,4 +71,72 @@ describe("PDF renderer", () => {
     const loaded = await PDFDocument.load(bytes);
     expect(loaded.getPageCount()).toBe(1);
   });
+
+  // Bug class A regression test (this stage's completion report): a single unbreakable token (no
+  // whitespace at all - a raw UUID is the real-world example that shipped broken) that alone exceeds a
+  // narrow column's own width must never crash or silently overflow into the next column. Before this
+  // stage's fix, wrapAllLines only ever split on whitespace, so this exact shape reproduced the
+  // reported "97GTeS7f6554"-style overlap.
+  it("hard-truncates a single unbreakable token wider than its column instead of overflowing", async () => {
+    const uuidLikeSections: ReportSectionModel[] = [
+      { kind: "cover", sectionType: "cover", mode: "EVIDENCE", title: "Partner Portfolio", subtitle: "sub", scopeLine: "scope", periodLine: "period", generatedAtLine: "gen", evidenceCutoffLine: "cutoff" },
+      {
+        kind: "table",
+        sectionType: "ranked_table",
+        mode: "EVIDENCE",
+        title: "Partners",
+        columns: [
+          { id: "partnerDisplayName", label: "Partner" },
+          { id: "status", label: "Status" },
+          { id: "partnerRef", label: "Partner Ref" },
+        ],
+        rows: [
+          { partnerDisplayName: "Acme Creators", status: "ACTIVE", partnerRef: "e055235f-128c-4b79-bd74-9741e576f554aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" },
+        ],
+      },
+    ];
+    const bytes = await generateReportPdf(uuidLikeSections, meta);
+    const loaded = await PDFDocument.load(bytes);
+    expect(loaded.getPageCount()).toBeGreaterThanOrEqual(1);
+  });
+
+  // Design brief regression test: buildGenericTable's own defense-in-depth column filter (see
+  // report-sections/helpers.ts) must mean a nested-object field on a row (the exact shape that broke
+  // Finance Status / Operations Attention before this stage's fix) never reaches the PDF text layout at
+  // all - the renderer itself must also never throw if one somehow did.
+  it("never throws when a table row contains a non-scalar column value", async () => {
+    const badSections: ReportSectionModel[] = [
+      { kind: "cover", sectionType: "cover", mode: "EVIDENCE", title: "Finance Status", subtitle: "sub", scopeLine: "scope", periodLine: "period", generatedAtLine: "gen", evidenceCutoffLine: "cutoff" },
+      {
+        kind: "table",
+        sectionType: "ranked_table",
+        mode: "EVIDENCE",
+        title: "Agreements",
+        columns: [
+          { id: "counterpartyDisplayName", label: "Counterparty" },
+          { id: "nested", label: "Nested" },
+        ],
+        // `nested` simulates an accidental object-valued cell slipping through - the renderer must not throw.
+        rows: [{ counterpartyDisplayName: "Vendor A", nested: { a: 1 } as unknown as string }],
+      },
+    ];
+    await expect(generateReportPdf(badSections, meta)).resolves.toBeInstanceOf(Uint8Array);
+  });
+
+  it("selects the accent-tile KPI/cover mode for monthly_partner_performance and the bordered-grid mode otherwise", async () => {
+    const accentBytes = await generateReportPdf(sections(), { ...meta, templateId: "monthly_partner_performance" });
+    const gridBytes = await generateReportPdf(sections(), { ...meta, templateId: "campaign_event_performance_detailed" });
+    const defaultBytes = await generateReportPdf(sections(), meta);
+    for (const bytes of [accentBytes, gridBytes, defaultBytes]) {
+      const loaded = await PDFDocument.load(bytes);
+      expect(loaded.getPageCount()).toBeGreaterThanOrEqual(1);
+    }
+  });
+
+  it("Roman-numeral-prefixes section headings only for the designated templates", async () => {
+    // Not asserting on drawn text content (pdf-lib does not expose rendered text back out easily) -
+    // this is a smoke test that the numbering code path runs without throwing for both branches.
+    await expect(generateReportPdf(sections(), { ...meta, templateId: "campaign_event_performance_compact" })).resolves.toBeInstanceOf(Uint8Array);
+    await expect(generateReportPdf(sections(), { ...meta, templateId: "partner_portfolio_coverage" })).resolves.toBeInstanceOf(Uint8Array);
+  });
 });

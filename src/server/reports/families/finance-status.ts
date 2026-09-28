@@ -50,6 +50,58 @@ export async function runFinanceStatusReport(actor: ActorContext, appliedFilters
     ...paymentRows.map((row) => ({ kind: "payment" as const, ref: row.paymentRef, counterparty: row.counterparty.displayName, status: row.status, amountMinor: row.amountMinor })),
   ];
 
+  // Bug class B fix (this stage's completion report): the FOUR *WorkspaceRowDto shapes above each
+  // carry `counterparty` as a NESTED OBJECT ({type, ref, displayName, ...}) - the combined `rows` array
+  // above already correctly flattens it to a plain displayName string per row, but `sections` below
+  // previously passed the RAW workspace rows straight through (agreementRows/payableRows/etc, not the
+  // flattened rows above), which handed buildGenericTable a `counterparty` column whose actual runtime
+  // value is an object, not a scalar - the exact shape that crashes wrapText's own `text.split(...)`
+  // (a `string` is assumed, but a real object was there) once rendered as a PDF table cell. Each
+  // section below is now its own flat, scalar-only projection, with the resolved counterparty
+  // displayName kept as the PRIMARY column and the raw *Ref demoted to the end (further reinforced,
+  // generically, by report-sections/helpers.ts's own orderColumnsForDisplay).
+  const agreementSectionRows: ReportRow[] = agreementRows.map((row) => ({
+    counterpartyDisplayName: row.counterparty.displayName,
+    counterpartyType: row.counterparty.type,
+    lifecycle: row.lifecycle,
+    agreementNumber: row.agreementNumber,
+    agreementType: row.agreementType,
+    effectiveFrom: row.effectiveFrom,
+    effectiveTo: row.effectiveTo,
+    awaitingActivation: row.awaitingActivation,
+    kycState: row.kyc.state,
+    hasDiscrepancy: row.hasDiscrepancy,
+    agreementRef: row.agreementRef,
+  }));
+  const payableSectionRows: ReportRow[] = payableRows.map((row) => ({
+    counterpartyDisplayName: row.counterparty.displayName,
+    counterpartyType: row.counterparty.type,
+    commercialPeriod: row.commercialPeriod,
+    status: row.status,
+    sourceType: row.sourceType,
+    totalAmountMinorSigned: row.totalAmountMinorSigned,
+    determinationState: row.determinationState,
+    payableRef: row.payableRef,
+  }));
+  const invoiceSectionRows: ReportRow[] = invoiceRows.map((row) => ({
+    counterpartyDisplayName: row.counterparty.displayName,
+    counterpartyType: row.counterparty.type,
+    commercialPeriod: row.commercialPeriod,
+    status: row.status,
+    externalInvoiceNumber: row.externalInvoiceNumber,
+    declaredTotalMinor: row.declaredTotalMinor,
+    reconciliationState: row.reconciliationState,
+    invoiceRef: row.invoiceRef,
+  }));
+  const paymentSectionRows: ReportRow[] = paymentRows.map((row) => ({
+    counterpartyDisplayName: row.counterparty.displayName,
+    counterpartyType: row.counterparty.type,
+    status: row.status,
+    amountMinor: row.amountMinor,
+    method: row.method,
+    paymentRef: row.paymentRef,
+  }));
+
   const truncated = agreements.data.disclosure.headsTruncated || payables.data.disclosure.headsTruncated || invoices.data.disclosure.headsTruncated || payments.data.disclosure.headsTruncated;
 
   return {
@@ -62,7 +114,7 @@ export async function runFinanceStatusReport(actor: ActorContext, appliedFilters
       scopeSummary: { basis: "actor-scope (listAgreementsWorkspace/listPayablesWorkspace/listInvoicesWorkspace/listPaymentsWorkspace)", note: partnerRef ? "Filtered to the requested Partner/Vendor counterparty ref." : "Every actor-scoped Finance record across all four modules." },
       metrics: { activeAgreementCount, payableTotalAmountMinorSigned, invoiceDeclaredGrossMinor, paymentSettledMinor },
       rows,
-      sections: { agreements: agreementRows, payables: payableRows, invoices: invoiceRows, payments: paymentRows },
+      sections: { agreements: agreementSectionRows, payables: payableSectionRows, invoices: invoiceSectionRows, payments: paymentSectionRows },
       truncated,
       rowCount: rows.length,
       provenance: [

@@ -14,6 +14,11 @@ export function buildTopNContentTable(params: { title: string; metricLabel: stri
     .sort((a, b) => b.metricValue - a.metricValue)
     .slice(0, params.n);
   const title = `${params.title} - Top ${params.n} by ${params.metricLabel}${params.platformOrContext ? ` (${params.platformOrContext})` : ""}`;
+  // `url` was accepted on TopNItem but previously dropped when building the table's own columns/rows -
+  // a real hyperlink (e.g. a Partner Analytics drill-down link) supplied by a caller never reached the
+  // PDF/XLSX output. Only shown when at least one ranked item actually carries one, so a caller with no
+  // real link data never gets an all-"Not available" column.
+  const hasLinks = ranked.some((item) => item.url !== null && item.url !== undefined);
   return {
     kind: "table",
     sectionType: "top_n_content",
@@ -24,8 +29,9 @@ export function buildTopNContentTable(params: { title: string; metricLabel: stri
       { id: "label", label: "Content" },
       { id: "metricValue", label: params.metricLabel, numeric: true },
       { id: "context", label: "Context" },
+      ...(hasLinks ? [{ id: "link", label: "Link" }] : []),
     ],
-    rows: ranked.map((item, index) => ({ rank: index + 1, label: item.label, metricValue: item.metricValue, context: item.context ?? null })),
+    rows: ranked.map((item, index) => ({ rank: index + 1, label: item.label, metricValue: item.metricValue, context: item.context ?? null, ...(hasLinks ? { link: item.url ?? null } : {}) })),
     emptyMessage: "No Content items had a reported value for this metric.",
   };
 }
