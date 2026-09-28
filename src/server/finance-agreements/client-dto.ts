@@ -199,6 +199,12 @@ export type ContractArtifactDto = {
 
 export type ExtractionProposalDto = { fieldKey: AgreementFieldKey; normalizedValue: unknown; confidence: ExtractionConfidence; warnings: string[]; requiresHumanConfirmation: true; page: number | null };
 
+// OCR Completion stage: safe, non-restricted provenance only (spec section 7/22's "Source: Document
+// text / Source: OCR" evidence UX) - never raw OCR text, never a page image. Ordinary UI is allowed
+// to know THAT OCR was used, which provider/version, and each page's confidence BAND (not a raw
+// percentage - section 9's "avoid displaying arbitrary percentages").
+export type ExtractionSourceDto = { kind: "native" } | { kind: "ocr"; ocrProviderId: string; ocrProviderVersion: string; ocrPageBands: Array<{ page: number; band: "USABLE" | "LOW" | "FAILED" }> };
+
 export type ExtractionRunDto = {
   runRef: string;
   artifactRef: string;
@@ -208,6 +214,7 @@ export type ExtractionRunDto = {
   pageCount: number;
   charCount: number;
   proposals: ExtractionProposalDto[];
+  source: ExtractionSourceDto;
   createdAt: string;
   createdByUserRef: string;
 };
@@ -358,6 +365,16 @@ export function toContractArtifactDto(doc: ContractArtifactDoc): ContractArtifac
   };
 }
 
+function toExtractionSourceDto(source: ExtractionRunDoc["source"]): ExtractionSourceDto {
+  if (source.kind === "native") return { kind: "native" };
+  return {
+    kind: "ocr",
+    ocrProviderId: source.ocrProviderId ?? "unknown",
+    ocrProviderVersion: source.ocrProviderVersion ?? "unknown",
+    ocrPageBands: (source.ocrPages ?? []).map((page) => ({ page: page.page, band: page.band })),
+  };
+}
+
 export function toExtractionRunDto(doc: ExtractionRunDoc): ExtractionRunDto {
   return {
     runRef: doc.runRef,
@@ -367,6 +384,7 @@ export function toExtractionRunDto(doc: ExtractionRunDoc): ExtractionRunDto {
     parserVersion: doc.parserVersion,
     pageCount: doc.pageCount,
     charCount: doc.charCount,
+    source: toExtractionSourceDto(doc.source),
     proposals: doc.proposals.map((proposal) => ({
       fieldKey: proposal.fieldKey,
       normalizedValue: proposal.normalizedValue,

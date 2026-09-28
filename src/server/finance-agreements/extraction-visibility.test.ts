@@ -59,8 +59,12 @@ describe("contractArtifactClaimId", () => {
 });
 
 describe("describeExtractionReason", () => {
-  it("says plainly that no OCR adapter exists for a scan, and never echoes anything for an unknown code", () => {
-    expect(describeExtractionReason("no_extractable_text")).toMatch(/No OCR adapter is configured/);
+  // OCR Completion stage: `no_extractable_text` alone now means OCR itself never ran (the ocr_*
+  // codes describe what real OCR did after it ran - see extraction-reasons.ts's own OCR entries).
+  it("says plainly that the PDF could not be read automatically, describes the ocr_used/failure codes, and never echoes anything for an unknown code", () => {
+    expect(describeExtractionReason("no_extractable_text")).toMatch(/could not be read automatically/);
+    expect(describeExtractionReason("ocr_used")).toMatch(/Scanned document detected/);
+    expect(describeExtractionReason("ocr_no_usable_text")).toMatch(/couldn't reliably read/);
     expect(describeExtractionReason("missing_core:effectiveDate")).toMatch(/core field/);
     expect(describeExtractionReason("anything_else")).toBe("See the extraction status.");
   });

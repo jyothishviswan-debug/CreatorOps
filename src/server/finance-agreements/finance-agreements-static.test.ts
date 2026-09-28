@@ -440,9 +440,15 @@ describe("no delete, no rank, no roles - across the module, sub-folders and rout
     expect(barrel).not.toMatch(/\b(delete|remove|purge)\w*Agreement|\bdeleteAgreement\b/i);
   });
 
-  it("the extraction folder is pure: it imports no Firestore, Firebase, Storage or owning module (only the PDF reader, zod, siblings and Discovery's pure region-name constant)", () => {
+  // OCR Completion stage: extraction/ocr-provider.ts adds exactly two new dependencies -
+  // tesseract.js (the local/offline OCR engine) and @napi-rs/canvas (PDF page rasterization,
+  // reached through unpdf's own renderPageAsImage). Both are still no Firestore, no Firebase, no
+  // Storage, no owning module, no network call (see ocr-provider.ts's own header comment for the
+  // proof); this is a deliberate, reviewed widening of the allowlist for exactly these two
+  // specifiers, nothing broader.
+  it("the extraction folder is pure: it imports no Firestore, Firebase, Storage or owning module (only the PDF reader, the local OCR engine + rasterizer, zod, siblings and Discovery's pure region-name constant)", () => {
     for (const file of moduleFiles.filter((f) => f.includes(`${path.sep}extraction${path.sep}`))) {
-      for (const spec of importsOf(read(file))) expect(spec, `${rel(file)} imports ${spec}`).toMatch(/^(\.\/|unpdf$|zod$|@\/server\/discovery\/types$)/);
+      for (const spec of importsOf(read(file))) expect(spec, `${rel(file)} imports ${spec}`).toMatch(/^(\.\/|unpdf$|zod$|tesseract\.js$|@napi-rs\/canvas$|@\/server\/discovery\/types$)/);
     }
   });
 

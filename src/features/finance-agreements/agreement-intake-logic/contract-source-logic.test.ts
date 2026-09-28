@@ -9,7 +9,7 @@ function extraction(over: Partial<ExtractionResultDto> & { status?: ExtractionRe
   const { status, ...rest } = over;
   return {
     agreementRef: "agr_1",
-    run: { runRef: "run_1", artifactRef: "ca_1", status: status ?? "EXTRACTED", reasonCodes: [], parserVersion: "p1", pageCount: 3, charCount: 900, createdAt: "2026-09-01T00:00:00.000Z", createdByUserRef: "u" },
+    run: { runRef: "run_1", artifactRef: "ca_1", status: status ?? "EXTRACTED", reasonCodes: [], parserVersion: "p1", pageCount: 3, charCount: 900, source: { kind: "native" }, createdAt: "2026-09-01T00:00:00.000Z", createdByUserRef: "u" },
     reasons: [],
     fields: [{ fieldKey: "counterpartyName", normalizedValue: "Asha Rao", confidence: "HIGH", warnings: [], requiresHumanConfirmation: true, page: 1, valueState: "VISIBLE" }],
     contractDetailVisible: false,

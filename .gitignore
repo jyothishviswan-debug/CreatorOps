@@ -177,3 +177,4 @@ playwright-report/
 blob-report/
 playwright/.cache/
 tests/e2e/.auth/
+firebase.private.json

@@ -6,6 +6,7 @@ import { getAdminFirestore } from "@/server/firebase/admin";
 import { txResolveDisplayVersions, withHeadDisplay } from "./agreement-head-display";
 import { ContractArtifactStoreError, getContractArtifactStore } from "./contract-artifacts/store";
 import { toExtractionResultDto, type ExtractionResultDto } from "./client-dto";
+import { runOcrForAgreement } from "./extraction-ocr";
 import { redactIdentityFromText } from "./extraction-redaction";
 import { buildExtractionDocs, runExtractionPipeline } from "./extraction-run-builder";
 import { PARSER_VERSION } from "./extraction/pdf-text";
@@ -148,7 +149,7 @@ export async function extractContract(actor: ActorContext | null, rawInput: unkn
   const now = new Date().toISOString();
   let docs: ReturnType<typeof buildExtractionDocs>;
   try {
-    const outcome = await runExtractionPipeline(bytes, artifact.sha256);
+    const outcome = await runExtractionPipeline(bytes, artifact.sha256, runOcrForAgreement);
     docs = buildExtractionDocs({ agreementRef: head.agreementRef, artifactRef: artifact.artifactRef, runRef, actorUserRef: actor!.userRef, now, parserVersion: PARSER_VERSION, outcome });
   } catch {
     // The pipeline reports every PDF failure as an outcome; reaching here is an internal defect.

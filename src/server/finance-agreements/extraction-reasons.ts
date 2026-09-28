@@ -6,7 +6,9 @@ export const EXTRACTION_REASON_ARTIFACT_INTEGRITY = "artifact_integrity_mismatch
 export const EXTRACTION_REASON_PROPOSAL_DROPPED = "proposal_dropped_invalid";
 
 const REASON_MESSAGES: Readonly<Record<string, string>> = {
-  no_extractable_text: "No readable text was found in the PDF. No OCR adapter is configured, so a scanned or image-only contract cannot be read automatically; enter the terms manually.",
+  // OCR Completion stage: no_extractable_text on its own now only means OCR itself never ran (an
+  // internal/test condition) - the ocr_* codes below describe what OCR did after it ran.
+  no_extractable_text: "No readable text was found in the PDF, and it could not be read automatically. Enter the terms manually.",
   unreadable_pdf: "The PDF could not be read. Enter the terms manually.",
   encrypted: "The PDF is password-protected and cannot be read. Enter the terms manually.",
   too_many_pages: "The PDF has more pages than can be read automatically. Enter the terms manually.",
@@ -18,6 +20,15 @@ const REASON_MESSAGES: Readonly<Record<string, string>> = {
   extractor_rule_error: "One or more extraction rules failed; the pre-fill may be incomplete.",
   [EXTRACTION_REASON_ARTIFACT_INTEGRITY]: "The stored contract file does not match its recorded checksum.",
   [EXTRACTION_REASON_PROPOSAL_DROPPED]: "Some proposals could not be stored and were left out.",
+  // Scanned document detected -> OCR was used to read it (spec section 20/22 UI copy).
+  ocr_used: "Scanned document detected. OCR was used to read it - review the extracted fields carefully.",
+  ocr_no_usable_text: "We couldn't reliably read this scanned document. You can continue with manual review.",
+  ocr_too_many_pages: "The scanned document has more pages than can be read automatically. Enter the terms manually.",
+  ocr_timeout: "Reading the scanned document took too long. You can continue with manual review.",
+  ocr_encrypted: "The scanned document is password-protected and cannot be read. Enter the terms manually.",
+  ocr_unreadable_pdf: "The scanned document could not be read. You can continue with manual review.",
+  ocr_rasterization_failed: "The scanned document's pages could not be prepared for reading. You can continue with manual review.",
+  ocr_image_too_large: "One or more pages of the scanned document are too large to read automatically. You can continue with manual review.",
 };
 
 export function describeExtractionReason(code: string): string {

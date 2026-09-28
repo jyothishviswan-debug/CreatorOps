@@ -515,6 +515,27 @@ export const extractionProposalSchema = z
   });
 export type ExtractionProposal = z.infer<typeof extractionProposalSchema>;
 
+// OCR Completion stage: WAS the text native or OCR (section 7/9 provenance + confidence-model
+// requirements)? Compact and trusted-server-only: per-page OCR CONFIDENCE and BAND only - never
+// raw OCR text (that stays in the restricted extraction record / the server-only OCR cache, never
+// here). "native" carries no further fields - the absence of an ocrProviderId etc. on a native run
+// is itself the provenance signal.
+export const OCR_CONFIDENCE_BANDS = ["USABLE", "LOW", "FAILED"] as const;
+export const ocrConfidenceBandSchema = z.enum(OCR_CONFIDENCE_BANDS);
+export const ocrPageProvenanceSchema = z
+  .object({ page: z.number().int().min(1).max(100_000), confidence: z.number().min(0).max(100), band: ocrConfidenceBandSchema })
+  .strict();
+export const extractionSourceSchema = z
+  .object({
+    kind: z.enum(["native", "ocr"]),
+    ocrProviderId: z.string().min(1).max(100).optional(),
+    ocrProviderVersion: z.string().min(1).max(100).optional(),
+    ocrConfigVersion: z.string().min(1).max(100).optional(),
+    ocrPages: z.array(ocrPageProvenanceSchema).max(60).optional(),
+  })
+  .strict();
+export type ExtractionSource = z.infer<typeof extractionSourceSchema>;
+
 export const MAX_EXTRACTION_PROPOSALS = 60;
 export const extractionRunDocSchema = z
   .object({
@@ -527,11 +548,36 @@ export const extractionRunDocSchema = z
     pageCount: z.number().int().min(0).max(100_000),
     charCount: z.number().int().min(0),
     proposals: z.array(extractionProposalSchema).max(MAX_EXTRACTION_PROPOSALS),
+    source: extractionSourceSchema.default({ kind: "native" }),
     createdAt: isoTimestamp,
     createdByUserRef: nonEmpty,
   })
   .strict();
 export type ExtractionRunDoc = z.infer<typeof extractionRunDocSchema>;
+
+// --- OCR text cache (financeAgreementOcrRuns/{claimId}) - SERVER-ONLY, idempotency + reuse --------
+// OCR is expensive (real local Tesseract recognition, ~1s+/page). This is the idempotency claim
+// (section 15): same artifact bytes + same OCR provider/version/raster-config => the SAME claim id
+// (see extraction-ocr.ts's ocrClaimId) => the recovered page TEXT is reused rather than re-run.
+// Deliberately compact: page text + confidence/band only, never a field VALUE, never image bytes.
+// Readable only by server code with contract-detail sensitivity (same gate as the restricted
+// extraction record) - never returned by an ordinary DTO, matching section 8's "raw OCR text stays
+// server-side" requirement.
+export const ocrRunDocSchema = z
+  .object({
+    claimId: refString,
+    artifactSha256: z.string().length(64),
+    providerId: z.string().min(1).max(100),
+    providerVersion: z.string().min(1).max(100),
+    configVersion: z.string().min(1).max(100),
+    pageCount: z.number().int().min(0).max(100_000),
+    pages: z
+      .array(z.object({ page: z.number().int().min(1).max(100_000), text: z.string().max(50_000), confidence: z.number().min(0).max(100), band: ocrConfidenceBandSchema }).strict())
+      .max(60),
+    createdAt: isoTimestamp,
+  })
+  .strict();
+export type OcrRunDoc = z.infer<typeof ocrRunDocSchema>;
 
 // --- Restricted extraction (financeAgreementRestrictedExtractions/{runRef}) - SERVER-ONLY --------------------------------
 // Raw snippets/locators for every field and raw values of identity fields. Readable only with

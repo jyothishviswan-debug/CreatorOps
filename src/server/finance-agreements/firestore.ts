@@ -24,6 +24,7 @@ import {
   agreementVersionDocSchema,
   contractArtifactDocSchema,
   extractionRunDocSchema,
+  ocrRunDocSchema,
   restrictedExtractionDocSchema,
   type AgreementClaimDoc,
   type AgreementCounterpartyInput,
@@ -32,6 +33,7 @@ import {
   type AgreementVersionDoc,
   type ContractArtifactDoc,
   type ExtractionRunDoc,
+  type OcrRunDoc,
   type RestrictedExtractionDoc,
 } from "./types";
 
@@ -51,6 +53,10 @@ export const FINANCE_AGREEMENT_COLLECTIONS = {
   financeAgreementClaims: "financeAgreementClaims",
   financeContractArtifacts: "financeContractArtifacts",
   financeAgreementRestrictedExtractions: "financeAgreementRestrictedExtractions",
+  // OCR Completion stage: the server-only OCR text-recovery cache (section 15/section 7 of the
+  // addendum). Keyed by the OCR idempotency claim id (see extraction-ocr.ts's ocrClaimId) - never
+  // exposed by an ordinary DTO.
+  financeAgreementOcrRuns: "financeAgreementOcrRuns",
 } as const;
 
 export const MAX_AGREEMENT_VERSION_SUMMARIES = 50;
@@ -83,6 +89,10 @@ export function financeContractArtifactsCollection() {
 
 export function financeAgreementRestrictedExtractionsCollection() {
   return getAdminFirestore().collection(FINANCE_AGREEMENT_COLLECTIONS.financeAgreementRestrictedExtractions);
+}
+
+export function financeAgreementOcrRunsCollection() {
+  return getAdminFirestore().collection(FINANCE_AGREEMENT_COLLECTIONS.financeAgreementOcrRuns);
 }
 
 // Version doc ids are the plain integer as a string ("1", "2", ...) - the deterministic id
@@ -187,6 +197,20 @@ export async function getRestrictedExtractionDoc(runRef: string): Promise<Restri
   if (!snapshot.exists) return null;
   const result = restrictedExtractionDocSchema.safeParse(snapshot.data());
   return result.success ? result.data : null;
+}
+
+// SERVER-ONLY, non-transactional (a best-effort cache lookup/write - see extraction-ocr.ts's own
+// header comment for why this is not folded into the extraction-run transaction): the recovered
+// OCR page text for a given idempotency claim, never exposed by an ordinary DTO.
+export async function getOcrRunDoc(claimId: string): Promise<OcrRunDoc | null> {
+  const snapshot = await financeAgreementOcrRunsCollection().doc(claimId).get();
+  if (!snapshot.exists) return null;
+  const result = ocrRunDocSchema.safeParse(snapshot.data());
+  return result.success ? result.data : null;
+}
+
+export async function setOcrRunDoc(run: OcrRunDoc): Promise<void> {
+  await financeAgreementOcrRunsCollection().doc(run.claimId).set(ocrRunDocSchema.parse(run));
 }
 
 // --- In-transaction reads (Firestore requires every read before any write) ---------------------------------------------
