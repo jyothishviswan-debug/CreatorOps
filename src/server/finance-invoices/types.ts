@@ -318,6 +318,29 @@ export type InvoiceHeadDoc = z.infer<typeof invoiceHeadDocSchema>;
 export const invoiceNumberClaimDocSchema = z.object({ claimId: nonEmpty, invoiceRef: nonEmpty, counterpartyType: invoiceCounterpartyTypeSchema, counterpartyRef: refString, createdAt: isoTimestamp }).strict();
 export type InvoiceNumberClaimDoc = z.infer<typeof invoiceNumberClaimDocSchema>;
 
+// --- OCR text cache (financeInvoiceOcrRuns/{claimId}) - SERVER-ONLY, idempotency + reuse -------------------------------------
+// OCR Completion stage: Invoice extraction is EPHEMERAL/read-only by design (see
+// extraction-preview-service.ts's own header) - nothing about the ordinary field proposals
+// persists. OCR is comparatively expensive (real local Tesseract recognition), so - and ONLY so -
+// the recovered OCR page TEXT + confidence/band is cached here, keyed by the OCR idempotency claim
+// id (see extraction-ocr.ts's ocrClaimId). Never a field VALUE, never image bytes, never exposed by
+// an ordinary DTO. Field extraction FROM this cached text stays exactly as ephemeral/recomputed-
+// on-each-call as it is today.
+export const invoiceOcrPageSchema = z.object({ page: z.number().int().min(1).max(100_000), text: z.string().max(50_000), confidence: z.number().min(0).max(100), band: z.enum(["USABLE", "LOW", "FAILED"]) }).strict();
+export const invoiceOcrRunDocSchema = z
+  .object({
+    claimId: refString,
+    artifactSha256: z.string().length(64),
+    providerId: z.string().min(1).max(100),
+    providerVersion: z.string().min(1).max(100),
+    configVersion: z.string().min(1).max(100),
+    pageCount: z.number().int().min(0).max(100_000),
+    pages: z.array(invoiceOcrPageSchema).max(20),
+    createdAt: isoTimestamp,
+  })
+  .strict();
+export type InvoiceOcrRunDoc = z.infer<typeof invoiceOcrRunDocSchema>;
+
 // --- Append-only event history (financeInvoices/{invoiceRef}/events/{id}) ---------------------------------------------------
 export const INVOICE_EVENT_KINDS = [
   "INVOICE_CREATED",

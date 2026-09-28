@@ -59,8 +59,32 @@ export type InvoiceFieldExtractionResult = { fields: InvoiceExtractedFieldPropos
 export const INVOICE_EXTRACTION_STATUSES = ["EXTRACTED", "PARTIAL", "MANUAL_REVIEW_REQUIRED"] as const;
 export type InvoiceExtractionStatus = (typeof INVOICE_EXTRACTION_STATUSES)[number];
 
-export const INVOICE_EXTRACTION_REASON_CODES = ["pdf_unreadable", "no_extractable_text", "missing_core_fields", "truncated", "low_confidence_core"] as const;
+// OCR Completion stage: appended, not replacing the native-only codes above (a document is still
+// "pdf_unreadable"/"no_extractable_text" when OCR never runs at all, e.g. no ocrRunner injected).
+export const INVOICE_EXTRACTION_REASON_CODES = [
+  "pdf_unreadable",
+  "no_extractable_text",
+  "missing_core_fields",
+  "truncated",
+  "low_confidence_core",
+  "ocr_used",
+  "ocr_no_usable_text",
+  "ocr_too_many_pages",
+  "ocr_timeout",
+  "ocr_encrypted",
+  "ocr_unreadable_pdf",
+  "ocr_rasterization_failed",
+  "ocr_image_too_large",
+] as const;
 export type InvoiceExtractionReasonCode = (typeof INVOICE_EXTRACTION_REASON_CODES)[number];
+
+// Compact, non-restricted provenance (mirrors Agreement extraction's ExtractionSource) - never raw
+// OCR text, never a page image. "native" carries no further fields.
+export const INVOICE_OCR_CONFIDENCE_BANDS = ["USABLE", "LOW", "FAILED"] as const;
+export type InvoiceOcrConfidenceBand = (typeof INVOICE_OCR_CONFIDENCE_BANDS)[number];
+export type InvoiceExtractionSource =
+  | { kind: "native" }
+  | { kind: "ocr"; ocrProviderId?: string; ocrProviderVersion?: string; ocrConfigVersion?: string; ocrPages?: Array<{ page: number; confidence: number; band: InvoiceOcrConfidenceBand }> };
 
 export type InvoiceExtractionClassification = {
   status: InvoiceExtractionStatus;

@@ -356,19 +356,31 @@ export type InvoiceExtractedFieldProposalDto = {
   restricted: boolean;
 };
 
+// OCR Completion stage: safe, non-restricted provenance only (spec section 7/22) - never raw OCR
+// text, never a page image; a page's confidence BAND only, never a raw percentage (section 9).
+export type InvoiceExtractionSourceDto = { kind: "native" } | { kind: "ocr"; ocrProviderId: string; ocrProviderVersion: string; ocrPageBands: Array<{ page: number; band: "USABLE" | "LOW" | "FAILED" }> };
+
 export type InvoiceExtractionPreviewDto = {
   status: InvoiceExtractionStatus;
   reasons: InvoiceExtractionReasonCode[];
   fields: InvoiceExtractedFieldProposalDto[];
+  source: InvoiceExtractionSourceDto;
 };
+
+function toInvoiceExtractionSourceDto(source: { kind: "native" } | { kind: "ocr"; ocrProviderId?: string; ocrProviderVersion?: string; ocrPages?: Array<{ page: number; band: "USABLE" | "LOW" | "FAILED" }> } | undefined): InvoiceExtractionSourceDto {
+  if (!source || source.kind === "native") return { kind: "native" };
+  return { kind: "ocr", ocrProviderId: source.ocrProviderId ?? "unknown", ocrProviderVersion: source.ocrProviderVersion ?? "unknown", ocrPageBands: (source.ocrPages ?? []).map((page) => ({ page: page.page, band: page.band })) };
+}
 
 export function toInvoiceExtractionPreviewDto(result: {
   classification: { status: InvoiceExtractionStatus; reasons: InvoiceExtractionReasonCode[] };
   fields: Array<{ fieldKey: InvoiceExtractedFieldKey; value: string | number | null; page: number; confidence: InvoiceExtractionConfidence; warnings: string[]; restricted: boolean }>;
+  source?: { kind: "native" } | { kind: "ocr"; ocrProviderId?: string; ocrProviderVersion?: string; ocrPages?: Array<{ page: number; band: "USABLE" | "LOW" | "FAILED" }> };
 }): InvoiceExtractionPreviewDto {
   return {
     status: result.classification.status,
     reasons: [...result.classification.reasons],
     fields: result.fields.map((field) => ({ fieldKey: field.fieldKey, value: field.value, page: field.page, confidence: field.confidence, warnings: [...field.warnings], restricted: field.restricted })),
+    source: toInvoiceExtractionSourceDto(result.source),
   };
 }

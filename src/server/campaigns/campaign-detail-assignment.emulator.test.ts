@@ -228,7 +228,7 @@ describe("Create Assignment from Campaign - trusted outcome-aware create", () =>
     // exactly those known roots are exempt; anything else Finance-shaped still fails this check. A Campaign or Assignment writing
     // Finance data is separately barred by each Finance module's static guards (no Finance document carries a campaign/assignment ref).
     const rootCollections = (await getAdminFirestore().listCollections()).map((c) => c.id);
-    expect(rootCollections.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name) && !/^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions|Payables|Invoices|InvoiceNumberClaims|Payments|PaymentReferenceClaims|PaymentSettlements)$/.test(name))).toEqual([]);
+    expect(rootCollections.filter((name) => /finance|agreement|payable|invoice|payment|payee/i.test(name) && !/^finance(Agreements|AgreementClaims|ContractArtifacts|AgreementRestrictedExtractions|AgreementOcrRuns|Payables|Invoices|InvoiceNumberClaims|InvoiceOcrRuns|Payments|PaymentReferenceClaims|PaymentSettlements)$/.test(name))).toEqual([]);
   });
 
   it("a Campaign outside the actor's scope is denied (scope_denied), and no Assignment is written", async () => {

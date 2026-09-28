@@ -15,7 +15,7 @@ import {
   type SortDirection,
 } from "@/server/shared/scoped-list";
 
-import { invoiceEventSchema, invoiceHeadDocSchema, invoiceNumberClaimDocSchema, invoiceVersionDocSchema, type InvoiceEvent, type InvoiceHeadDoc, type InvoiceNumberClaimDoc, type InvoiceVersionDoc } from "./types";
+import { invoiceEventSchema, invoiceHeadDocSchema, invoiceNumberClaimDocSchema, invoiceOcrRunDocSchema, invoiceVersionDocSchema, type InvoiceEvent, type InvoiceHeadDoc, type InvoiceNumberClaimDoc, type InvoiceOcrRunDoc, type InvoiceVersionDoc } from "./types";
 
 // Step 16A: collection accessors + parse-on-read / parse-on-write helpers for the Finance Invoices
 // domain.
@@ -30,6 +30,9 @@ export const FINANCE_INVOICE_COLLECTIONS = {
   versions: "versions", // subcollection under financeInvoices/{invoiceRef}
   events: "events", // subcollection under financeInvoices/{invoiceRef}
   financeInvoiceNumberClaims: "financeInvoiceNumberClaims",
+  // OCR Completion stage: the server-only OCR text-recovery cache. Keyed by the OCR idempotency
+  // claim id - never exposed by an ordinary DTO.
+  financeInvoiceOcrRuns: "financeInvoiceOcrRuns",
 } as const;
 
 export const MAX_INVOICE_VERSION_SUMMARIES = 50;
@@ -50,6 +53,22 @@ export function financeInvoiceEventsCollection(invoiceRef: string) {
 
 export function financeInvoiceNumberClaimsCollection() {
   return getAdminFirestore().collection(FINANCE_INVOICE_COLLECTIONS.financeInvoiceNumberClaims);
+}
+
+export function financeInvoiceOcrRunsCollection() {
+  return getAdminFirestore().collection(FINANCE_INVOICE_COLLECTIONS.financeInvoiceOcrRuns);
+}
+
+// SERVER-ONLY, non-transactional best-effort cache (see extraction-ocr.ts's own header for why).
+export async function getInvoiceOcrRunDoc(claimId: string): Promise<InvoiceOcrRunDoc | null> {
+  const snapshot = await financeInvoiceOcrRunsCollection().doc(claimId).get();
+  if (!snapshot.exists) return null;
+  const result = invoiceOcrRunDocSchema.safeParse(snapshot.data());
+  return result.success ? result.data : null;
+}
+
+export async function setInvoiceOcrRunDoc(run: InvoiceOcrRunDoc): Promise<void> {
+  await financeInvoiceOcrRunsCollection().doc(run.claimId).set(invoiceOcrRunDocSchema.parse(run));
 }
 
 // Version doc ids are the plain integer as a string ("1", "2", ...) - identical discipline to

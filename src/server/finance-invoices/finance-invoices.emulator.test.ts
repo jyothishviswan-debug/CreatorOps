@@ -637,6 +637,45 @@ describe("extraction preview (Step 15C section 19/24/26 - read-only, never persi
     expect(denied.code).toBe("unauthorized");
     expect(denied.reason).toBe("feature_denied");
   });
+
+  // OCR Completion stage: the mandatory "at least one real local OCR implementation processes real
+  // scanned fixture bytes end-to-end" closure criterion, exercised through the FULL
+  // previewInvoiceExtraction() service (real auth/gate check, real OCR engine, real OCR text
+  // cache/idempotency claim) - not just the pure pipeline function. Also proves the cache: a second
+  // preview of the SAME bytes reuses the cached OCR text (the financeInvoiceOcrRuns doc already
+  // exists before the second call).
+  it(
+    "a REAL scanned Invoice fixture (genuine image-only PDF) is OCR'd end-to-end through previewInvoiceExtraction(), recovering supplier/invoice-number/total/GSTIN evidence via the EXISTING field extractor, and a repeat preview reuses the cached OCR text",
+    { timeout: 60_000 },
+    async () => {
+      const { buildScannedInvoicePdf } = await import("./testing/ocr-fixtures");
+      const { ocrClaimId } = await import("./extraction-ocr");
+      const { getInvoiceOcrRunDoc, financeInvoiceOcrRunsCollection } = await import("./firestore");
+      const { sha256Hex: hashOf } = await import("./document-storage");
+
+      const headActor = await actorFor("partnership_head");
+      const { invoice } = await draftInvoice();
+      const bytes = Buffer.from(await buildScannedInvoicePdf());
+
+      const first = must(await previewInvoiceExtraction(headActor, { invoiceRef: invoice.head.invoiceRef, contentBase64: bytes.toString("base64") }), "real scanned Invoice preview");
+      expect(first.source.kind).toBe("ocr");
+      if (first.source.kind === "ocr") expect(first.source.ocrProviderId).toBe("tesseract.js");
+      expect(["EXTRACTED", "PARTIAL"]).toContain(first.status);
+      for (const field of first.fields) expect(field.confidence).not.toBe("HIGH"); // spec section 9
+      expect(first.fields.find((f) => f.fieldKey === "externalInvoiceNumber")?.value).toBe("INV-TEST-00417");
+      expect(first.fields.find((f) => f.fieldKey === "declaredTotalMinor")?.value).toBe(4_720_000);
+
+      const claimId = ocrClaimId(hashOf(bytes));
+      const cached = await getInvoiceOcrRunDoc(claimId);
+      expect(cached, "the OCR text cache doc must exist after the first real OCR run").not.toBeNull();
+      expect(cached!.pages[0]?.text).toMatch(/47200/);
+
+      const second = must(await previewInvoiceExtraction(headActor, { invoiceRef: invoice.head.invoiceRef, contentBase64: bytes.toString("base64") }), "repeat preview");
+      expect(second.source.kind).toBe("ocr");
+
+      await financeInvoiceOcrRunsCollection().doc(claimId).delete();
+    },
+  );
 });
 
 // =====================================================================================================================

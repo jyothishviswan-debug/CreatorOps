@@ -1,8 +1,9 @@
 import type { ActorContext } from "@/server/authz/types";
 
 import { toInvoiceExtractionPreviewDto, type InvoiceExtractionPreviewDto } from "./client-dto";
-import { validateInvoicePdf } from "./document-storage";
-import { runInvoiceExtraction } from "./extraction/pipeline";
+import { validateInvoicePdf, sha256Hex } from "./document-storage";
+import { runOcrForInvoice } from "./extraction-ocr";
+import { runInvoiceExtraction, type OcrRunOutcome } from "./extraction/pipeline";
 import { loadAuthorizedInvoice, requireAuthoringAccess } from "./finance-invoices-gate";
 import { formatIssues } from "./service-common";
 import { financeInvoicesConflictResult, financeInvoicesInvalidInputResult, financeInvoicesUnauthorizedResult, previewInvoiceExtractionInputSchema, type FinanceInvoicesServiceResult } from "./types";
@@ -42,6 +43,15 @@ export async function previewInvoiceExtraction(actor: ActorContext | null, rawIn
   const validation = validateInvoicePdf(bytes);
   if (!validation.ok) return financeInvoicesInvalidInputResult(`The document could not be read: ${validation.reason.replace(/_/g, " ")}.`);
 
-  const result = await runInvoiceExtraction(bytes);
+  // OCR Completion stage: bridges extraction-ocr.ts's own OcrExtractionOutcome shape (a `pdf`
+  // object, matching Agreement extraction's convention) onto pipeline.ts's simpler `pages` array -
+  // both files stay independently natural rather than one distorting its shape for the other.
+  const ocrRunner = async (input: Uint8Array, sha256: string): Promise<OcrRunOutcome> => {
+    const outcome = await runOcrForInvoice(input, sha256);
+    if (!outcome.ok) return outcome;
+    return { ok: true, pages: outcome.pdf.pages, pageInfo: outcome.pageInfo, providerId: outcome.providerId, providerVersion: outcome.providerVersion, configVersion: outcome.configVersion };
+  };
+
+  const result = await runInvoiceExtraction(bytes, ocrRunner, sha256Hex(bytes));
   return { ok: true, data: toInvoiceExtractionPreviewDto(result) };
 }
