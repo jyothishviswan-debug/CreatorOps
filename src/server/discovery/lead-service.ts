@@ -5,6 +5,7 @@ import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import type { ActionId } from "@/server/authz/actions";
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
+import { getPartnerAccountDocByRef } from "@/server/partners/firestore";
 import { toLeadDto, type LeadDto } from "./client-dto";
 import { checkForDuplicates } from "./duplicate-check";
 import { requireDiscoveryAccess, requireDiscoveryFeatureAccess, requireLeadInScope } from "./discovery-gate";
@@ -24,7 +25,8 @@ import {
   leadDocSchema,
   leadLifecycleSchema,
   leadSourceSchema,
-  outreachDirectionSchema,
+  outreachChannelSchema,
+  outreachEntrySchema,
   researchSchema,
   reviewDimensionsSchema,
   reviewOutcomeSchema,
@@ -115,17 +117,28 @@ export async function getLead(actor: ActorContext | null, leadRef: unknown): Pro
 
 // ---- Create ----
 
+// Finding #26 (user-decided): phone is mandatory from Discovery itself -
+// real validation, not just non-empty (a plain digits/leading-+ shape;
+// canonical downstream phone handling elsewhere in the app follows the
+// same convention). Finding #13 (user-decided): Owner has no separate
+// creation-time choice at all anymore - see createLead's own comment.
+const leadPhoneSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(40)
+  .regex(/^\+?[0-9][0-9\s-]{5,}$/, "Enter a valid contact number.");
+
 const createLeadInputSchema = z.object({
   displayName: z.string().min(1).max(200),
   email: z.string().min(1).max(300).optional(),
-  phone: z.string().min(1).max(40).optional(),
+  phone: leadPhoneSchema,
   profileUrl: z.string().min(1).max(500).optional(),
   platform: z.string().min(1).max(60).optional(),
   handle: z.string().min(1).max(120).optional(),
   source: leadSourceSchema,
   regionIds: z.array(z.string().min(1)).max(50).optional(),
   teamId: z.string().min(1).max(120).optional(),
-  ownerUserRef: z.string().min(1).optional(),
 });
 export type CreateLeadInput = z.input<typeof createLeadInputSchema>;
 
@@ -138,12 +151,13 @@ export async function createLead(actor: ActorContext | null, rawInput: unknown, 
   if (!parsed.success) return discoveryInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
   const input = parsed.data;
 
-  let ownerUid: string | null = null;
-  if (input.ownerUserRef) {
-    const owner = await findActiveUserByRef(input.ownerUserRef);
-    if (!owner) return discoveryInvalidInputResult("ownerUserRef does not resolve to a real, active user.");
-    ownerUid = owner.uid;
-  }
+  // Finding #13 (user-decided): Owner always defaults to the authenticated
+  // creator, server-side, unconditionally - never a client-supplied
+  // choice at creation (that would trust unauthenticated/spoofable
+  // input for an authorization-relevant field - ownerUid is a real scope
+  // dimension, see discovery-gate.ts's requireLeadInScope). Reassignment
+  // is a distinct, separately-authorized action afterward (assignOwner).
+  const ownerUid = actor.uid;
 
   const now = new Date().toISOString();
   const uid = leadsCollection().doc().id;
@@ -341,9 +355,14 @@ export async function recordReview(actor: ActorContext | null, leadRef: unknown,
 
 // ---- Outreach / response ----
 
+// Finding #10 (user-decided): Direction removed entirely - Channel /
+// Discussion (summary) / Outcome only. This also resolves finding #11 (the
+// old "meaningful response" checkbox was invisibly gated on
+// direction==="INBOUND") - meaningfulResponse is now its own explicit,
+// independent signal with no hidden dependency to resolve.
 const recordOutreachInputSchema = z.object({
-  direction: outreachDirectionSchema,
-  channel: z.string().min(1).max(60),
+  // Finding #7 (user-decided): closed enum for new writes, never free text.
+  channel: outreachChannelSchema,
   summary: z.string().min(1).max(1000),
   outcome: z.string().min(1).max(120),
   notes: z.string().min(1).max(2000).optional(),
@@ -368,25 +387,28 @@ export async function recordOutreach(actor: ActorContext | null, leadRef: unknow
     const createdAt = new Date().toISOString();
     const outreachSummary = {
       totalCount: (current.outreachSummary?.totalCount ?? 0) + 1,
-      lastDirection: input.direction,
+      // Never written going forward - see outreachSummarySchema's own comment.
+      lastDirection: null,
       lastChannel: input.channel,
       lastOutcome: input.outcome,
       lastAt: createdAt,
       nextFollowUpAt: input.nextFollowUpAt ?? null,
     };
 
-    // The first genuine outbound contact can advance NEW/RESEARCHING to
-    // CONTACTED; a meaningful inbound response can advance CONTACTED to
-    // RESPONDED. Both are the ONLY lifecycle side effects this function
-    // ever applies, and both go through the exact same transition table
-    // every other lifecycle change does (see authz/lifecycle.ts) - an
-    // outreach entry recorded from a state that doesn't allow the
-    // implied transition simply doesn't move the lifecycle at all.
+    // Recording ANY outreach attempt is real contact evidence, so it can
+    // advance NEW/RESEARCHING to CONTACTED; a meaningful response can then
+    // advance CONTACTED to RESPONDED - meaningfulResponse is a plain,
+    // independent signal, no longer gated on a removed Direction field.
+    // Both go through the exact same transition table every other
+    // lifecycle change does (see authz/lifecycle.ts) - recorded from a
+    // state that doesn't allow the implied transition simply doesn't move
+    // the lifecycle at all.
     let lifecycle = current.lifecycle;
     let respondedAt = current.respondedAt;
-    if (input.direction === "OUTBOUND" && (current.lifecycle === "NEW" || current.lifecycle === "RESEARCHING")) {
+    if (current.lifecycle === "NEW" || current.lifecycle === "RESEARCHING") {
       lifecycle = "CONTACTED";
-    } else if (input.direction === "INBOUND" && input.meaningfulResponse && current.lifecycle === "CONTACTED") {
+    }
+    if (input.meaningfulResponse && (lifecycle === "CONTACTED" || current.lifecycle === "CONTACTED")) {
       lifecycle = "RESPONDED";
       respondedAt = createdAt;
     }
@@ -397,11 +419,33 @@ export async function recordOutreach(actor: ActorContext | null, leadRef: unknow
   if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Lead not found." };
   if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This Lead was changed elsewhere. Reload and try again." };
 
+  // Finding #9 (user-decided): the event metadata now carries the FULL per-attempt record (the
+  // real, previously-unused outreachEntrySchema shape), not just the four fields the old rollup
+  // summary alone could hold - this is what makes a genuine per-attempt history view possible,
+  // reusing the already-existing append-only leads/{uid}/events subcollection rather than inventing
+  // a new storage mechanism. `lifecycle` is kept as an extra, non-schema field purely for the
+  // existing generic HistoryPanel's own display needs.
+  // Conditional spread, never an unconditional `notes: input.notes` key assignment - the Admin SDK
+  // rejects an explicit `undefined` value outright ("Cannot use \"undefined\" as a Firestore value"),
+  // and Zod's `.optional()` parse would otherwise echo an explicitly-present `undefined` key straight
+  // through into the object this later gets spread into (same class of bug as campaign-service.ts's
+  // own `addCampaignResource`/`editCampaignResource` fix this session).
+  const attempt = outreachEntrySchema.parse({
+    channel: input.channel,
+    summary: input.summary,
+    outcome: input.outcome,
+    ...(input.notes !== undefined ? { notes: input.notes } : {}),
+    ...(input.supportingReference !== undefined ? { supportingReference: input.supportingReference } : {}),
+    ...(input.nextFollowUpAt !== undefined ? { nextFollowUpAt: input.nextFollowUpAt } : {}),
+    meaningfulResponse: input.meaningfulResponse ?? false,
+    actorUserRef: actor!.userRef,
+    createdAt: result.doc.updatedAt,
+  });
   await writeLeadEvent({
     leadUid: loaded.lead.uid,
     kind: "outreach_recorded",
     actorUserRef: actor!.userRef,
-    metadata: { direction: input.direction, channel: input.channel, outcome: input.outcome, meaningfulResponse: input.meaningfulResponse ?? false, lifecycle: result.doc.lifecycle },
+    metadata: { ...attempt, lifecycle: result.doc.lifecycle },
     requestId,
   });
   return { ok: true, data: await toLeadDto(result.doc) };
@@ -522,11 +566,29 @@ export async function saveAssetDecision(actor: ActorContext | null, leadRef: unk
   if (!parsed.success) return discoveryInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
   const input = parsed.data;
 
-  if (input.decision !== "NEW_ACCOUNT" && !input.existingPartnerAccountRef) {
-    return discoveryInvalidInputResult(`"${input.decision}" requires existingPartnerAccountRef.`);
-  }
+  // Finding #16 (user-decided): existingPartnerAccountRef is now an
+  // OPTIONAL shortcut for MAINTAIN_EXISTING/TRANSFER_AND_MAINTAIN, never a
+  // prerequisite - the real business meaning is "the Partner/Vendor
+  // already operates a real external account," which this Lead's own
+  // confirmed platform/handle/profile evidence (captured on the Lead
+  // itself, see DiscoveryLeadForm) can satisfy just as validly as a
+  // pre-existing internal record. readiness.ts is where "is there
+  // SUFFICIENT identity, from either source" is actually enforced
+  // holistically (it can change independently of when this decision was
+  // saved, e.g. the operator fills in platform/handle afterward).
   if (input.decision === "NEW_ACCOUNT" && input.existingPartnerAccountRef) {
     return discoveryInvalidInputResult("NEW_ACCOUNT must not reference an existing Partner Account.");
+  }
+  // Finding #15: presence alone was never enough - this used to accept
+  // ANY non-empty string, persisting a reference that might not resolve
+  // to a real Partner Account until conversion time (or, for a legacy/
+  // corrupted Lead doc that bypassed this check, never at all - see
+  // convertLead's own fix for that silent-fallback case). Real
+  // referential integrity is enforced here, at the one place this field
+  // is ever written.
+  if (input.existingPartnerAccountRef) {
+    const account = await getPartnerAccountDocByRef(input.existingPartnerAccountRef);
+    if (!account) return discoveryInvalidInputResult("The referenced existing Partner Account does not exist.");
   }
 
   const result = await runLeadMutation(loaded.lead.uid, input.expectedVersion, (current) => {
@@ -582,6 +644,43 @@ export async function assignManager(actor: ActorContext | null, leadRef: unknown
   if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This Lead was changed elsewhere. Reload and try again." };
 
   await writeLeadEvent({ leadUid: loaded.lead.uid, kind: "manager_assigned", actorUserRef: actor!.userRef, metadata: { assigned: Boolean(managerUid) }, requestId });
+  return { ok: true, data: await toLeadDto(result.doc) };
+}
+
+// ---- Owner reassignment (finding #12, required dependency of #13) ----
+// Unlike Manager, Owner can never be cleared to null here - #13's own
+// decision is that every Lead always has a real owner (defaulting to its
+// creator at creation, see createLead) - this is strictly a REASSIGNMENT
+// to a different real, active, admitted user, mirroring assignManager's
+// own gate/mutation/event shape exactly otherwise.
+const assignOwnerInputSchema = z.object({
+  ownerUserRef: z.string().min(1),
+  expectedVersion: z.number().int().min(1),
+});
+export type AssignOwnerInput = z.input<typeof assignOwnerInputSchema>;
+
+export async function assignOwner(actor: ActorContext | null, leadRef: unknown, rawInput: unknown, requestId: string): Promise<DiscoveryServiceResult<LeadDto>> {
+  const loaded = await loadAuthorizedLead(actor, leadRef, "manage_owner_assignment");
+  if (!loaded.ok) return loaded.error;
+
+  const parsed = assignOwnerInputSchema.safeParse(rawInput);
+  if (!parsed.success) return discoveryInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
+  const input = parsed.data;
+
+  const owner = await findActiveUserByRef(input.ownerUserRef);
+  if (!owner) return discoveryInvalidInputResult("ownerUserRef must reference a real, active, admitted user.");
+
+  const result = await runLeadMutation(loaded.lead.uid, input.expectedVersion, (current) => ({
+    ...current,
+    ownerUid: owner.uid,
+    updatedAt: new Date().toISOString(),
+    updatedByUserRef: actor!.userRef,
+  }));
+
+  if (result.kind === "not_found") return { ok: false, code: "not_found", message: "Lead not found." };
+  if (result.kind === "stale") return { ok: false, code: "stale_write", message: "This Lead was changed elsewhere. Reload and try again." };
+
+  await writeLeadEvent({ leadUid: loaded.lead.uid, kind: "owner_assigned", actorUserRef: actor!.userRef, metadata: {}, requestId });
   return { ok: true, data: await toLeadDto(result.doc) };
 }
 

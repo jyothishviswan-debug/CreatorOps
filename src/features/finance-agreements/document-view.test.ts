@@ -61,6 +61,12 @@ describe("the Agreement document panel state machine", () => {
     expect(view.headline).toContain("after this version is confirmed");
   });
 
+  it("finding #31: PENDING-unconfirmed explains WHY storage is deferred, not just that it is", () => {
+    const view = buildDocumentView({ document: PENDING_UNCONFIRMED, canManage: true });
+    expect(view.note).toContain("deferred until this version is confirmed");
+    expect(view.note).toContain("stored automatically once confirmed");
+  });
+
   it("FAILED: the plain server reason, nothing claimed as stored, and a Retry", () => {
     const view = buildDocumentView({ document: FAILED, canManage: true });
     expect(view.action).toEqual({ kind: "retry", label: "Retry", busyLabel: "Storing…" });

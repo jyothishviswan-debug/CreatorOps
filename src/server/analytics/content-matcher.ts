@@ -38,25 +38,34 @@ export type ContentMatchResult = {
   matchedAssignmentRef: string | null;
   matchedCampaignRef: string | null;
   matchedPartnerRef: string | null;
-  // Scope projection, denormalized from the matched Content doc itself
-  // (see types.ts's own comment on analyticsContentSourceRecordDocSchema)
-  // - null/empty for anything not MATCHED.
+  // Finding #57: ownership is resolved INDEPENDENTLY of matchState now - a real, already-claimed
+  // Content thread's own Partner is still known even when that thread isn't CURRENTLY a live match
+  // (CONTENT_NOT_CURRENTLY_APPROVED / URL_NOT_IN_CURRENT_REVISION below), so these four fields can be
+  // populated on an UNMATCHED result too. Only the two truly-no-identity-found cases (NO_CLAIM_FOUND,
+  // CLAIMED_CONTENT_NOT_FOUND, NO_MATCHING_KEY_SUPPLIED) leave them null/empty, since there is no real
+  // Content doc to derive ownership from in those cases.
   ownerUid: string | null;
   regionIds: string[];
   teamIds: string[];
 };
 
-function unmatched(tier: "platform_content_id" | "published_url" | "none", value: string | null, reasonCode: string, candidateCount = 0): ContentMatchResult {
+function unmatched(
+  tier: "platform_content_id" | "published_url" | "none",
+  value: string | null,
+  reasonCode: string,
+  candidateCount = 0,
+  ownership: { matchedPartnerRef: string; ownerUid: string | null; regionIds: string[]; teamIds: string[] } | null = null,
+): ContentMatchResult {
   return {
     matchState: "UNMATCHED",
     matchEvidence: { tier, value, reasonCode, candidateCount },
     matchedContentRef: null,
     matchedAssignmentRef: null,
     matchedCampaignRef: null,
-    matchedPartnerRef: null,
-    ownerUid: null,
-    regionIds: [],
-    teamIds: [],
+    matchedPartnerRef: ownership?.matchedPartnerRef ?? null,
+    ownerUid: ownership?.ownerUid ?? null,
+    regionIds: ownership?.regionIds ?? [],
+    teamIds: ownership?.teamIds ?? [],
   };
 }
 
@@ -93,13 +102,23 @@ export async function matchContentSourceRow(row: { platform: string; platformCon
     return unmatched("published_url", normalizedUrl, "CLAIMED_CONTENT_NOT_FOUND", 1);
   }
 
+  // Finding #57: "exact Content identity that resolves to Account -> Partner" is one of the allowed
+  // deterministic ownership paths - a real Content thread was found by its exact claimed URL in both
+  // branches below, so its own already-known Partner/scope is real, deterministic evidence, even
+  // though the thread isn't a CURRENTLY live Content/Campaign match. Content itself stays genuinely
+  // UNMATCHED (never silently promoted) - only ownership is independently carried through.
   if (content.status !== "APPROVED") {
     // A real historical claim exists, but its owning thread is not
     // CURRENTLY approved (still open, under review, revision-requested,
     // or cancelled) - this is deliberately a DIFFERENT reasonCode from
     // "no claim found at all", per the task's own explicit auditability
     // requirement.
-    return unmatched("published_url", normalizedUrl, "CONTENT_NOT_CURRENTLY_APPROVED", 1);
+    return unmatched("published_url", normalizedUrl, "CONTENT_NOT_CURRENTLY_APPROVED", 1, {
+      matchedPartnerRef: content.partnerRef,
+      ownerUid: content.ownerUid,
+      regionIds: content.regionIds,
+      teamIds: content.teamIds,
+    });
   }
 
   const stillCurrent = content.currentLinks.some((link) => link.platform === row.platform && link.normalizedUrl === normalizedUrl);
@@ -110,7 +129,12 @@ export async function matchContentSourceRow(row: { platform: string; platformCon
     // be silently treated as a live match. Distinct reasonCode, per the
     // task's own explicit "historical-superseded-link-not-silently-
     // selected" requirement.
-    return unmatched("published_url", normalizedUrl, "URL_NOT_IN_CURRENT_REVISION", 1);
+    return unmatched("published_url", normalizedUrl, "URL_NOT_IN_CURRENT_REVISION", 1, {
+      matchedPartnerRef: content.partnerRef,
+      ownerUid: content.ownerUid,
+      regionIds: content.regionIds,
+      teamIds: content.teamIds,
+    });
   }
 
   return {

@@ -2,7 +2,7 @@
 // emulator (no mocks), same rationale as Vendors'/Partners' own
 // emulator test suites. Run with `pnpm test:emulator` against a running
 // `pnpm firebase:emulators`.
-import { beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
 import { resolveActor } from "@/server/authz/actor";
@@ -14,8 +14,10 @@ import { getPartnerDocByRef } from "@/server/partners/firestore";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
 import { getVendorDocByRef } from "@/server/vendors/firestore";
 import { seedVendorsData } from "@/server/vendors/seed-vendors-data";
+import { createInMemoryCampaignResourceStorage, setCampaignResourceStorageForTests } from "./resource-storage";
 import {
   addCampaignResource,
+  addCampaignResourceUpload,
   createCampaign,
   editCampaign,
   editCampaignResource,
@@ -123,6 +125,42 @@ describe("Campaign contract", () => {
     expect(badEdit.code).toBe("invalid_input");
   });
 
+  // Finding #33: endDate is a real, server-authoritative required field
+  // (createCampaignInputSchema: `z.string().min(1)`, no `.optional()`) -
+  // a direct API call omitting it entirely (not just an empty string, and
+  // not going through the UI's own client-side check) must still be
+  // rejected with a clear, actionable error, never silently accepted or
+  // defaulted.
+  it("rejects a direct create request that omits endDate entirely", async () => {
+    const head = await actorFor("partnership_head");
+    const missingEndDate = await createCampaign(
+      head,
+      { name: uniqueName("Missing End Date"), objective: "x", startDate: "2026-01-01", defaultReviewPolicy: "REVIEW_REQUIRED" },
+      "req-missing-end-date",
+    );
+    expect(missingEndDate.ok).toBe(false);
+    if (missingEndDate.ok) throw new Error("unreachable");
+    expect(missingEndDate.code).toBe("invalid_input");
+
+    const missingStartDate = await createCampaign(
+      head,
+      { name: uniqueName("Missing Start Date"), objective: "x", endDate: "2026-06-01", defaultReviewPolicy: "REVIEW_REQUIRED" },
+      "req-missing-start-date",
+    );
+    expect(missingStartDate.ok).toBe(false);
+    if (missingStartDate.ok) throw new Error("unreachable");
+    expect(missingStartDate.code).toBe("invalid_input");
+  });
+
+  it("accepts a valid create request with both dates present and correctly ordered", async () => {
+    const head = await actorFor("partnership_head");
+    const created = await createRealCampaign(head, { startDate: "2026-02-01", endDate: "2026-03-01" });
+    expect(created.status).toBe("DRAFT");
+    const doc = await getCampaignDocByRef(created.campaignRef);
+    expect(doc?.startDate).toBe("2026-02-01");
+    expect(doc?.endDate).toBe("2026-03-01");
+  });
+
   it("platform identity: normalizes case/whitespace, is stable, rejects whitespace-only and post-normalization duplicates, and never rejects an ordinary un-catalogued platform name", async () => {
     const head = await actorFor("partnership_head");
 
@@ -168,35 +206,139 @@ describe("Campaign contract", () => {
 
   it("criteria.platforms shares the exact same normalization/validation as top-level platforms", async () => {
     const head = await actorFor("partnership_head");
-    const result = await createCampaign(
+    const badPlatform = await createCampaign(
       head,
-      { name: uniqueName("Criteria Platform"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "REVIEW_REQUIRED", criteria: { platforms: ["  YouTube  "] } },
-      "req-criteria-platform",
+      { name: uniqueName("Bad Platform"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "REVIEW_REQUIRED", platforms: ["  "] },
+      "req-bad-platform",
     );
-    expect(result.ok).toBe(true);
-    if (!result.ok) throw new Error("unreachable");
-    expect(result.data.criteria.platforms).toEqual(["youtube"]);
-
-    const badCriteriaPlatform = await createCampaign(
-      head,
-      { name: uniqueName("Bad Criteria Platform"), objective: "x", startDate: "2026-01-01", endDate: "2026-02-01", defaultReviewPolicy: "REVIEW_REQUIRED", criteria: { platforms: ["  "] } },
-      "req-bad-criteria-platform",
-    );
-    expect(badCriteriaPlatform.ok).toBe(false);
+    expect(badPlatform.ok).toBe(false);
   });
 
-  it("resource contract: rejects an invalid resource type, accepts a valid one, and enforces the bounded max", async () => {
+  describe("finding #34: criteria.platforms mirrors the canonical top-level platforms (single source of truth)", () => {
+    it("on create: criteria.platforms is derived from the canonical platforms, never from anything a caller sends for it directly", async () => {
+      const head = await actorFor("partnership_head");
+      const result = await createCampaign(
+        head,
+        {
+          name: uniqueName("Mirror On Create"),
+          objective: "x",
+          startDate: "2026-01-01",
+          endDate: "2026-02-01",
+          defaultReviewPolicy: "REVIEW_REQUIRED",
+          platforms: ["  YouTube  "],
+          // A caller still sending a divergent criteria.platforms (e.g. an old client) is
+          // silently overridden by the canonical value - never trusted as a second source.
+          criteria: { platforms: ["instagram"] },
+        },
+        "req-mirror-create",
+      );
+      expect(result.ok).toBe(true);
+      if (!result.ok) throw new Error("unreachable");
+      expect(result.data.platforms).toEqual(["youtube"]);
+      expect(result.data.criteria.platforms).toEqual(["youtube"]);
+    });
+
+    it("on edit: touching platforms alone (no criteria in the request) still re-mirrors criteria.platforms", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createRealCampaign(head, { name: uniqueName("Mirror Edit Platforms"), platforms: ["instagram"] });
+
+      const edited = await editCampaign(head, created.campaignRef, { platforms: ["youtube", "x"], expectedVersion: created.version }, "req-mirror-edit-platforms");
+      expect(edited.ok).toBe(true);
+      if (!edited.ok) throw new Error("unreachable");
+      expect(edited.data.platforms.slice().sort()).toEqual(["x", "youtube"]);
+      expect(edited.data.criteria.platforms.slice().sort()).toEqual(["x", "youtube"]);
+    });
+
+    it("on edit: touching criteria alone (no platforms in the request) also re-mirrors criteria.platforms to the CURRENT canonical value", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createRealCampaign(head, { name: uniqueName("Mirror Edit Criteria"), platforms: ["instagram"] });
+
+      const edited = await editCampaign(head, created.campaignRef, { criteria: { languageIds: ["Malayalam"] }, expectedVersion: created.version }, "req-mirror-edit-criteria");
+      expect(edited.ok).toBe(true);
+      if (!edited.ok) throw new Error("unreachable");
+      expect(edited.data.criteria.languageIds).toEqual(["Malayalam"]);
+      expect(edited.data.criteria.platforms).toEqual(["instagram"]);
+    });
+
+    it("on edit: an unrelated field-only edit (neither platforms nor criteria touched) never disturbs a pre-existing legacy divergence", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createRealCampaign(head, { name: uniqueName("Legacy Preserved"), platforms: ["instagram", "youtube"] });
+
+      // A raw doc write, deliberately bypassing editCampaign's own re-mirroring - simulates data
+      // that predates this finding's fix. There is no way to reach this state through the
+      // ordinary API anymore (test 3 above already proves an ordinary criteria-touching edit
+      // always re-mirrors), by design.
+      const { campaignsCollection, getCampaignDocByRef } = await import("./firestore");
+      const stored = await getCampaignDocByRef(created.campaignRef);
+      if (!stored) throw new Error("unreachable");
+      await campaignsCollection()
+        .doc(stored.uid)
+        .update({ "criteria.platforms": ["instagram"], version: created.version + 1 });
+
+      const unrelatedEdit = await editCampaign(head, created.campaignRef, { objective: "A different objective entirely", expectedVersion: created.version + 1 }, "req-legacy-unrelated");
+      expect(unrelatedEdit.ok).toBe(true);
+      if (!unrelatedEdit.ok) throw new Error("unreachable");
+      expect(unrelatedEdit.data.objective).toBe("A different objective entirely");
+      expect(unrelatedEdit.data.platforms.slice().sort()).toEqual(["instagram", "youtube"]);
+      expect(unrelatedEdit.data.criteria.platforms).toEqual(["instagram"]); // untouched - the legacy divergence survives an unrelated edit
+    });
+  });
+
+  // Findings #36/#37 (user-decided): the create-input schema now only accepts the 3 current types
+  // (LINK/UPLOAD/TEXT) - a legacy type like "BRIEF" is no longer newly creatable, even though the READ
+  // schema still accepts it on already-stored resources (see the "legacy resources stay readable" test
+  // below). UPLOAD is deliberately excluded too - it has no client-supplied url (see addCampaignResourceUpload).
+  it("resource contract: rejects an invalid resource type (including a legacy one), accepts a valid LINK, and enforces the bounded max", async () => {
     const head = await actorFor("partnership_head");
     const created = await createRealCampaign(head);
 
     const badType = await addCampaignResource(head, created.campaignRef, { label: "Brief", type: "NOT_A_TYPE", url: "https://example.com", expectedVersion: created.version }, "req-bad-resource");
     expect(badType.ok).toBe(false);
 
-    const good = await addCampaignResource(head, created.campaignRef, { label: "Brief", type: "BRIEF", url: "https://example.com/brief.pdf", expectedVersion: created.version }, "req-good-resource");
+    const legacyType = await addCampaignResource(head, created.campaignRef, { label: "Brief", type: "BRIEF", url: "https://example.com/brief.pdf", expectedVersion: created.version }, "req-legacy-resource");
+    expect(legacyType.ok).toBe(false);
+    if (legacyType.ok) throw new Error("unreachable");
+    expect(legacyType.code).toBe("invalid_input");
+
+    const good = await addCampaignResource(head, created.campaignRef, { label: "Brief", type: "LINK", url: "https://example.com/brief.pdf", expectedVersion: created.version }, "req-good-resource");
     expect(good.ok).toBe(true);
     if (!good.ok) throw new Error("unreachable");
     expect(good.data.resources).toHaveLength(1);
     expect(good.data.resources[0]!.resourceRef).toBeTruthy();
+  });
+
+  it("a LINK resource requires a url and forbids content; a TEXT resource requires content and forbids a url", async () => {
+    const head = await actorFor("partnership_head");
+    const created = await createRealCampaign(head);
+
+    const linkWithoutUrl = await addCampaignResource(head, created.campaignRef, { label: "x", type: "LINK", expectedVersion: created.version }, "req-link-no-url");
+    expect(linkWithoutUrl.ok).toBe(false);
+
+    const textWithUrl = await addCampaignResource(head, created.campaignRef, { label: "x", type: "TEXT", url: "https://example.com", content: "hi", expectedVersion: created.version }, "req-text-with-url");
+    expect(textWithUrl.ok).toBe(false);
+
+    const text = await addCampaignResource(head, created.campaignRef, { label: "Notes", type: "TEXT", content: "Some plain-text notes.", expectedVersion: created.version }, "req-text-ok");
+    expect(text.ok).toBe(true);
+    if (!text.ok) throw new Error("unreachable");
+    expect(text.data.resources[0]!.content).toBe("Some plain-text notes.");
+    expect(text.data.resources[0]!.url).toBeUndefined();
+  });
+
+  // Finding #32's own .strict()-schema-safety discipline applies equally here: narrowing CREATE input
+  // must never break reading an already-stored legacy-typed resource (civic-voices is seeded with one).
+  it("a legacy-typed stored resource (e.g. BRIEF) still reads back fine and can still be edited", async () => {
+    const head = await actorFor("partnership_head");
+    const civicVoices = await getCampaign(head, "civic-voices");
+    if (!civicVoices.ok) throw new Error("unreachable");
+    const legacyResource = civicVoices.data.resources.find((r) => r.type === "BRIEF");
+    expect(legacyResource).toBeTruthy();
+
+    const edited = await editCampaignResource(head, civicVoices.data.campaignRef, { resourceRef: legacyResource!.resourceRef, description: "Updated description.", expectedVersion: civicVoices.data.version }, "req-edit-legacy");
+    expect(edited.ok).toBe(true);
+    if (!edited.ok) throw new Error("unreachable");
+    const stillLegacy = edited.data.resources.find((r) => r.resourceRef === legacyResource!.resourceRef);
+    expect(stillLegacy?.type).toBe("BRIEF");
+    expect(stillLegacy?.description).toBe("Updated description.");
   });
 
   it("targeting criteria accepts the canonical Target Audience taxonomy (multi-value), rejects an unrecognized value, and never accepts tier at all", async () => {
@@ -282,7 +424,7 @@ describe("Campaign create/edit", () => {
     const head = await actorFor("partnership_head");
     const created = await createRealCampaign(head);
 
-    const added = await addCampaignResource(head, created.campaignRef, { label: "Brief v1", type: "BRIEF", url: "https://example.com/v1.pdf", expectedVersion: created.version }, "req-add");
+    const added = await addCampaignResource(head, created.campaignRef, { label: "Brief v1", type: "LINK", url: "https://example.com/v1.pdf", expectedVersion: created.version }, "req-add");
     if (!added.ok) throw new Error("unreachable");
     const resourceRef = added.data.resources[0]!.resourceRef;
 
@@ -295,6 +437,52 @@ describe("Campaign create/edit", () => {
     expect(removed.ok).toBe(true);
     if (!removed.ok) throw new Error("unreachable");
     expect(removed.data.resources).toHaveLength(0);
+  });
+
+  // Findings #36/#37: the UPLOAD path - no client-supplied url, stores real bytes through the resource-
+  // storage abstraction (a fake in-memory adapter installed for this test, mirroring the finance-
+  // agreements upload tests' own idiom) and appends the resource entry in the same mutation.
+  describe("UPLOAD resource", () => {
+    afterEach(() => setCampaignResourceStorageForTests(null));
+
+    it("stores the file through the configured storage and records the returned link as the resource url", async () => {
+      const fake = createInMemoryCampaignResourceStorage();
+      setCampaignResourceStorageForTests(fake);
+
+      const head = await actorFor("partnership_head");
+      const created = await createRealCampaign(head);
+      const buffer = Buffer.from("fake png bytes for an emulator test");
+
+      const uploaded = await addCampaignResourceUpload(head, created.campaignRef, { label: "Deck", fileName: "deck.png", mimeType: "image/png", buffer, expectedVersion: created.version }, "req-upload");
+      expect(uploaded.ok).toBe(true);
+      if (!uploaded.ok) throw new Error("unreachable");
+      expect(uploaded.data.resources).toHaveLength(1);
+      const resource = uploaded.data.resources[0]!;
+      expect(resource.type).toBe("UPLOAD");
+      expect(resource.url).toBe(fake.files[0]!.webViewLink);
+      expect(resource.url?.startsWith("https://drive.invalid/fake-campaign-resource/")).toBe(true);
+    });
+
+    it("rejects an unsupported MIME type before ever calling storage", async () => {
+      const fake = createInMemoryCampaignResourceStorage();
+      setCampaignResourceStorageForTests(fake);
+
+      const head = await actorFor("partnership_head");
+      const created = await createRealCampaign(head);
+      const rejected = await addCampaignResourceUpload(head, created.campaignRef, { label: "Deck", fileName: "deck.exe", mimeType: "application/x-msdownload", buffer: Buffer.from("x"), expectedVersion: created.version }, "req-upload-bad-mime");
+      expect(rejected.ok).toBe(false);
+      expect(fake.calls).toHaveLength(0);
+    });
+
+    it("is NOT_CONFIGURED (never a fabricated link) when no storage override is installed and no real Drive config exists", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createRealCampaign(head);
+      const result = await addCampaignResourceUpload(head, created.campaignRef, { label: "Deck", fileName: "deck.png", mimeType: "image/png", buffer: Buffer.from("x"), expectedVersion: created.version }, "req-upload-not-configured");
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.code).toBe("invalid_input");
+      expect(result.message).toMatch(/not configured/i);
+    });
   });
 });
 

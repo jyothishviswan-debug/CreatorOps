@@ -12,6 +12,8 @@
     "test:emulator": "vitest run --config vitest.emulator.config.mts",
     "test:e2e": "playwright test",
     "firebase:emulators": "firebase emulators:start --project demo-creatorops",
+    "firebase:emulators:pilot": "bash scripts/pilot-emulator.sh",
+    "firebase:emulators:pilot:reset": "bash scripts/reset-pilot-emulator-snapshot.sh",
     "seed:emulator": "tsx scripts/seed-emulator-users.ts",
     "reset:emulator": "tsx scripts/reset-emulator.ts"
   },

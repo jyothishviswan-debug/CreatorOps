@@ -30,6 +30,7 @@ import * as api from "../api-client";
 import type { ApplyKycInput, FinanceApiFailure, FinanceApiResult, UpdateMasterDataInput } from "../api-client";
 import { describeConfirmBlockers, type ConfirmBlockerView } from "../confirm-blockers";
 import { buildFieldViewModels, fieldPlacement, groupFieldViewModels, unresolvedFields, type FieldViewModel, type IntakeSectionId } from "../field-view-model";
+import { describeStoreOutcome } from "../document-view";
 import { diffDraftAgainstPrior, type ConfirmedTermSet, type FieldChange } from "../revision-diff";
 import { counterpartyInputKey } from "../agreement-for";
 import {
@@ -727,8 +728,30 @@ export function IntakeProvider({ permissions, initial, children }: IntakeProvide
           const result = await api.confirmAgreementVersion(current.head.agreementRef, { version: selected.version, expectedDocVersion: selected.docVersion });
           if (result.ok) {
             setAgreement(result.data);
-            notify("success", "Agreement confirmed. Its terms are now frozen.", "confirm");
             void refreshKyc();
+            // Finding #31: the signed-document storage attempt now auto-fires right after a successful
+            // confirm - still its own independent, retriable operation under the hood (same
+            // storeAgreementDocument call the Overview tab's own manual "Store"/"Retry" button makes), just
+            // no separate manual click required. `canStore` is false exactly when there's nothing to store
+            // (no signed file of this version's own, or it's already STORED) - a natural no-op then, same
+            // as the manual button would have been. Uses the CONFIRM response's own fresh docVersion, never
+            // stale local state.
+            const confirmed = result.data.selectedVersion;
+            if (confirmed?.document.canStore) {
+              const stored = await api.storeAgreementDocument(current.head.agreementRef, { version: confirmed.version, expectedDocVersion: confirmed.docVersion });
+              if (stored.ok) {
+                setAgreement(stored.data.agreement);
+                notify(stored.data.outcome === "failed" ? "warning" : "success", `Agreement confirmed. ${describeStoreOutcome(stored.data).text}`, "confirm");
+              } else {
+                // Confirmation itself already succeeded and is never rolled back for a storage failure
+                // (provider failure must not corrupt the Agreement lifecycle) - this is reported as an
+                // adjacent warning, with the existing Overview tab's own Store/Retry control as the
+                // real recovery path (nothing new to duplicate here).
+                notify("warning", "Agreement confirmed. Its terms are now frozen. The signed document could not be stored yet - open the Agreement to retry.", "confirm");
+              }
+            } else {
+              notify("success", "Agreement confirmed. Its terms are now frozen.", "confirm");
+            }
           } else if (result.kind === "not_ready") {
             const views = describeConfirmBlockers(result.blockers, current.head.counterparty.type);
             dispatch({ type: "blockers", blockers: views });

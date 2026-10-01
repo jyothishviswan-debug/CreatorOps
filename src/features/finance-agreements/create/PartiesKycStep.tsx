@@ -9,6 +9,7 @@ import type { AgreementParty, AgreementPartyRole } from "@/server/finance-agreem
 
 import { useIntake } from "../agreement-intake-logic/intake-context";
 import { buildKycRows, isKycActionKind, owningRecordHref, type KycDialogKind } from "../agreement-intake-logic/kyc-ui";
+import { safeDocumentLink } from "../document-view";
 import type { KycComponentKey } from "../format";
 
 import { accountViews } from "./agreement-create-adapter";
@@ -26,14 +27,16 @@ const ROLE_LABEL: Record<AgreementPartyRole, string> = {
 };
 
 export function PartiesKycStep() {
-  const { counterparty, version, kyc, flags, setParties, isBusy, notify } = useIntake();
+  const { counterparty, version, kyc, flags, setParties, isBusy, notify, preview } = useIntake();
   const [dialog, setDialog] = useState<{ component: KycComponentKey; kind: KycDialogKind } | null>(null);
 
   if (!version || !counterparty) return null;
   const payeeCount = version.parties.filter(({ role: partyRole }) => partyRole === "PAYEE").length;
   const primaryCount = version.parties.filter(({ role: partyRole }) => partyRole === "PRIMARY_COUNTERPARTY").length;
   const ambiguous = payeeCount > 1 || (payeeCount === 0 && primaryCount > 1);
-  const accounts = accountViews(counterparty);
+  // Finding #27: the same canonical Partner Account identity (handle/profile URL) already loaded into the
+  // intake preview - reused, never a second/duplicated identity lookup.
+  const accounts = accountViews(counterparty, preview?.partnerAccounts ?? []);
   const kycRows = buildKycRows({ counterpartyType: counterparty.type, kyc, canViewIdentity: flags.canViewIdentity, canManageKyc: flags.canManageCounterpartyKyc });
 
   return (
@@ -64,22 +67,39 @@ export function PartiesKycStep() {
               {accounts.length === 0 ? (
                 <p className="muted">No account scope recorded for this counterparty.</p>
               ) : (
-                <table>
-                  <thead>
-                    <tr>
-                      <th>Platform</th>
-                      <th>Scope</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {accounts.map((account) => (
-                      <tr key={account.id}>
-                        <td style={{ textTransform: "capitalize" }}>{account.platform}</td>
-                        <td>{account.state === "PARTNER_LEVEL" ? "Partner-level (no specific account)" : "Specific account"}</td>
+                <div className="tablewrap">
+                  <table className="compact">
+                    <thead>
+                      <tr>
+                        <th>Platform</th>
+                        <th>Scope</th>
+                        <th>Handle</th>
+                        <th>Profile URL</th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
+                    </thead>
+                    <tbody>
+                      {accounts.map((account) => {
+                        const link = safeDocumentLink(account.url);
+                        return (
+                          <tr key={account.id}>
+                            <td style={{ textTransform: "capitalize" }}>{account.platform}</td>
+                            <td>{account.state === "PARTNER_LEVEL" ? "Partner-level (no specific account)" : "Specific account"}</td>
+                            <td>{account.handle ? `@${account.handle}` : <span className="muted">Not available</span>}</td>
+                            <td>
+                              {link ? (
+                                <a href={link} target="_blank" rel="noreferrer" style={{ wordBreak: "break-all" }}>
+                                  {link}
+                                </a>
+                              ) : (
+                                <span className="muted">Not available</span>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
               )}
             </div>
           </section>

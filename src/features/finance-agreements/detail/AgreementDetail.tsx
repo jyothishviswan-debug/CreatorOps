@@ -247,7 +247,19 @@ export function AgreementDetail(props: AgreementDetailProps) {
     switch (dialog) {
       case "confirm": {
         if (!openSummary) return;
-        void execute("confirm", () => confirmAgreementVersion(agreementRef, { version: openSummary.version, expectedDocVersion: openSummary.docVersion }), `Version ${openSummary.version} confirmed. Its terms are frozen; activate it to put it in force.`);
+        void execute(
+          "confirm",
+          () => confirmAgreementVersion(agreementRef, { version: openSummary.version, expectedDocVersion: openSummary.docVersion }),
+          `Version ${openSummary.version} confirmed. Its terms are frozen; activate it to put it in force.`,
+          (data) => {
+            // Finding #31: storage auto-fires right after a successful confirm here too - the same operation
+            // as the "Create Agreement" wizard's own auto-fire (intake-context.tsx's confirmAgreement),
+            // applied consistently to this Agreement's own revision-confirm entry point. canStore is false
+            // exactly when there's nothing to store (NOT_APPLICABLE / already STORED), a natural no-op.
+            const confirmed = data.selectedVersion;
+            if (confirmed?.document.canStore) void storeDocument(confirmed.version, { expectedDocVersion: confirmed.docVersion, keepNotice: true });
+          },
+        );
         return;
       }
       case "activate": {
@@ -286,17 +298,21 @@ export function AgreementDetail(props: AgreementDetailProps) {
 
   // Store (or retry) the ORIGINAL signed Agreement of one CONFIRMED version in Drive. Idempotent on the server; a Drive failure is a successful call
   // whose outcome is "failed" (retriable). Every response REPLACES local state; the version's own docVersion is the concurrency counter.
-  async function storeDocument(version: number) {
+  // `options.expectedDocVersion` overrides the (possibly still-stale, pre-re-render) `versions` lookup - used by the finding #31 auto-fire
+  // right after confirm, which must use the CONFIRM response's own fresh docVersion, never a value from before that response applied.
+  // `options.keepNotice` skips clearing the generic page notice - used by that same auto-fire so "Version N confirmed..." isn't wiped out
+  // by the store call it immediately triggers.
+  async function storeDocument(version: number, options?: { expectedDocVersion?: number; keepNotice?: boolean }) {
     if (busyRef.current) return;
-    const target = versions.find((entry) => entry.version === version);
-    if (!target) return;
+    const expectedDocVersion = options?.expectedDocVersion ?? versions.find((entry) => entry.version === version)?.docVersion;
+    if (expectedDocVersion === undefined) return;
     busyRef.current = "document";
     setBusy("document");
     setDocumentBusyVersion(version);
     setDocumentNotice(null);
     setFailure(null);
-    setNotice(null);
-    const result = await storeAgreementDocument(agreementRef, { version, expectedDocVersion: target.docVersion });
+    if (!options?.keepNotice) setNotice(null);
+    const result = await storeAgreementDocument(agreementRef, { version, expectedDocVersion });
     busyRef.current = null;
     if (!aliveRef.current) return;
     setBusy(null);

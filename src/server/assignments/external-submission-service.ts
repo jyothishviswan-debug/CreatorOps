@@ -3,6 +3,8 @@ import { z } from "zod";
 
 import { getAdminFirestore } from "@/server/firebase/admin";
 import type { ActorContext } from "@/server/authz/types";
+import { getCampaignDocByRef } from "@/server/campaigns/firestore";
+import type { CampaignResource } from "@/server/campaigns/types";
 import { getPartnerDocByRef } from "@/server/partners/firestore";
 import { getVendorDocByRef, vendorPartnerActiveClaimsCollection } from "@/server/vendors/firestore";
 import { vendorPartnerActiveClaimDocSchema } from "@/server/vendors/types";
@@ -359,6 +361,19 @@ async function loadValidSession(rawToken: string): Promise<ValidSession | null> 
   return { session, assignment, thread };
 }
 
+// Finding #47: creator-safe projection of the owning Campaign's own current Resources - only
+// LINK/UPLOAD/TEXT (the legacy DOCUMENT/BRIEF/ASSET/OTHER types, still readable internally per
+// findings #36/#37, are treated as unavailable on this public surface). Deterministic order: the
+// Campaign's own stored array order (resources are only ever appended/removed, never reordered -
+// see campaigns/types.ts's own resource_added/resource_removed event model), so this is already
+// stable without an extra sort. `url`/`content` are passed through exactly as stored - the source
+// schema itself already guarantees `url` is a safe external/view link, never a raw storage path.
+function buildPublicCampaignResources(resources: readonly CampaignResource[]): PublicAssignmentSubmissionDto["campaignResources"] {
+  return resources
+    .filter((resource): resource is CampaignResource & { type: "LINK" | "UPLOAD" | "TEXT" } => resource.type === "LINK" || resource.type === "UPLOAD" || resource.type === "TEXT")
+    .map((resource) => ({ label: resource.label, type: resource.type, url: resource.url ?? null, content: resource.content }));
+}
+
 export async function resolveExternalSubmission(rawToken: unknown): Promise<PublicResolveResult> {
   if (typeof rawToken !== "string" || rawToken.length === 0) return { ok: false };
 
@@ -366,10 +381,19 @@ export async function resolveExternalSubmission(rawToken: unknown): Promise<Publ
   if (!loaded) return { ok: false };
   const { assignment, thread } = loaded;
 
+  // Finding #47: Resources are read LIVE from the owning Campaign (the same precedent finding #38
+  // already established for the internal AssignmentDto's own campaignResources), never snapshotted
+  // - a Resource removed from the Campaign after this Assignment was created is never shown. The
+  // Campaign is looked up strictly by this Assignment's own fixed campaignRef, so a token can never
+  // resolve any other Campaign's Resources (the cross-Assignment boundary finding #47 requires).
+  const campaign = await getCampaignDocByRef(assignment.campaignRef);
+
   const dto: PublicAssignmentSubmissionDto = {
     campaignName: assignment.brief.campaignName,
-    assignmentDisplayContext: assignment.brief.contentRequirementSummary ?? assignment.brief.campaignName,
+    campaignObjective: assignment.brief.campaignObjective,
+    campaignResources: campaign ? buildPublicCampaignResources(campaign.resources) : [],
     instructions: assignment.brief.instructions,
+    contentRequirementSummary: assignment.brief.contentRequirementSummary,
     dueAt: assignment.brief.dueAt,
     language: assignment.brief.language,
     hashtags: assignment.brief.hashtags,
@@ -381,6 +405,7 @@ export async function resolveExternalSubmission(rawToken: unknown): Promise<Publ
     // authoring detail, never useful to the external recipient).
     resourceLinks: assignment.brief.resourceLinks.filter((link) => link.shareExternally).map((link) => ({ label: link.label, url: link.url })),
     reviewPolicyNote: assignment.brief.reviewPolicy === "REVIEW_REQUIRED" ? "Content from this Assignment is reviewed before it is considered final." : null,
+    requiredCount: assignment.brief.requiredCount ?? 1,
     threadStatus: thread.status,
     revisionNote: thread.status === "REVISION_REQUESTED" ? thread.statusReason : null,
     currentLinks: thread.currentLinks.map((link) => ({ platform: link.platform, url: link.originalUrl })),

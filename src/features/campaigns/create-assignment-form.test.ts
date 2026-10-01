@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { buildCreateAssignmentInput, distinctNormalizedPlatforms, EMPTY_CREATE_ASSIGNMENT_FORM, parseCommaList, parseHashtags, type CreateAssignmentFormValues } from "./create-assignment-form";
+import { buildCreateAssignmentInput, buildCreateAssignmentsForPartnersInput, distinctNormalizedPlatforms, EMPTY_CREATE_ASSIGNMENT_FORM, parseCommaList, parseHashtags, type CreateAssignmentFormValues } from "./create-assignment-form";
 
 const ACCOUNTS = [{ partnerAccountRef: "pa-1", platform: "Instagram" }];
 
@@ -103,5 +103,69 @@ describe("buildCreateAssignmentInput", () => {
     expect(build({ contentRequirementSummary: "x".repeat(1001) })).toMatchObject({ ok: false });
     expect(build({ hashtags: Array.from({ length: 31 }, (_, i) => `tag${i}`).join(",") })).toMatchObject({ ok: false });
     expect(build({ formats: Array.from({ length: 21 }, (_, i) => `f${i}`).join(",") })).toMatchObject({ ok: false });
+  });
+});
+
+// Findings #40/#42/#51 (user-decided, #40 corrected): the bulk-create builder - shared brief validation,
+// no per-Partner account selection, platforms are a DIRECT selection rather than derived from selected
+// accounts, and Direct + Through-Vendor selection are ADDITIVE (directPartnerRefs and vendorSelections
+// both present in the same call).
+describe("buildCreateAssignmentsForPartnersInput", () => {
+  function buildBulk(over: Partial<Parameters<typeof buildCreateAssignmentsForPartnersInput>[0]> = {}) {
+    return buildCreateAssignmentsForPartnersInput({
+      campaignRef: "camp-1",
+      directPartnerRefs: ["partner-1", "partner-2"],
+      vendorSelections: [],
+      platforms: ["Instagram"],
+      values: EMPTY_CREATE_ASSIGNMENT_FORM,
+      ...over,
+    });
+  }
+
+  it("requires at least one Partner (direct or through a Vendor) and at least one platform", () => {
+    expect(buildBulk({ directPartnerRefs: [] })).toMatchObject({ ok: false, errors: ["Select at least one Partner, directly or through a Vendor."] });
+    expect(buildBulk({ platforms: [] })).toMatchObject({ ok: false, errors: ["Select at least one platform."] });
+    expect(buildBulk({ directPartnerRefs: [], platforms: [] })).toMatchObject({ ok: false, errors: ["Select at least one Partner, directly or through a Vendor.", "Select at least one platform."] });
+    // A Vendor-only selection (no Direct Partners) is sufficient - the two are additive, neither is required alone.
+    expect(buildBulk({ directPartnerRefs: [], vendorSelections: [{ vendorRef: "vendor-1", partnerRefs: ["partner-3"] }] })).toMatchObject({ ok: true });
+  });
+
+  it("on success, sends exactly campaignRef/directPartnerRefs/vendorSelections/brief.platforms and never an owner/reviewPolicy/Campaign-derived field", () => {
+    const result = buildBulk();
+    expect(result).toEqual({ ok: true, input: { campaignRef: "camp-1", directPartnerRefs: ["partner-1", "partner-2"], vendorSelections: [], brief: { platforms: ["instagram"] } } });
+    if (!result.ok) throw new Error("unreachable");
+    const serialized = JSON.stringify(result.input);
+    for (const forbidden of ["partnerAccountRefs", "owner", "reviewPolicy", "campaignName", "campaignObjective"]) expect(serialized).not.toContain(forbidden);
+  });
+
+  it("carries one or more Vendor sections, each with its own Partner refs, alongside Direct refs in the same request", () => {
+    const result = buildBulk({
+      directPartnerRefs: ["partner-1"],
+      vendorSelections: [
+        { vendorRef: "vendor-x", partnerRefs: ["partner-2", "partner-3"] },
+        { vendorRef: "vendor-y", partnerRefs: ["partner-4"] },
+      ],
+    });
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.input.directPartnerRefs).toEqual(["partner-1"]);
+    expect(result.input.vendorSelections).toEqual([
+      { vendorRef: "vendor-x", partnerRefs: ["partner-2", "partner-3"] },
+      { vendorRef: "vendor-y", partnerRefs: ["partner-4"] },
+    ]);
+  });
+
+  it("normalizes and de-duplicates platforms", () => {
+    const result = buildBulk({ platforms: ["Instagram", "instagram", " YouTube "] });
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.input.brief?.platforms).toEqual(["instagram", "youtube"]);
+  });
+
+  it("shares the same brief field validation as the single-create builder (instructions/count/dueAt/etc.)", () => {
+    expect(buildBulk({ values: { ...EMPTY_CREATE_ASSIGNMENT_FORM, requiredCount: "0" } })).toMatchObject({ ok: false });
+    expect(buildBulk({ values: { ...EMPTY_CREATE_ASSIGNMENT_FORM, dueAt: "12/01/2026" } })).toMatchObject({ ok: false });
+    expect(buildBulk({ values: { ...EMPTY_CREATE_ASSIGNMENT_FORM, instructions: "x".repeat(2001) } })).toMatchObject({ ok: false });
+    const withFields = buildBulk({ values: { ...EMPTY_CREATE_ASSIGNMENT_FORM, requiredCount: "3", instructions: "Do this", formats: "Reel, reel", hashtags: "#Launch" } });
+    if (!withFields.ok) throw new Error("unreachable");
+    expect(withFields.input.brief).toMatchObject({ requiredCount: 3, instructions: "Do this", formats: ["Reel"], hashtags: ["Launch"] });
   });
 });

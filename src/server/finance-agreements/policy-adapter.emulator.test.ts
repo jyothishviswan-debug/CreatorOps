@@ -144,8 +144,11 @@ async function seedVendor(): Promise<VendorDoc> {
   return vendor;
 }
 
-// One in-period Assignment (format reel) with an APPROVED thread (1 qualifying unit) for the review evidence.
-async function seedEvidence(partner: PartnerDoc) {
+// One in-period Assignment (format reel) with an APPROVED thread (1 qualifying unit) for the review evidence,
+// due/approved on the given calendar date (default 2019-03-10 / approved 2019-03-09, matching the original
+// fixture exactly). Returns the assignmentRef so a caller can build more than one distinctly-dated fixture
+// (Wave B / finding #64 re-audit's pre/post-effective-date test needs exactly this).
+async function seedEvidence(partner: PartnerDoc, dueDate = "2019-03-10", approvedAt = "2019-03-09T00:00:00.000Z"): Promise<string> {
   const uid = assignmentsCollection().doc().id;
   const now = new Date().toISOString();
   const assignment = assignmentDocSchema.parse({
@@ -157,7 +160,7 @@ async function seedEvidence(partner: PartnerDoc) {
     partnerAccountRefs: [],
     status: "IN_PROGRESS",
     statusReason: null,
-    brief: assignmentBriefSchema.parse({ dueAt: "2019-03-10", requiredCount: 2, formats: ["reel"], platforms: ["instagram"], reviewPolicy: "REVIEW_REQUIRED", campaignName: "POL Campaign" }),
+    brief: assignmentBriefSchema.parse({ dueAt: dueDate, requiredCount: 2, formats: ["reel"], platforms: ["instagram"], reviewPolicy: "REVIEW_REQUIRED", campaignName: "POL Campaign" }),
     ownerUid: null,
     regionIds: [PRIVATE_REGION],
     teamIds: [],
@@ -188,7 +191,7 @@ async function seedEvidence(partner: PartnerDoc) {
     openedAt: "2019-03-01T00:00:00.000Z",
     firstSubmittedAt: "2019-03-08T10:00:00.000Z",
     lastSubmittedAt: "2019-03-08T10:00:00.000Z",
-    approvedAt: "2019-03-09T00:00:00.000Z",
+    approvedAt,
     cancelledAt: null,
     ownerUid: null,
     regionIds: [PRIVATE_REGION],
@@ -201,6 +204,7 @@ async function seedEvidence(partner: PartnerDoc) {
   const threadRef = contentCollection().doc(threadUid);
   await threadRef.set(thread);
   cleanup.push(threadRef);
+  return assignment.assignmentRef;
 }
 
 // ---- Agreement helpers (real services) ------------------------------------------------------------------------------------
@@ -419,9 +423,9 @@ describe("the adapter contract on real Agreement data", () => {
     expect(await at("2019-04")).toBeNull();
   });
 
-  it("an Agreement that starts (or is open-ended) mid-range: partial months are not governed; an open-ended range governs later months", async () => {
+  it("an Agreement that starts mid-range: the INCEPTION month (version 1's own first month) governs per Step 14D; an open-ended range governs later months", async () => {
     const partner = await seedPartner();
-    await activeAgreement(
+    const v1 = await activeAgreement(
       partner,
       decisionsWith({
         ...POLICY_TERMS(),
@@ -429,9 +433,51 @@ describe("the adapter contract on real Agreement data", () => {
         terminationDate: { fieldKey: "terminationDate", decision: "UNAVAILABLE" },
       }),
     );
-    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-02")).toBeNull(); // starts on the 15th: no requirement for a partial month
+    const ref = v1.head.agreementRef;
+    // starts on the 15th: this is version 1's OWN first month, so the Step 14D inception exception governs it
+    // (the required count stays the Agreement's full stated figure - unscaled by days covered)
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-02")).toMatchObject({ agreementRef: ref, agreementVersion: 1, monthlyDeliverableRequirement: { requiredCount: 2 } });
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-01")).toBeNull(); // before effectiveFrom entirely: never governed
     expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-03")).toMatchObject({ agreementVersion: 1 });
     expect(await getAgreementCommercialPolicy(partner.partnerRef, "2031-07")).toMatchObject({ agreementVersion: 1 }); // open-ended
+    // evidenceWindowStart is set to the real effective date for the inception month, present ONLY there.
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-02")).toMatchObject({ evidenceWindowStart: "2019-02-15" });
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-03")).not.toHaveProperty("evidenceWindowStart");
+  });
+
+  it("effective on the LAST day of the month is still that month's inception (a one-day evidence window, not excluded entirely)", async () => {
+    const partner = await seedPartner();
+    await activeAgreement(
+      partner,
+      decisionsWith({ ...POLICY_TERMS(), effectiveDate: { fieldKey: "effectiveDate", decision: "CORRECTED", value: "2019-02-28" }, terminationDate: { fieldKey: "terminationDate", decision: "UNAVAILABLE" } }),
+    );
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-02")).toMatchObject({ agreementVersion: 1, evidenceWindowStart: "2019-02-28" });
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-01")).toBeNull();
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-03")).toMatchObject({ agreementVersion: 1 });
+  });
+
+  it("a version that starts AND ends within its own inception month is not governed at all - the existing whole-month-coverage rule still wins over the inception exception", async () => {
+    const head = await actorFor("partnership_head");
+    const partner = await seedPartner();
+    const confirmed = await confirmedAgreement(partner, decisionsWith({ ...POLICY_TERMS(), effectiveDate: { fieldKey: "effectiveDate", decision: "CORRECTED", value: "2019-02-15" } }));
+    const active = await activate(head, confirmed);
+    const ended = must(await endAgreement(head, { agreementRef: active.head.agreementRef, expectedDocVersion: active.head.docVersion, reason: "Cancelled mid-inception-month" }, requestId()), "end");
+    await financeAgreementVersionsCollection(active.head.agreementRef).doc("1").update({ endedAt: "2019-02-20T00:00:00.000Z" });
+    expect(ended.head.status).toBe("ENDED");
+    // ends 2019-02-20, before month-end (2019-02-28): the whole-month-coverage check runs FIRST and
+    // already fails this month, so the inception exception never even gets a chance to apply.
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-02")).toBeNull();
+  });
+
+  it("Step 14D inception exception is scoped to exactly version 1's own first month: a later revision starting mid-month is NOT exempted", async () => {
+    const partner = await seedPartner();
+    const v1 = await activeAgreement(partner, decisionsWith(POLICY_TERMS())); // effective 2019-01-01, full coverage
+    // v2: a forward revision effective mid-month (2019-06-15) - NOT version 1, so no inception exception applies
+    const v2 = await reviseAndActivate(v1, [{ fieldKey: "effectiveDate", decision: "CORRECTED", value: "2019-06-15" }]);
+    expect(v2.head.activeVersion).toBe(2);
+    // June straddles the v1->v2 change (v1 superseded the day before v2's effectiveFrom): neither version covers the whole month
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-06")).toBeNull();
+    expect(await getAgreementCommercialPolicy(partner.partnerRef, "2019-07")).toMatchObject({ agreementVersion: 2 });
   });
 
   it("revisions: the highest covering version wins; a same-dates correction supersedes v1 entirely; a forward revision leaves v1 governing the months BEFORE it (historical reviews keep their Agreement)", async () => {
@@ -494,6 +540,72 @@ describe("Partner Reviews picks the Agreement policy up through the provider sea
 
   const storedVersion = async (reviewRef: string, version = 1) => (await partnerReviewVersionsCollection(reviewRef).doc(String(version)).get()).data() as Record<string, any>; // eslint-disable-line @typescript-eslint/no-explicit-any
   const track = (reviewRef: string) => reviewRefs.add(reviewRef);
+
+  // Remediation-plan Wave B / finding #64 re-audit ("Step 14D"): the real, end-to-end proof that
+  // pre-effective activity does NOT get counted just because Partner Review's own evidence window
+  // used to always be the full calendar month. Two real Assignments (each with its own APPROVED
+  // thread) straddle the Agreement's mid-month effectiveFrom - only the post-effective one may count.
+  it("inception month: an Assignment/Content thread due/approved BEFORE effectiveFrom is excluded from evidence; one due/approved ON OR AFTER effectiveFrom is included - never a comment-only limitation", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+    // Pre-effective: due + approved entirely BEFORE the Agreement's 2019-02-15 effectiveFrom.
+    await seedEvidence(partner, "2019-02-10", "2019-02-09T00:00:00.000Z");
+    // Post-effective: due + approved ON/AFTER effectiveFrom, within the same calendar month.
+    await seedEvidence(partner, "2019-02-20", "2019-02-19T00:00:00.000Z");
+
+    await activeAgreement(
+      partner,
+      decisionsWith({
+        ...POLICY_TERMS(),
+        effectiveDate: { fieldKey: "effectiveDate", decision: "CORRECTED", value: "2019-02-15" },
+        terminationDate: { fieldKey: "terminationDate", decision: "UNAVAILABLE" },
+      }),
+    );
+
+    const generated = await generatePartnerReviewDraft(manager, { partnerRef: partner.partnerRef, periodKey: "2019-02" }, requestId());
+    if (!generated.ok) throw new Error(`generate: ${generated.code} ${generated.message}`);
+    const reviewRef = generated.data.review.head.reviewRef;
+    track(reviewRef);
+    const stored = await storedVersion(reviewRef);
+
+    // requiredCount stays the Agreement's FULL, unscaled monthly figure (2) - never day-scaled.
+    // actualQualifyingCount is exactly 1: the post-effective thread only. If the pre-effective one
+    // had leaked in (the pre-fix behavior - full calendar month, unnarrowed), this would be 2.
+    expect(stored.snapshot.commercial.monthlyDeliverable).toMatchObject({ requiredCount: 2, actualQualifyingCount: 1, evaluation: "below_requirement" });
+    // The evidence snapshot's OWN periodStart honestly reflects the narrowed window (effectiveFrom),
+    // never claiming the full month was scanned - the review's own head/version period identity
+    // (periodKey/periodStart/periodEnd below) stays the full calendar month regardless.
+    expect(stored.snapshot.periodStart).toBe("2019-02-15");
+    expect(stored.snapshot.periodEnd).toBe("2019-02-28");
+    expect(generated.data.review.head.periodKey).toBe("2019-02");
+  });
+
+  // Same shape as above, but the SAME two Assignments both fall in the FOLLOWING full month
+  // (2019-03) - proves this is a one-time inception exception, not a general narrowing: a normal,
+  // fully-governed month counts BOTH real Assignments, pre-effective-relative-to-inception or not.
+  it("a later, fully-governed month is NOT narrowed - both real Assignments due in that month count, exactly like before Step 14D", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+    await seedEvidence(partner, "2019-03-05", "2019-03-04T00:00:00.000Z");
+    await seedEvidence(partner, "2019-03-20", "2019-03-19T00:00:00.000Z");
+
+    await activeAgreement(
+      partner,
+      decisionsWith({
+        ...POLICY_TERMS(),
+        effectiveDate: { fieldKey: "effectiveDate", decision: "CORRECTED", value: "2019-02-15" },
+        terminationDate: { fieldKey: "terminationDate", decision: "UNAVAILABLE" },
+      }),
+    );
+
+    const generated = await generatePartnerReviewDraft(manager, { partnerRef: partner.partnerRef, periodKey: "2019-03" }, requestId());
+    if (!generated.ok) throw new Error(`generate: ${generated.code} ${generated.message}`);
+    track(generated.data.review.head.reviewRef);
+    const stored = await storedVersion(generated.data.review.head.reviewRef);
+    expect(stored.snapshot.commercial.monthlyDeliverable).toMatchObject({ requiredCount: 2, actualQualifyingCount: 2, evaluation: "met" });
+    // no narrowing for a fully-governed month - periodStart is the calendar month's own 1st
+    expect(stored.snapshot.periodStart).toBe("2019-03-01");
+  });
 
   it("generate: governingAgreement + the required count + explicit LFC/SFC + warning-only targets; a new governing version changes the fingerprint and provenance; generate / refresh / submit / finalize / handoff write NOTHING to Finance", async () => {
     const manager = await actorFor("partnership_manager");

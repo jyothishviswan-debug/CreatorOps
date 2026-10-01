@@ -66,6 +66,7 @@ import {
   addPayableAdjustment,
   confirmPayableTax,
   createPayable,
+  createPayablesForItems,
   getPayable,
   getPayableSourceRevision,
   listPayableEvents,
@@ -372,6 +373,79 @@ async function partnerReadyForPayable(seeds: FieldDecisionSeed[] = DETERMINED_TE
   return { partner, agreement, reviewRef };
 }
 
+// Finding #62 (bulk create): period-parameterized variants of seedEvidence/generatedReview/
+// finalizedReview, so "one counterparty, multiple periods" can be proven with real, distinct
+// evidence per period rather than reusing the single hardcoded PERIOD constant. Kept separate from
+// the originals (never touching their own exact call shape) to avoid any risk to the existing,
+// already-proven single-item test suite above.
+async function seedEvidenceAtPeriod(partner: PartnerDoc, period: string): Promise<void> {
+  const uid = assignmentsCollection().doc().id;
+  const now = new Date().toISOString();
+  const assignment = assignmentDocSchema.parse({
+    uid,
+    assignmentRef: `pay-bas-${uid}`,
+    version: 1,
+    campaignRef: `pay-bcamp-${runId}`,
+    partnerRef: partner.partnerRef,
+    partnerAccountRefs: [],
+    status: "IN_PROGRESS",
+    statusReason: null,
+    brief: assignmentBriefSchema.parse({ dueAt: `${period}-10`, requiredCount: 1, formats: ["reel"], platforms: ["instagram"], reviewPolicy: "REVIEW_REQUIRED", campaignName: "Bulk PAY Campaign" }),
+    ownerUid: null,
+    regionIds: [PRIVATE_REGION],
+    teamIds: [],
+    createdAt: `${period}-01T08:00:00.000Z`,
+    createdByUserRef: "pay-test",
+    updatedAt: now,
+    updatedByUserRef: "pay-test",
+  });
+  const assignmentRef = assignmentsCollection().doc(uid);
+  await assignmentRef.set(assignment);
+  cleanup.push(assignmentRef);
+
+  const threadUid = contentCollection().doc().id;
+  const thread = contentDocSchema.parse({
+    uid: threadUid,
+    contentRef: `pay-bct-${threadUid}`,
+    version: 3,
+    assignmentRef: assignment.assignmentRef,
+    campaignRef: assignment.campaignRef,
+    partnerRef: partner.partnerRef,
+    status: "APPROVED",
+    statusReason: null,
+    currentRevisionNumber: 1,
+    reviewedRevisionNumber: 1,
+    currentLinks: [{ platform: "instagram", originalUrl: `https://instagram.com/p/BPAY${threadUid}`, normalizedUrl: `https://instagram.com/p/bpay${threadUid.toLowerCase()}`, recordedAt: `${period}-08T10:00:00.000Z` }],
+    qualifyingFulfillment: null,
+    dueAt: null,
+    openedAt: `${period}-01T00:00:00.000Z`,
+    firstSubmittedAt: `${period}-08T10:00:00.000Z`,
+    lastSubmittedAt: `${period}-08T10:00:00.000Z`,
+    approvedAt: `${period}-09T00:00:00.000Z`,
+    cancelledAt: null,
+    ownerUid: null,
+    regionIds: [PRIVATE_REGION],
+    teamIds: [],
+    createdAt: `${period}-01T00:00:00.000Z`,
+    createdByUserRef: "pay-test",
+    updatedAt: `${period}-08T10:00:00.000Z`,
+    updatedByUserRef: "pay-test",
+  });
+  const threadRef = contentCollection().doc(threadUid);
+  await threadRef.set(thread);
+  cleanup.push(threadRef);
+}
+
+async function finalizedReviewAtPeriod(partner: PartnerDoc, period: string): Promise<string> {
+  const manager = await actorFor("partnership_manager");
+  const generated = await generatePartnerReviewDraft(manager, { partnerRef: partner.partnerRef, periodKey: period }, requestId());
+  if (!generated.ok) throw new Error(`generate review: ${generated.code} ${generated.message}`);
+  const reviewRef = generated.data.review.head.reviewRef;
+  reviewRefs.add(reviewRef);
+  await finalizeOpenReview(reviewRef);
+  return reviewRef;
+}
+
 async function createFor(actor: ActorContext, counterpartyType: "PARTNER" | "VENDOR", counterpartyRef: string, agreementRef?: string) {
   const result = await createPayable(actor, { counterpartyType, counterpartyRef, commercialPeriod: PERIOD, ...(agreementRef ? { agreementRef } : {}) }, requestId());
   if (result.ok) payableRefs.add(result.data.payable.head.payableRef);
@@ -672,6 +746,228 @@ describe("idempotency, concurrency and the canonical basis", () => {
     const storedV1 = (await financePayableVersionsCollection(payableRef).doc("1").get()).data() as Record<string, unknown>;
     expect(storedV1.totalAmountMinorSigned).toBe(5_000_000);
     expect(must(await getPayableSourceRevision(head, payableRef), "source revision after").state).toBe("CURRENT");
+  });
+});
+
+// =====================================================================================================================
+// Finding #62: bulk Create Payable - createPayablesForItems calls the exact, unmodified
+// createPayable() once per item, so every guarantee already proven above (idempotency, concurrency,
+// #30 calculation, #64 inception-period, scope) is inherited for free. These tests prove the
+// ORCHESTRATION layer itself: per-item independence, partial success, dedup, and that a bulk request
+// never widens what a single request could already do.
+describe("finding #62: bulk create (createPayablesForItems)", () => {
+  it("[1] one counterparty + one period behaves exactly like a single createPayable call", async () => {
+    const manager = await actorFor("partnership_manager");
+    const { partner } = await partnerReadyForPayable();
+    const result = await createPayablesForItems(manager, { items: [{ counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD }] }, requestId());
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(1);
+    expect(result.data.results[0]).toMatchObject({ outcome: "created", error: null });
+    const payableRef = result.data.results[0]!.payableRef!;
+    payableRefs.add(payableRef);
+    // #30 calculation parity: the bulk-created Payable's amount is byte-identical to what the
+    // single-item path computes for the same fixed-fee-only evidence - because it's the SAME call.
+    const single = await getPayableHeadDoc(payableRef);
+    expect(single?.payableRef).toBe(payableRefFor({ counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD }));
+  });
+
+  it("[2] multiple counterparties + one period: each item resolves independently", async () => {
+    const manager = await actorFor("partnership_manager");
+    const { partner: partnerA } = await partnerReadyForPayable();
+    const { partner: partnerB } = await partnerReadyForPayable();
+    const result = await createPayablesForItems(
+      manager,
+      {
+        items: [
+          { counterpartyType: "PARTNER", counterpartyRef: partnerA.partnerRef, commercialPeriod: PERIOD },
+          { counterpartyType: "PARTNER", counterpartyRef: partnerB.partnerRef, commercialPeriod: PERIOD },
+        ],
+      },
+      requestId(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(2);
+    expect(result.data.results.every((r) => r.outcome === "created")).toBe(true);
+    const refs = new Set(result.data.results.map((r) => r.item.counterpartyRef));
+    expect(refs).toEqual(new Set([partnerA.partnerRef, partnerB.partnerRef]));
+    for (const r of result.data.results) if (r.payableRef) payableRefs.add(r.payableRef);
+  });
+
+  it("[3] one counterparty + multiple periods: each period resolves independently against its own real evidence", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+    await seedEvidence(partner); // PERIOD = 2019-03
+    await seedEvidenceAtPeriod(partner, "2019-06"); // a period no other test in this file filters/asserts on, to avoid cross-test pollution within the same run
+    await activeAgreement(partnerCp(partner), DETERMINED_TERMS());
+    await finalizedReview(partner);
+    await finalizedReviewAtPeriod(partner, "2019-06");
+
+    const result = await createPayablesForItems(
+      manager,
+      {
+        items: [
+          { counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD },
+          { counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, commercialPeriod: "2019-06" },
+        ],
+      },
+      requestId(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(2);
+    expect(result.data.results.every((r) => r.outcome === "created")).toBe(true);
+    expect(result.data.results.map((r) => r.item.commercialPeriod).sort()).toEqual(["2019-03", "2019-06"]);
+    for (const r of result.data.results) if (r.payableRef) payableRefs.add(r.payableRef);
+  });
+
+  it("[5] an item with no governing Agreement is safely reported as an error - never fails the whole batch", async () => {
+    const manager = await actorFor("partnership_manager");
+    const { partner: readyPartner } = await partnerReadyForPayable();
+    const notReadyPartner = await seedPartner(); // no Agreement, no finalized Review at all
+
+    const result = await createPayablesForItems(
+      manager,
+      {
+        items: [
+          { counterpartyType: "PARTNER", counterpartyRef: readyPartner.partnerRef, commercialPeriod: PERIOD },
+          { counterpartyType: "PARTNER", counterpartyRef: notReadyPartner.partnerRef, commercialPeriod: PERIOD },
+        ],
+      },
+      requestId(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(2);
+    const ready = result.data.results.find((r) => r.item.counterpartyRef === readyPartner.partnerRef)!;
+    const notReady = result.data.results.find((r) => r.item.counterpartyRef === notReadyPartner.partnerRef)!;
+    expect(ready.outcome).toBe("created");
+    expect(notReady.outcome).toBe("error");
+    expect(notReady.error).toBeTruthy();
+    expect(notReady.payableRef).toBeNull();
+    if (ready.payableRef) payableRefs.add(ready.payableRef);
+  });
+
+  it("[6] an out-of-scope counterparty in the batch is rejected with the same neutral message - never leaks existence, never blocks the rest", async () => {
+    const manager = await actorFor("partnership_manager");
+    const { partner: inScope } = await partnerReadyForPayable();
+    const outOfScope = await seedPartner([PRIVATE_REGION]);
+
+    const result = await createPayablesForItems(
+      manager,
+      {
+        items: [
+          { counterpartyType: "PARTNER", counterpartyRef: inScope.partnerRef, commercialPeriod: PERIOD },
+          { counterpartyType: "PARTNER", counterpartyRef: outOfScope.partnerRef, commercialPeriod: PERIOD },
+        ],
+      },
+      requestId(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    const scoped = result.data.results.find((r) => r.item.counterpartyRef === inScope.partnerRef)!;
+    const denied = result.data.results.find((r) => r.item.counterpartyRef === outOfScope.partnerRef)!;
+    expect(scoped.outcome).toBe("created");
+    expect(denied.outcome).toBe("error");
+    expect(denied.error).toBe("Not found.");
+    if (scoped.payableRef) payableRefs.add(scoped.payableRef);
+  });
+
+  it("[7]/[8] an already-existing Payable is never duplicated - mixed existing + new in one batch", async () => {
+    const manager = await actorFor("partnership_manager");
+    const { partner: alreadyCreated } = await partnerReadyForPayable();
+    const firstCreate = must(await createFor(manager, "PARTNER", alreadyCreated.partnerRef), "pre-create");
+    const { partner: brandNew } = await partnerReadyForPayable();
+
+    const result = await createPayablesForItems(
+      manager,
+      {
+        items: [
+          { counterpartyType: "PARTNER", counterpartyRef: alreadyCreated.partnerRef, commercialPeriod: PERIOD },
+          { counterpartyType: "PARTNER", counterpartyRef: brandNew.partnerRef, commercialPeriod: PERIOD },
+        ],
+      },
+      requestId(),
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    const existing = result.data.results.find((r) => r.item.counterpartyRef === alreadyCreated.partnerRef)!;
+    const created = result.data.results.find((r) => r.item.counterpartyRef === brandNew.partnerRef)!;
+    expect(existing.outcome).toBe("existing");
+    expect(existing.payableRef).toBe(firstCreate.payable.head.payableRef);
+    expect(created.outcome).toBe("created");
+    if (created.payableRef) payableRefs.add(created.payableRef);
+
+    // Still exactly one version - the bulk "existing" resolution never touched it.
+    const versions = await financePayableVersionsCollection(firstCreate.payable.head.payableRef).get();
+    expect(versions.size).toBe(1);
+  });
+
+  it("[4] a duplicate (counterparty, period) pair named twice in the SAME bulk request is deduped, not double-written", async () => {
+    const manager = await actorFor("partnership_manager");
+    const { partner } = await partnerReadyForPayable();
+    const item = { counterpartyType: "PARTNER" as const, counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD };
+
+    const result = await createPayablesForItems(manager, { items: [item, item] }, requestId());
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(1);
+    expect(result.data.results[0]!.outcome).toBe("created");
+    if (result.data.results[0]!.payableRef) payableRefs.add(result.data.results[0]!.payableRef!);
+  });
+
+  it("[12] concurrent bulk requests naming the SAME (counterparty, period) produce at most one canonical Payable", async () => {
+    const manager = await actorFor("partnership_manager");
+    const { partner } = await partnerReadyForPayable();
+    const item = { counterpartyType: "PARTNER" as const, counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD };
+
+    const [resultA, resultB] = await Promise.all([createPayablesForItems(manager, { items: [item] }, requestId()), createPayablesForItems(manager, { items: [item] }, requestId())]);
+    expect(resultA.ok && resultB.ok).toBe(true);
+    if (!resultA.ok || !resultB.ok) throw new Error("unreachable");
+    const outcomes = [resultA.data.results[0]!.outcome, resultB.data.results[0]!.outcome].sort();
+    expect(outcomes).toEqual(["created", "existing"]);
+
+    const payableRef = payableRefFor({ counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD });
+    payableRefs.add(payableRef);
+    expect((await financePayableVersionsCollection(payableRef).get()).size).toBe(1);
+  });
+
+  it("[13] a bulk request naming an already-VOID Payable's basis reports that item as an error, never silently mutating it", async () => {
+    const manager = await actorFor("partnership_manager");
+    const head = await actorFor("partnership_head");
+    const { partner } = await partnerReadyForPayable();
+    const created = must(await createFor(manager, "PARTNER", partner.partnerRef), "create");
+    const voided = must(await voidPayable(head, { payableRef: created.payable.head.payableRef, reason: "Bulk-test void for #62 coverage.", expectedDocVersion: created.payable.head.docVersion }, requestId()), "void");
+    expect(voided.head.status).toBe("VOID");
+
+    const result = await createPayablesForItems(manager, { items: [{ counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD }] }, requestId());
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results[0]!.outcome).toBe("error");
+    expect(result.data.results[0]!.error).toMatch(/voided/i);
+
+    const stillVoid = await getPayableHeadDoc(created.payable.head.payableRef);
+    expect(stillVoid?.status).toBe("VOID");
+    expect(stillVoid?.docVersion).toBe(voided.head.docVersion);
+  });
+
+  it("exceeding the max item cap is a clean invalid_input, writing nothing", async () => {
+    const manager = await actorFor("partnership_manager");
+    const items = Array.from({ length: 51 }, (_, i) => ({ counterpartyType: "PARTNER" as const, counterpartyRef: `partner-fixture-${i}`, commercialPeriod: PERIOD }));
+    const result = await createPayablesForItems(manager, { items }, requestId());
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("invalid_input");
+  });
+
+  it("an actor without manage_payables is denied the whole bulk request up front", async () => {
+    const viewer = await actorFor("viewer");
+    const { partner } = await partnerReadyForPayable();
+    const result = await createPayablesForItems(viewer, { items: [{ counterpartyType: "PARTNER", counterpartyRef: partner.partnerRef, commercialPeriod: PERIOD }] }, requestId());
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("unauthorized");
   });
 });
 

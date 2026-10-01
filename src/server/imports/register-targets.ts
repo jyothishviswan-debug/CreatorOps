@@ -1,4 +1,5 @@
 import { registerAnalyticsImportTarget } from "@/server/analytics/import-service";
+import { registerContentLinkImportTarget } from "./content-link-import";
 import { registerContractBundleImportTarget } from "./contract-bundle-import";
 
 // Step 12A / Import Center Completion: registers every real Import
@@ -9,4 +10,6 @@ import { registerContractBundleImportTarget } from "./contract-bundle-import";
 export function registerImportTargets(): void {
   registerAnalyticsImportTarget();
   registerContractBundleImportTarget();
+  // Finding #44 (user-decided): Manager-recorded content links, bulk.
+  registerContentLinkImportTarget();
 }

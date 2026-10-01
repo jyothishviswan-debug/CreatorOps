@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { QUALIFYING_UNIT_SELECT_OPTIONS, mapQualifyingUnit, qualifyingPairIssue } from "./qualifying-unit";
+import { mapQualifyingUnit, qualifyingPairIssue, qualifyingUnitSelectOptions } from "./qualifying-unit";
 
 describe("mapQualifyingUnit", () => {
-  it("accepts exactly the two supported units with their human labels", () => {
-    expect(mapQualifyingUnit("approved_content_thread")).toEqual({ state: "SUPPORTED", value: "approved_content_thread", label: "Approved Content" });
-    expect(mapQualifyingUnit("approved_current_link")).toEqual({ state: "SUPPORTED", value: "approved_current_link", label: "Approved current link" });
+  it("accepts the current unit and the two legacy units (backward compat) with their human labels", () => {
+    expect(mapQualifyingUnit("qualifying_analytics_post")).toEqual({ state: "SUPPORTED", value: "qualifying_analytics_post", label: "Monthly required posts/content" });
+    expect(mapQualifyingUnit("approved_content_thread")).toEqual({ state: "SUPPORTED", value: "approved_content_thread", label: "Approved Content (legacy)" });
+    expect(mapQualifyingUnit("approved_current_link")).toEqual({ state: "SUPPORTED", value: "approved_current_link", label: "Approved current link (legacy)" });
   });
 
   it("NEVER silently maps unsupported wording: it is kept as written and marked Needs mapping", () => {
@@ -20,17 +21,40 @@ describe("mapQualifyingUnit", () => {
   });
 });
 
-describe("the dropdown", () => {
-  it("offers only the two supported units (no free text)", () => {
-    expect(QUALIFYING_UNIT_SELECT_OPTIONS).toEqual([
-      { value: "approved_content_thread", label: "Approved Content" },
-      { value: "approved_current_link", label: "Approved current link" },
+// Findings #30/#66 (user-decided): the confirmation control never offers a technical choice between
+// internal implementation concepts - a new/unset/already-current field sees exactly ONE option; only a
+// field already confirmed on a LEGACY unit additionally keeps its own existing option present (so an
+// existing value is never silently blanked out), and that legacy option is never offered to anything else.
+describe("qualifyingUnitSelectOptions - the confirmation control's own options", () => {
+  it("a brand-new/unset field sees exactly one option: the current unit", () => {
+    expect(qualifyingUnitSelectOptions(null)).toEqual([{ value: "qualifying_analytics_post", label: "Monthly required posts/content" }]);
+    expect(qualifyingUnitSelectOptions(undefined)).toEqual([{ value: "qualifying_analytics_post", label: "Monthly required posts/content" }]);
+    expect(qualifyingUnitSelectOptions("")).toEqual([{ value: "qualifying_analytics_post", label: "Monthly required posts/content" }]);
+  });
+
+  it("a field already on the current unit still sees exactly one option (itself) - never a legacy choice", () => {
+    expect(qualifyingUnitSelectOptions("qualifying_analytics_post")).toEqual([{ value: "qualifying_analytics_post", label: "Monthly required posts/content" }]);
+  });
+
+  it("a field already confirmed on a legacy unit keeps its OWN existing option present, alongside the current one - never blanked", () => {
+    expect(qualifyingUnitSelectOptions("approved_content_thread")).toEqual([
+      { value: "qualifying_analytics_post", label: "Monthly required posts/content" },
+      { value: "approved_content_thread", label: "Approved Content (legacy)" },
     ]);
+    expect(qualifyingUnitSelectOptions("approved_current_link")).toEqual([
+      { value: "qualifying_analytics_post", label: "Monthly required posts/content" },
+      { value: "approved_current_link", label: "Approved current link (legacy)" },
+    ]);
+  });
+
+  it("an unrecognized wording extracted from a contract is never offered as its own option (a free-text noun is never selectable)", () => {
+    expect(qualifyingUnitSelectOptions("reel")).toEqual([{ value: "qualifying_analytics_post", label: "Monthly required posts/content" }]);
   });
 });
 
 describe("qualifyingPairIssue - count and unit go together", () => {
   it("is fine when both are stated (supported unit) or neither", () => {
+    expect(qualifyingPairIssue(4, "qualifying_analytics_post")).toBeNull();
     expect(qualifyingPairIssue(4, "approved_content_thread")).toBeNull();
     expect(qualifyingPairIssue(0, "approved_current_link")).toBeNull();
     expect(qualifyingPairIssue(null, null)).toBeNull();

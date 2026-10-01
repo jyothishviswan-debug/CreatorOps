@@ -87,7 +87,14 @@ export type CampaignCriteria = z.infer<typeof campaignCriteriaSchema>;
 // UI entirely and keeps this to safe metadata: a label/type/URL/
 // description, never a secret, never restricted identity, never an
 // Agreement contract file.
-export const CAMPAIGN_RESOURCE_TYPES = ["LINK", "DOCUMENT", "BRIEF", "ASSET", "OTHER"] as const;
+// Findings #36/#37 (user-decided): the current, real set is exactly Link / Upload / Text. The legacy
+// DOCUMENT/BRIEF/ASSET/OTHER values stay in the READ schema below (campaignResourceSchema is .strict(),
+// so removing an enum value outright would fail every already-stored Campaign with a resource of one of
+// those types - the same silent-"not found" consequence documented on campaignCriteriaSchema for finding
+// #32). Only the CREATE-input schema (campaign-service.ts's addResourceInputSchema) is narrowed to the 3
+// current values - old resources of a legacy type stay readable/displayable, never newly creatable.
+export const CAMPAIGN_RESOURCE_TYPES = ["LINK", "UPLOAD", "TEXT", "DOCUMENT", "BRIEF", "ASSET", "OTHER"] as const;
+export const CAMPAIGN_RESOURCE_CURRENT_TYPES = ["LINK", "UPLOAD", "TEXT"] as const;
 export const campaignResourceTypeSchema = z.enum(CAMPAIGN_RESOURCE_TYPES);
 export type CampaignResourceType = z.infer<typeof campaignResourceTypeSchema>;
 
@@ -96,7 +103,15 @@ export const campaignResourceSchema = z
     resourceRef: z.string().min(1),
     label: z.string().min(1).max(200),
     type: campaignResourceTypeSchema,
-    url: z.string().min(1).max(1000),
+    // Used for LINK (external URL) and UPLOAD (the storage-returned webViewLink) - never for TEXT,
+    // which has no URL at all and carries its body in `content` instead. Widened from required to
+    // optional for this finding (safe/backward-compatible - every already-stored LINK/legacy resource
+    // already has a real value here, this only permits a TEXT resource to omit it); "required for
+    // LINK/UPLOAD, forbidden for TEXT" is enforced at the write path (addResourceInputSchema), not here.
+    url: z.string().min(1).max(1000).optional(),
+    // New, optional field (safe to add to a .strict() schema - old docs simply won't have it) - TEXT's
+    // own plain-text body.
+    content: z.string().min(1).max(4000).nullable().default(null),
     description: z.string().min(1).max(1000).nullable().default(null),
     addedAt: z.string().min(1),
     addedByUserRef: z.string().min(1),

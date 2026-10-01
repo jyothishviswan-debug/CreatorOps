@@ -14,6 +14,8 @@ import type { ContentListCursor } from "@/server/content/firestore";
 import { CONTENT_STATUSES, type ContentStatus } from "@/server/content/types";
 import { listContent } from "./api-client";
 import { contentDisplayTitle, platformLabel, STATUS_LABELS, statusTone } from "./format";
+import { decideNextAction } from "./workflow";
+import { ContentReviewDialog } from "./ContentReviewDialog";
 
 const PAGE_SIZE = 10;
 
@@ -30,11 +32,24 @@ const PAGE_SIZE = 10;
 // Content, so this filters the CURRENTLY-LOADED, already-authorized page
 // only (zero extra reads), against title/type/platform/partner/campaign/
 // region context already present on the fetched ContentDto rows.
-export function ContentWorkspace({ initialContent, initialNextCursor }: { initialContent: ContentDto[]; initialNextCursor: ContentListCursor | null }) {
+export function ContentWorkspace({
+  initialContent,
+  initialNextCursor,
+  actorCanReview,
+}: {
+  initialContent: ContentDto[];
+  initialNextCursor: ContentListCursor | null;
+  actorCanReview: boolean;
+}) {
   const router = useRouter();
   const [pages, setPages] = useState<ContentDto[][]>([initialContent]);
   const [nextCursors, setNextCursors] = useState<(ContentListCursor | null)[]>([initialNextCursor]);
   const [currentPage, setCurrentPage] = useState(1);
+  // Finding #46: the row Approve quick-action opens this SAME dialog
+  // (never a second/blind backend path - content-lifecycle-service.ts's
+  // approveContentThread is the one canonical approval function, reused
+  // identically by the detail page's ContentNextActionPanel).
+  const [reviewTarget, setReviewTarget] = useState<ContentDto | null>(null);
 
   const [searchInput, setSearchInput] = useState("");
   const [status, setStatus] = useState<ContentStatus | "all">("all");
@@ -100,6 +115,13 @@ export function ContentWorkspace({ initialContent, initialNextCursor }: { initia
     router.push(`/content/${contentRef}`);
   }
 
+  // Finding #46: refreshes the row (and the currently loaded page's data)
+  // in place from the dialog's own result, without a hard reload - same
+  // ContentDto shape the detail page's onSaved callback already receives.
+  function handleReviewSaved(updated: ContentDto) {
+    setPages((prev) => prev.map((page) => page.map((c) => (c.contentRef === updated.contentRef ? updated : c))));
+  }
+
   function clearFilters() {
     setSearchInput("");
     if (status !== "all") refetchForStatus("all");
@@ -159,9 +181,9 @@ export function ContentWorkspace({ initialContent, initialNextCursor }: { initia
           }
         />
       ) : layout === "cards" ? (
-        <RecordCards rows={rows} onOpen={openContent} compact={density} />
+        <RecordCards rows={rows} onOpen={openContent} onApprove={actorCanReview ? setReviewTarget : undefined} compact={density} />
       ) : (
-        <RecordTable rows={rows} onOpen={openContent} compact={density} />
+        <RecordTable rows={rows} onOpen={openContent} onApprove={actorCanReview ? setReviewTarget : undefined} compact={density} />
       )}
 
       <div className="panelfoot">
@@ -170,8 +192,23 @@ export function ContentWorkspace({ initialContent, initialNextCursor }: { initia
         </span>
         <Pager currentPage={currentPage} knownPages={pages.length} hasMore={hasMore} busy={loading} onChange={goToPage} />
       </div>
+
+      {reviewTarget && (
+        <ContentReviewDialog content={reviewTarget} open={true} onClose={() => setReviewTarget(null)} onSaved={handleReviewSaved} />
+      )}
     </section>
   );
+}
+
+// Finding #46: lifecycle eligibility mirrors the detail page's own
+// decideNextAction gate exactly (only true for UNDER_REVIEW, i.e. the
+// same "review_submission" outcome when actorCanReview is true) - no
+// reviewable Content, already-terminal, and lifecycle-disallowed rows all
+// fall through to no button. Permission itself is the separate
+// actorCanReview gate threaded from the page (onApprove is only passed
+// down to these row renderers when actorCanReview is true).
+function canQuickApprove(c: ContentDto): boolean {
+  return decideNextAction(c, true) === "review_submission";
 }
 
 function recordLabel(c: ContentDto): string {
@@ -188,7 +225,17 @@ function contextLabel(c: ContentDto): string {
   return `${c.currentLinks.length} ${linkWord} · rev ${c.currentRevisionNumber}`;
 }
 
-function RecordCards({ rows, onOpen, compact }: { rows: ContentDto[]; onOpen: (contentRef: string) => void; compact: boolean }) {
+function RecordCards({
+  rows,
+  onOpen,
+  onApprove,
+  compact,
+}: {
+  rows: ContentDto[];
+  onOpen: (contentRef: string) => void;
+  onApprove?: (content: ContentDto) => void;
+  compact: boolean;
+}) {
   return (
     <div className="recordgrid">
       {rows.map((c) => (
@@ -200,8 +247,13 @@ function RecordCards({ rows, onOpen, compact }: { rows: ContentDto[]; onOpen: (c
               {!compact && <small>{c.partnerDisplayName ?? "Unknown Partner"}</small>}
             </span>
           </button>
-          <div style={{ marginTop: 13 }}>
+          <div style={{ marginTop: 13, display: "flex", alignItems: "center", gap: 8 }}>
             <Pill tone={statusTone(c.status)}>{STATUS_LABELS[c.status]}</Pill>
+            {onApprove && canQuickApprove(c) && (
+              <button type="button" className="btn primary" style={{ marginLeft: "auto" }} onClick={() => onApprove(c)} data-testid={`row-approve-${c.contentRef}`}>
+                Approve
+              </button>
+            )}
           </div>
           <div className="recordmeta">
             <span>{c.regionIds[0] ?? "No region"}</span>
@@ -213,7 +265,17 @@ function RecordCards({ rows, onOpen, compact }: { rows: ContentDto[]; onOpen: (c
   );
 }
 
-function RecordTable({ rows, onOpen, compact }: { rows: ContentDto[]; onOpen: (contentRef: string) => void; compact: boolean }) {
+function RecordTable({
+  rows,
+  onOpen,
+  onApprove,
+  compact,
+}: {
+  rows: ContentDto[];
+  onOpen: (contentRef: string) => void;
+  onApprove?: (content: ContentDto) => void;
+  compact: boolean;
+}) {
   return (
     <div className="tablewrap">
       <table className={compact ? "compact" : ""}>
@@ -248,7 +310,12 @@ function RecordTable({ rows, onOpen, compact }: { rows: ContentDto[]; onOpen: (c
               <td>{contextLabel(c)}</td>
               <td>{c.regionIds[0] ?? "—"}</td>
               <td>{c.ownerDisplayName ?? "Unassigned"}</td>
-              <td>
+              <td style={{ display: "flex", gap: 6, justifyContent: "flex-end" }}>
+                {onApprove && canQuickApprove(c) && (
+                  <button type="button" className="btn primary" onClick={() => onApprove(c)} data-testid={`row-approve-${c.contentRef}`}>
+                    Approve
+                  </button>
+                )}
                 <button className="iconbutton" aria-label={`Inspect ${recordLabel(c)}`} type="button" onClick={() => onOpen(c.contentRef)}>
                   &rsaquo;
                 </button>

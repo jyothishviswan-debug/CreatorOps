@@ -88,12 +88,12 @@ export type ActorEvidenceThread = Omit<EvidenceThread, "contentRef" | "links"> &
   redactedContext: RedactionMarker[];
 };
 
-export type ActorProductionAssignment = Omit<EvidenceProductionAssignment, "assignmentRef" | "campaignRef" | "campaignName" | "thread"> & {
+export type ActorProductionAssignment = Omit<EvidenceProductionAssignment, "assignmentRef" | "campaignRef" | "campaignName" | "threads"> & {
   itemKey: string;
   assignmentRef: string | null;
   campaignRef: string | null;
   campaignName: string | null;
-  thread: ActorEvidenceThread | null;
+  threads: ActorEvidenceThread[];
   redactedContext: RedactionMarker[];
 };
 
@@ -122,10 +122,11 @@ export type ActorPerformanceRecord = Omit<EvidencePerformanceRecord, "sourceReco
 // Commercial evidence as an actor sees it: same results, source-record refs
 // gated. `itemKey` is the SAME per-response key as the Assignment's
 // Production/Compliance rows, so a caller can pair them.
-export type ActorCountUnit = Omit<EvidenceCountUnit, "assignmentRef" | "contentRef"> & {
+export type ActorCountUnit = Omit<EvidenceCountUnit, "assignmentRef" | "contentRef" | "sourceRecordRef"> & {
   itemKey: string;
   assignmentRef: string | null;
   contentRef: string | null;
+  sourceRecordRef: string | null;
   redactedContext: RedactionMarker[];
 };
 
@@ -151,7 +152,7 @@ export type ActorPolicyConflict = { reason: PolicyConflictMarker["reason"]; conf
 export type ActorCommercialEvidence = Omit<CommercialEvidence, "monthlyDeliverable" | "lfcSfc" | "targets" | "policyConflict"> & {
   policyConflict?: ActorPolicyConflict;
   monthlyDeliverable: Omit<EvidenceMonthlyDeliverable, "actualCountSources"> & {
-    actualCountSources: { sourceType: "content_thread" | "content_link"; units: ActorCountUnit[] } | null;
+    actualCountSources: { sourceType: "content_thread" | "content_link" | "analytics_post"; units: ActorCountUnit[] } | null;
   };
   lfcSfc: Omit<EvidenceLfcSfc, "units"> & { units: ActorLfcSfcUnit[] };
   targets: ActorEvidenceTarget[];
@@ -186,19 +187,23 @@ export function collectSnapshotSourceRefs(snapshot: EvidenceSnapshot): SnapshotS
   for (const item of snapshot.production.assignments) {
     assignments.add(item.assignmentRef);
     campaigns.add(item.campaignRef);
-    if (item.thread) contents.add(item.thread.contentRef);
+    for (const thread of item.threads) contents.add(thread.contentRef);
   }
   for (const item of snapshot.compliance.assignments) assignments.add(item.assignmentRef);
   for (const record of snapshot.performance.records) analyticsRecords.add(record.sourceRecordRef);
   // Commercial evidence names the units it counted and the records it read
   // (incl. channel snapshot records, which live in the same Analytics scope).
   const commercial = commercialOrNeutral(snapshot);
+  // Finding #30: a content_thread/content_link unit names an assignmentRef/contentRef; an
+  // analytics_post unit (never both) names a sourceRecordRef instead - each is added to its own ref
+  // bucket, exactly one of which is populated per unit.
   for (const unit of commercial.monthlyDeliverable.actualCountSources?.units ?? []) {
-    assignments.add(unit.assignmentRef);
-    contents.add(unit.contentRef);
+    if (unit.assignmentRef) assignments.add(unit.assignmentRef);
+    if (unit.contentRef) contents.add(unit.contentRef);
+    if (unit.sourceRecordRef) analyticsRecords.add(unit.sourceRecordRef);
   }
   for (const unit of commercial.lfcSfc.units) {
-    assignments.add(unit.assignmentRef);
+    if (unit.assignmentRef) assignments.add(unit.assignmentRef);
     if (unit.contentRef) contents.add(unit.contentRef);
   }
   for (const target of commercial.targets) for (const ref of target.provenance.refs) analyticsRecords.add(ref);
@@ -243,12 +248,19 @@ function redactProduction(item: EvidenceProductionAssignment, itemKey: string, a
   // independently - an accessible Assignment under an inaccessible
   // Campaign shows the Assignment but not the Campaign).
   const campaignAccessible = assignmentAccessible && access.campaigns.has(item.campaignRef);
-  const contentAccessible = item.thread ? access.contents.has(item.thread.contentRef) : true;
+  // Finding #50 (reopened): content accessibility is now per-THREAD - an
+  // Assignment can carry several records, and access is checked
+  // independently for each one (today Content access is Partner-scoped,
+  // so in practice every thread of an accessible Assignment shares the
+  // same answer, but this stays structurally correct if that ever
+  // changes). The Assignment-level "content" redaction marker fires if
+  // ANY of its threads is inaccessible.
+  const threadAccessibility = item.threads.map((thread) => access.contents.has(thread.contentRef));
 
   const redactedContext: RedactionMarker[] = [];
   if (!assignmentAccessible) redactedContext.push(marker("assignment"));
   if (!campaignAccessible) redactedContext.push(marker("campaign"));
-  if (item.thread && !contentAccessible) redactedContext.push(marker("content"));
+  if (threadAccessibility.some((accessible) => !accessible)) redactedContext.push(marker("content"));
 
   return {
     itemKey,
@@ -265,7 +277,7 @@ function redactProduction(item: EvidenceProductionAssignment, itemKey: string, a
     createdAt: item.createdAt,
     completed: item.completed,
     cancelled: item.cancelled,
-    thread: item.thread ? redactThread(item.thread, contentAccessible) : null,
+    threads: item.threads.map((thread, i) => redactThread(thread, threadAccessibility[i]!)),
     redactedContext,
   };
 }
@@ -303,14 +315,28 @@ function redactPerformance(record: EvidencePerformanceRecord, itemKey: string, a
   };
 }
 
-function redactCommercial(commercial: CommercialEvidence, keyForAssignment: (assignmentRef: string) => string, access: SourceAccess): ActorCommercialEvidence {
-  const unitContext = (assignmentRef: string, contentRef: string | null): { assignmentRef: string | null; contentRef: string | null; redactedContext: RedactionMarker[] } => {
-    const assignmentAccessible = access.assignments.has(assignmentRef);
+function redactCommercial(
+  commercial: CommercialEvidence,
+  keyForAssignment: (assignmentRef: string) => string,
+  newItemKey: () => string,
+  access: SourceAccess,
+): ActorCommercialEvidence {
+  const unitContext = (assignmentRef: string | null, contentRef: string | null): { assignmentRef: string | null; contentRef: string | null; redactedContext: RedactionMarker[] } => {
+    const assignmentAccessible = assignmentRef === null ? true : access.assignments.has(assignmentRef);
     const contentAccessible = contentRef === null ? true : access.contents.has(contentRef);
     const redactedContext: RedactionMarker[] = [];
-    if (!assignmentAccessible) redactedContext.push(marker("assignment"));
-    if (!contentAccessible) redactedContext.push(marker("content"));
+    if (assignmentRef !== null && !assignmentAccessible) redactedContext.push(marker("assignment"));
+    if (contentRef !== null && !contentAccessible) redactedContext.push(marker("content"));
     return { assignmentRef: assignmentAccessible ? assignmentRef : null, contentRef: contentRef !== null && contentAccessible ? contentRef : null, redactedContext };
+  };
+
+  // Finding #30: an analytics_post unit's identity is a sourceRecordRef instead of an assignmentRef/
+  // contentRef - gated by access.analyticsRecords, the same way Performance records and target
+  // provenance refs already are.
+  const sourceRecordContext = (sourceRecordRef: string | null): { sourceRecordRef: string | null; redactedContext: RedactionMarker[] } => {
+    if (sourceRecordRef === null) return { sourceRecordRef: null, redactedContext: [] };
+    const accessible = access.analyticsRecords.has(sourceRecordRef);
+    return { sourceRecordRef: accessible ? sourceRecordRef : null, redactedContext: accessible ? [] : [marker("analytics")] };
   };
 
   const deliverable = commercial.monthlyDeliverable;
@@ -325,7 +351,18 @@ function redactCommercial(commercial: CommercialEvidence, keyForAssignment: (ass
       actualCountSources: deliverable.actualCountSources
         ? {
             sourceType: deliverable.actualCountSources.sourceType,
-            units: deliverable.actualCountSources.units.map((unit) => ({ itemKey: keyForAssignment(unit.assignmentRef), unitCount: unit.unitCount, ...unitContext(unit.assignmentRef, unit.contentRef) })),
+            units: deliverable.actualCountSources.units.map((unit) => {
+              const ctx = unitContext(unit.assignmentRef, unit.contentRef);
+              const srcCtx = sourceRecordContext(unit.sourceRecordRef);
+              return {
+                itemKey: unit.assignmentRef !== null ? keyForAssignment(unit.assignmentRef) : newItemKey(),
+                unitCount: unit.unitCount,
+                assignmentRef: ctx.assignmentRef,
+                contentRef: ctx.contentRef,
+                sourceRecordRef: srcCtx.sourceRecordRef,
+                redactedContext: [...ctx.redactedContext, ...srcCtx.redactedContext],
+              };
+            }),
           }
         : null,
     },
@@ -383,7 +420,7 @@ export function redactVersionForActor(
   const production = snapshot.production.assignments.map((item) => redactProduction(item, keyForAssignment(item.assignmentRef), access));
   const compliance = snapshot.compliance.assignments.map((item) => redactCompliance(item, keyForAssignment(item.assignmentRef), access));
   const records = snapshot.performance.records.map((record) => redactPerformance(record, newItemKey(), access));
-  const commercial = redactCommercial(commercialOrNeutral(snapshot), keyForAssignment, access);
+  const commercial = redactCommercial(commercialOrNeutral(snapshot), keyForAssignment, newItemKey, access);
 
   // The actor-facing ref list is DERIVED FROM what survived redaction, so it
   // can never name a source the response itself withholds.
@@ -394,7 +431,7 @@ export function redactVersionForActor(
   for (const item of production) {
     show("assignment", item.assignmentRef);
     show("campaign", item.campaignRef);
-    show("content", item.thread?.contentRef ?? null);
+    for (const thread of item.threads) show("content", thread.contentRef);
   }
   for (const item of compliance) show("assignment", item.assignmentRef);
   for (const record of records) show("analyticsSourceRecord", record.sourceRecordRef);

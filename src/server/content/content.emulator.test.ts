@@ -14,13 +14,14 @@
 // stays focused on Content's own domain: thread creation, scope/
 // authorization, the lifecycle table, fulfillment, cancellation, and
 // publication-identity claim adaptation).
-import { beforeAll, describe, expect, it } from "vitest";
+import * as XLSX from "xlsx";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { seedEmulatorTestUsers } from "@/server/auth/seed-users";
 import { resolveActor } from "@/server/authz/actor";
 import { seedAccessControlData, TEST_IDENTITIES } from "@/server/authz/seed-access-data";
 import type { ActorContext } from "@/server/authz/types";
-import { getAdminAuth } from "@/server/firebase/admin";
+import { getAdminAuth, getAdminFirestore } from "@/server/firebase/admin";
 import { createAssignment } from "@/server/assignments/assignment-service";
 import { transitionAssignmentLifecycle } from "@/server/assignments/assignment-lifecycle-service";
 import { getAssignmentDocByRef } from "@/server/assignments/firestore";
@@ -37,10 +38,16 @@ import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
 import { seedVendorsData } from "@/server/vendors/seed-vendors-data";
 import { evaluateAssignmentFulfillment } from "./fulfillment-service";
-import { getContentAssignmentThreadClaim } from "./firestore";
+import { contentCollection, getContentAssignmentThreadClaim } from "./firestore";
 import { getContent, getContentHistory, listContent, resolveOrCreateContentThread } from "./content-service";
 import { approveContentThread, cancelContent, requestContentRevision } from "./content-lifecycle-service";
+import { generateContentRef } from "./ids";
+import { recordContentLinksOnBehalf } from "./manager-submission-service";
+import { getImportTarget } from "@/server/imports/target-registry";
+import { registerImportTargets } from "@/server/imports/register-targets";
+import { getContentLinkImportBatchDetail, listContentLinkImportBatches } from "@/server/imports/content-link-import";
 import { seedContentData } from "./seed-content-data";
+import { contentDocSchema } from "./types";
 import type { ContentDto } from "./client-dto";
 
 const uidByRole = new Map<string, string>();
@@ -179,6 +186,47 @@ async function driveToApproved(head: ActorContext, assignmentRef: string, url = 
   return approved.data;
 }
 
+// Finding #50 (reopened) test-only helper: writes one EXTRA already-
+// APPROVED Content record directly for an Assignment, bypassing the
+// normal session-creation flow. Used ONLY to prove
+// evaluateAssignmentFulfillment's own counting logic never clamps/errors
+// on genuine over-fulfillment - the real product flow today can reach AT
+// MOST exactly requiredCount approved records (session creation is
+// correctly refused once the Assignment auto-completes), so a qualifying
+// record beyond that can only be constructed directly here; this is not
+// claiming that exact sequence is reachable through the live UI today.
+async function seedExtraApprovedContent(assignment: AssignmentDto, url: string): Promise<void> {
+  const now = new Date().toISOString();
+  const doc = contentDocSchema.parse({
+    uid: contentCollection().doc().id,
+    contentRef: generateContentRef(),
+    version: 1,
+    assignmentRef: assignment.assignmentRef,
+    campaignRef: assignment.campaignRef,
+    partnerRef: assignment.partnerRef,
+    status: "APPROVED",
+    statusReason: null,
+    currentRevisionNumber: 1,
+    reviewedRevisionNumber: 1,
+    currentLinks: [{ platform: "instagram", originalUrl: url, normalizedUrl: url, recordedAt: now }],
+    qualifyingFulfillment: { kind: "QUALIFYING_REQUIRED", reasonCode: null, determinedAt: now },
+    dueAt: null,
+    openedAt: now,
+    firstSubmittedAt: now,
+    lastSubmittedAt: now,
+    approvedAt: now,
+    cancelledAt: null,
+    ownerUid: null,
+    regionIds: assignment.regionIds,
+    teamIds: assignment.teamIds,
+    createdAt: now,
+    createdByUserRef: "req-seed-extra-approved",
+    updatedAt: now,
+    updatedByUserRef: "req-seed-extra-approved",
+  });
+  await contentCollection().doc(doc.uid).set(doc);
+}
+
 describe("Thread creation (resolveOrCreateContentThread)", () => {
   it("the first call creates a fresh OPEN thread with the Assignment's own snapshot", async () => {
     const head = await actorFor("partnership_head");
@@ -191,7 +239,7 @@ describe("Thread creation (resolveOrCreateContentThread)", () => {
     expect(thread.assignmentRef).toBe(assignment.assignmentRef);
   });
 
-  it("every subsequent call returns the SAME thread - idempotent get-or-create, never a second competing thread", async () => {
+  it("every subsequent call returns the SAME thread WHILE it is non-terminal - idempotent get-or-create, never a second competing thread", async () => {
     const head = await actorFor("partnership_head");
     const assignment = await createOperationalAssignment(head, "ASSIGNED");
     const first = await resolveOrCreateContentThread(assignment.assignmentRef, head.userRef, "req-1");
@@ -200,7 +248,39 @@ describe("Thread creation (resolveOrCreateContentThread)", () => {
     expect(second.contentRef).toBe(first.contentRef);
   });
 
-  it("the one-canonical-thread-per-Assignment claim exists and points at the created thread", async () => {
+  // Finding #50 (reopened): the whole point of restoring canonical
+  // semantics - once the current cycle closes (APPROVED or CANCELLED),
+  // the Assignment's obligation is NOT done-forever; the next call opens
+  // a genuinely new, independent record.
+  it("returns a NEW thread once the previous one reaches APPROVED, and re-points the claim at it", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS", { brief: { platforms: ["instagram"], requiredCount: 2 } });
+    const approved = await driveToApproved(head, assignment.assignmentRef);
+    expect(approved.status).toBe("APPROVED");
+
+    const next = await resolveOrCreateContentThread(assignment.assignmentRef, head.userRef, "req-next");
+    expect(next.contentRef).not.toBe(approved.contentRef);
+    expect(next.status).toBe("OPEN");
+
+    const claim = await getContentAssignmentThreadClaim(assignment.assignmentRef);
+    expect(claim?.contentUid).toBe(next.uid);
+    expect(claim?.contentRef).toBe(next.contentRef);
+  });
+
+  it("returns a NEW thread once the previous one is CANCELLED", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS");
+    const opened = await resolveOrCreateContentThread(assignment.assignmentRef, head.userRef, "req-open");
+    const cancelled = await cancelContent(head, opened.contentRef, { reason: "Test cancellation.", expectedVersion: opened.version }, "req-cancel");
+    if (!cancelled.ok) throw new Error(`unreachable: ${cancelled.message}`);
+    expect(cancelled.data.status).toBe("CANCELLED");
+
+    const next = await resolveOrCreateContentThread(assignment.assignmentRef, head.userRef, "req-next");
+    expect(next.uid).not.toBe(opened.uid);
+    expect(next.status).toBe("OPEN");
+  });
+
+  it("the current-thread-per-Assignment claim exists and points at the created thread", async () => {
     const head = await actorFor("partnership_head");
     const assignment = await createOperationalAssignment(head, "ASSIGNED");
     const thread = await resolveOrCreateContentThread(assignment.assignmentRef, head.userRef, "req");
@@ -215,6 +295,17 @@ describe("Thread creation (resolveOrCreateContentThread)", () => {
     const results = await Promise.all(Array.from({ length: 6 }, (_, i) => resolveOrCreateContentThread(assignment.assignmentRef, head.userRef, `req-${i}`)));
     const uniqueUids = new Set(results.map((r) => r.uid));
     expect(uniqueUids.size).toBe(1);
+  }, 20_000);
+
+  it("concurrent calls AFTER the current thread has gone terminal still create exactly ONE new thread, never a duplicate", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS", { brief: { platforms: ["instagram"], requiredCount: 5 } });
+    const approved = await driveToApproved(head, assignment.assignmentRef);
+
+    const results = await Promise.all(Array.from({ length: 6 }, (_, i) => resolveOrCreateContentThread(assignment.assignmentRef, head.userRef, `req-race-${i}`)));
+    const uniqueRefs = new Set(results.map((r) => r.contentRef));
+    expect(uniqueRefs.size).toBe(1);
+    expect([...uniqueRefs][0]).not.toBe(approved.contentRef);
   }, 20_000);
 
   it("creating a real external-submission session drives thread creation automatically - no separate manual create step exists", async () => {
@@ -514,6 +605,126 @@ describe("Fulfillment", () => {
     expect(assignmentDoc?.status).toBe("COMPLETED");
   });
 
+  // Finding #50 (reopened) closure-audit follow-up: the spec's own §15
+  // test checklist named "requiredCount = 1 unchanged" as its own,
+  // distinctly-asserted case - the test above proves the auto-complete
+  // TRANSACTION mechanics for the default case, but never asserted the
+  // actual requiredCount/qualifyingCount numbers evaluateAssignmentFulfillment
+  // returns for it. This closes that gap explicitly.
+  it("requiredCount = 1 (the default, brief.requiredCount omitted): a single approval fulfills with the honest 1/1 count, unchanged from before this finding", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS");
+    const assignmentDocBefore = await getAssignmentDocByRef(assignment.assignmentRef);
+    expect(assignmentDocBefore?.brief.requiredCount ?? null).toBeNull();
+
+    const approved = await driveToApproved(head, assignment.assignmentRef);
+    expect(approved.status).toBe("APPROVED");
+
+    const assignmentDoc = await getAssignmentDocByRef(assignment.assignmentRef);
+    expect(assignmentDoc?.status).toBe("COMPLETED");
+    const result = await evaluateAssignmentFulfillment(assignmentDoc!);
+    expect(result).toMatchObject({ fulfilled: true, requiredCount: 1, qualifyingCount: 1 });
+  });
+
+  // Finding #50 (reopened) closure-audit follow-up: §22's own closure
+  // criteria named "cancelled Content does not qualify" as its own
+  // requirement. This was previously only proven one layer up, in the
+  // Partner Review evidence tests (a different function) - this proves it
+  // directly against evaluateAssignmentFulfillment itself: a CANCELLED
+  // record sitting right next to a later APPROVED one must never inflate
+  // qualifyingCount.
+  it("a CANCELLED Content record never counts toward qualifyingCount, even alongside a later APPROVED one", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS", { brief: { platforms: ["instagram"], requiredCount: 2 } });
+
+    const firstThread = await submitOnce(head, assignment.assignmentRef, uniqueUrl("cancel-then-approve-1"));
+    const cancelled = await cancelContent(head, firstThread.contentRef, { reason: "Wrong platform.", expectedVersion: firstThread.version }, "req");
+    expect(cancelled.ok).toBe(true);
+
+    const afterCancel = await getAssignmentDocByRef(assignment.assignmentRef);
+    const resultAfterCancel = await evaluateAssignmentFulfillment(afterCancel!);
+    expect(resultAfterCancel).toMatchObject({ fulfilled: false, requiredCount: 2, qualifyingCount: 0 });
+
+    const approved = await driveToApproved(head, assignment.assignmentRef, uniqueUrl("cancel-then-approve-2"));
+    expect(approved.contentRef).not.toBe(firstThread.contentRef);
+
+    const afterApprove = await getAssignmentDocByRef(assignment.assignmentRef);
+    expect(afterApprove?.status).toBe("IN_PROGRESS"); // NOT completed - the cancelled record never counted, so only 1/2 is genuinely satisfied.
+    const resultAfterApprove = await evaluateAssignmentFulfillment(afterApprove!);
+    expect(resultAfterApprove).toMatchObject({ fulfilled: false, requiredCount: 2, qualifyingCount: 1 });
+  });
+
+  // Finding #50: requiredCount was previously dead data - fulfillment
+  // always hardcoded requiredCount:1/qualifyingCount:1 (or 0) regardless of
+  // what the brief actually configured. The one-thread-per-Assignment
+  // model means "N required" can only be links within that one thread's
+  // current revision (see MAX_ASSIGNMENT_REQUIRED_COUNT's own comment in
+  // assignments/types.ts) - these prove that's now real, on both the
+  // auto-complete and manual-complete paths, which share one evaluator.
+  // Finding #50 (reopened): restored canonical semantics - requiredCount
+  // is fulfilled by the COUNT of the Assignment's own APPROVED Content
+  // RECORDS (never links inside one record). Each cycle below is a
+  // genuinely separate submission session -> separate Content thread,
+  // exactly the "multiple qualifying Content records fulfill the
+  // Assignment" model the finding restores.
+  it("requiredCount = 3: three separate submission cycles progress partial -> partial -> fulfilled, auto-completing only on the third approval", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS", { brief: { platforms: ["instagram"], requiredCount: 3 } });
+
+    const first = await driveToApproved(head, assignment.assignmentRef, uniqueUrl("progress-1"));
+    let assignmentDoc = await getAssignmentDocByRef(assignment.assignmentRef);
+    expect(assignmentDoc?.status).toBe("IN_PROGRESS");
+    let result = await evaluateAssignmentFulfillment(assignmentDoc!);
+    expect(result).toMatchObject({ fulfilled: false, requiredCount: 3, qualifyingCount: 1 });
+    expect(result.blockers[0]?.message).toContain("requires 3 approved submission(s)");
+    expect(result.blockers[0]?.message).toContain("1 currently approved");
+
+    const second = await driveToApproved(head, assignment.assignmentRef, uniqueUrl("progress-2"));
+    expect(second.contentRef).not.toBe(first.contentRef);
+    assignmentDoc = await getAssignmentDocByRef(assignment.assignmentRef);
+    expect(assignmentDoc?.status).toBe("IN_PROGRESS");
+    result = await evaluateAssignmentFulfillment(assignmentDoc!);
+    expect(result).toMatchObject({ fulfilled: false, requiredCount: 3, qualifyingCount: 2 });
+
+    // Manual completion is blocked at every partial step - the shared
+    // evaluator backs both the auto-complete and the manual-complete gate.
+    const manualAttempt = await transitionAssignmentLifecycle(head, assignment.assignmentRef, { to: "COMPLETED", expectedVersion: assignmentDoc!.version }, "req-manual-blocked");
+    expect(manualAttempt.ok).toBe(false);
+    if (manualAttempt.ok) throw new Error("unreachable");
+    expect(manualAttempt.code).toBe("not_ready");
+
+    const third = await driveToApproved(head, assignment.assignmentRef, uniqueUrl("progress-3"));
+    expect(third.contentRef).not.toBe(first.contentRef);
+    expect(third.contentRef).not.toBe(second.contentRef);
+    assignmentDoc = await getAssignmentDocByRef(assignment.assignmentRef);
+    expect(assignmentDoc?.status).toBe("COMPLETED");
+    result = await evaluateAssignmentFulfillment(assignmentDoc!);
+    expect(result).toMatchObject({ fulfilled: true, requiredCount: 3, qualifyingCount: 3 });
+  });
+
+  it("requiredCount = 2: a THIRD approved record over-fulfills honestly - qualifyingCount=3, fulfilled=true, never clamped, never an error", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS", { brief: { platforms: ["instagram"], requiredCount: 2 } });
+
+    await driveToApproved(head, assignment.assignmentRef, uniqueUrl("over-1"));
+    await driveToApproved(head, assignment.assignmentRef, uniqueUrl("over-2"));
+    const completedAfterTwo = await getAssignmentDocByRef(assignment.assignmentRef);
+    expect(completedAfterTwo?.status).toBe("COMPLETED");
+    expect(await evaluateAssignmentFulfillment(completedAfterTwo!)).toMatchObject({ fulfilled: true, requiredCount: 2, qualifyingCount: 2 });
+
+    // The real product flow correctly refuses a 3rd session once the
+    // Assignment is COMPLETED (see the dedicated test below) - a 3rd
+    // qualifying record beyond requiredCount is not reachable through the
+    // live UI today. Seeded directly here ONLY to prove the fulfillment
+    // COUNTING logic itself is genuinely uncapped and honest, not to
+    // claim this exact sequence is a real user flow.
+    await seedExtraApprovedContent(assignment, uniqueUrl("over-3"));
+
+    const finalAssignmentDoc = await getAssignmentDocByRef(assignment.assignmentRef);
+    const result = await evaluateAssignmentFulfillment(finalAssignmentDoc!);
+    expect(result).toMatchObject({ fulfilled: true, requiredCount: 2, qualifyingCount: 3 });
+  });
+
   it("manual transitionAssignmentLifecycle(COMPLETED) is blocked while unfulfilled, and succeeds once the thread was already approved while the Assignment was ACCEPTED (not IN_PROGRESS, so no auto-trigger fired) - proving the shared evaluator backs both paths", async () => {
     const head = await actorFor("partnership_head");
 
@@ -542,7 +753,7 @@ describe("Fulfillment", () => {
     expect(manualComplete.data.status).toBe("COMPLETED");
   });
 
-  it("a COMPLETED Assignment refuses a new external-submission session - nothing new can be issued once its one thread is closed", async () => {
+  it("a COMPLETED Assignment refuses a new external-submission session - nothing new can be issued once its obligation is fully met, even though the Assignment could in principle carry more Content records", async () => {
     const head = await actorFor("partnership_head");
     const assignment = await createOperationalAssignment(head, "IN_PROGRESS");
     await driveToApproved(head, assignment.assignmentRef);
@@ -702,4 +913,287 @@ describe("Concurrency", () => {
     const succeeded = results.filter((r) => r.ok);
     expect(succeeded).toHaveLength(1);
   }, 20_000);
+});
+
+// Finding #44 (user-decided): a Manager recording content links on the Partner's behalf - real,
+// authenticated-actor writes, requiring an Assignment context, mirroring submitExternalLinks' own
+// revision/claim-conflict transaction shape exactly.
+describe("Manager-recorded content links (recordContentLinksOnBehalf)", () => {
+  it("creates a fresh thread (resolveOrCreateContentThread) and records the links as revision 1, recipientType MANAGER, actor is the real recorder", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS");
+    const url = uniqueUrl("manager-record");
+
+    const result = await recordContentLinksOnBehalf(head, { assignmentRef: assignment.assignmentRef, rows: [{ platform: "instagram", url }] }, "req-manager-record-1");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.status).toBe("UNDER_REVIEW");
+    expect(result.data.currentLinks.some((l) => l.normalizedUrl === url)).toBe(true);
+    expect(result.data.assignmentRef).toBe(assignment.assignmentRef);
+  });
+
+  it("is idempotent-safe with the get-or-create thread: a second call while still OPEN reuses the SAME thread and advances the revision number", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS");
+
+    const first = await recordContentLinksOnBehalf(head, { assignmentRef: assignment.assignmentRef, rows: [{ platform: "instagram", url: uniqueUrl("manager-a") }] }, "req-manager-record-2a");
+    if (!first.ok) throw new Error("unreachable");
+    expect(first.data.currentRevisionNumber).toBe(1);
+
+    // The thread is now UNDER_REVIEW - request a revision so it becomes editable again, then record
+    // again on the Partner's behalf, proving the SAME thread (not a second one) receives revision 2.
+    const revisionRequested = await requestContentRevision(head, first.data.contentRef, { reason: "needs a fix", reviewedRevisionNumber: first.data.reviewedRevisionNumber!, expectedVersion: first.data.version }, "req-revise");
+    if (!revisionRequested.ok) throw new Error("unreachable");
+
+    const second = await recordContentLinksOnBehalf(head, { assignmentRef: assignment.assignmentRef, rows: [{ platform: "instagram", url: uniqueUrl("manager-b") }] }, "req-manager-record-2b");
+    if (!second.ok) throw new Error("unreachable");
+    expect(second.data.contentRef).toBe(first.data.contentRef);
+    expect(second.data.currentRevisionNumber).toBe(2);
+  });
+
+  it("rejects a platform not permitted by the Assignment's own brief", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS"); // brief.platforms = ["instagram"] only
+    const result = await recordContentLinksOnBehalf(head, { assignmentRef: assignment.assignmentRef, rows: [{ platform: "youtube", url: uniqueUrl("bad-platform") }] }, "req-manager-record-3");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("invalid_input");
+    expect(result.message).toMatch(/platform/i);
+  });
+
+  it("rejects duplicate platform+URL rows in the same submission", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS");
+    const url = uniqueUrl("dup");
+    const result = await recordContentLinksOnBehalf(
+      head,
+      { assignmentRef: assignment.assignmentRef, rows: [{ platform: "instagram", url }, { platform: "instagram", url }] },
+      "req-manager-record-4",
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("invalid_input");
+  });
+
+  it("rejects a cross-thread publication-identity collision - a URL already claimed by a DIFFERENT thread fails atomically", async () => {
+    const head = await actorFor("partnership_head");
+    const claimingAssignment = await createOperationalAssignment(head, "IN_PROGRESS");
+    const url = uniqueUrl("collision");
+    const claimed = await recordContentLinksOnBehalf(head, { assignmentRef: claimingAssignment.assignmentRef, rows: [{ platform: "instagram", url }] }, "req-manager-record-5a");
+    if (!claimed.ok) throw new Error("unreachable");
+
+    const otherAssignment = await createOperationalAssignment(head, "IN_PROGRESS");
+    const collision = await recordContentLinksOnBehalf(head, { assignmentRef: otherAssignment.assignmentRef, rows: [{ platform: "instagram", url }] }, "req-manager-record-5b");
+    expect(collision.ok).toBe(false);
+    if (collision.ok) throw new Error("unreachable");
+    expect(collision.code).toBe("invalid_input");
+  });
+
+  it("rejects an assignmentRef that does not resolve to a real Assignment, and one whose status does not allow content generation (DRAFT)", async () => {
+    const head = await actorFor("partnership_head");
+    const notReal = await recordContentLinksOnBehalf(head, { assignmentRef: "not-a-real-assignment", rows: [{ platform: "instagram", url: uniqueUrl("nope") }] }, "req-manager-record-6a");
+    expect(notReal.ok).toBe(false);
+
+    const draftAssignment = await createFreshAssignment(head);
+    const stillDraft = await recordContentLinksOnBehalf(head, { assignmentRef: draftAssignment.assignmentRef, rows: [{ platform: "instagram", url: uniqueUrl("draft") }] }, "req-manager-record-6b");
+    expect(stillDraft.ok).toBe(false);
+    if (stillDraft.ok) throw new Error("unreachable");
+    expect(stillDraft.message).toMatch(/DRAFT/);
+  });
+
+  it("Viewer/Analyst are denied the Content feature entirely - record_content_links is unreachable to them", async () => {
+    const head = await actorFor("partnership_head");
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS");
+    for (const role of ["viewer", "analyst"]) {
+      const actor = await actorFor(role);
+      const result = await recordContentLinksOnBehalf(actor, { assignmentRef: assignment.assignmentRef, rows: [{ platform: "instagram", url: uniqueUrl("denied") }] }, "req-manager-record-7");
+      expect(result.ok).toBe(false);
+      if (result.ok) throw new Error("unreachable");
+      expect(result.reason).toBe("feature_denied");
+    }
+  });
+
+  it("never creates orphan Content - assignmentRef is always required by the input schema", async () => {
+    const head = await actorFor("partnership_head");
+    const result = await recordContentLinksOnBehalf(head, { rows: [{ platform: "instagram", url: uniqueUrl("orphan") }] }, "req-manager-record-8");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("invalid_input");
+  });
+});
+
+// Finding #44 (user-decided): the bulk import target - a real, registered "content_links" adapter
+// (never a value bolted onto AnalyticsTargetKind), dispatched exactly the way Import Center dispatches
+// any OTHER registered target, writing through the SAME recordContentLinksOnBehalf every single-link
+// call above already exercises (never a bespoke direct Firestore write).
+describe("Bulk import target (content_links)", () => {
+  function workbookBuffer(rows: unknown[][]): Buffer {
+    const workbook = XLSX.utils.book_new();
+    const sheet = XLSX.utils.aoa_to_sheet(rows);
+    XLSX.utils.book_append_sheet(workbook, sheet, "Links");
+    return XLSX.write(workbook, { type: "buffer", bookType: "xlsx" }) as Buffer;
+  }
+
+  // The seeded partnership_head role holds content:record_content_links (Findings #44's own single-link
+  // grant) but NOT imports:manage_imports (the SEEDED baseline only grants that to analyst/super_admin -
+  // see seed-access-data.ts's own comment on analyst's imports grant; contract-bundle-import.emulator.
+  // test.ts's own tests hit the exact same gap and resolve it the exact same way: a real per-user
+  // override document, the actual product mechanism for this - see authz/types.ts's userAccessOverride
+  // Doc - not a test-only shortcut).
+  //
+  // CAUGHT DURING FULL-SUITE VERIFICATION: an earlier version of this setup wrote that override onto the
+  // SHARED, cross-file partnership_head uid (the same seeded identity every other emulator test file's
+  // own actorFor("partnership_head") resolves to) - safe in isolation, but a genuine race under the full
+  // suite (some other concurrently-running file's own Firestore activity against that same shared uid can
+  // observe/interact with the override mid-run). Fixed to mirror finance-onboarding-harness.ts's own
+  // actor() pattern exactly: a SYNTHETIC, globally-unique uid (never resolved by any other file, never
+  // touched by seedEmulatorTestUsers/seedAccessControlData) that still inherits partnership_head's real,
+  // unmutated ROLE-level grants (role-level grants are read-only here, keyed by role not uid) plus its
+  // own GLOBAL scope grant and its own imports override - fully isolated from every other file's own
+  // activity, by construction.
+  let importActor: ActorContext;
+  beforeAll(async () => {
+    registerImportTargets();
+    const uid = `content-link-import-test-${runId}-${Math.random().toString(36).slice(2, 8)}`;
+    const now = new Date().toISOString();
+    await getAdminFirestore()
+      .collection("scopeAssignments")
+      .doc(`${uid}__GLOBAL`)
+      .set({ type: "GLOBAL", uid, grantedAt: now, grantedBy: "content-link-import-test" });
+    await getAdminFirestore()
+      .collection("userAccessOverrides")
+      .doc(uid)
+      .set({ uid, version: 1, features: { imports: { view: true, actions: { manage_imports: true } } } });
+    const userRef = `content-link-import-test-ref-${uid}`;
+    // A real backing users/{uid} doc too - listContentLinkImportBatches resolves actorDisplayName via
+    // getUserDocByRef(actorUserRef); without this, the synthetic actor's own history rows would
+    // correctly (and uninterestingly) resolve to a null display name, same as any genuinely unknown
+    // userRef - this makes the display-name resolution itself a real, exercised assertion instead.
+    await getAdminFirestore().collection("users").doc(uid).set({ uid, email: `${uid}@example.test`, role: "partnership_head", active: true, displayName: "Content Link Import Test Actor", userRef, version: 1 });
+    importActor = { uid, email: `${uid}@example.test`, role: "partnership_head", displayName: "Content Link Import Test Actor", userRef };
+  });
+
+  afterAll(async () => {
+    await getAdminFirestore().collection("scopeAssignments").doc(`${importActor.uid}__GLOBAL`).delete();
+    await getAdminFirestore().collection("userAccessOverrides").doc(importActor.uid).delete();
+    await getAdminFirestore().collection("users").doc(importActor.uid).delete();
+  });
+
+  it("dry-runs and executes a real bulk file: groups rows by Assignment Ref, records real links, and is idempotent on replay", async () => {
+    const head = importActor;
+    const a1 = await createOperationalAssignment(head, "IN_PROGRESS");
+    const a2 = await createOperationalAssignment(head, "IN_PROGRESS");
+    const url1 = uniqueUrl("bulk-a1-1");
+    const url2 = uniqueUrl("bulk-a1-2");
+    const url3 = uniqueUrl("bulk-a2-1");
+
+    const buffer = workbookBuffer([
+      ["Assignment Ref", "Platform", "URL"],
+      [a1.assignmentRef, "instagram", url1],
+      [a1.assignmentRef, "instagram", url2], // grouped with the row above - ONE call, ONE revision
+      [a2.assignmentRef, "instagram", url3],
+    ]);
+    const file = { buffer, filename: "links.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+
+    const target = getImportTarget("content_links");
+    expect(target).not.toBeNull();
+
+    const dryRun = await target!.dryRun(head, file, {}, "req-bulk-dry-1");
+    expect(dryRun.batchRef).toBeNull(); // dry run persists nothing
+    expect(dryRun.totalRows).toBe(3);
+    expect(dryRun.counts.CREATE).toBe(3);
+
+    const executed = await target!.execute(head, file, {}, "req-bulk-exec-1");
+    expect(executed.status).toBe("COMPLETED");
+    expect(executed.counts.CREATE).toBe(3);
+    expect(executed.batchRef).toBeTruthy();
+
+    // History/provenance is genuinely retained and readable, not just written - the same batch
+    // reads back through both the list and detail functions the API route layer itself uses.
+    const list = await listContentLinkImportBatches(head, 20);
+    expect(list.ok).toBe(true);
+    if (!list.ok) throw new Error("unreachable");
+    const listed = list.data.find((b) => b.batchRef === executed.batchRef);
+    expect(listed).toBeTruthy();
+    expect(listed?.status).toBe("COMPLETED");
+    expect(listed?.totalRows).toBe(3);
+    expect(listed?.actorDisplayName).toBeTruthy();
+
+    const detail = await getContentLinkImportBatchDetail(head, executed.batchRef);
+    expect(detail.ok).toBe(true);
+    if (!detail.ok) throw new Error("unreachable");
+    expect(detail.data.rows).toHaveLength(3);
+    expect(detail.data.rows.every((r) => r.outcome === "CREATE" && r.contentRef)).toBe(true);
+    expect(detail.data.rows.map((r) => r.assignmentRef).sort()).toEqual([a1.assignmentRef, a1.assignmentRef, a2.assignmentRef].sort());
+
+    const a1Thread = await threadForTest(head, a1.assignmentRef);
+    expect(a1Thread.status).toBe("UNDER_REVIEW");
+    expect(a1Thread.currentRevisionNumber).toBe(1); // both a1 rows landed in ONE revision, not two
+    expect(a1Thread.currentLinks.map((l) => l.normalizedUrl).sort()).toEqual([url1, url2].sort());
+
+    const a2Thread = await threadForTest(head, a2.assignmentRef);
+    expect(a2Thread.currentLinks.some((l) => l.normalizedUrl === url3)).toBe(true);
+
+    // Replaying the EXACT same file is idempotent: every group is already claimed, so nothing is
+    // recorded twice and no new revision is created.
+    const replayedDryRun = await target!.dryRun(head, file, {}, "req-bulk-dry-2");
+    expect(replayedDryRun.counts.UNCHANGED).toBe(3);
+    expect(replayedDryRun.counts.CREATE).toBe(0);
+
+    const replayedExecute = await target!.execute(head, file, {}, "req-bulk-exec-2");
+    expect(replayedExecute.counts.UNCHANGED).toBe(3);
+    const a1ThreadAfterReplay = await threadForTest(head, a1.assignmentRef);
+    expect(a1ThreadAfterReplay.currentRevisionNumber).toBe(1); // unchanged
+    expect(a1ThreadAfterReplay.version).toBe(a1Thread.version); // never re-written
+  });
+
+  it("reports a malformed row (missing a required column) as its own ERROR row, never silently dropped and never blocking the rest of the file", async () => {
+    const head = importActor;
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS");
+    const url = uniqueUrl("bulk-malformed");
+
+    const buffer = workbookBuffer([
+      ["Assignment Ref", "Platform", "URL"],
+      [assignment.assignmentRef, "", url], // missing Platform
+      [assignment.assignmentRef, "instagram", uniqueUrl("bulk-ok")],
+    ]);
+    const file = { buffer, filename: "links.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+
+    const target = getImportTarget("content_links")!;
+    const dryRun = await target.dryRun(head, file, {}, "req-bulk-malformed");
+    expect(dryRun.totalRows).toBe(2);
+    expect(dryRun.counts.ERROR).toBe(1);
+    // The malformed row does not block the other row's own group from resolving normally.
+    expect(dryRun.counts.CREATE).toBe(1);
+  });
+
+  it("a real pre-check (never a rubber stamp) flags an Assignment platform mismatch in the DRY RUN itself, before any write", async () => {
+    const head = importActor;
+    const assignment = await createOperationalAssignment(head, "IN_PROGRESS"); // brief.platforms = ["instagram"] only
+    const buffer = workbookBuffer([
+      ["Assignment Ref", "Platform", "URL"],
+      [assignment.assignmentRef, "youtube", uniqueUrl("bulk-bad-platform")],
+    ]);
+    const file = { buffer, filename: "links.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+
+    const target = getImportTarget("content_links")!;
+    const dryRun = await target.dryRun(head, file, {}, "req-bulk-platform-check");
+    expect(dryRun.counts.AMBIGUOUS).toBe(1);
+    expect(dryRun.counts.CREATE).toBe(0);
+  });
+
+  it("Viewer/Analyst are denied at the target-gate level, before the file is even parsed", async () => {
+    const assignment = await createOperationalAssignment(await actorFor("partnership_head"), "IN_PROGRESS");
+    const buffer = workbookBuffer([
+      ["Assignment Ref", "Platform", "URL"],
+      [assignment.assignmentRef, "instagram", uniqueUrl("bulk-denied")],
+    ]);
+    const file = { buffer, filename: "links.xlsx", mimeType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" };
+    const target = getImportTarget("content_links")!;
+
+    for (const role of ["viewer", "analyst"]) {
+      const actor = await actorFor(role);
+      await expect(target.dryRun(actor, file, {}, "req-bulk-denied")).rejects.toThrow();
+    }
+  });
 });

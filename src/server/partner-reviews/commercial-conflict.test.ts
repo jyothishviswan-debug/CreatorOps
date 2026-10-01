@@ -26,6 +26,7 @@ function input(over: Partial<BuildEvidenceInput> = {}): BuildEvidenceInput {
     assignmentScanTruncated: false,
     assignmentsScanned: 0,
     threads: [],
+    contentScanTruncated: false,
     analyticsRecords: [],
     analyticsScanTruncated: false,
     analyticsRecordsScanned: 0,

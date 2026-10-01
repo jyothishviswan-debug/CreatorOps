@@ -3,7 +3,7 @@ import { getFinanceAgreementDriveEnv, type FinanceAgreementDriveEnv } from "@/li
 import { createGoogleDriveAgreementStorage } from "./google-drive";
 import { isAutomatedTestRun } from "./guard";
 import { createInMemoryAgreementDocumentStorage, type FakeAgreementDocumentStorage } from "./in-memory";
-import type { AgreementDocumentStorage, AgreementDocumentStorageResolution } from "./types";
+import type { AgreementDocumentStorage, AgreementDocumentStorageNotConfiguredReason, AgreementDocumentStorageResolution } from "./types";
 
 export * from "./types";
 export { agreementDocumentIdempotencyKey, buildAgreementDocumentFileName } from "./file-name";
@@ -11,23 +11,35 @@ export { isAutomatedTestRun } from "./guard";
 export { createInMemoryAgreementDocumentStorage, FAKE_DRIVE_LINK_HOST, type FakeAgreementDocumentStorage, type FakeStoredFile, type FakeStoreCall } from "./in-memory";
 export { createGoogleDriveAgreementStorage, mapDriveError, type GoogleDriveAgreementStorageConfig } from "./google-drive";
 
-// Step 14B.1: which Agreement-document storage this process uses. The choice is made from configuration,
-// never hard-coded:
+// Step 14B.1 (revised, remediation-plan Wave A / finding #69's external-service safety gate): which
+// Agreement-document storage this process uses. The choice is made from EXPLICIT configuration, never
+// inferred from credential presence alone:
 //   1. a test override (setAgreementDocumentStorageForTests) - tests only;
-//   2. FINANCE_AGREEMENT_DRIVE_MODE=fake - the in-memory fake, ONLY when NODE_ENV is not "production";
-//   3. real Google Drive when credentials and at least one folder id are configured (and never inside an
-//      automated test run: there the answer is NOT_CONFIGURED, and the real adapter would refuse anyway);
-//   4. otherwise NOT_CONFIGURED - a truthful state, never a fabricated link.
+//   2. an automated test run ALWAYS resolves to NOT_CONFIGURED (never fake, never Drive) unless an
+//      override is installed - same discipline as Invoices' own resolver, and the reason this file's
+//      guard.ts exists at all;
+//   3. real Google Drive ONLY when FINANCE_AGREEMENT_DRIVE_MODE is explicitly "real" AND the shared
+//      ALLOW_REAL_EXTERNAL_SERVICES master switch is also explicitly on AND credentials + at least one
+//      folder id are configured - configuration merely being PRESENT (e.g. a developer's own .env.local
+//      holding real credentials/folder ids with no opt-in flag at all - the exact live gap this revision
+//      closes) is never enough on its own, matching Invoices' FINANCE_INVOICE_DRIVE_PROVIDER discipline;
+//   4. the in-memory FAKE otherwise, as long as this is not a production runtime (production without an
+//      explicit real opt-in is a truthful NOT_CONFIGURED, never a silent fallback to the fake);
+//   5. otherwise NOT_CONFIGURED - a truthful state, never a fabricated link.
 
 type ResolveInputs = { env: FinanceAgreementDriveEnv; nodeEnv: string | undefined; testRun: boolean };
 
 // Pure (unit-tested).
-export function resolveAgreementDocumentStorageKind(inputs: ResolveInputs): "FAKE" | "GOOGLE_DRIVE" | { notConfigured: "missing_credentials" | "missing_folder" | "live_drive_disabled_in_tests" } {
-  if (inputs.env.mode === "fake" && inputs.nodeEnv !== "production") return "FAKE";
-  if (!inputs.env.credentialsPath?.trim()) return { notConfigured: "missing_credentials" };
-  if (!inputs.env.partnersFolderId && !inputs.env.vendorsFolderId) return { notConfigured: "missing_folder" };
+export function resolveAgreementDocumentStorageKind(inputs: ResolveInputs): "FAKE" | "GOOGLE_DRIVE" | { notConfigured: AgreementDocumentStorageNotConfiguredReason } {
   if (inputs.testRun) return { notConfigured: "live_drive_disabled_in_tests" };
-  return "GOOGLE_DRIVE";
+  if (inputs.env.mode === "real") {
+    if (!inputs.env.allowRealExternalServices) return { notConfigured: "real_external_services_not_allowed" };
+    if (!inputs.env.credentialsPath?.trim()) return { notConfigured: "missing_credentials" };
+    if (!inputs.env.partnersFolderId && !inputs.env.vendorsFolderId) return { notConfigured: "missing_folder" };
+    return "GOOGLE_DRIVE";
+  }
+  if (inputs.nodeEnv === "production") return { notConfigured: "drive_mode_not_enabled" };
+  return "FAKE";
 }
 
 type Override = AgreementDocumentStorage | "NOT_CONFIGURED" | null;

@@ -35,6 +35,8 @@ import { seedPartnersData } from "@/server/partners/seed-partners-data";
 import { seedVendorsData } from "@/server/vendors/seed-vendors-data";
 
 import { computeNormalizedIdentity } from "@/server/partners/identity";
+import { createPartner } from "@/server/partners/partner-service";
+import { createPartnerAccount } from "@/server/partners/partner-account-service";
 
 import { requireAnalyticsExploreAccess, requireAnalyticsManageAccess, requireImportsModuleAccess } from "./analytics-gate";
 import { resolveAnalyticsSourceRecordMatch } from "./correction-service";
@@ -50,8 +52,11 @@ import {
 import { getAnalyticsImportBatchDetail } from "./import-history-service";
 import { computeRowIdentityKey } from "./import-pipeline";
 import { dryRunAnalyticsImport, executeAnalyticsImport } from "./import-service";
+import { fetchBoundedPartnerRecords } from "./partner-view-service";
 import { rebuildAnalyticsReadModels } from "./read-models";
 import { seedAnalyticsData } from "./seed-analytics-data";
+import { generateAnalyticsImportTemplate } from "./template-generator";
+import { parseXlsxForVerification } from "@/server/exports/xlsx";
 
 const uidByRole = new Map<string, string>();
 const runId = Date.now();
@@ -278,6 +283,102 @@ describe("Partner Account matching - ambiguity is a real, exercised outcome", ()
   });
 });
 
+// ---- Finding #57: unmatched-but-identifiable rows keep their real Partner ownership ----
+describe("finding #57: a Content-unmatched row still resolves deterministic Partner ownership", () => {
+  it("a real handle on a Content-unmatched row resolves Partner/Account ownership while matchState/classification stay genuinely UNMATCHED, and the row becomes visible in that Partner's own scoped view (never another Partner's)", async () => {
+    const head = await actorFor("partnership_head");
+    const analyst = await actorFor("analyst");
+
+    const partnerA = await createPartner(head, { displayName: `Wave8 Owner A ${runId}`, regionIds: ["Kerala"] }, "req-w8-1a");
+    const partnerB = await createPartner(head, { displayName: `Wave8 Owner B ${runId}`, regionIds: ["Kerala"] }, "req-w8-1b");
+    if (!partnerA.ok || !partnerB.ok) throw new Error("unreachable");
+    const uniqueHandle = `wave8owner${runId}`;
+    const account = await createPartnerAccount(head, partnerA.data.partnerRef, { platform: "instagram", handle: uniqueHandle }, "req-w8-2");
+    if (!account.ok) throw new Error("unreachable");
+
+    const freshUrl = `https://instagram.com/p/wave8-unowned-${runId}`;
+    const buffer = workbookBuffer("Posts", [
+      ["Post URL", "Username", "Likes"],
+      [freshUrl, uniqueHandle, "12"],
+    ]);
+    const result = await executeAnalyticsImport(analyst, { targetKind: "campaign_content", fileBuffer: buffer, filename: uniqueFilename("w8-owner"), mimeType: XLSX_MIME }, "req-w8-3");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    // Finding #57: still counted/classified as unmatched - ownership resolving never promotes it.
+    expect(result.data.counts.unmatched).toBe(1);
+
+    const committed = await analyticsContentSourceRecordsCollection().where("normalizedUrl", "==", freshUrl).get();
+    expect(committed.size).toBe(1);
+    const data = committed.docs[0]!.data();
+    expect(data.matchState).toBe("UNMATCHED");
+    expect(data.matchEvidence.reasonCode).toBe("NO_CLAIM_FOUND");
+    expect(data.matchedContentRef).toBeNull();
+    expect(data.matchedAssignmentRef).toBeNull();
+    expect(data.matchedCampaignRef).toBeNull();
+    // The real point of the fix: ownership IS known even though Content is not.
+    expect(data.matchedPartnerRef).toBe(partnerA.data.partnerRef);
+    expect(data.matchedPartnerAccountRef).toBe(account.data.partnerAccountRef);
+    // partnerA was created with no explicit owner - ownerUid legitimately stays null, but it is
+    // independently resolved FROM the Partner doc (never a stale/guessed value), same as regionIds.
+    expect(data.ownerUid).toBeNull();
+    expect(data.regionIds).toEqual(partnerA.data.regionIds);
+
+    // Visible in Partner A's own scoped Analytics view...
+    const forPartnerA = await fetchBoundedPartnerRecords(analyst, "content", partnerA.data.partnerRef, "instagram");
+    expect(forPartnerA.records.some((r) => r.normalizedUrl === freshUrl)).toBe(true);
+    // ...but invisible under a completely different Partner's own scoped view - the explicit
+    // matchedPartnerRef filter never leaks a row to the wrong Partner.
+    const forPartnerB = await fetchBoundedPartnerRecords(analyst, "content", partnerB.data.partnerRef, "instagram");
+    expect(forPartnerB.records.some((r) => r.normalizedUrl === freshUrl)).toBe(false);
+  });
+
+  it("an ambiguous handle never resolves ownership for a Content-unmatched row - ambiguity stays explicit, never guessed", async () => {
+    const analyst = await actorFor("analyst");
+    // Reuses the seeded "sharedhandle" fixture (analytics.emulator.test.ts's own "Partner Account
+    // matching" block above proves this handle is genuinely ambiguous across 2 distinct accounts).
+    const freshUrl = `https://instagram.com/p/wave8-ambiguous-${runId}`;
+    const buffer = workbookBuffer("Posts", [
+      ["Post URL", "Username", "Likes"],
+      [freshUrl, "sharedhandle", "3"],
+    ]);
+    const result = await executeAnalyticsImport(analyst, { targetKind: "campaign_content", fileBuffer: buffer, filename: uniqueFilename("w8-ambiguous"), mimeType: XLSX_MIME }, "req-w8-4");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.counts.unmatched).toBe(1);
+
+    const committed = await analyticsContentSourceRecordsCollection().where("normalizedUrl", "==", freshUrl).get();
+    const data = committed.docs[0]!.data();
+    expect(data.matchState).toBe("UNMATCHED");
+    // Never silently resolved to either of the two candidate accounts.
+    expect(data.matchedPartnerRef).toBeNull();
+    expect(data.matchedPartnerAccountRef).toBeNull();
+    expect(data.ownerUid).toBeNull();
+  });
+
+  it("a display-name-only row (no Username/handle column at all) never resolves ownership - fuzzy/display-name matching is never accepted", async () => {
+    const analyst = await actorFor("analyst");
+    const freshUrl = `https://instagram.com/p/wave8-namedonly-${runId}`;
+    // "Partner" maps to accountOrChannelName (display name), a DIFFERENT field from accountUsername -
+    // deliberately never passed to the account matcher (see partner-account-matcher.ts's own
+    // "displayName never a matching dimension" discipline).
+    const buffer = workbookBuffer("Posts", [
+      ["Post URL", "Partner", "Likes"],
+      [freshUrl, "Wave8 Some Creator Display Name", "7"],
+    ]);
+    const result = await executeAnalyticsImport(analyst, { targetKind: "campaign_content", fileBuffer: buffer, filename: uniqueFilename("w8-nameonly"), mimeType: XLSX_MIME }, "req-w8-5");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.counts.unmatched).toBe(1);
+
+    const committed = await analyticsContentSourceRecordsCollection().where("normalizedUrl", "==", freshUrl).get();
+    const data = committed.docs[0]!.data();
+    expect(data.matchState).toBe("UNMATCHED");
+    expect(data.matchedPartnerRef).toBeNull();
+    expect(data.matchedPartnerAccountRef).toBeNull();
+    expect(data.ownerUid).toBeNull();
+  });
+});
+
 // ---- Execute idempotency and partial success (Section 10) ----------------
 describe("execute idempotency, partial success, and concurrency", () => {
   it("byte-identical retry is idempotent - same sourceHash, no duplicate batch/rows", async () => {
@@ -414,6 +515,91 @@ describe("Data Explorer - scope-constrained listing", () => {
 });
 
 // ---- Read-model rebuild (Section 14/22) ------------------------------------
+// ---- Finding #56: Download Template - authorization, prefill, scope ----
+describe("finding #56: generateAnalyticsImportTemplate", () => {
+  it("Viewer is denied (same module gate as the rest of Import Center)", async () => {
+    const viewer = await actorFor("viewer");
+    const result = await generateAnalyticsImportTemplate(viewer, { targetKind: "campaign_content", contentPlatform: "instagram", partnerSelection: { mode: "all" } });
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.code).toBe("unauthorized");
+  });
+
+  it("Analyst can download; the workbook has the Partner's own display name and handle prefilled, Platform set, and every performance field left blank (no fabrication)", async () => {
+    const head = await actorFor("partnership_head");
+    const analyst = await actorFor("analyst");
+    const partner = await createPartner(head, { displayName: `Wave8 Template Partner ${runId}`, regionIds: ["Kerala"] }, "req-w8-t1");
+    if (!partner.ok) throw new Error("unreachable");
+    const handle = `wave8template${runId}`;
+    const account = await createPartnerAccount(head, partner.data.partnerRef, { platform: "instagram", handle }, "req-w8-t2");
+    if (!account.ok) throw new Error("unreachable");
+
+    const result = await generateAnalyticsImportTemplate(analyst, {
+      targetKind: "campaign_content",
+      contentPlatform: "instagram",
+      partnerSelection: { mode: "selected", partnerRefs: [partner.data.partnerRef] },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+
+    const { headers, rows } = parseXlsxForVerification(result.data.bytes);
+    expect(headers).toContain("Partner");
+    expect(headers).toContain("Username");
+    const partnerIdx = headers.indexOf("Partner");
+    const usernameIdx = headers.indexOf("Username");
+    const platformIdx = headers.indexOf("Platform");
+    const likesIdx = headers.indexOf("Likes");
+    expect(rows[0]![partnerIdx]).toBe(partner.data.displayName);
+    expect(rows[0]![usernameIdx]).toBe(handle);
+    expect(rows[0]![platformIdx]).toBe("Instagram");
+    // Never fabricated performance data - generateXlsx writes a null cell value as an empty string
+    // (see xlsx.ts's own cellValue()), so an untouched performance field round-trips as "", not a
+    // real value of any kind.
+    expect(rows[0]![likesIdx]).toBe("");
+  });
+
+  it("a forged/out-of-scope partnerRef in 'selected' is silently dropped, never rejecting the whole request and never widening access", async () => {
+    const analyst = await actorFor("analyst");
+    const result = await generateAnalyticsImportTemplate(analyst, {
+      targetKind: "campaign_content",
+      contentPlatform: "instagram",
+      partnerSelection: { mode: "selected", partnerRefs: ["not-a-real-partner-ref"] },
+    });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    const { headers, rows } = parseXlsxForVerification(result.data.bytes);
+    // No real row was fabricated for the forged ref - falls back to one blank example row: every
+    // cell empty EXCEPT Platform, which is always the requester's own chosen context (never
+    // Partner-derived, so a dropped forged ref cannot affect it).
+    expect(rows).toHaveLength(1);
+    const platformIdx = headers.indexOf("Platform");
+    rows[0]!.forEach((cell, i) => {
+      if (i === platformIdx) expect(cell).toBe("Instagram");
+      else expect(cell).toBe("");
+    });
+  });
+
+  it("'all' stays scope-constrained and bounded - never a literal fetch-all", async () => {
+    const analyst = await actorFor("analyst");
+    const result = await generateAnalyticsImportTemplate(analyst, { targetKind: "campaign_content", contentPlatform: "instagram", partnerSelection: { mode: "all" } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    const { rows } = parseXlsxForVerification(result.data.bytes);
+    expect(rows.length).toBeLessThanOrEqual(100);
+  });
+
+  it("channel_account template uses the channelPlatform context and no sensitive/internal fields ever appear", async () => {
+    const analyst = await actorFor("analyst");
+    const result = await generateAnalyticsImportTemplate(analyst, { targetKind: "channel_account", channelPlatform: "youtube", partnerSelection: { mode: "all" } });
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    const { headers, rows } = parseXlsxForVerification(result.data.bytes);
+    const platformIdx = headers.indexOf("Platform");
+    expect(rows[0]![platformIdx]).toBe("youtube");
+    const serialized = JSON.stringify({ headers, rows });
+    for (const forbidden of ["email", "phone", "legalName", "ownerUid", "partnerAccountRef", "normalizedIdentity"]) expect(serialized.toLowerCase()).not.toContain(forbidden.toLowerCase());
+  });
+});
+
 describe("rebuildAnalyticsReadModels - deterministic, never mutates source records", () => {
   it("is deterministic - the same inputs produce the same aggregates on two consecutive runs", async () => {
     // Hermeticity (Step 12E): the rebuild scans the WHOLE source-record collections, and other emulator files write and

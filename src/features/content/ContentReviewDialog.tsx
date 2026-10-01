@@ -9,22 +9,27 @@ import { platformLabel } from "./format";
 
 type Decision = "APPROVED" | "REVISION_REQUESTED";
 
-// Step 11A.1: repurposed from the retired review dialog - only the two
-// real Manager decisions exist now (never "Reject" - section 9's own
-// explicit "do not keep REJECTED"). Shows the current revision's own
-// links directly (currentLinks is already denormalized onto the loaded
-// ContentDto, no extra fetch needed) so the Manager can actually see what
-// they're deciding on.
+// Finding #45: the decision IS the action - clicking "Approve" or "Request
+// changes" executes that outcome directly (after validation), instead of
+// picking a radio option and then pressing a separate generic confirm
+// button. Reason stays required only for Request changes (server-enforced
+// too - content-lifecycle-service.ts's own reasonRequired check is
+// unchanged, this is UI-only). `pending` (not just a boolean `busy`) tracks
+// WHICH action is in flight so the other button can be disabled without
+// losing its own label, and both are disabled the instant either is
+// clicked so a double click can never fire two requests (the server's own
+// expectedVersion/reviewedRevisionNumber staleness check is a second,
+// independent guard against this - see content-lifecycle-service.ts).
 export function ContentReviewDialog({ content, open, onClose, onSaved }: { content: ContentDto; open: boolean; onClose: () => void; onSaved: (content: ContentDto) => void }) {
-  const [decision, setDecision] = useState<Decision>("APPROVED");
   const [reason, setReason] = useState("");
-  const [busy, setBusy] = useState(false);
+  const [pending, setPending] = useState<Decision | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reasonMissing, setReasonMissing] = useState(false);
 
   function reset() {
-    setDecision("APPROVED");
     setReason("");
     setError(null);
+    setReasonMissing(false);
   }
 
   function close() {
@@ -32,12 +37,14 @@ export function ContentReviewDialog({ content, open, onClose, onSaved }: { conte
     onClose();
   }
 
-  const reasonRequired = decision === "REVISION_REQUESTED";
-  const canSubmit = !reasonRequired || reason.trim().length > 0;
-
-  async function submit() {
-    if (!content.reviewedRevisionNumber) return;
-    setBusy(true);
+  async function act(decision: Decision) {
+    if (pending || !content.reviewedRevisionNumber) return;
+    if (decision === "REVISION_REQUESTED" && reason.trim().length === 0) {
+      setReasonMissing(true);
+      return;
+    }
+    setReasonMissing(false);
+    setPending(decision);
     setError(null);
 
     const result =
@@ -45,7 +52,7 @@ export function ContentReviewDialog({ content, open, onClose, onSaved }: { conte
         ? await approveContentThread(content.contentRef, { reviewedRevisionNumber: content.reviewedRevisionNumber, expectedVersion: content.version })
         : await requestContentRevision(content.contentRef, { reason: reason.trim(), reviewedRevisionNumber: content.reviewedRevisionNumber, expectedVersion: content.version });
 
-    setBusy(false);
+    setPending(null);
     if (!result.ok) {
       setError(result.error);
       return;
@@ -54,6 +61,8 @@ export function ContentReviewDialog({ content, open, onClose, onSaved }: { conte
     onSaved(result.data);
     onClose();
   }
+
+  const busy = pending !== null;
 
   return (
     <DialogShell
@@ -65,8 +74,11 @@ export function ContentReviewDialog({ content, open, onClose, onSaved }: { conte
           <button type="button" className="btn" onClick={close} disabled={busy}>
             Cancel
           </button>
-          <button type="button" className="btn primary" onClick={submit} disabled={busy || !canSubmit}>
-            {busy ? "Saving…" : "Record decision"}
+          <button type="button" className="btn" onClick={() => act("REVISION_REQUESTED")} disabled={busy} data-testid="review-request-changes">
+            {pending === "REVISION_REQUESTED" ? "Requesting changes…" : "Request changes"}
+          </button>
+          <button type="button" className="btn primary" onClick={() => act("APPROVED")} disabled={busy} data-testid="review-approve">
+            {pending === "APPROVED" ? "Approving…" : "Approve"}
           </button>
         </>
       }
@@ -104,23 +116,22 @@ export function ContentReviewDialog({ content, open, onClose, onSaved }: { conte
         )}
       </div>
 
-      <fieldset style={{ marginTop: 14, border: "none", padding: 0 }}>
-        <legend className="foundationnote" style={{ marginBottom: 8 }}>
-          Decision
-        </legend>
-        <div className="actions" role="radiogroup" aria-label="Review decision">
-          {(["APPROVED", "REVISION_REQUESTED"] as Decision[]).map((value) => (
-            <label key={value} className="btn" style={{ display: "inline-flex", alignItems: "center", gap: 6 }}>
-              <input type="radio" name="content-review-decision" value={value} checked={decision === value} onChange={() => setDecision(value)} />
-              {value === "APPROVED" ? "Approve" : "Request changes"}
-            </label>
-          ))}
-        </div>
-      </fieldset>
-
       <div className="field full" style={{ marginTop: 14 }}>
-        <label htmlFor="content-review-reason">Reason{reasonRequired ? " (required)" : " (not needed to approve)"}</label>
-        <textarea id="content-review-reason" value={reason} onChange={(e) => setReason(e.target.value)} required={reasonRequired} disabled={decision === "APPROVED"} />
+        <label htmlFor="content-review-reason">Reason (required for Request changes; not needed to approve)</label>
+        <textarea
+          id="content-review-reason"
+          value={reason}
+          onChange={(e) => {
+            setReason(e.target.value);
+            if (e.target.value.trim().length > 0) setReasonMissing(false);
+          }}
+          disabled={busy}
+        />
+        {reasonMissing && (
+          <small className="fielderror" role="alert">
+            Add a reason before requesting changes.
+          </small>
+        )}
       </div>
 
       {error && (

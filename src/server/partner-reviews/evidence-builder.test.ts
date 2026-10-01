@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import { UNSUPPORTED_METRIC_IDS } from "@/server/analytics/metric-registry";
 
+import { qualifyingThreadUnits } from "./commercial-builder";
 import {
   MAX_ANALYTICS_RECORDS_IN_PERIOD,
   MAX_ASSIGNMENTS_IN_PERIOD,
@@ -20,6 +21,7 @@ import {
   type ContentThreadSource,
 } from "./evidence-builder";
 import { derivePeriod } from "./period";
+import { EVIDENCE_SNAPSHOT_SCHEMA_VERSION, normalizeStoredEvidenceSnapshot, partnerReviewVersionDocSchema } from "./types";
 
 const period = derivePeriod("2026-03")!;
 const CUTOFF = "2026-05-01T00:00:00.000Z";
@@ -92,6 +94,7 @@ function input(over: Partial<BuildEvidenceInput> = {}): BuildEvidenceInput {
     assignmentScanTruncated: false,
     assignmentsScanned: 1,
     threads: [thread()],
+    contentScanTruncated: false,
     analyticsRecords: [record()],
     analyticsScanTruncated: false,
     analyticsRecordsScanned: 1,
@@ -228,8 +231,8 @@ describe("buildEvidence - Production and Compliance (raw facts, no score)", () =
     const built = buildEvidence(input());
     const p = built.snapshot.production.assignments[0]!;
     expect(p).toMatchObject({ assignmentRef: "as-1", campaignRef: "camp-1", campaignName: "Spring Launch", status: "IN_PROGRESS", dueAt: "2026-03-10", eventDate: "2026-03-10", eventDateSource: "dueAt", requiredCount: 2, formats: ["reel"], platforms: ["instagram"], completed: false, cancelled: false });
-    expect(p.thread).toMatchObject({ contentRef: "ct-1", status: "UNDER_REVIEW", linkCount: 1, linkPlatforms: ["instagram"], firstSubmittedAt: "2026-03-08T10:00:00.000Z" });
-    expect(p.thread!.links).toEqual([{ platform: "instagram", url: "https://instagram.com/p/a" }]);
+    expect(p.threads[0]).toMatchObject({ contentRef: "ct-1", status: "UNDER_REVIEW", linkCount: 1, linkPlatforms: ["instagram"], firstSubmittedAt: "2026-03-08T10:00:00.000Z" });
+    expect(p.threads[0]!.links).toEqual([{ platform: "instagram", url: "https://instagram.com/p/a" }]);
   });
 
   it("includes a cancelled assignment with its status, flagged, and a completed one flagged completed", () => {
@@ -480,5 +483,144 @@ describe("accepted monthly inclusion policy - Analytics (reporting-period OVERLA
     expect(built.snapshot.performance.records).toEqual([]);
     expect(built.snapshot.completeness.counts.analyticsRecordsExcludedUnparseableReportingPeriod).toBe(3);
     expect(built.snapshot.completeness.incompleteReasons).toEqual(["analytics_records_with_unparseable_reporting_period"]);
+  });
+});
+
+// Finding #50 (reopened): an Assignment can now own SEVERAL Content
+// threads, not just one - these prove evidence-builder.ts genuinely
+// aggregates every one of them (the prior single-thread Map silently
+// dropped every thread but the last one seen for a given assignmentRef;
+// this was dormant only because the 1:1 lock made a second thread
+// structurally impossible - see content-service.ts's own comment).
+describe("multiple Content records per Assignment (finding #50 reopened)", () => {
+  it("two threads sharing an assignmentRef both survive into production.threads[] - never a silent overwrite", () => {
+    const built = buildEvidence(
+      input({
+        threads: [thread({ contentRef: "ct-1", status: "APPROVED", approvedAt: "2026-03-09T00:00:00.000Z" }), thread({ contentRef: "ct-2", status: "UNDER_REVIEW" })],
+      }),
+    );
+    const production = built.snapshot.production.assignments[0]!;
+    expect(production.threads).toHaveLength(2);
+    expect(production.threads.map((t) => t.contentRef).sort()).toEqual(["ct-1", "ct-2"]);
+
+    // Both content refs reach sourceRefs - neither is dropped.
+    expect(built.sourceRefs).toEqual(expect.arrayContaining([{ type: "content", ref: "ct-1" }, { type: "content", ref: "ct-2" }]));
+
+    // qualifyingThreadUnits counts only the APPROVED one - never both, never neither.
+    const units = qualifyingThreadUnits([production], "approved_content_thread");
+    expect(units).toHaveLength(1);
+    expect(units[0]!.contentRef).toBe("ct-1");
+  });
+
+  // Finding #50 (reopened) closure-audit follow-up: the spec's own §16
+  // Variant A explicitly asked for proof that aggregation doesn't depend
+  // on Firestore's own (unordered-across-docs) query return order - the
+  // test above only ever constructed the fixture in one fixed array
+  // order. This feeds the identical two threads in the REVERSED order and
+  // asserts byte-identical results, proving threadByAssignmentRef's own
+  // push-never-overwrite Map genuinely doesn't care which thread arrives
+  // first.
+  it("the same two threads fed in the OPPOSITE order produce identical production/sourceRefs/qualifying results - order-independent by construction", () => {
+    const forwardThreads = [thread({ contentRef: "ct-1", status: "APPROVED", approvedAt: "2026-03-09T00:00:00.000Z" }), thread({ contentRef: "ct-2", status: "UNDER_REVIEW" })];
+    const reversedThreads = [...forwardThreads].reverse();
+
+    const forward = buildEvidence(input({ threads: forwardThreads }));
+    const reversed = buildEvidence(input({ threads: reversedThreads }));
+
+    const normalize = (built: ReturnType<typeof buildEvidence>) => ({
+      threads: [...built.snapshot.production.assignments[0]!.threads].sort((a, b) => a.contentRef.localeCompare(b.contentRef)),
+      sourceRefs: [...built.sourceRefs].sort((a, b) => (a.ref + a.type).localeCompare(b.ref + b.type)),
+      units: qualifyingThreadUnits([built.snapshot.production.assignments[0]!], "approved_content_thread").map((u) => u.contentRef),
+    });
+    expect(normalize(forward)).toEqual(normalize(reversed));
+  });
+
+  it("TWO approved threads under one Assignment both count as qualifying units - never collapsed to one", () => {
+    const built = buildEvidence(
+      input({
+        threads: [
+          thread({ contentRef: "ct-1", status: "APPROVED", approvedAt: "2026-03-05T00:00:00.000Z" }),
+          thread({ contentRef: "ct-2", status: "APPROVED", approvedAt: "2026-03-09T00:00:00.000Z" }),
+        ],
+      }),
+    );
+    const production = built.snapshot.production.assignments[0]!;
+    const units = qualifyingThreadUnits([production], "approved_content_thread");
+    expect(units).toHaveLength(2);
+    expect(units.map((u) => u.contentRef).sort()).toEqual(["ct-1", "ct-2"]);
+  });
+
+  it("compliance is derived ACROSS every thread: earliest submittedAt, latest approvedAt among APPROVED, summed revisionRequestCount", () => {
+    const built = buildEvidence(
+      input({
+        threads: [
+          thread({ contentRef: "ct-1", status: "APPROVED", firstSubmittedAt: "2026-03-02T00:00:00.000Z", approvedAt: "2026-03-05T00:00:00.000Z", currentRevisionNumber: 2 }),
+          thread({ contentRef: "ct-2", status: "APPROVED", firstSubmittedAt: "2026-03-06T00:00:00.000Z", approvedAt: "2026-03-09T00:00:00.000Z", currentRevisionNumber: 3, openedAt: "2026-03-06T00:00:00.000Z" }),
+        ],
+      }),
+    );
+    const compliance = built.snapshot.compliance.assignments[0]!;
+    expect(compliance.submittedAt).toBe("2026-03-02T00:00:00.000Z"); // earliest
+    expect(compliance.approvedAt).toBe("2026-03-09T00:00:00.000Z"); // latest among APPROVED
+    expect(compliance.revisionRequestCount).toBe(3); // (2-1) + (3-1) summed across both threads
+    // threadStatus reflects the most-recently-OPENED (current) cycle.
+    expect(compliance.threadStatus).toBe("APPROVED");
+  });
+
+  it("a REPLAY of a v1-shaped stored snapshot (singular thread, schemaVersion 1) still parses via normalizeStoredEvidenceSnapshot - never rewritten, never lost", () => {
+    const built = buildEvidence(input());
+    const v2Assignment = built.snapshot.production.assignments[0]!;
+    const singleThread = v2Assignment.threads[0]!;
+
+    // Hand-construct the RAW v1 shape this exact fixture would have
+    // produced before finding #50 (reopened) - singular nullable `thread`,
+    // schemaVersion 1 - simulating an already-stored FINALIZED version
+    // that must never be rewritten.
+    const v1Assignment = { ...v2Assignment, thread: singleThread } as Record<string, unknown>;
+    delete v1Assignment.threads;
+    const v1Snapshot = { ...built.snapshot, schemaVersion: 1, production: { assignments: [v1Assignment] } };
+
+    const rawVersionDoc = {
+      reviewRef: "review-partner-1-2026-03",
+      version: 1,
+      status: "FINALIZED",
+      docVersion: 1,
+      snapshot: v1Snapshot,
+      evidenceCutoff: built.snapshot.evidenceCutoff,
+      sourceFingerprint: built.sourceFingerprint,
+      sourceRefs: built.sourceRefs,
+      generatedAt: "2026-04-01T00:00:00.000Z",
+      generatedByUserRef: "ref-1",
+      lastRefreshedAt: null,
+      lastRefreshedByUserRef: null,
+      submittedAt: null,
+      submittedByUserRef: null,
+      finalizedAt: "2026-04-01T00:00:00.000Z",
+      finalizedByUserRef: "ref-1",
+      supersededAt: null,
+      supersededByVersion: null,
+      statusReason: null,
+      createdAt: "2026-04-01T00:00:00.000Z",
+      createdByUserRef: "ref-1",
+    };
+
+    // Never parses successfully WITHOUT the coercion - proves this test
+    // actually exercises the v1 shape, not an accidental v2 pass-through.
+    expect(partnerReviewVersionDocSchema.safeParse(rawVersionDoc).success).toBe(false);
+
+    const normalized = partnerReviewVersionDocSchema.safeParse(normalizeStoredEvidenceSnapshot(rawVersionDoc));
+    expect(normalized.success).toBe(true);
+    if (!normalized.success) return;
+    expect(normalized.data.snapshot.schemaVersion).toBe(EVIDENCE_SNAPSHOT_SCHEMA_VERSION);
+    expect(normalized.data.snapshot.production.assignments[0]!.threads).toEqual([singleThread]);
+
+    // A v1 doc with a NULL thread normalizes to an empty array, never a crash.
+    const v1NoThreadAssignment = { ...v2Assignment, thread: null } as Record<string, unknown>;
+    delete v1NoThreadAssignment.threads;
+    const noThreadDoc = { ...rawVersionDoc, snapshot: { ...v1Snapshot, production: { assignments: [v1NoThreadAssignment] } } };
+    const normalizedNoThread = partnerReviewVersionDocSchema.safeParse(normalizeStoredEvidenceSnapshot(noThreadDoc));
+    expect(normalizedNoThread.success).toBe(true);
+    if (!normalizedNoThread.success) return;
+    expect(normalizedNoThread.data.snapshot.production.assignments[0]!.threads).toEqual([]);
   });
 });

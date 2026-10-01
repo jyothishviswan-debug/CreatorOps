@@ -30,10 +30,12 @@ export const REVIEW_POLICY_LABELS: Record<ReviewPolicy, string> = {
 
 export const RESOURCE_TYPE_LABELS: Record<CampaignResourceType, string> = {
   LINK: "Link",
-  DOCUMENT: "Document",
-  BRIEF: "Brief",
-  ASSET: "Asset",
-  OTHER: "Other",
+  UPLOAD: "Upload",
+  TEXT: "Text",
+  DOCUMENT: "Document (legacy)",
+  BRIEF: "Brief (legacy)",
+  ASSET: "Asset (legacy)",
+  OTHER: "Other (legacy)",
 };
 
 const EVENT_LABELS: Record<CampaignEventKind, string> = {
@@ -58,6 +60,17 @@ export function eventLabel(kind: CampaignEventKind): string {
 // this only ever affects how it's rendered.
 export function platformLabel(value: string): string {
   return value.length > 0 ? value[0]!.toUpperCase() + value.slice(1) : value;
+}
+
+// Finding #34: both arrays already store the same normalized platform-identifier format
+// (campaignPlatformsArraySchema), so a plain set comparison - order-independent, duplicate-
+// independent - is enough to tell a genuinely-divergent legacy value from an identical one.
+export function sameNormalizedSet(a: readonly string[], b: readonly string[]): boolean {
+  const setA = new Set(a);
+  const setB = new Set(b);
+  if (setA.size !== setB.size) return false;
+  for (const value of setA) if (!setB.has(value)) return false;
+  return true;
 }
 
 export function dateLabel(value: string): string {

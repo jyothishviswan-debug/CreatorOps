@@ -1,18 +1,19 @@
 "use client";
 
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 
 import { Pill } from "@/ui/Badge";
 import { Icon } from "@/ui/icons";
 import type { LeadDto } from "@/server/discovery/client-dto";
 import type { ManagerCandidateDto } from "@/server/discovery/user-picker";
-import { ASSET_DECISIONS, REVIEW_OUTCOMES, type AssetDecisionKind, type LeadKycAttachment, type ReviewOutcome, type TargetAudience } from "@/server/discovery/types";
+import { ASSET_DECISIONS, REVIEW_OUTCOMES, type AssetDecisionKind, type LeadKycAttachment, type OutreachChannel, type ReviewOutcome, type TargetAudience } from "@/server/discovery/types";
 import { TargetAudienceMultiSelect } from "@/features/shared/TargetAudienceMultiSelect";
 import type { DiscoveryApiResult } from "./api-client";
 import {
   addKycLinkAttachment,
   assignManager,
+  getLeadHistory,
   getLeadKyc,
   recordOutreach,
   recordReview,
@@ -24,7 +25,7 @@ import {
   uploadKycAttachment,
 } from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
-import { REVIEW_OUTCOME_LABELS } from "./format";
+import { absoluteTime, ASSET_DECISION_DESCRIPTIONS, ASSET_DECISION_LABELS, channelLabel, CHANNEL_OPTIONS, REVIEW_OUTCOME_LABELS } from "./format";
 import { ManagerPicker } from "./ManagerPicker";
 
 type StageProps = { lead: LeadDto; onSaved: (lead: LeadDto) => void };
@@ -269,8 +270,7 @@ export function ReviewStage({ lead, onSaved }: StageProps) {
 // ---- Outreach & Negotiation ----
 
 export function OutreachStage({ lead, onSaved }: StageProps) {
-  const [direction, setDirection] = useState<"OUTBOUND" | "INBOUND">("OUTBOUND");
-  const [channel, setChannel] = useState("");
+  const [channel, setChannel] = useState<OutreachChannel | "">("");
   const [summary, setSummary] = useState("");
   const [outcome, setOutcome] = useState("");
   const [notes, setNotes] = useState("");
@@ -279,22 +279,31 @@ export function OutreachStage({ lead, onSaved }: StageProps) {
   const [meaningfulResponse, setMeaningfulResponse] = useState(false);
   const outreachSave = useSaveHandler(onSaved);
 
+  // Findings #2/#3 (user-decided): same read-only/edit toggle as AgreementStage, gated on
+  // `alignmentConfirmed` (Commercial has no separate confirmedAt timestamp, a plain boolean instead).
+  const [commercialEditing, setCommercialEditing] = useState(!lead.commercial?.alignmentConfirmed);
   const [negotiationSummary, setNegotiationSummary] = useState(lead.commercial?.negotiationSummary ?? "");
   const [alignmentConfirmed, setAlignmentConfirmed] = useState(lead.commercial?.alignmentConfirmed ?? false);
   const commercialSave = useSaveHandler(onSaved);
 
+  function startCommercialEditing() {
+    setNegotiationSummary(lead.commercial?.negotiationSummary ?? "");
+    setAlignmentConfirmed(lead.commercial?.alignmentConfirmed ?? false);
+    setCommercialEditing(true);
+  }
+
   async function handleOutreachSubmit(e: FormEvent) {
     e.preventDefault();
+    if (!channel) return; // the required <select>'s disabled placeholder keeps this unreachable via a real submit
     const ok = await outreachSave.run(() =>
       recordOutreach(lead.leadRef, {
-        direction,
         channel,
         summary,
         outcome,
         notes: notes.trim() || undefined,
         supportingReference: supportingReference.trim() || undefined,
         nextFollowUpAt: nextFollowUpAt || undefined,
-        meaningfulResponse: direction === "INBOUND" ? meaningfulResponse : undefined,
+        meaningfulResponse,
         expectedVersion: lead.version,
       }),
     );
@@ -311,7 +320,8 @@ export function OutreachStage({ lead, onSaved }: StageProps) {
 
   async function handleCommercialSubmit(e: FormEvent) {
     e.preventDefault();
-    await commercialSave.run(() => saveCommercial(lead.leadRef, { negotiationSummary: negotiationSummary.trim() || undefined, alignmentConfirmed, expectedVersion: lead.version }));
+    const ok = await commercialSave.run(() => saveCommercial(lead.leadRef, { negotiationSummary: negotiationSummary.trim() || undefined, alignmentConfirmed, expectedVersion: lead.version }));
+    if (ok) setCommercialEditing(false);
   }
 
   return (
@@ -326,9 +336,13 @@ export function OutreachStage({ lead, onSaved }: StageProps) {
           <div className="kv">
             <span>Last contact</span>
             <b>
-              {lead.outreachSummary.lastDirection === "OUTBOUND" ? "Outbound" : "Inbound"} · {lead.outreachSummary.lastChannel} · {lead.outreachSummary.lastOutcome}
+              {channelLabel(lead.outreachSummary.lastChannel)} · {lead.outreachSummary.lastOutcome} · {absoluteTime(lead.outreachSummary.lastAt)}
             </b>
           </div>
+          {/* Finding #8 (user-decided): anchored to the "Last contact" timestamp actually shown just
+              above - only rendered when a real timestamp exists to disclaim, never as orphaned copy
+              with no field for it to refer to. */}
+          <p className="foundationnote">The timestamp above is always server-captured when the attempt is recorded - never entered by the operator.</p>
           {lead.respondedAt && (
             <div className="kv">
               <span>Meaningful response recorded</span>
@@ -337,19 +351,21 @@ export function OutreachStage({ lead, onSaved }: StageProps) {
           )}
         </>
       )}
-      <p className="foundationnote">The contact timestamp is always server-captured - never entered by the operator.</p>
       <form onSubmit={handleOutreachSubmit}>
         <div className="fields">
           <div className="field">
-            <label htmlFor="outreach-direction">Direction</label>
-            <select id="outreach-direction" value={direction} onChange={(e) => setDirection(e.target.value as "OUTBOUND" | "INBOUND")}>
-              <option value="OUTBOUND">Outbound</option>
-              <option value="INBOUND">Inbound</option>
-            </select>
-          </div>
-          <div className="field">
             <label htmlFor="outreach-channel">Channel</label>
-            <input id="outreach-channel" type="text" value={channel} onChange={(e) => setChannel(e.target.value)} placeholder="email, call, DM…" required />
+            {/* Finding #7 (user-decided): a controlled selector, not free text - see CHANNEL_OPTIONS. */}
+            <select id="outreach-channel" value={channel} onChange={(e) => setChannel(e.target.value as OutreachChannel | "")} required>
+              <option value="" disabled>
+                Select a channel…
+              </option>
+              {CHANNEL_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="field full">
             <label htmlFor="outreach-summary">Summary</label>
@@ -371,14 +387,13 @@ export function OutreachStage({ lead, onSaved }: StageProps) {
             <label htmlFor="outreach-notes">Notes</label>
             <textarea id="outreach-notes" value={notes} onChange={(e) => setNotes(e.target.value)} />
           </div>
-          {direction === "INBOUND" && (
-            <div className="field">
-              <label htmlFor="outreach-meaningful">
-                <input id="outreach-meaningful" type="checkbox" checked={meaningfulResponse} onChange={(e) => setMeaningfulResponse(e.target.checked)} style={{ marginRight: 8 }} />
-                This is a meaningful response
-              </label>
-            </div>
-          )}
+          <div className="field">
+            <label htmlFor="outreach-meaningful">
+              <input id="outreach-meaningful" type="checkbox" checked={meaningfulResponse} onChange={(e) => setMeaningfulResponse(e.target.checked)} style={{ marginRight: 8 }} />
+              This is a meaningful response
+            </label>
+            <small>The creator has substantively replied - checking this satisfies the &ldquo;awaiting response&rdquo; readiness requirement.</small>
+          </div>
         </div>
         <ErrorBanner message={outreachSave.error} />
         <button type="submit" className="btn primary" disabled={outreachSave.saving} style={{ marginTop: 14 }}>
@@ -386,34 +401,170 @@ export function OutreachStage({ lead, onSaved }: StageProps) {
         </button>
       </form>
 
+      {lead.outreachSummary && <OutreachHistory leadRef={lead.leadRef} totalCount={lead.outreachSummary.totalCount} />}
+
       <h3 style={{ marginTop: 28 }}>Negotiation / commercial alignment</h3>
       <p className="foundationnote">Distinct evidence from outreach above - conversion evidence, not a contact log entry.</p>
-      <form onSubmit={handleCommercialSubmit}>
-        <div className="fields">
-          <div className="field full">
-            <label htmlFor="commercial-summary">Negotiation summary</label>
-            <textarea id="commercial-summary" value={negotiationSummary} onChange={(e) => setNegotiationSummary(e.target.value)} />
+      {!commercialEditing && lead.commercial ? (
+        <div>
+          <div className="kv">
+            <span>Confirmed</span>
+            <Pill tone="default">Yes</Pill>
           </div>
-          <div className="field">
-            <label htmlFor="commercial-confirmed">
-              <input id="commercial-confirmed" type="checkbox" checked={alignmentConfirmed} onChange={(e) => setAlignmentConfirmed(e.target.checked)} style={{ marginRight: 8 }} />
-              Commercial alignment confirmed
-            </label>
-          </div>
+          {lead.commercial.negotiationSummary && (
+            <div className="kv">
+              <span>Negotiation summary</span>
+              <b>{lead.commercial.negotiationSummary}</b>
+            </div>
+          )}
+          <button type="button" className="btn" style={{ marginTop: 10 }} onClick={startCommercialEditing}>
+            Edit
+          </button>
         </div>
-        <ErrorBanner message={commercialSave.error} />
-        <button type="submit" className="btn primary" disabled={commercialSave.saving} style={{ marginTop: 14 }}>
-          {commercialSave.saving ? "Saving…" : "Save commercial evidence"}
-        </button>
-      </form>
+      ) : (
+        <form onSubmit={handleCommercialSubmit}>
+          <div className="fields">
+            <div className="field full">
+              <label htmlFor="commercial-summary">Negotiation summary</label>
+              <textarea id="commercial-summary" value={negotiationSummary} onChange={(e) => setNegotiationSummary(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="commercial-confirmed">
+                <input id="commercial-confirmed" type="checkbox" checked={alignmentConfirmed} onChange={(e) => setAlignmentConfirmed(e.target.checked)} style={{ marginRight: 8 }} />
+                Commercial alignment confirmed
+              </label>
+            </div>
+          </div>
+          <ErrorBanner message={commercialSave.error} />
+          <div className="actions" style={{ marginTop: 14 }}>
+            {lead.commercial?.alignmentConfirmed && (
+              <button type="button" className="btn" onClick={() => setCommercialEditing(false)} disabled={commercialSave.saving}>
+                Cancel
+              </button>
+            )}
+            <button type="submit" className="btn primary" disabled={commercialSave.saving}>
+              {commercialSave.saving ? "Saving…" : "Save commercial evidence"}
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
+
+type OutreachAttempt = {
+  id: string;
+  channel: string;
+  summary: string;
+  outcome: string;
+  notes: string | null;
+  supportingReference: string | null;
+  nextFollowUpAt: string | null;
+  meaningfulResponse: boolean;
+  createdAt: string;
+  actorDisplayName: string | null;
+};
+
+function readString(metadata: Record<string, unknown> | null | undefined, key: string): string | null {
+  const value = metadata?.[key];
+  return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+// Finding #9 (user-decided): a real per-attempt log, not just the rolled-up "Attempts logged: N / Last
+// contact: ..." summary above. Reuses the SAME append-only leads/{uid}/events history every other
+// Discovery mutation already writes to (see lead-events.ts) - never a second, parallel history
+// mechanism - filtered client-side to `outreach_recorded` events, since a per-Lead event volume is
+// naturally small/bounded and this avoids a new Firestore composite index for a kind-scoped query.
+// Refetches whenever `totalCount` changes (i.e. a new attempt was just recorded), no separate
+// refresh-key plumbing needed.
+function OutreachHistory({ leadRef, totalCount }: { leadRef: string; totalCount: number }) {
+  const [attempts, setAttempts] = useState<OutreachAttempt[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [truncated, setTruncated] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    // No synchronous setState here (same discipline as HistoryPanel.tsx's own effect) - `loading`
+    // starts true via its initial state and a `totalCount` change simply refreshes the list in the
+    // background rather than flashing back to a loading state.
+    getLeadHistory(leadRef, { limit: 100 }).then((result) => {
+      if (cancelled) return;
+      setLoading(false);
+      if (!result.ok) {
+        setError(result.error);
+        return;
+      }
+      const outreachEvents = result.data.events.filter((e) => e.kind === "outreach_recorded");
+      setAttempts(
+        outreachEvents.map((e) => ({
+          id: e.id,
+          channel: readString(e.metadata, "channel") ?? "unknown",
+          summary: readString(e.metadata, "summary") ?? "",
+          outcome: readString(e.metadata, "outcome") ?? "",
+          notes: readString(e.metadata, "notes"),
+          supportingReference: readString(e.metadata, "supportingReference"),
+          nextFollowUpAt: readString(e.metadata, "nextFollowUpAt"),
+          meaningfulResponse: e.metadata?.meaningfulResponse === true,
+          createdAt: e.createdAt,
+          actorDisplayName: e.actorDisplayName,
+        })),
+      );
+      // Never silently incomplete without disclosure, same discipline as this codebase's other bounded
+      // reports - if fewer outreach_recorded events came back than the Lead's own real totalCount,
+      // some older attempts fell outside this page's window.
+      setTruncated(outreachEvents.length < totalCount);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [leadRef, totalCount]);
+
+  return (
+    <div style={{ marginTop: 20 }}>
+      <h4>Outreach attempts</h4>
+      {loading ? (
+        <p className="foundationnote">Loading…</p>
+      ) : error ? (
+        <div className="banner" role="alert">
+          {error}
+        </div>
+      ) : attempts.length === 0 ? (
+        <p className="foundationnote">No outreach attempts recorded yet.</p>
+      ) : (
+        <>
+          <ul className="checklist" style={{ gridTemplateColumns: "1fr" }}>
+            {attempts.map((attempt) => (
+              <li key={attempt.id} style={{ display: "block" }}>
+                <div>
+                  <b>{channelLabel(attempt.channel)}</b> · {attempt.outcome} · {absoluteTime(attempt.createdAt)} · {attempt.actorDisplayName ?? "Unknown actor"}
+                  {attempt.meaningfulResponse && <Pill tone="default">Meaningful response</Pill>}
+                </div>
+                {attempt.summary && <small style={{ display: "block", marginTop: 4 }}>{attempt.summary}</small>}
+                {attempt.notes && <small style={{ display: "block", marginTop: 4 }}>Notes: {attempt.notes}</small>}
+                {attempt.supportingReference && <small style={{ display: "block", marginTop: 4 }}>Reference: {attempt.supportingReference}</small>}
+                {attempt.nextFollowUpAt && <small style={{ display: "block", marginTop: 4 }}>Next follow-up: {attempt.nextFollowUpAt}</small>}
+              </li>
+            ))}
+          </ul>
+          {truncated && <small>Showing the most recent {attempts.length} of {totalCount} total attempts.</small>}
+        </>
+      )}
     </div>
   );
 }
 
 // ---- Agreement ----
 
+// Findings #2/#3 (user-decided): once confirmed, Agreement evidence renders as a read-only summary +
+// "Edit" button (matching DiscoveryLeadOwnerPanel's own editing-toggle idiom) instead of leaving the
+// full form open underneath. `editing` defaults to true whenever nothing is confirmed yet (a
+// never-confirmed record has no read-only state to show); `startEditing` resets every local field back
+// to the confirmed value first, so re-opening after a previous unsaved edit + Cancel never carries a
+// stale pending change (same fix DiscoveryLeadOwnerPanel's own comment documents for its own idiom).
 export function AgreementStage({ lead, onSaved }: StageProps) {
   const a = lead.discoveryAgreement;
+  const [editing, setEditing] = useState(!a?.confirmedAt);
   const [summary, setSummary] = useState(a?.summary ?? "");
   const [amount, setAmount] = useState(a?.amount !== undefined ? String(a.amount) : "");
   const [deliverableCount, setDeliverableCount] = useState(a?.deliverableCount !== undefined ? String(a.deliverableCount) : "");
@@ -421,9 +572,18 @@ export function AgreementStage({ lead, onSaved }: StageProps) {
   const [confirmed, setConfirmed] = useState(Boolean(a?.confirmedAt));
   const { saving, error, run } = useSaveHandler(onSaved);
 
+  function startEditing() {
+    setSummary(a?.summary ?? "");
+    setAmount(a?.amount !== undefined ? String(a.amount) : "");
+    setDeliverableCount(a?.deliverableCount !== undefined ? String(a.deliverableCount) : "");
+    setReferenceUrl(a?.referenceUrl ?? "");
+    setConfirmed(Boolean(a?.confirmedAt));
+    setEditing(true);
+  }
+
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
-    await run(() =>
+    const ok = await run(() =>
       saveDiscoveryAgreement(lead.leadRef, {
         summary: summary.trim() || undefined,
         amount: amount.trim() ? Number(amount) : undefined,
@@ -433,6 +593,52 @@ export function AgreementStage({ lead, onSaved }: StageProps) {
         expectedVersion: lead.version,
       }),
     );
+    if (ok) setEditing(false);
+  }
+
+  if (!editing && a) {
+    return (
+      <div>
+        <p className="foundationnote">
+          <b>Discovery operational agreement evidence only.</b> This is never canonical Finance Agreement truth.
+        </p>
+        <div className="kv">
+          <span>Confirmed</span>
+          <Pill tone="default">Yes</Pill>
+        </div>
+        {a.amount !== undefined && (
+          <div className="kv">
+            <span>Amount</span>
+            <b>{a.amount.toLocaleString("en-GB")}</b>
+          </div>
+        )}
+        {a.deliverableCount !== undefined && (
+          <div className="kv">
+            <span>Deliverables</span>
+            <b>{a.deliverableCount}</b>
+          </div>
+        )}
+        {a.summary && (
+          <div className="kv">
+            <span>Summary note</span>
+            <b>{a.summary}</b>
+          </div>
+        )}
+        {a.referenceUrl && (
+          <div className="kv">
+            <span>Reference URL</span>
+            <b>
+              <a href={a.referenceUrl} target="_blank" rel="noreferrer">
+                {a.referenceUrl}
+              </a>
+            </b>
+          </div>
+        )}
+        <button type="button" className="btn" style={{ marginTop: 10 }} onClick={startEditing}>
+          Edit
+        </button>
+      </div>
+    );
   }
 
   return (
@@ -440,30 +646,6 @@ export function AgreementStage({ lead, onSaved }: StageProps) {
       <p className="foundationnote">
         <b>Discovery operational agreement evidence only.</b> This is never canonical Finance Agreement truth.
       </p>
-      {a && (
-        <>
-          <div className="kv">
-            <span>Confirmed</span>
-            <Pill tone={a.confirmedAt ? "default" : "gray"}>{a.confirmedAt ? "Yes" : "Not yet"}</Pill>
-          </div>
-          {a.amount !== undefined && (
-            <div className="kv">
-              <span>Amount</span>
-              {/* Final Whole-Product Certification (hydration sweep): a fixed locale, matching this
-                  codebase's own established convention (e.g. ExportsWorkspace.tsx's DATE_LOCALE) - the
-                  default Intl locale can differ between the server render and the browser, which is a
-                  real hydration-text-mismatch risk for a real server-passed value, not a hypothetical one. */}
-              <b>{a.amount.toLocaleString("en-GB")}</b>
-            </div>
-          )}
-          {a.deliverableCount !== undefined && (
-            <div className="kv">
-              <span>Deliverables</span>
-              <b>{a.deliverableCount}</b>
-            </div>
-          )}
-        </>
-      )}
       <form onSubmit={handleSubmit}>
         <div className="fields">
           <div className="field full">
@@ -490,21 +672,22 @@ export function AgreementStage({ lead, onSaved }: StageProps) {
           </div>
         </div>
         <ErrorBanner message={error} />
-        <button type="submit" className="btn primary" disabled={saving} style={{ marginTop: 14 }}>
-          {saving ? "Saving…" : "Save agreement evidence"}
-        </button>
+        <div className="actions" style={{ marginTop: 14 }}>
+          {a?.confirmedAt && (
+            <button type="button" className="btn" onClick={() => setEditing(false)} disabled={saving}>
+              Cancel
+            </button>
+          )}
+          <button type="submit" className="btn primary" disabled={saving}>
+            {saving ? "Saving…" : "Save agreement evidence"}
+          </button>
+        </div>
       </form>
     </div>
   );
 }
 
 // ---- Asset Setup ----
-
-const ASSET_LABELS: Record<AssetDecisionKind, string> = {
-  MAINTAIN_EXISTING: "Maintain Existing",
-  TRANSFER_AND_MAINTAIN: "Transfer & Maintain",
-  NEW_ACCOUNT: "New Account",
-};
 
 export function AssetStage({ lead, onSaved }: StageProps) {
   const d = lead.assetDecision;
@@ -518,7 +701,7 @@ export function AssetStage({ lead, onSaved }: StageProps) {
     await run(() =>
       saveAssetDecision(lead.leadRef, {
         decision,
-        existingPartnerAccountRef: decision !== "NEW_ACCOUNT" ? existingRef.trim() : undefined,
+        existingPartnerAccountRef: decision !== "NEW_ACCOUNT" ? existingRef.trim() || undefined : undefined,
         notes: notes.trim() || undefined,
         expectedVersion: lead.version,
       }),
@@ -530,12 +713,17 @@ export function AssetStage({ lead, onSaved }: StageProps) {
       {d && (
         <div className="kv">
           <span>Saved decision</span>
-          <Pill tone="default">{ASSET_LABELS[d.decision]}</Pill>
+          <Pill tone="default">{ASSET_DECISION_LABELS[d.decision]}</Pill>
         </div>
       )}
       {decision === "NEW_ACCOUNT" && (
         <div className="banner" role="status">
           <b>New Account setup is pending.</b> No Partner Account URL or handle is fabricated - it&rsquo;s created only once conversion completes, and only from confirmed evidence.
+        </div>
+      )}
+      {decision !== "NEW_ACCOUNT" && (
+        <div className="banner" role="status">
+          {ASSET_DECISION_DESCRIPTIONS[decision]}
         </div>
       )}
       <form onSubmit={handleSubmit}>
@@ -545,15 +733,16 @@ export function AssetStage({ lead, onSaved }: StageProps) {
             <select id="asset-decision" value={decision} onChange={(e) => setDecision(e.target.value as AssetDecisionKind)}>
               {ASSET_DECISIONS.map((k) => (
                 <option key={k} value={k}>
-                  {ASSET_LABELS[k]}
+                  {ASSET_DECISION_LABELS[k]}
                 </option>
               ))}
             </select>
           </div>
           {decision !== "NEW_ACCOUNT" && (
             <div className="field full">
-              <label htmlFor="asset-existing-ref">Existing Partner Account reference</label>
-              <input id="asset-existing-ref" type="text" value={existingRef} onChange={(e) => setExistingRef(e.target.value)} required />
+              <label htmlFor="asset-existing-ref">Existing Partner Account reference (optional)</label>
+              <input id="asset-existing-ref" type="text" value={existingRef} onChange={(e) => setExistingRef(e.target.value)} placeholder="Leave blank to use this Lead's own confirmed Platform/Handle instead" />
+              <small>Optional shortcut - if left blank, this Lead&rsquo;s own confirmed Platform on the Lead tab is used as the real external account identity at conversion.</small>
             </div>
           )}
           <div className="field full">
@@ -631,7 +820,10 @@ export function KycStage({ lead, onSaved }: StageProps) {
 function KycPanel({ lead, onSaved }: StageProps) {
   const [state, setState] = useState<"idle" | "loading" | "denied" | "error" | "ready">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
-  const [email, setEmail] = useState("");
+  // Finding #4 (user-decided): prefilled from the Lead's already-known email when no KYC package
+  // exists yet - `load()` below only ever overwrites this from a REAL saved KYC doc's own confirmed
+  // email, never the other way around, so a deliberately different confirmed value is never clobbered.
+  const [email, setEmail] = useState(lead.email ?? "");
   const [aadhaarNumber, setAadhaarNumber] = useState("");
   const [panNumber, setPanNumber] = useState("");
   const [accountHolderName, setAccountHolderName] = useState("");
@@ -834,6 +1026,19 @@ function KycAttachments({
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Finding #5 (user-decided): switching document type or source (link/upload) clears any stale
+  // link/file already entered for the PREVIOUS type - a document meant for one type can never be
+  // silently submitted under a different one. Adjusted during render (React's own recommended pattern
+  // for "reset state when a value changes"), not inside a useEffect - a synchronous setState in an
+  // effect body triggers a needless extra render.
+  const [resetKey, setResetKey] = useState(`${docType}-${mode}`);
+  const currentResetKey = `${docType}-${mode}`;
+  if (currentResetKey !== resetKey) {
+    setResetKey(currentResetKey);
+    setLinkUrl("");
+    setFile(null);
+  }
+
   async function handleAdd(e: FormEvent) {
     e.preventDefault();
     setError(null);
@@ -889,12 +1094,15 @@ function KycAttachments({
             </select>
           </div>
           {mode === "link" ? (
-            <div className="field full" key="link">
+            <div className="field full" key={`link-${docType}`}>
               <label htmlFor="attach-url">Document link</label>
               <input id="attach-url" type="url" placeholder="https://…" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} required />
             </div>
           ) : (
-            <div className="field full" key="upload">
+            // Keyed on docType too (not just mode) so the browser's own native file-picker display -
+            // which React cannot control via `value` - genuinely remounts and clears on a doc-type
+            // change while staying in Upload mode, not just when switching Link<->Upload (finding #5).
+            <div className="field full" key={`upload-${docType}`}>
               <label htmlFor="attach-file">Choose file</label>
               <input id="attach-file" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
             </div>
@@ -916,8 +1124,10 @@ function KycAttachments({
             <li key={`${a.docType}-${a.addedAt}-${i}`}>
               <Icon name={a.kind === "upload" ? "upload" : "link"} />
               <b>{DOC_TYPE_LABELS[a.docType]}</b> ·{" "}
+              {/* Finding #6 (user-decided): matches Finance Agreement's own "Open ___ document" anchor
+                  convention instead of a generic "Open link". */}
               <a href={a.url} target="_blank" rel="noreferrer">
-                {a.kind === "upload" ? a.fileName ?? "Uploaded file" : "Open link"}
+                {a.kind === "upload" ? (a.fileName ?? `Open ${DOC_TYPE_LABELS[a.docType]} document`) : `Open ${DOC_TYPE_LABELS[a.docType]} document`}
               </a>
             </li>
           ))}

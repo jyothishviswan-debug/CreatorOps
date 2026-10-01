@@ -7,7 +7,15 @@
 // boundary, not used by anything this UI step calls, but kept for shape
 // parity with the server's own AssignmentsServiceErrorCode).
 import type { AssignmentDto } from "@/server/assignments/client-dto";
-import type { CreateAssignmentInput, EditAssignmentBriefInput, ListAssignmentHistoryInput, ListAssignmentsInput, AssignmentHistoryEventDto } from "@/server/assignments/assignment-service";
+import type {
+  CreateAssignmentInput,
+  CreateAssignmentsForPartnersInput,
+  CreateAssignmentsForPartnersResult,
+  EditAssignmentBriefInput,
+  ListAssignmentHistoryInput,
+  ListAssignmentsInput,
+  AssignmentHistoryEventDto,
+} from "@/server/assignments/assignment-service";
 import type { TransitionAssignmentInput } from "@/server/assignments/assignment-lifecycle-service";
 import type { AssignmentListCursor } from "@/server/assignments/firestore";
 import type { AssignmentEventListCursor } from "@/server/assignments/assignment-events";
@@ -104,6 +112,13 @@ export async function createAssignment(input: CreateAssignmentInput): Promise<As
   return { ok: true, data: { assignment: result.data, outcome: result.status === 201 ? "created" : "existing" } };
 }
 
+// Findings #40/#42/#51 (user-decided): the ONE bulk-create request - Direct multi-select and Through-
+// Vendor mode both just build the Partner-ref list and call this, never a client-side loop of individual
+// createAssignment calls.
+export function createAssignmentsForPartners(input: CreateAssignmentsForPartnersInput): Promise<AssignmentsApiResult<CreateAssignmentsForPartnersResult>> {
+  return call("/api/assignments/bulk", { method: "POST", body: JSON.stringify(input) });
+}
+
 export function editAssignmentBrief(assignmentRef: string, input: EditAssignmentBriefInput): Promise<AssignmentsApiResult<AssignmentDto>> {
   return call(`/api/assignments/${encodeURIComponent(assignmentRef)}`, { method: "PATCH", body: JSON.stringify(input) });
 }
@@ -156,4 +171,13 @@ export function getActiveSubmissionSession(
 ): Promise<AssignmentsApiResult<{ session: SafeSubmissionSessionDto | null }>> {
   const qs = query({ recipientType, recipientRef });
   return call(`/api/assignments/${encodeURIComponent(assignmentRef)}/submission-sessions${qs}`);
+}
+
+// Finding #43: revokes the given session (state ACTIVE -> REVOKED) so its
+// existing raw token immediately fails to resolve - the server-side half
+// of "revoke and reissue" already existed (see revoke/route.ts's own
+// comment: regeneration is create-new + revoke-old, no combined endpoint),
+// only the UI to call it was missing.
+export function revokeSubmissionSession(assignmentRef: string, sessionRef: string): Promise<AssignmentsApiResult<SafeSubmissionSessionDto>> {
+  return call(`/api/assignments/${encodeURIComponent(assignmentRef)}/submission-sessions/${encodeURIComponent(sessionRef)}/revoke`, { method: "POST" });
 }

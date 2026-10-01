@@ -1,6 +1,6 @@
 import type { AssignmentDoc } from "@/server/assignments/types";
-import { contentAssignmentThreadClaimsCollection, contentCollection } from "./firestore";
-import { contentAssignmentThreadClaimDocSchema, contentDocSchema, type ContentDoc, type ContentReadinessIssue } from "./types";
+import { contentCollection } from "./firestore";
+import { contentDocSchema, type ContentReadinessIssue } from "./types";
 
 function blocker(code: string, message: string): ContentReadinessIssue {
   return { code, message };
@@ -13,72 +13,81 @@ export type AssignmentFulfillmentResult = {
   qualifyingCount: number;
 };
 
-// Step 11A.1: resolves the Assignment's own single canonical Content
-// thread via the contentAssignmentThreadClaims doc (id = assignmentRef)
-// and asks one question: has it reached APPROVED? No slot-counting, no
-// per-record compatibility re-check - the one-thread-per-Assignment model
-// makes the old countQualifyingContentForAssignment's slot arithmetic
-// unnecessary, so it has been deleted rather than kept as dead code.
+// Finding #50 (reopened): canonical semantics restored - one Assignment
+// carries the obligation (requiredCount, on its brief), and MULTIPLE
+// qualifying Content records fulfill it, never links inside one thread.
+// This queries every Content record for the Assignment (there can be
+// several across separate submission cycles - see
+// resolveOrCreateContentThread in content-service.ts) and counts how many
+// have reached APPROVED. qualifyingCount is that real count - it can
+// exceed requiredCount (over-fulfillment is allowed and reported
+// honestly, never clamped, never an error). requiredCount defaults to 1
+// when unset, which every pre-existing single-cycle Assignment already
+// satisfies with its one approved thread, so default behavior is
+// unchanged.
+//
+// Deliberately UNBOUNDED (no .limit()) - this feeds a gating decision
+// (Assignment auto-completion, manual completion, CANCELLED-transition
+// blocking), not a display surface. A silent truncation here would be a
+// real correctness bug (undercounting real qualifying work), not a UX
+// nicety - unlike evidence-collector.ts's bounded, truncation-flagged
+// scans, which feed a display/evidence surface where an honest "more
+// exists" flag is the right tradeoff. Real-world cardinality here is
+// bounded by deliberate human submission cycles (also soft-capped by
+// MAX_ASSIGNMENT_REQUIRED_COUNT, assignments/types.ts), never
+// attacker-controlled volume, so an unbounded read is safe in practice.
 //
 // `override` lets a caller who is deciding the fate of ONE specific
-// Content thread IN THE SAME TRANSACTION (approveContentThread, in
+// Content record IN THE SAME TRANSACTION (approveContentThread, in
 // content-lifecycle-service.ts) substitute its about-to-be-written status
 // for whatever is currently on disk - required because a Firestore
-// transaction must complete every read before any write.
+// transaction must complete every read before any write. That record is
+// already present in the query result (the transaction only changes its
+// status, never creates it), so the override just overrides its counted
+// approval state in place - no separate "add" branch needed.
 //
 // Accepts an optional Firestore transaction so reads happen either as a
 // pre-check (no tx) or as the actual gating read INSIDE the transaction
 // that performs an approval/completion (tx passed) - a concurrent
-// approval/cancellation of the thread correctly forces a retry rather
-// than racing.
+// approval/cancellation of any of the Assignment's records correctly
+// forces a retry rather than racing.
 export async function evaluateAssignmentFulfillment(
   assignment: AssignmentDoc,
   tx?: FirebaseFirestore.Transaction,
   override?: { contentUid: string; willBeApproved: boolean },
 ): Promise<AssignmentFulfillmentResult> {
-  const claimQuery = contentAssignmentThreadClaimsCollection().doc(assignment.assignmentRef);
-  const claimSnap = tx ? await tx.get(claimQuery) : await claimQuery.get();
+  const requiredCount = assignment.brief.requiredCount ?? 1;
 
-  if (!claimSnap.exists) {
+  const contentQuery = contentCollection().where("assignmentRef", "==", assignment.assignmentRef);
+  const contentSnap = tx ? await tx.get(contentQuery) : await contentQuery.get();
+
+  let sawAny = false;
+  let qualifyingCount = 0;
+  for (const doc of contentSnap.docs) {
+    const parsed = contentDocSchema.safeParse(doc.data());
+    if (!parsed.success) continue;
+    sawAny = true;
+    const isApproved = override && override.contentUid === parsed.data.uid ? override.willBeApproved : parsed.data.status === "APPROVED";
+    if (isApproved) qualifyingCount += 1;
+  }
+
+  if (!sawAny) {
     return {
       fulfilled: false,
       blockers: [blocker("NO_SUBMISSION_THREAD", "No submission has been made for this Assignment yet.")],
-      requiredCount: 1,
+      requiredCount,
       qualifyingCount: 0,
     };
   }
 
-  const claim = contentAssignmentThreadClaimDocSchema.safeParse(claimSnap.data());
-  if (!claim.success) {
+  if (qualifyingCount < requiredCount) {
     return {
       fulfilled: false,
-      blockers: [blocker("NO_SUBMISSION_THREAD", "No submission has been made for this Assignment yet.")],
-      requiredCount: 1,
-      qualifyingCount: 0,
+      blockers: [blocker("CONTENT_NOT_FULFILLED", `This Assignment requires ${requiredCount} approved submission(s); ${qualifyingCount} currently approved.`)],
+      requiredCount,
+      qualifyingCount,
     };
   }
 
-  let fulfilled: boolean;
-  if (override && override.contentUid === claim.data.contentUid) {
-    fulfilled = override.willBeApproved;
-  } else {
-    const threadRef = contentCollection().doc(claim.data.contentUid);
-    const threadSnap = tx ? await tx.get(threadRef) : await threadRef.get();
-    const thread: ContentDoc | null = threadSnap.exists ? (() => {
-      const parsed = contentDocSchema.safeParse(threadSnap.data());
-      return parsed.success ? parsed.data : null;
-    })() : null;
-    fulfilled = thread?.status === "APPROVED";
-  }
-
-  if (fulfilled) {
-    return { fulfilled: true, blockers: [], requiredCount: 1, qualifyingCount: 1 };
-  }
-
-  return {
-    fulfilled: false,
-    blockers: [blocker("CONTENT_NOT_FULFILLED", "This Assignment's submission thread has not been approved yet.")],
-    requiredCount: 1,
-    qualifyingCount: 0,
-  };
+  return { fulfilled: true, blockers: [], requiredCount, qualifyingCount };
 }

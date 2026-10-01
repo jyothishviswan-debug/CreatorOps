@@ -86,4 +86,30 @@ describe("parseWorkbookBuffer", () => {
     const result = parseWorkbookBuffer(Buffer.from("PK\x03\x04this is not a valid zip stream", "binary"));
     expect(result.ok).toBe(false);
   });
+
+  // Remediation-plan Wave B / finding #55 re-audit: the real root cause behind a class of silent
+  // data loss - SheetJS's own sheet_to_json auto-suffixes a duplicate header ("Views" -> "Views_1")
+  // when building row objects, but nothing downstream ever reads that suffixed key, so the second
+  // column's entire data used to vanish with zero error anywhere.
+  it("rejects a sheet with the same literal header text twice, naming the sheet and the duplicated column", () => {
+    const buffer = bufferFromRows("Posts", [
+      ["Post URL", "Views", "Views"],
+      ["https://instagram.com/p/p1", 100, 200],
+    ]);
+    const result = parseWorkbookBuffer(buffer);
+    expect(result.ok).toBe(false);
+    if (result.ok) return;
+    expect(result.reasonCode).toBe("DUPLICATE_HEADER");
+    expect(result.message).toContain("Posts");
+    expect(result.message).toContain("Views");
+  });
+
+  it("does NOT reject headers that are merely similar (different text) - only an exact literal duplicate", () => {
+    const buffer = bufferFromRows("Posts", [
+      ["Post URL", "Views", "View Count"],
+      ["https://instagram.com/p/p1", 100, 200],
+    ]);
+    const result = parseWorkbookBuffer(buffer);
+    expect(result.ok).toBe(true);
+  });
 });

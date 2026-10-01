@@ -317,15 +317,35 @@ test.describe("Detail workflow", () => {
     await page.getByRole("button", { name: "Save asset decision" }).click();
     await expect(page.getByText("Saved decision")).toBeVisible();
 
+    // Finding #15: existingPartnerAccountRef is now verified to resolve to
+    // a real Partner Account at save time - a made-up placeholder ref is
+    // correctly rejected, so this uses a real seeded account
+    // ("seed-account-creatorhouse-ig-primary", from seed-partners-data.ts)
+    // instead.
     await page.getByLabel("Decision").selectOption("MAINTAIN_EXISTING");
-    await page.getByLabel("Existing Partner Account reference").fill("placeholder-account-ref");
+    await page.getByLabel("Existing Partner Account reference").fill("seed-account-creatorhouse-ig-primary");
     await page.getByRole("button", { name: "Save asset decision" }).click();
     await expect(page.locator(".pill", { hasText: "Maintain Existing" })).toBeVisible();
 
     await page.getByLabel("Decision").selectOption("TRANSFER_AND_MAINTAIN");
-    await page.getByLabel("Existing Partner Account reference").fill("placeholder-account-ref-2");
+    await page.getByLabel("Existing Partner Account reference").fill("seed-account-creatorhouse-ig-primary");
     await page.getByRole("button", { name: "Save asset decision" }).click();
     await expect(page.locator(".pill", { hasText: "Transfer & Maintain" })).toBeVisible();
+  });
+
+  // Finding #15: a made-up/nonexistent Partner Account reference must
+  // produce a clear, actionable error and never silently save - the real,
+  // previously-missing existence check (lead-service.ts's saveAssetDecision).
+  test("a nonexistent existingPartnerAccountRef produces a clear error and does not save", async ({ page }) => {
+    const lead = await createLeadViaApi(page);
+    await page.goto(`/discovery/${lead.leadRef}`);
+    await page.getByRole("tab", { name: "Asset Setup" }).click();
+
+    await page.getByLabel("Decision").selectOption("MAINTAIN_EXISTING");
+    await page.getByLabel("Existing Partner Account reference").fill("not-a-real-account-ref");
+    await page.getByRole("button", { name: "Save asset decision" }).click();
+    await expect(page.getByText("does not exist")).toBeVisible();
+    await expect(page.getByText("Saved decision")).toHaveCount(0);
   });
 
   test("manager assignment uses a real active-user search, never free text", async ({ page }) => {

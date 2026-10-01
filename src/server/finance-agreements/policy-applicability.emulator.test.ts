@@ -1,7 +1,8 @@
 // Step 14C - APPLICABILITY CERTIFICATION of the Agreement commercial-policy adapter against the running Firestore/Auth emulator, on
 // real Agreement data created through the real services (no hand-written Agreement documents except the one documented `endedAt`
 // move). Every rule of the 14C design is pinned here:
-//   - a version governs a month only if its confirmed effective range covers the WHOLE month (no proration);
+//   - a version governs a month only if its confirmed effective range covers the WHOLE month (no proration), EXCEPT
+//     Step 14D's inception exception: version 1 also governs the one partial month its own effectiveFrom falls inside;
 //   - v1 governs the months before a forward v2; v2 governs from its effective start; a forward v2 never rewrites v1's historical months;
 //   - a month that STRADDLES the v1/v2 boundary has NO policy (unavailable) - it is never attributed to either version;
 //   - ENDED governs only through its end date; SUPERSEDED stays valid historical policy for the months it governed;
@@ -68,10 +69,12 @@ describe("v1 / v2 forward revision", () => {
     for (const month of ["2019-01", "2019-06", "2019-12"]) expect(await at(partner.partnerRef, month), month).toMatchObject({ agreementVersion: 2, monthlyDeliverableRequirement: { requiredCount: 3 } });
   });
 
-  it("an Agreement starting mid-month has no policy for that partial month; an open-ended range governs later months", async () => {
+  it("an Agreement starting mid-month: Step 14D's inception exception governs v1's OWN first (partial) month; an open-ended range governs later months", async () => {
     const partner = await h.seedPartner();
     await h.activeAgreement(partner, decisionsWith(policyTerms({ effectiveDate: seed("effectiveDate", "2019-02-15"), terminationDate: decide("terminationDate", "UNAVAILABLE") })));
-    expect(await at(partner.partnerRef, "2019-02")).toBeNull();
+    // version 1's own inception month: governed (requirement unscaled - see policy-adapter.ts's Step 14D comment)
+    expect(await at(partner.partnerRef, "2019-02")).toMatchObject({ agreementVersion: 1, monthlyDeliverableRequirement: { requiredCount: 2 } });
+    expect(await at(partner.partnerRef, "2019-01")).toBeNull(); // before effectiveFrom entirely
     expect(await at(partner.partnerRef, "2019-03")).toMatchObject({ agreementVersion: 1 });
     expect(await at(partner.partnerRef, "2031-07")).toMatchObject({ agreementVersion: 1 });
   });

@@ -6,15 +6,20 @@ import { Panel, PanelBody, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import { EmptyState } from "@/ui/States";
 import type { CampaignDto } from "@/server/campaigns/client-dto";
-import { CAMPAIGN_RESOURCE_TYPES, type CampaignResource, type CampaignResourceType } from "@/server/campaigns/types";
-import { addCampaignResource, editCampaignResource, removeCampaignResource } from "./api-client";
+import { CAMPAIGN_RESOURCE_CURRENT_TYPES, type CampaignResource, type CampaignResourceType } from "@/server/campaigns/types";
+import { addCampaignResource, addCampaignResourceUpload, editCampaignResource, removeCampaignResource } from "./api-client";
 import { RESOURCE_TYPE_LABELS } from "./format";
 
-// Real resource metadata only - never a document-upload system, never
-// Agreement contract storage (Step 9B section 5's own explicit rule).
-// Each mutation (add/edit/remove) uses its own dedicated endpoint and
-// the Campaign's optimistic version, mirroring Vendors'/Partners' own
-// relationship-panel idiom.
+// Findings #36/#37 (user-decided): exactly 3 real, creatable types - Link
+// (validated URL), Upload (a real file, via the canonical
+// resource-storage abstraction - fake/offline in tests, real Drive only
+// with explicit opt-in), Text (plain text/details, no URL required). The
+// 4 legacy types (Document/Brief/Asset/Other) stay readable/displayable
+// on already-stored resources but are never newly creatable - see
+// campaign-service.ts's own comment. Each mutation (add/edit/remove) uses
+// its own dedicated endpoint and the Campaign's optimistic version,
+// mirroring Vendors'/Partners' own relationship-panel idiom.
+type CreateType = (typeof CAMPAIGN_RESOURCE_CURRENT_TYPES)[number];
 export function CampaignResourcesPanel({ campaign, onSaved }: { campaign: CampaignDto; onSaved: (campaign: CampaignDto) => void }) {
   const [creating, setCreating] = useState(false);
   const [editingRef, setEditingRef] = useState<string | null>(null);
@@ -23,7 +28,7 @@ export function CampaignResourcesPanel({ campaign, onSaved }: { campaign: Campai
     <Panel span={12}>
       <PanelHead
         title="Resources"
-        description="Bounded ordinary resource metadata - labels, types, and safe URLs. No file upload, no restricted content."
+        description="Links, uploaded files, and plain-text notes for this Campaign. No restricted content."
         link={
           !creating && (
             <button type="button" className="btn" onClick={() => setCreating(true)}>
@@ -95,11 +100,19 @@ function ResourceRow({
         <div>
           <b>{resource.label}</b>
           <Pill tone="default"> {RESOURCE_TYPE_LABELS[resource.type]}</Pill>
-          <div>
-            <a href={resource.url} target="_blank" rel="noreferrer" className="textlink">
-              {resource.url}
-            </a>
-          </div>
+          {resource.type === "TEXT" ? (
+            <div>
+              <small>{resource.content}</small>
+            </div>
+          ) : (
+            resource.url && (
+              <div>
+                <a href={resource.url} target="_blank" rel="noreferrer" className="textlink">
+                  {resource.type === "UPLOAD" ? "Open file" : resource.url}
+                </a>
+              </div>
+            )
+          )}
           {resource.description && (
             <div>
               <small>{resource.description}</small>
@@ -128,14 +141,28 @@ type ResourceFormProps =
   | { mode: "create"; campaignRef: string; version: number; onSaved: (campaign: CampaignDto) => void; onCancel: () => void }
   | { mode: "edit"; campaignRef: string; version: number; resource: CampaignResource; onSaved: (campaign: CampaignDto) => void; onCancel: () => void };
 
+// Findings #36/#37: in edit mode, the resource's TYPE is fixed - a legacy
+// resource (DOCUMENT/BRIEF/ASSET/OTHER) can still have its label/url/
+// description edited (never re-typed into one of the current 3, since
+// editResourceInputSchema's `type` only accepts LINK/UPLOAD/TEXT - leaving
+// it unset keeps whatever type the resource already has), and UPLOAD has no
+// re-upload flow at all (only label/description are editable; its
+// storage-returned url is left untouched).
 function ResourceForm(props: ResourceFormProps) {
   const initial = props.mode === "edit" ? props.resource : null;
+  const effectiveType: CampaignResourceType = initial?.type ?? "LINK";
   const [label, setLabel] = useState(initial?.label ?? "");
-  const [type, setType] = useState<CampaignResourceType>(initial?.type ?? "LINK");
+  const [type, setType] = useState<CreateType>("LINK");
   const [url, setUrl] = useState(initial?.url ?? "");
+  const [content, setContent] = useState(initial?.content ?? "");
+  const [file, setFile] = useState<File | null>(null);
   const [description, setDescription] = useState(initial?.description ?? "");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  const isText = props.mode === "create" ? type === "TEXT" : effectiveType === "TEXT";
+  const isUpload = props.mode === "create" ? type === "UPLOAD" : effectiveType === "UPLOAD";
+  const isLink = !isText && !isUpload;
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -144,8 +171,24 @@ function ResourceForm(props: ResourceFormProps) {
 
     const result =
       props.mode === "create"
-        ? await addCampaignResource(props.campaignRef, { label, type, url, description: description.trim() || undefined, expectedVersion: props.version })
-        : await editCampaignResource(props.campaignRef, { resourceRef: props.resource.resourceRef, label, type, url, description: description.trim() || null, expectedVersion: props.version });
+        ? type === "UPLOAD"
+          ? await addCampaignResourceUpload(props.campaignRef, { label, description: description.trim() || undefined, file: file!, expectedVersion: props.version })
+          : await addCampaignResource(props.campaignRef, {
+              label,
+              type,
+              url: type === "LINK" ? url : undefined,
+              content: type === "TEXT" ? content : undefined,
+              description: description.trim() || undefined,
+              expectedVersion: props.version,
+            })
+        : await editCampaignResource(props.campaignRef, {
+            resourceRef: props.resource.resourceRef,
+            label,
+            url: isLink ? url : undefined,
+            content: isText ? content : undefined,
+            description: description.trim() || null,
+            expectedVersion: props.version,
+          });
 
     setSaving(false);
     if (!result.ok) {
@@ -155,6 +198,8 @@ function ResourceForm(props: ResourceFormProps) {
     props.onSaved(result.data);
   }
 
+  const submitDisabled = !label.trim() || (isLink && !url.trim()) || (isUpload && props.mode === "create" && !file) || (isText && !content.trim());
+
   return (
     <form onSubmit={handleSubmit} className="record" style={{ marginBottom: 14 }}>
       <div className="fields">
@@ -162,20 +207,46 @@ function ResourceForm(props: ResourceFormProps) {
           <label>Label / title</label>
           <input type="text" value={label} onChange={(e) => setLabel(e.target.value)} required maxLength={200} />
         </div>
-        <div className="field">
-          <label>Type</label>
-          <select value={type} onChange={(e) => setType(e.target.value as CampaignResourceType)}>
-            {CAMPAIGN_RESOURCE_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {RESOURCE_TYPE_LABELS[t]}
-              </option>
-            ))}
-          </select>
-        </div>
-        <div className="field full">
-          <label>URL / reference</label>
-          <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} required maxLength={1000} placeholder="https://…" />
-        </div>
+        {props.mode === "create" ? (
+          <div className="field">
+            <label>Type</label>
+            <select value={type} onChange={(e) => setType(e.target.value as CreateType)}>
+              {CAMPAIGN_RESOURCE_CURRENT_TYPES.map((t) => (
+                <option key={t} value={t}>
+                  {RESOURCE_TYPE_LABELS[t]}
+                </option>
+              ))}
+            </select>
+          </div>
+        ) : (
+          <div className="field">
+            <label>Type</label>
+            <input type="text" value={RESOURCE_TYPE_LABELS[effectiveType]} disabled readOnly />
+          </div>
+        )}
+        {isLink && (
+          <div className="field full">
+            <label>URL / reference</label>
+            <input type="url" value={url} onChange={(e) => setUrl(e.target.value)} required maxLength={1000} placeholder="https://…" />
+          </div>
+        )}
+        {isText && (
+          <div className="field full">
+            <label>Text content</label>
+            <textarea value={content} onChange={(e) => setContent(e.target.value)} required maxLength={4000} rows={4} />
+          </div>
+        )}
+        {isUpload && props.mode === "create" && (
+          <div className="field full">
+            <label>File</label>
+            <input type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
+          </div>
+        )}
+        {isUpload && props.mode === "edit" && (
+          <div className="field full">
+            <small>Uploaded files can&rsquo;t be re-uploaded here - remove and add a new one instead.</small>
+          </div>
+        )}
         <div className="field full">
           <label>Description (optional)</label>
           <input type="text" value={description} onChange={(e) => setDescription(e.target.value)} maxLength={1000} />
@@ -192,7 +263,7 @@ function ResourceForm(props: ResourceFormProps) {
         <button type="button" className="btn" onClick={props.onCancel} disabled={saving}>
           Cancel
         </button>
-        <button type="submit" className="btn primary" disabled={saving || !label.trim() || !url.trim()}>
+        <button type="submit" className="btn primary" disabled={saving || submitDisabled}>
           {saving ? "Saving…" : props.mode === "create" ? "Add resource" : "Save changes"}
         </button>
       </div>

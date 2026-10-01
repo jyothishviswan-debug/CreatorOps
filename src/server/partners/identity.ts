@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 
 import { normalizePlatformIdentifier } from "@/server/shared/platform";
+import { normalizeHandle, normalizeProfileUrl } from "@/server/shared/account-identity";
 
 // The canonical normalized-account-identity algorithm (Step 7A section
 // 3, corrected in Step 7A.1). Represents the CURRENT strongest external
@@ -56,13 +57,12 @@ export function normalizePlatformAccountId(value: string): string {
   return value.trim().toLowerCase();
 }
 
-export function normalizeProfileUrl(value: string): string {
-  return value.trim().toLowerCase().replace(/\/+$/, "");
-}
-
-export function normalizeHandle(value: string): string {
-  return value.trim().toLowerCase().replace(/^@/, "");
-}
+// Step 18-21: relocated to @/server/shared/account-identity (a
+// domain-neutral, crypto-free file Discovery/Partner Accounts/Analytics
+// all now share) - re-exported under their original local names here so
+// every existing caller of identity.ts's own normalizeHandle/
+// normalizeProfileUrl (e.g. partner-account-matcher.ts) is unaffected.
+export { normalizeHandle, normalizeProfileUrl };
 
 // Returns null only when NO identity evidence was supplied at all - the
 // caller must treat that as invalid input, never as "assign no identity".

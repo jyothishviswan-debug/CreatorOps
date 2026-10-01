@@ -46,6 +46,11 @@ export const COLLECTOR_PAGE_SIZE = 200;
 export const MAX_ASSIGNMENTS_SCANNED = 1000;
 export const MAX_ANALYTICS_RECORDS_SCANNED = 2000;
 export const MAX_CHANNEL_RECORDS_SCANNED = 1000;
+// Finding #50 (reopened): an Assignment can now own several Content
+// records (one per submission cycle), so this can no longer assume ~1
+// thread per in-period Assignment - same order of magnitude as
+// MAX_ANALYTICS_RECORDS_SCANNED, since both are per-Partner scan ceilings.
+export const MAX_THREADS_SCANNED = 2000;
 // Firestore's `in` operator caps at 30 values per query.
 const IN_QUERY_CHUNK = 30;
 
@@ -91,6 +96,16 @@ export async function collectPartnerEvidence(partnerRef: string, period: ReviewP
   const policy = resolution.kind === "policy" ? resolution.policy : null;
   const policyConflict = resolution.kind === "conflict" ? { reason: "multiple_applicable_agreements" as const, agreementRefs: resolution.agreementRefs } : null;
 
+  // Remediation-plan Wave B / finding #64 re-audit ("Step 14D"): for an Agreement's own inception
+  // month, `policy.evidenceWindowStart` narrows the ACTUAL evidence-selection window to
+  // [effectiveFrom, monthEnd] instead of the full calendar month - this is what makes
+  // actualQualifyingCount (and every other in-period Assignment/Analytics fact) honestly reflect
+  // only what could really have happened under the governing Agreement, never pre-effective
+  // activity. The review's OWN stored identity (periodKey/periodStart/periodEnd, set by the caller
+  // from derivePeriod) is deliberately untouched - only what counts as "in period" for evidence
+  // selection narrows; the review itself is still unambiguously "the September 2026 review".
+  const evidencePeriod: ReviewPeriod = policy?.evidenceWindowStart && policy.evidenceWindowStart > period.periodStart ? { ...period, periodStart: policy.evidenceWindowStart } : period;
+
   const [assignmentScan, analyticsScan, channelScan] = await Promise.all([
     scanByEquality<AssignmentSource>(
       assignmentsCollection(),
@@ -126,33 +141,43 @@ export async function collectPartnerEvidence(partnerRef: string, period: ReviewP
       : Promise.resolve({ items: [] as ChannelSnapshotRecordSource[], scanned: 0, truncated: false }),
   ]);
 
-  // ONE bulk, chunked read of the canonical Content threads for the
-  // in-period Assignments only (one canonical thread per Assignment) -
-  // never one lookup per Assignment.
-  const inPeriodRefs = selectInPeriodAssignments(assignmentScan.items, period).selected.map((entry) => entry.assignment.assignmentRef);
+  // ONE bulk, chunked read of the Content threads for the in-period
+  // Assignments only - never one lookup per Assignment. Finding #50
+  // (reopened): an Assignment can now own SEVERAL Content records (one
+  // per submission cycle), so this can no longer assume ~1 thread per
+  // Assignment (the previous `.limit(chunk.length * 2)` did, and would
+  // silently truncate an Assignment with more than ~2 records). Every
+  // chunk (each ≤IN_QUERY_CHUNK assignmentRefs, already bounded by the
+  // `in` operator itself) is read in full; the combined result is then
+  // capped at MAX_THREADS_SCANNED with an explicit, honest truncation
+  // flag - never a silent drop.
+  const inPeriodRefs = selectInPeriodAssignments(assignmentScan.items, evidencePeriod).selected.map((entry) => entry.assignment.assignmentRef);
   const chunks: string[][] = [];
   for (let i = 0; i < inPeriodRefs.length; i += IN_QUERY_CHUNK) chunks.push(inPeriodRefs.slice(i, i + IN_QUERY_CHUNK));
 
-  const threadSnapshots = await Promise.all(chunks.map((chunk) => contentCollection().where("assignmentRef", "in", chunk).limit(chunk.length * 2).get()));
-  const threads: ContentThreadSource[] = [];
+  const threadSnapshots = await Promise.all(chunks.map((chunk) => contentCollection().where("assignmentRef", "in", chunk).get()));
+  const allThreads: ContentThreadSource[] = [];
   for (const snapshot of threadSnapshots) {
     for (const doc of snapshot.docs) {
       const parsed = contentDocSchema.safeParse(doc.data());
       // A thread must belong to this Partner as well - defense in depth.
-      if (parsed.success && parsed.data.partnerRef === partnerRef) threads.push(parsed.data);
+      if (parsed.success && parsed.data.partnerRef === partnerRef) allThreads.push(parsed.data);
     }
   }
+  const contentScanTruncated = allThreads.length > MAX_THREADS_SCANNED;
+  const threads = contentScanTruncated ? allThreads.slice(0, MAX_THREADS_SCANNED) : allThreads;
 
   const now = options.now ? options.now() : new Date();
 
   return buildEvidence({
     partnerRef,
-    period,
+    period: evidencePeriod,
     evidenceCutoff: now.toISOString(),
     assignments: assignmentScan.items,
     assignmentScanTruncated: assignmentScan.truncated,
     assignmentsScanned: assignmentScan.scanned,
     threads,
+    contentScanTruncated,
     analyticsRecords: analyticsScan.items,
     analyticsScanTruncated: analyticsScan.truncated,
     analyticsRecordsScanned: analyticsScan.scanned,

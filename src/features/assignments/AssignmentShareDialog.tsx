@@ -5,7 +5,7 @@ import { useEffect, useRef, useState } from "react";
 import { DialogShell } from "@/ui/Dialog";
 import type { AssignmentDto } from "@/server/assignments/client-dto";
 import type { SubmissionRecipientType } from "@/server/assignments/external-submission-types";
-import { createSubmissionSession, getActiveSubmissionSession, getAssignment, getAssignmentCurrentVendor } from "./api-client";
+import { createSubmissionSession, getActiveSubmissionSession, getAssignment, getAssignmentCurrentVendor, revokeSubmissionSession } from "./api-client";
 import { buildWhatsAppDeepLink, buildWhatsAppShareMessage } from "./whatsapp";
 import { SHARE_ELIGIBLE_STATUSES } from "./format";
 
@@ -26,6 +26,12 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
   const [error, setError] = useState<string | null>(null);
   const [generatedUrl, setGeneratedUrl] = useState<string | null>(null);
   const [copyLabel, setCopyLabel] = useState("Copy submission link");
+  // Finding #43: when the pre-check finds an already-active session for
+  // this recipient, its sessionRef is kept here so the conflict banner can
+  // offer a real "Revoke and reissue" action instead of a dead end -
+  // cleared whenever the recipient selection changes, so a stale
+  // conflict for a DIFFERENT recipient can never be revoked by mistake.
+  const [conflictingSessionRef, setConflictingSessionRef] = useState<string | null>(null);
   // A ref, not just the `busy` state - two clicks landing in the same
   // task (a real double-click, or a race between the click and React's
   // next render) would otherwise both close over the same stale
@@ -70,7 +76,13 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
     setGeneratedUrl(null);
     setCopyLabel("Copy submission link");
     setVendorLoadedFor(null);
+    setConflictingSessionRef(null);
     onClose();
+  }
+
+  function clearConflictState() {
+    setError(null);
+    setConflictingSessionRef(null);
   }
 
   const summary = assignment.brief.instructions ?? assignment.brief.contentRequirementSummary;
@@ -81,6 +93,7 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
     dueAt: assignment.brief.dueAt,
     platforms: assignment.brief.platforms,
     summary,
+    resources: assignment.campaignResources,
   });
 
   async function handleConfirm() {
@@ -117,6 +130,7 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
       dueAt: fresh.data.brief.dueAt,
       platforms: fresh.data.brief.platforms,
       summary: freshSummary,
+      resources: fresh.data.campaignResources,
     };
 
     if (!includeLink) {
@@ -141,9 +155,11 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
       pending?.close();
       creatingRef.current = false;
       setBusy(false);
-      setError("An active submission link already exists for this recipient. Revoke it first (from the submission session's own history) to issue a new one.");
+      setConflictingSessionRef(existing.data.session.sessionRef);
+      setError("An active submission link already exists for this recipient.");
       return;
     }
+    setConflictingSessionRef(null);
 
     const result = await createSubmissionSession(assignment.assignmentRef, { recipientType, recipientRef });
 
@@ -164,6 +180,51 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
     creatingRef.current = false;
     setBusy(false);
     setGeneratedUrl(url);
+  }
+
+  // Finding #43: staff-driven "revoke and reissue", built entirely from
+  // the existing trusted revoke + create services (never a second token
+  // system, matching revoke/route.ts's own comment that regeneration is
+  // create-new + revoke-old with no combined endpoint). Deliberately does
+  // NOT reuse handleConfirm's WhatsApp-popup path: that path opens
+  // window.open() synchronously off the raw click so the browser still
+  // attributes the popup to a user gesture, and the `await
+  // revokeSubmissionSession` here would already have spent that gesture -
+  // the popup could then be silently blocked. Instead this shows the new
+  // link the same safe way `generatedUrl` already does elsewhere in this
+  // dialog (readonly input + Copy button), which the operator can then
+  // share however they choose.
+  async function handleRevokeAndReissue() {
+    if (!conflictingSessionRef || busy) return;
+    setError(null);
+    setBusy(true);
+
+    const revoked = await revokeSubmissionSession(assignment.assignmentRef, conflictingSessionRef);
+    if (!revoked.ok) {
+      setBusy(false);
+      setError(revoked.error);
+      return;
+    }
+    setConflictingSessionRef(null);
+
+    // Same trusted re-read as the normal create flow - an Assignment that
+    // moved out of an eligible status between opening this dialog and
+    // clicking "Revoke and reissue" must still block the reissue.
+    const fresh = await getAssignment(assignment.assignmentRef);
+    if (!fresh.ok || !SHARE_ELIGIBLE_STATUSES.includes(fresh.data.status)) {
+      setBusy(false);
+      setError(fresh.ok ? "This Assignment is no longer available to share." : fresh.error);
+      return;
+    }
+
+    const recipientRef = recipientType === "VENDOR" ? (vendorRef ?? undefined) : undefined;
+    const result = await createSubmissionSession(assignment.assignmentRef, { recipientType, recipientRef });
+    setBusy(false);
+    if (!result.ok) {
+      setError(result.error);
+      return;
+    }
+    setGeneratedUrl(`${window.location.origin}/submit/${result.data.rawToken}`);
   }
 
   async function copyLink() {
@@ -211,12 +272,28 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
           <label>Submission recipient</label>
           <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
             <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 400 }}>
-              <input type="radio" name="recipientType" checked={recipientType === "PARTNER"} onChange={() => setRecipientType("PARTNER")} />
+              <input
+                type="radio"
+                name="recipientType"
+                checked={recipientType === "PARTNER"}
+                onChange={() => {
+                  setRecipientType("PARTNER");
+                  clearConflictState();
+                }}
+              />
               Partner
             </label>
             {vendorLabel && (
               <label style={{ display: "flex", alignItems: "center", gap: 8, fontWeight: 400 }}>
-                <input type="radio" name="recipientType" checked={recipientType === "VENDOR"} onChange={() => setRecipientType("VENDOR")} />
+                <input
+                  type="radio"
+                  name="recipientType"
+                  checked={recipientType === "VENDOR"}
+                  onChange={() => {
+                    setRecipientType("VENDOR");
+                    clearConflictState();
+                  }}
+                />
                 Current Vendor — {vendorLabel}
               </label>
             )}
@@ -227,6 +304,11 @@ export function AssignmentShareDialog({ assignment, open, onClose }: { assignmen
       {error && (
         <div className="banner" role="alert" style={{ marginTop: 14 }}>
           {error}
+          {conflictingSessionRef && (
+            <button type="button" className="btn" style={{ marginLeft: 10 }} disabled={busy} onClick={handleRevokeAndReissue}>
+              {busy ? "Working…" : "Revoke and reissue"}
+            </button>
+          )}
         </div>
       )}
 

@@ -75,6 +75,25 @@ export function parseWorkbookBuffer(buffer: Buffer, options: { includeBlankRows?
     const headers = readHeaders(worksheet);
     for (const header of headers) decompressedChars += header.length;
 
+    // Remediation-plan Wave B / finding #55 re-audit: a sheet with the SAME literal header text
+    // twice (e.g. two columns both named "Views") is rejected here, structurally, before any
+    // adapter ever sees it. Root cause this closes: SheetJS's own sheet_to_json auto-suffixes a
+    // duplicate header when building each ROW object (the second "Views" column's cells land under
+    // the key "Views_1"), but `headers` above still lists the literal text twice - since every
+    // downstream reader (classifyHeaders/fieldValueGetter) only ever looks up a row by the literal
+    // header text from `headers`, the second column's entire data was silently and completely
+    // unreadable, with no error, no unsupported/unrecognized flag anywhere (confirmed during this
+    // re-audit). A case-insensitive match on the same normalized rule the adapters themselves use
+    // would be even stricter, but this checks the EXACT literal text - the precise condition that
+    // triggers SheetJS's own silent renaming.
+    const seenHeaders = new Set<string>();
+    for (const header of headers) {
+      if (seenHeaders.has(header)) {
+        return { ok: false, reasonCode: "DUPLICATE_HEADER", message: `Sheet "${sheetName}" has the column "${header}" more than once. Rename or remove the duplicate and re-upload - a duplicate column's data cannot be read reliably.` };
+      }
+      seenHeaders.add(header);
+    }
+
     // defval: null - a blank cell always becomes `null`, never coerced
     // to "" or `0`; raw: true - cell VALUES only, never formatted
     // display strings, and never a formula. blankrows defaults to false

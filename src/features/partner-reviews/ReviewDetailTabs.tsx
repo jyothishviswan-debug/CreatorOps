@@ -357,23 +357,25 @@ export function ProductionSection({ detail }: { detail: PartnerReviewDetailDto }
                           {item.formats.join(", ") || "—"} · {item.platforms.map(platformLabel).join(", ") || "—"}
                         </td>
                         <td>
-                          {item.thread ? (
-                            <>
-                              {item.thread.status} · revision {item.thread.currentRevisionNumber}
-                              <small style={{ display: "block" }}>
-                                {item.thread.linkCount} submitted link{item.thread.linkCount === 1 ? "" : "s"}
-                                {item.thread.status !== "APPROVED" && item.thread.linkCount > 0 && " (not counted until approved)"}
-                              </small>
-                              {item.thread.links && item.thread.links.length > 0 && (
+                          {item.threads.length > 0 ? (
+                            item.threads.map((thread, threadIndex) => (
+                              <div key={thread.contentRef ?? threadIndex} style={{ marginBottom: threadIndex < item.threads.length - 1 ? 10 : 0 }}>
+                                {thread.status} · revision {thread.currentRevisionNumber}
                                 <small style={{ display: "block" }}>
-                                  {item.thread.links.map((link) => (
-                                    <a key={link.url} href={link.url} target="_blank" rel="noreferrer" style={{ marginRight: 8 }}>
-                                      {platformLabel(link.platform)} link
-                                    </a>
-                                  ))}
+                                  {thread.linkCount} submitted link{thread.linkCount === 1 ? "" : "s"}
+                                  {thread.status !== "APPROVED" && thread.linkCount > 0 && " (not counted until approved)"}
                                 </small>
-                              )}
-                            </>
+                                {thread.links && thread.links.length > 0 && (
+                                  <small style={{ display: "block" }}>
+                                    {thread.links.map((link) => (
+                                      <a key={link.url} href={link.url} target="_blank" rel="noreferrer" style={{ marginRight: 8 }}>
+                                        {platformLabel(link.platform)} link
+                                      </a>
+                                    ))}
+                                  </small>
+                                )}
+                              </div>
+                            ))
                           ) : (
                             <span>No Content thread</span>
                           )}

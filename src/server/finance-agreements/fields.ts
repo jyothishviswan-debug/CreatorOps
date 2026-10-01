@@ -220,8 +220,10 @@ const DEFS: AgreementFieldDef[] = [
   def("partnerRef", "partner_platform", "Partner", "text", "counterparty", null, { mode: "COMPUTED", extractable: false, appliesTo: PARTNER_ONLY, canonicalSource: { kind: "master_data", path: "partnerRef" } }),
   def("partnerAccountRefs", "partner_platform", "Partner Accounts", "array", "counterparty", null, { mode: "COMPUTED", extractable: false, appliesTo: PARTNER_ONLY, canonicalSource: { kind: "partner_account", path: "partnerAccountRef" } }),
   def("platforms", "partner_platform", "Platforms", "array", "terms", terms("platform", "platforms"), { canonicalSource: { kind: "partner_account", path: "platform" }, notApplicableValue: [] }),
-  def("collaboratorPageLink", "partner_platform", "Collaborator page link", "text", "terms", terms("platform", "collaboratorPageLink"), { canonicalSource: { kind: "partner_account", path: "profileUrl" } }),
-  def("collaboratorPageName", "partner_platform", "Collaborator page name", "text", "terms", terms("platform", "collaboratorPageName"), { canonicalSource: { kind: "partner_account", path: "displayName" } }),
+  // Finding #23: "Collaborator" was inconsistent with "Partner"/"account" used everywhere else in the app -
+  // labels only, wire keys (collaboratorPageLink/collaboratorPageName) and stored data are unchanged.
+  def("collaboratorPageLink", "partner_platform", "Partner account link", "text", "terms", terms("platform", "collaboratorPageLink"), { canonicalSource: { kind: "partner_account", path: "profileUrl" } }),
+  def("collaboratorPageName", "partner_platform", "Partner account name", "text", "terms", terms("platform", "collaboratorPageName"), { canonicalSource: { kind: "partner_account", path: "displayName" } }),
 
   // --- agreement dates / clauses (Agreement STATUS is CreatorOps lifecycle, never copied from text) ---
   def("agreementNumber", "dates_terms", "Agreement number", "text", "terms", terms("agreementNumber")),

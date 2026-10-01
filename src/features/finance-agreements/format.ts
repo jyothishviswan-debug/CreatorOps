@@ -303,10 +303,18 @@ export const FIELD_GROUP_LABELS: Record<AgreementFieldGroup, string> = {
   admin: "Additional details",
 };
 
-// --- Qualifying unit (only the two units Step 14A supports) ---------------------------------------------------------------------------------------
+// --- Qualifying unit --------------------------------------------------------------------------------------------------------------------------
+// Findings #30/#66 (user-decided): "qualifying_analytics_post" ("Monthly required posts/content") is the
+// ONE unit a daily user ever confirms going forward - evaluated from distinct Analytics posts matched to
+// the Partner/Partner Account (see commercial-builder.ts's qualifyingAnalyticsPostUnits), never a choice
+// between internal implementation concepts. approved_content_thread/approved_current_link stay
+// RECOGNIZED here (never removed from this list) purely so an Agreement already confirmed under one of
+// them keeps displaying/validating correctly - qualifying-unit.ts's own select-options function is the
+// SEPARATE, narrower control that decides what a person can actually CHOOSE.
 export const QUALIFYING_UNIT_OPTIONS = [
-  { value: "approved_content_thread", label: "Approved Content" },
-  { value: "approved_current_link", label: "Approved current link" },
+  { value: "qualifying_analytics_post", label: "Monthly required posts/content" },
+  { value: "approved_content_thread", label: "Approved Content (legacy)" },
+  { value: "approved_current_link", label: "Approved current link (legacy)" },
 ] as const;
 export type SupportedQualifyingUnit = (typeof QUALIFYING_UNIT_OPTIONS)[number]["value"];
 

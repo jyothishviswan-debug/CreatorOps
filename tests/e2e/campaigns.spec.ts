@@ -31,7 +31,11 @@ function uniqueName(prefix: string): string {
 // vendors.spec.ts already uses to work around it.
 function formField(page: Page, label: string) {
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return page.locator(".field").filter({ has: page.locator("label", { hasText: new RegExp(`^\\s*${escaped}\\s*$`) }) }).locator("input, select, textarea");
+  // Finding #33: a genuinely required field's label now carries a visible
+  // " (required)" suffix (src/ui/Form.tsx's Field component) - tolerated
+  // here as optional so this exact-match helper still finds the field
+  // regardless of whether it's required.
+  return page.locator(".field").filter({ has: page.locator("label", { hasText: new RegExp(`^\\s*${escaped}\\s*(\\(required\\))?\\s*$`) }) }).locator("input, select, textarea");
 }
 
 type CampaignApi = { campaignRef: string; version: number; name: string; status: string };

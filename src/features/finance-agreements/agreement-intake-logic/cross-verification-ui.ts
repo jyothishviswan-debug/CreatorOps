@@ -17,7 +17,7 @@ export type CrossVerificationGroup = { key: CrossVerificationGroupKey; title: st
 
 const GROUP_META: Record<CrossVerificationGroupKey, { title: string; description: string }> = {
   contact: { title: "Contact details", description: "Name, phone, email, state, address and PIN code." },
-  platform: { title: "Platform & page", description: "Platforms and the collaborator page, compared with the Partner Accounts in CreatorOps." },
+  platform: { title: "Platform & page", description: "Platforms and the linked account, compared with the Partner Accounts in CreatorOps." },
   identity: { title: "Restricted identity", description: "Compared only when you have access to restricted details; without it every row here reads Restricted and no value is shown. A value is never copied into the Agreement - you only acknowledge it." },
 };
 

@@ -89,6 +89,50 @@
   display: block;
 }
 
+/* Finding #29: see TermsTargetsStep.tsx's FieldGrid for the full root-cause note - a real long-option
+   <select> forces its .s4/.s6/.s12 grid item wider than the track (default min-width:auto). Scoped to
+   this module (never foundation.css's golden-master-ported .s4/.record rules). */
+.fieldCell {
+  min-width: 0;
+}
+
+/* Finding #25: live-measured at a genuine 1366px laptop width, this 6-column table's own content
+   ("nowrap" everywhere, per foundation.css's global `table` rule) grew wider than its .tablewrap and
+   overflowed by ~58px - a real, if modest, horizontal scroll the global overflow:auto fallback alone
+   left in place. Fixed columns + wrapping on the two free-text columns (CreatorOps/Agreement, the ones
+   that can genuinely hold a long URL/address) keeps the table inside its own container instead of
+   growing past it - "Status"/"Action" stay compact and reachable without any scroll. No second table
+   design system: this is the SAME .tablewrap/table markup, only sized to fit. */
+.verifyTable table {
+  table-layout: fixed;
+}
+.verifyTable th:nth-child(1),
+.verifyTable td:nth-child(1) {
+  width: 13%;
+}
+.verifyTable th:nth-child(2),
+.verifyTable td:nth-child(2),
+.verifyTable th:nth-child(3),
+.verifyTable td:nth-child(3) {
+  width: 21%;
+  white-space: normal;
+  word-break: break-word;
+}
+.verifyTable th:nth-child(4),
+.verifyTable td:nth-child(4) {
+  width: 13%;
+  white-space: normal;
+}
+.verifyTable th:nth-child(5),
+.verifyTable td:nth-child(5) {
+  width: 10%;
+}
+.verifyTable th:nth-child(6),
+.verifyTable td:nth-child(6) {
+  width: 21%;
+  white-space: normal;
+}
+
 .verifyCards {
   display: none;
 }

@@ -201,7 +201,12 @@ export function PartnerDetail({
 
       {selectedTab === "accounts" && (
         <PanelGrid>
-          <PartnerAccountsPanel partnerRef={partner.partnerRef} pendingSetup={partner.pendingPartnerAccountSetup} onChanged={handleAccountsChanged} />
+          <PartnerAccountsPanel
+            partnerRef={partner.partnerRef}
+            pendingSetup={partner.pendingPartnerAccountSetup}
+            sourceDiscoveryPlatform={partner.sourceDiscovery?.snapshot.platform ?? null}
+            onChanged={handleAccountsChanged}
+          />
         </PanelGrid>
       )}
 

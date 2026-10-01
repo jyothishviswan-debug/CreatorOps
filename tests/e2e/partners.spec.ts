@@ -39,7 +39,11 @@ function formField(page: Page, label: string) {
   // this tolerates trailing/leading whitespace rather than requiring an
   // exact end-of-string match.
   const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return page.locator(".field").filter({ has: page.locator("label", { hasText: new RegExp(`^\\s*${escaped}\\s*$`) }) }).locator("input, select, textarea");
+  // Finding #33: a genuinely required field's label now carries a visible
+  // " (required)" suffix (src/ui/Form.tsx's Field component) - tolerated
+  // here as optional so this exact-match helper still finds the field
+  // regardless of whether it's required.
+  return page.locator(".field").filter({ has: page.locator("label", { hasText: new RegExp(`^\\s*${escaped}\\s*(\\(required\\))?\\s*$`) }) }).locator("input, select, textarea");
 }
 
 type PartnerApi = { partnerRef: string; version: number; displayName: string; status: string };

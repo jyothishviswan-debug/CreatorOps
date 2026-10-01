@@ -4,8 +4,16 @@ import { getUserDocByRef } from "@/server/authz/firestore";
 import type { ActorContext } from "@/server/authz/types";
 
 import { requireAnalyticsExploreAccess } from "./analytics-gate";
-import { analyticsImportBatchesCollection, findAnalyticsImportBatchSupersededBy, getAnalyticsImportBatchByRef } from "./firestore";
-import { analyticsImportBatchDocSchema, analyticsInvalidInputResult, analyticsNotFoundResult, analyticsUnauthorizedResult, type AnalyticsImportBatchDoc, type AnalyticsServiceResult } from "./types";
+import { analyticsImportBatchesCollection, findAnalyticsImportBatchSupersededBy, getAnalyticsImportBatchByRef, getAnalyticsImportBatchRowDetail } from "./firestore";
+import {
+  analyticsImportBatchDocSchema,
+  analyticsInvalidInputResult,
+  analyticsNotFoundResult,
+  analyticsUnauthorizedResult,
+  type AnalyticsImportBatchDoc,
+  type AnalyticsImportRowSummaryDto,
+  type AnalyticsServiceResult,
+} from "./types";
 
 // Step 12A section 16: Import History server contract. Batches are
 // global governance/provenance records (not per-record region/team
@@ -72,6 +80,12 @@ export async function listAnalyticsImportBatches(
 export type AnalyticsImportBatchDetailDto = AnalyticsImportBatchListItemDto & {
   supersededByBatchRef: string | null; // set when a LATER batch supersedes this one
   correctionEligible: boolean; // true only when nothing else already supersedes this batch
+  // Finding #59: the same bounded per-row outcome/detail rows Review and
+  // Results show, reused here rather than reinvented - null only for a
+  // batch that predates this field (before this fix shipped); [] for one
+  // that genuinely has none.
+  rows: AnalyticsImportRowSummaryDto[] | null;
+  rowsTruncated: boolean;
 };
 
 export async function getAnalyticsImportBatchDetail(actor: ActorContext | null, batchRef: unknown): Promise<AnalyticsServiceResult<AnalyticsImportBatchDetailDto>> {
@@ -82,7 +96,7 @@ export async function getAnalyticsImportBatchDetail(actor: ActorContext | null, 
   const batch = await getAnalyticsImportBatchByRef(batchRef);
   if (!batch) return analyticsNotFoundResult("Import batch not found.");
 
-  const [names, supersededBy] = await Promise.all([resolveActorDisplayNames([batch]), findAnalyticsImportBatchSupersededBy(batchRef)]);
+  const [names, supersededBy, rowDetail] = await Promise.all([resolveActorDisplayNames([batch]), findAnalyticsImportBatchSupersededBy(batchRef), getAnalyticsImportBatchRowDetail(batch.uid)]);
 
   return {
     ok: true,
@@ -95,6 +109,8 @@ export async function getAnalyticsImportBatchDetail(actor: ActorContext | null, 
       // own stale-correction guard) - surfaced here so a caller can
       // decide whether to even offer a "correct this batch" action.
       correctionEligible: !supersededBy,
+      rows: rowDetail?.rows ?? null,
+      rowsTruncated: rowDetail?.rowsTruncated ?? false,
     },
   };
 }

@@ -14,7 +14,7 @@ import type { PartnerReviewsWorkspaceDto } from "@/server/partner-reviews/partne
 import type { ReviewListRowDto } from "@/server/partner-reviews/ui-dto";
 import { monthLabel, partnerHistoryHref, reviewHref, workspaceHref, WORKSPACE_FILTERS, WORKSPACE_FILTER_LABELS, type WorkspaceFilter } from "@/server/partner-reviews/ui-params";
 
-import { generateReview, loadWorkspacePage } from "./api-client";
+import { generateReview, generateReviewsForItems, loadWorkspacePage } from "./api-client";
 import { COMMERCIAL_EVIDENCE_LABEL, DISABLED_BUTTON_STYLE, dateOnly, EVENT_LABELS, formatCount, FRESHNESS_LABELS, freshnessTone, LIFECYCLE_LABELS, lifecycleTone, relativeTime, SIGNAL_LABELS, TARGET_MONITORING_LABEL } from "./format";
 import { ReviewMonthSelect } from "./ReviewMonthSelect";
 import { ReviewPartnerFilter } from "./ReviewPartnerFilter";
@@ -52,6 +52,14 @@ export function PartnerReviewsWorkspace({ initial, state }: { initial: PartnerRe
   const [rowErrors, setRowErrors] = useState<Record<string, string>>({});
   const [status, setStatus] = useState<string | null>(null);
 
+  // Finding #63: bulk Generate Review. Selection is scoped to the CURRENTLY rendered page's own rows
+  // only - "select all" never means every eligible row across the whole authorized/filter scope
+  // (the Needs Review candidate scan is itself bounded and not exhaustive - see its own disclosure
+  // copy above), only every eligible row actually visible right now. Cleared on page/filter change.
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [bulkBusy, setBulkBusy] = useState(false);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
   const { month, mode, permissions } = initial;
   const activeFilter: WorkspaceFilter | null = state.filter ?? (state.signal ? null : "needs-review");
 
@@ -83,6 +91,21 @@ export function PartnerReviewsWorkspace({ initial, state }: { initial: PartnerRe
     setPages((previous) => [...previous, result.data.rows]);
     setNextCursors((previous) => [...previous, result.data.nextCursor]);
     setCurrentPage(page);
+    setSelected(new Set());
+  }
+
+  function isEligibleForBulk(row: ReviewListRowDto): boolean {
+    const reviewRef = generated[row.rowKey]?.reviewRef ?? row.reviewRef;
+    return !reviewRef && permissions.canGenerate;
+  }
+
+  function toggleRow(rowKey: string, checked: boolean) {
+    setSelected((current) => {
+      const next = new Set(current);
+      if (checked) next.add(rowKey);
+      else next.delete(rowKey);
+      return next;
+    });
   }
 
   async function onGenerate(row: ReviewListRowDto) {
@@ -101,7 +124,58 @@ export function PartnerReviewsWorkspace({ initial, state }: { initial: PartnerRe
     setStatus(outcome === "created" ? `Draft review generated for ${row.partnerDisplayName ?? "this Partner"} · ${monthLabel(row.periodKey)}.` : `A review already existed for ${row.partnerDisplayName ?? "this Partner"} · ${monthLabel(row.periodKey)}.`);
   }
 
+  // Finding #63: one bulk request for every currently-selected row (from the page actually rendered
+  // right now) - never a client-side loop of individual generateReview() calls. Reuses the exact
+  // same per-row `generated`/`rowErrors` state and WorkspaceRow rendering the single-row path already
+  // uses, so a bulk-generated row looks and behaves identically to one generated individually.
+  async function onBulkGenerate() {
+    const rows = pageRows.filter((row) => selected.has(row.rowKey));
+    if (rows.length === 0 || bulkBusy) return;
+    setBulkBusy(true);
+    setBulkError(null);
+    const result = await generateReviewsForItems(rows.map((row) => ({ partnerRef: row.partnerRef, periodKey: row.periodKey })));
+    setBulkBusy(false);
+    if (!result.ok) {
+      setBulkError(result.error);
+      return;
+    }
+    const byKey = new Map(rows.map((row) => [`${row.partnerRef}|${row.periodKey}`, row]));
+    // Counts are derived directly from the response, never inside a setState updater - an updater
+    // callback runs later (and, under Strict Mode, can run more than once), so incrementing counters
+    // in its closure and reading them right after setGenerated/setRowErrors would see stale zeros.
+    let createdCount = 0;
+    let existingCount = 0;
+    let errorCount = 0;
+    for (const item of result.data.results) {
+      if (item.outcome === "created") createdCount += 1;
+      else if (item.outcome === "existing") existingCount += 1;
+      else errorCount += 1;
+    }
+    setGenerated((previous) => {
+      const next = { ...previous };
+      for (const item of result.data.results) {
+        const row = byKey.get(`${item.item.partnerRef}|${item.item.periodKey}`);
+        if (!row) continue;
+        if (item.outcome === "error" || !item.reviewRef) continue;
+        next[row.rowKey] = { reviewRef: item.reviewRef, outcome: item.outcome };
+      }
+      return next;
+    });
+    setRowErrors((previous) => {
+      const next = { ...previous };
+      for (const item of result.data.results) {
+        const row = byKey.get(`${item.item.partnerRef}|${item.item.periodKey}`);
+        if (!row) continue;
+        next[row.rowKey] = item.outcome === "error" ? (item.error ?? "Could not generate this review.") : "";
+      }
+      return next;
+    });
+    setSelected(new Set());
+    setStatus(`${createdCount} generated · ${existingCount} already existed${errorCount > 0 ? ` · ${errorCount} failed` : ""}.`);
+  }
+
   const pageRows = pages[currentPage - 1] ?? [];
+  const eligibleOnPage = pageRows.filter(isEligibleForBulk);
   const hasMore = nextCursors[currentPage - 1] != null;
   const anyFilterActive = Boolean(state.partnerRef || state.region.length > 0 || state.signal);
   const sourceLabel = month.resolved === null ? "No review months yet" : month.source === "explicit" ? "Selected month" : month.source === "latest_review" ? "Latest review month" : "Latest month with Assignments";
@@ -195,31 +269,76 @@ export function PartnerReviewsWorkspace({ initial, state }: { initial: PartnerRe
           }
         />
       ) : (
-        <div className="tablewrap">
-          <table className="compact">
-            <caption className="sr">Partner Reviews workspace</caption>
-            <thead>
-              <tr>
-                <th scope="col">Partner</th>
-                <th scope="col">Month · version</th>
-                <th scope="col">Status · freshness</th>
-                <th scope="col">Production</th>
-                <th scope="col">Compliance</th>
-                <th scope="col">Performance</th>
-                <th scope="col">Commercial evidence</th>
-                <th scope="col">Last event</th>
-                <th scope="col">
-                  <span className="sr">Action</span>
-                </th>
-              </tr>
-            </thead>
-            <tbody>
-              {pageRows.map((row) => (
-                <WorkspaceRow key={row.rowKey} row={row} generated={generated[row.rowKey] ?? null} canGenerate={permissions.canGenerate} busy={busyRow === row.rowKey} anyBusy={busyRow !== null} error={rowErrors[row.rowKey] || null} onGenerate={() => onGenerate(row)} />
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <>
+          {permissions.canGenerate && eligibleOnPage.length > 0 && (
+            <div className="actions" style={{ margin: "0 18px 10px", alignItems: "center" }}>
+              <button type="button" className="btn primary" disabled={selected.size === 0 || bulkBusy} onClick={onBulkGenerate}>
+                {bulkBusy ? "Generating…" : `Generate ${selected.size || ""} review${selected.size === 1 ? "" : "s"}`.trim()}
+              </button>
+              {selected.size > 0 && (
+                <button type="button" className="btn ghost" onClick={() => setSelected(new Set())}>
+                  Clear selection
+                </button>
+              )}
+              {bulkError && (
+                <span role="alert" style={{ color: "var(--red, #b42318)", fontSize: 12 }}>
+                  {bulkError}
+                </span>
+              )}
+            </div>
+          )}
+          <div className="tablewrap">
+            <table className="compact">
+              <caption className="sr">Partner Reviews workspace</caption>
+              <thead>
+                <tr>
+                  {permissions.canGenerate && (
+                    <th scope="col">
+                      {eligibleOnPage.length > 0 ? (
+                        <input
+                          type="checkbox"
+                          aria-label="Select all eligible rows on this page"
+                          checked={eligibleOnPage.every((row) => selected.has(row.rowKey))}
+                          onChange={(event) => setSelected(event.target.checked ? new Set(eligibleOnPage.map((row) => row.rowKey)) : new Set())}
+                        />
+                      ) : (
+                        <span className="sr">Select</span>
+                      )}
+                    </th>
+                  )}
+                  <th scope="col">Partner</th>
+                  <th scope="col">Month · version</th>
+                  <th scope="col">Status · freshness</th>
+                  <th scope="col">Production</th>
+                  <th scope="col">Compliance</th>
+                  <th scope="col">Performance</th>
+                  <th scope="col">Commercial evidence</th>
+                  <th scope="col">Last event</th>
+                  <th scope="col">
+                    <span className="sr">Action</span>
+                  </th>
+                </tr>
+              </thead>
+              <tbody>
+                {pageRows.map((row) => (
+                  <WorkspaceRow
+                    key={row.rowKey}
+                    row={row}
+                    generated={generated[row.rowKey] ?? null}
+                    canGenerate={permissions.canGenerate}
+                    busy={busyRow === row.rowKey}
+                    anyBusy={busyRow !== null || bulkBusy}
+                    error={rowErrors[row.rowKey] || null}
+                    onGenerate={() => onGenerate(row)}
+                    selectable={isEligibleForBulk(row)}
+                    selected={selected.has(row.rowKey)}
+                    onToggleSelect={(checked) => toggleRow(row.rowKey, checked)}
+                  />
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </>
       )}
 
       <div className="panelfoot">
@@ -232,7 +351,29 @@ export function PartnerReviewsWorkspace({ initial, state }: { initial: PartnerRe
   );
 }
 
-function WorkspaceRow({ row, generated, canGenerate, busy, anyBusy, error, onGenerate }: { row: ReviewListRowDto; generated: Generated | null; canGenerate: boolean; busy: boolean; anyBusy: boolean; error: string | null; onGenerate: () => void }) {
+function WorkspaceRow({
+  row,
+  generated,
+  canGenerate,
+  busy,
+  anyBusy,
+  error,
+  onGenerate,
+  selectable,
+  selected,
+  onToggleSelect,
+}: {
+  row: ReviewListRowDto;
+  generated: Generated | null;
+  canGenerate: boolean;
+  busy: boolean;
+  anyBusy: boolean;
+  error: string | null;
+  onGenerate: () => void;
+  selectable: boolean;
+  selected: boolean;
+  onToggleSelect: (checked: boolean) => void;
+}) {
   const name = row.partnerDisplayName ?? "Unknown Partner";
   const summary = row.summary;
   const reviewRef = generated?.reviewRef ?? row.reviewRef;
@@ -240,6 +381,15 @@ function WorkspaceRow({ row, generated, canGenerate, busy, anyBusy, error, onGen
 
   return (
     <tr>
+      {canGenerate && (
+        <td>
+          {selectable ? (
+            <input type="checkbox" aria-label={`Select ${name}, ${monthLabel(row.periodKey)} for bulk generation`} checked={selected} disabled={anyBusy} onChange={(event) => onToggleSelect(event.target.checked)} />
+          ) : (
+            <span className="sr">Not eligible for bulk generation</span>
+          )}
+        </td>
+      )}
       <td>
         <Link className="rowlink person" href={partnerHistoryHref(row.partnerRef, { month: row.periodKey })} aria-label={`${name} - Partner Reviews history`}>
           <span className="avatar">{initialsOf(name)}</span>

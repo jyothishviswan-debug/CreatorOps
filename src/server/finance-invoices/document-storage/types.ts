@@ -71,7 +71,7 @@ export interface InvoiceDocumentStorage {
 // document-storage/index.ts's resolveInvoiceDocumentStorageKind) - it is never live in an automated
 // test run, and a missing/invalid Drive configuration fails closed to NOT_CONFIGURED, never a silent
 // fallback to the fake.
-export type InvoiceDocumentStorageNotConfiguredReason = "live_backend_disabled_in_tests" | "test_override" | "not_implemented" | "missing_credentials" | "missing_folder";
+export type InvoiceDocumentStorageNotConfiguredReason = "live_backend_disabled_in_tests" | "test_override" | "not_implemented" | "missing_credentials" | "missing_folder" | "real_external_services_not_allowed";
 
 export type InvoiceDocumentStorageResolution = { state: "CONFIGURED"; storage: InvoiceDocumentStorage; mode: "FAKE" | "TEST_OVERRIDE" | "GOOGLE_DRIVE" } | { state: "NOT_CONFIGURED"; reason: InvoiceDocumentStorageNotConfiguredReason };
 

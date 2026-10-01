@@ -51,6 +51,16 @@ export function generateReview(input: { partnerRef: string; periodKey: string })
   return call(`/api/partner-reviews`, { method: "POST", body: JSON.stringify(input) });
 }
 
+// Finding #63: the ONE bulk-orchestration request for multiple Partner+period items - never a
+// client-side loop of individual generateReview() calls. Always 200 with a per-item results array;
+// a single item's failure never fails the whole request.
+export type BulkReviewItemResultDto = { item: { partnerRef: string; periodKey: string }; outcome: "created" | "existing" | "error"; reviewRef: string | null; error: string | null };
+export type GenerateReviewsForItemsResultDto = { results: BulkReviewItemResultDto[] };
+
+export function generateReviewsForItems(items: Array<{ partnerRef: string; periodKey: string }>): Promise<ReviewsApiResult<GenerateReviewsForItemsResultDto>> {
+  return call(`/api/partner-reviews/bulk`, { method: "POST", body: JSON.stringify({ items }) });
+}
+
 export function refreshReviewEvidence(reviewRef: string, input: { version?: number; expectedDocVersion: number }): Promise<ReviewsApiResult<PartnerReviewDetailDto>> {
   return call(`/api/partner-reviews/${reviewRef}/refresh`, { method: "POST", body: JSON.stringify(input) });
 }

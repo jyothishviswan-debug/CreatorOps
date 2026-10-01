@@ -9,7 +9,7 @@ import { classifyHeaders, fieldValueGetter, toSafeString, type RawSheetRow } fro
 export const YOUTUBE_CONTENT_HEADER_ALIASES: Record<AnalyticsMetricId, string[]> = {
   postId: ["Platform Content ID", "Video ID", "Content ID"],
   postUrl: ["Post URL", "Video URL", "Link to Video"],
-  postDateTime: ["Post Date", "Publish Date", "Upload Date", "Published Date"],
+  postDateTime: ["Post Date", "Publish Date", "Upload Date", "Published Date", "Published At", "Published"],
   postType: ["Post Type", "Video Type", "Format"],
   postMediaUrl: ["Media URL", "Thumbnail URL"],
   postCaption: ["Title", "Video Title", "Description"],
@@ -48,7 +48,7 @@ export type YoutubeContentCandidateRow = {
   ignoredColumns: string[];
 };
 
-export function classifyYoutubeContentSheet(headers: string[]): { isRecognized: boolean; recognizedHeaderCount: number; unsupportedHeaders: string[]; unrecognizedHeaders: string[] } {
+export function classifyYoutubeContentSheet(headers: string[]): { isRecognized: boolean; recognizedHeaderCount: number; unsupportedHeaders: string[]; unrecognizedHeaders: string[]; ambiguousHeaders: string[] } {
   const classification = classifyHeaders(headers, YOUTUBE_CONTENT_HEADER_ALIASES);
   const recognizedFieldIds = new Set(classification.recognized.values());
   const isRecognized = recognizedFieldIds.has("postId") || recognizedFieldIds.has("postUrl");
@@ -57,6 +57,9 @@ export function classifyYoutubeContentSheet(headers: string[]): { isRecognized: 
     recognizedHeaderCount: classification.recognized.size,
     unsupportedHeaders: [...classification.unsupported.keys()],
     unrecognizedHeaders: classification.unrecognized,
+    // Wave B / finding #55 re-audit: every raw header involved in a same-field collision - never
+    // silently resolved to one column.
+    ambiguousHeaders: [...classification.ambiguous.values()].flat(),
   };
 }
 

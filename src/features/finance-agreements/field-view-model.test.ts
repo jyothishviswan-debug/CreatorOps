@@ -132,7 +132,7 @@ describe("buildFieldViewModels", () => {
     expect(model.displayValue).toBe("reel");
     const supported = buildFieldViewModels({ draft: { qualifyingUnit: entry({ value: "approved_content_thread" }) }, counterpartyType: "PARTNER" }).find((m) => m.fieldKey === "qualifyingUnit")!;
     expect(supported.needsMapping).toBe(false);
-    expect(supported.displayValue).toBe("Approved Content");
+    expect(supported.displayValue).toBe("Approved Content (legacy)");
     expect(models.find((m) => m.fieldKey === "paymentCycle")!.needsMapping).toBe(false);
   });
 
@@ -232,6 +232,6 @@ describe("buildExtractionRows", () => {
   it("marks an unsupported qualifying unit as Needs mapping", () => {
     const rows = buildExtractionRows({ fields: [field({ fieldKey: "qualifyingUnit", normalizedValue: "reel" }), field({ fieldKey: "qualifyingUnit", normalizedValue: "approved_current_link" })], contractDetailVisible: false, restricted: null });
     expect(rows[0]).toMatchObject({ needsMapping: true, needsMappingLabel: "Needs mapping", valueText: "reel" });
-    expect(rows[1]).toMatchObject({ needsMapping: false, valueText: "Approved current link" });
+    expect(rows[1]).toMatchObject({ needsMapping: false, valueText: "Approved current link (legacy)" });
   });
 });

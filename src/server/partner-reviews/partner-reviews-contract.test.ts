@@ -102,6 +102,7 @@ function fixtureBuilt() {
         updatedAt: "2026-03-09T10:00:00.000Z",
       },
     ],
+    contentScanTruncated: false,
     analyticsRecords: [
       {
         sourceRef: "src-1",

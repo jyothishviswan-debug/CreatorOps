@@ -102,6 +102,7 @@ function versionDoc(): PartnerReviewVersionDoc {
     assignmentScanTruncated: false,
     assignmentsScanned: 2,
     threads: [thread(S.contentA, S.assignA, S.urlA), thread(S.contentB, S.assignB, S.urlB)],
+    contentScanTruncated: false,
     analyticsRecords: [
       analytics(S.srcA, S.batchA, S.sheetA, 7341, S.urlA, S.contentA, S.assignA, S.campA, S.acctA, 111),
       analytics(S.srcB, S.batchB, S.sheetB, 8842, S.urlB, S.contentB, S.assignB, S.campB, S.acctB, 222),
@@ -200,8 +201,9 @@ describe("redactVersionForActor - canonical aggregates stay identical for every 
     snapshot.production.assignments.forEach((row, i) => {
       const source = canonical.production.assignments[i]!;
       expect(row).toMatchObject({ status: source.status, dueAt: source.dueAt, eventDate: source.eventDate, eventDateSource: source.eventDateSource, requiredCount: source.requiredCount, formats: source.formats, platforms: source.platforms, createdAt: source.createdAt, completed: source.completed, cancelled: source.cancelled });
-      expect(row.thread).toMatchObject({ status: source.thread!.status, currentRevisionNumber: source.thread!.currentRevisionNumber, firstSubmittedAt: source.thread!.firstSubmittedAt, approvedAt: source.thread!.approvedAt, linkCount: source.thread!.linkCount, linkPlatforms: source.thread!.linkPlatforms, revisionRequestCount: source.thread!.revisionRequestCount });
-      expect(row.thread!.links).toBeNull();
+      const sourceThread = source.threads[0]!;
+      expect(row.threads[0]).toMatchObject({ status: sourceThread.status, currentRevisionNumber: sourceThread.currentRevisionNumber, firstSubmittedAt: sourceThread.firstSubmittedAt, approvedAt: sourceThread.approvedAt, linkCount: sourceThread.linkCount, linkPlatforms: sourceThread.linkPlatforms, revisionRequestCount: sourceThread.revisionRequestCount });
+      expect(row.threads[0]!.links).toBeNull();
     });
     snapshot.compliance.assignments.forEach((row, i) => {
       const { assignmentRef: _ref, ...rest } = canonical.compliance.assignments[i]!;
@@ -248,7 +250,7 @@ describe("redactVersionForActor - each source type is decided independently", ()
   it("inaccessible Content withholds contentRef and the link URLs but keeps link counts/platforms and thread status", () => {
     const view = redactVersionForActor(versionDoc(), { ...fullSourceAccessFor(versionDoc().snapshot), contents: new Set() });
     for (const row of view.snapshot.production.assignments) {
-      expect(row.thread).toMatchObject({ contentRef: null, links: null, linkCount: 1, linkPlatforms: ["instagram"], status: "APPROVED" });
+      expect(row.threads[0]).toMatchObject({ contentRef: null, links: null, linkCount: 1, linkPlatforms: ["instagram"], status: "APPROVED" });
       expect(row.redactedContext).toEqual([{ sourceType: "content", redacted: true }]);
     }
     // (An Analytics record the actor may access keeps its own matched refs / post URL - exactly what the

@@ -354,7 +354,19 @@ async function seedAnalytics(
 // month history without one evidence collection per month.
 async function seedDirectReview(partner: PartnerDoc, periodKey: string, status: "DRAFT" | "IN_REVIEW" | "FINALIZED" = "DRAFT") {
   const period = derivePeriod(periodKey)!;
-  const built = buildEvidence({ partnerRef: partner.partnerRef, period, evidenceCutoff: "2010-01-01T00:00:00.000Z", assignments: [], assignmentScanTruncated: false, assignmentsScanned: 0, threads: [], analyticsRecords: [], analyticsScanTruncated: false, analyticsRecordsScanned: 0 });
+  const built = buildEvidence({
+    partnerRef: partner.partnerRef,
+    period,
+    evidenceCutoff: "2010-01-01T00:00:00.000Z",
+    assignments: [],
+    assignmentScanTruncated: false,
+    assignmentsScanned: 0,
+    threads: [],
+    contentScanTruncated: false,
+    analyticsRecords: [],
+    analyticsScanTruncated: false,
+    analyticsRecordsScanned: 0,
+  });
   const reviewRef = reviewRefFor(partner.partnerRef, periodKey);
   const stamp = "2010-01-02T00:00:00.000Z";
   const version = partnerReviewVersionDocSchema.parse({

@@ -45,6 +45,18 @@ export const governingCommercialPolicySchema = z
   .object({
     agreementRef: z.string().min(1).max(200),
     agreementVersion: z.number().int().min(1),
+    // Remediation-plan Wave B / finding #64 re-audit ("Step 14D"): present ONLY for an Agreement's
+    // own inception month (its very first version's effectiveFrom falls mid-month) - the UTC date
+    // (YYYY-MM-DD) evidence collection should treat as the start of its window for this Partner +
+    // period, INSTEAD of the calendar month's own 1st. Absent for every normal, fully-governed
+    // month (the overwhelming majority), so this changes nothing for the common case. See
+    // policy-adapter.ts's own "Step 14D" comment for exactly when this is set, and
+    // evidence-collector.ts for where it narrows the actual evidence-selection window (never the
+    // review's own stored period identity, which always stays the full calendar month).
+    evidenceWindowStart: z
+      .string()
+      .regex(/^\d{4}-\d{2}-\d{2}$/)
+      .optional(),
     monthlyDeliverableRequirement: z
       .object({
         requiredCount: z.number().int().min(0),
@@ -204,6 +216,9 @@ export function policyFingerprintFacts(policy: GoverningCommercialPolicy) {
   return {
     agreementRef: policy.agreementRef,
     agreementVersion: policy.agreementVersion,
+    // Wave B / finding #64 re-audit: an inception-month evidence window change is a genuine change
+    // to which evidence counts, so it must affect the fingerprint exactly like a requirement change.
+    evidenceWindowStart: policy.evidenceWindowStart ?? null,
     requirement: policy.monthlyDeliverableRequirement
       ? {
           requiredCount: policy.monthlyDeliverableRequirement.requiredCount,

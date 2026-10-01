@@ -11,6 +11,7 @@ import { buildReviewDetail, loadAuthorizedReview, scopeSnapshotOf } from "./part
 import { buildHeadDisplay, carriedFinalized, computeReviewListSummary } from "./review-list-summary";
 import {
   MAX_PARTNER_REVIEW_VERSIONS,
+  normalizeStoredEvidenceSnapshot,
   partnerReviewHeadDocSchema,
   partnerReviewsConflictResult,
   partnerReviewsInvalidInputResult,
@@ -43,7 +44,7 @@ type LoadedTx = { head: PartnerReviewHeadDoc; version: PartnerReviewVersionDoc }
 
 function parseTxDocs(headSnap: FirebaseFirestore.DocumentSnapshot, versionSnap: FirebaseFirestore.DocumentSnapshot): LoadedTx | null {
   const head = headSnap.exists ? partnerReviewHeadDocSchema.safeParse(headSnap.data()) : null;
-  const version = versionSnap.exists ? partnerReviewVersionDocSchema.safeParse(versionSnap.data()) : null;
+  const version = versionSnap.exists ? partnerReviewVersionDocSchema.safeParse(normalizeStoredEvidenceSnapshot(versionSnap.data())) : null;
   if (!head?.success || !version?.success) return null;
   return { head: head.data, version: version.data };
 }
@@ -189,7 +190,7 @@ export async function finalizePartnerReview(actor: ActorContext | null, reviewRe
 
     const priorNumber = docs.head.currentFinalizedVersion;
     const priorSnap = priorNumber !== null && priorNumber !== docs.version.version ? await tx.get(partnerReviewVersionsCollection(head.reviewRef).doc(versionDocId(priorNumber))) : null;
-    const prior = priorSnap && priorSnap.exists ? partnerReviewVersionDocSchema.safeParse(priorSnap.data()) : null;
+    const prior = priorSnap && priorSnap.exists ? partnerReviewVersionDocSchema.safeParse(normalizeStoredEvidenceSnapshot(priorSnap.data())) : null;
 
     if (docs.version.docVersion !== parsed.data.expectedDocVersion) return { kind: "stale" };
     if (docs.head.openVersion !== docs.version.version || !canTransitionLifecycle(docs.version.status, "FINALIZED", PARTNER_REVIEW_LIFECYCLE_TRANSITIONS)) {

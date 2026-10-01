@@ -81,6 +81,36 @@ describe("parseSupportedDateTime", () => {
     expect(parseSupportedDateTime(-5)).toBeNull();
     expect(parseSupportedDateTime(999999)).toBeNull();
   });
+
+  it("accepts a real Date object, and null for an Invalid Date", () => {
+    expect(parseSupportedDateTime(new Date("2026-09-23T00:00:00Z"))).toBe("2026-09-23T00:00:00.000Z");
+    expect(parseSupportedDateTime(new Date("not a date"))).toBeNull();
+  });
+
+  // Remediation-plan Wave B / finding #65 re-audit.
+  it("a date-only ISO string is UTC midnight, regardless of the server's local timezone", () => {
+    expect(parseSupportedDateTime("2026-09-23")).toBe("2026-09-23T00:00:00.000Z");
+  });
+
+  it("an ISO datetime with an explicit offset/Z is parsed exactly, unaffected by server timezone", () => {
+    expect(parseSupportedDateTime("2026-09-23T18:57:26+05:30")).toBe(new Date("2026-09-23T18:57:26+05:30").toISOString());
+    expect(parseSupportedDateTime("2026-09-23T13:27:26Z")).toBe("2026-09-23T13:27:26.000Z");
+  });
+
+  it("an ISO datetime with NO explicit zone is treated as UTC (never the server's local zone) - a documented, deterministic choice", () => {
+    expect(parseSupportedDateTime("2026-09-23T18:57:26")).toBe("2026-09-23T18:57:26.000Z");
+    // a space instead of 'T' is also accepted (a common export convention), same UTC treatment
+    expect(parseSupportedDateTime("2026-09-23 18:57:26")).toBe("2026-09-23T18:57:26.000Z");
+  });
+
+  it("REJECTS a non-ISO date string rather than guessing it via the locale-ambiguous general Date grammar - the real bug this re-audit found", () => {
+    // "09/23/2026" (a plausible MM/DD/YYYY export value) is exactly the format that silently shifted
+    // by a calendar day depending on server timezone before this fix - now explicitly rejected.
+    expect(parseSupportedDateTime("09/23/2026")).toBeNull();
+    expect(parseSupportedDateTime("23/09/2026")).toBeNull();
+    expect(parseSupportedDateTime("Sep 23, 2026")).toBeNull();
+    expect(parseSupportedDateTime("23 September 2026")).toBeNull();
+  });
 });
 
 describe("platform normalization reuse", () => {

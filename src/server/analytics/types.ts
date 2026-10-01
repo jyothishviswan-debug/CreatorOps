@@ -160,7 +160,12 @@ export const analyticsContentSourceRecordDocSchema = z.object({
   rawPostUrl: z.string().min(1).max(1000).nullable(),
   rawPostType: z.string().min(1).max(120).nullable(),
   rawPostDateTime: z.string().min(1).max(120).nullable(),
-  rawMediaUrl: z.string().min(1).max(1000).nullable(),
+  // Wider than the other URL fields above (which are stable, short
+  // permalinks) because this one is a raw platform CDN asset URL - those
+  // routinely carry long signed query strings (auth tokens, encoded
+  // encode-profile blobs, etc.). A real Instagram export already observed
+  // values just over 1000 chars; capped generously rather than unbounded.
+  rawMediaUrl: z.string().min(1).max(4000).nullable(),
   rawCaption: z.string().min(1).max(2000).nullable(),
   rawComments: z.string().min(1).max(60).nullable(),
   rawLikes: z.string().min(1).max(60).nullable(),
@@ -188,10 +193,16 @@ export const analyticsContentSourceRecordDocSchema = z.object({
   matchedContentRef: z.string().min(1).nullable().default(null),
   matchedAssignmentRef: z.string().min(1).nullable().default(null),
   matchedCampaignRef: z.string().min(1).nullable().default(null),
+  // Finding #30 (user-decided): matchedPartnerRef itself can now come from EITHER the Content path
+  // (exact Post URL -> Content -> Account -> Partner) OR, when Content matching finds nothing at all
+  // (UNMATCHED - never when it is AMBIGUOUS), a genuinely resolved Partner Account match by handle - see
+  // import-pipeline.ts's buildContentRowOutcome for the exact precedence. A missing Content/Assignment
+  // thread never by itself blocks this field from resolving.
   matchedPartnerRef: z.string().min(1).nullable().default(null),
-  // Separate, best-effort enrichment - see types.ts's own header comment
-  // and content-matcher.ts. Its own failure/ambiguity never blocks or
-  // downgrades an otherwise-successful Content match.
+  // A SEPARATE resolution from the matchState/matchedPartnerRef decision above - see
+  // import-pipeline.ts's own comment. Set whenever the Partner Account match independently resolved one,
+  // regardless of which path (Content or Account) decided the row's overall matchState; an account
+  // match's own failure/ambiguity never blocks or downgrades an otherwise-successful Content match.
   matchedPartnerAccountRef: z.string().min(1).nullable().default(null),
 
   // Optimistic-concurrency-equivalent for correction-service.ts - bumped
@@ -199,14 +210,15 @@ export const analyticsContentSourceRecordDocSchema = z.object({
   // match resolution counts as revision 1).
   correctionRevision: z.number().int().min(1).default(1),
 
-  // Scope projection - denormalized from the MATCHED Content thread's own
-  // ownerUid/regionIds/teamIds at commit time (never independently
-  // assigned), same discipline as Content's own doc-level scope
-  // projection from its owning Assignment. An UNMATCHED/AMBIGUOUS row
-  // carries no scope evidence of its own (null/empty) and is therefore
-  // only reachable by a GLOBAL-scoped actor via explorer-service.ts -
-  // deliberately conservative, since an unresolved row's real ownership
-  // is, by definition, not yet known.
+  // Scope projection - denormalized at commit time from whichever ownership resolution actually
+  // succeeded (never independently assigned). Finding #57: ownership is resolved INDEPENDENTLY of
+  // matchState now, so an UNMATCHED-at-Content row can still carry real, non-null scope here whenever
+  // deterministic Partner/Account ownership evidence exists (see import-pipeline.ts's
+  // buildContentRowOutcome and content-matcher.ts's own comment) - it is then visible in its owning
+  // Partner's own scoped views while remaining genuinely, visibly Content-unmatched. AMBIGUOUS is the
+  // one state that never carries scope (ambiguity is never silently resolved into an owner) - still
+  // reachable only by a GLOBAL-scoped actor via explorer-service.ts, deliberately conservative, since
+  // an ambiguous row's real ownership is, by definition, not yet known.
   ownerUid: z.string().min(1).nullable().default(null),
   regionIds: z.array(z.string().min(1)).max(50).default([]),
   teamIds: z.array(z.string().min(1)).max(50).default([]),
@@ -362,7 +374,59 @@ export type AnalyticsImportRowSummaryDto = {
   // already belongs to, the closest safe stand-in for a current->proposed
   // diff this append-only ingestion model supports.
   conflictingBatchRef: string | null;
+  // Remediation-plan Wave B / finding #60 re-audit: set only for a "quarantined" row whose commit
+  // failed - a closed-list, already-safe/sanitized reason (never a raw stack, Zod internals, a
+  // Firestore path, or a signed/sensitive value). Null for every other row.
+  commitFailureReason: string | null;
+  // Remediation-plan Wave B re-audit (found during real-browser verification, not the original
+  // finding #60 fix pass): a SINGLE, pre-computed, safe display string for row.conflictingBatchRef /
+  // row.commitFailureReason - null when neither applies. Computed HERE, once, so it is present
+  // identically whether a caller reaches this DTO through the generic Import Center target-registry
+  // wrapper (import-service.ts's toGenericRows, which used to compute this itself, inconsistently)
+  // or through the real, live Analytics UI's own direct `/api/imports/execute`+`moduleKey==="analytics"`
+  // path (which returns this DTO completely raw, with NO wrapper in between - confirmed live: the
+  // wrapper's own `detail` computation was dead code for the actual product UI, which reads a `detail`
+  // field this DTO never had until now). This is finding #59's real, deeper root cause for Analytics
+  // specifically - not just this session's own #60 fix.
+  detail: string | null;
 };
+
+// A bounded number of rows kept from any one import/resume run - shared by
+// the in-memory response DTO above (dry-run/execute/resume all cap at this
+// many) and the persisted row-detail doc below (finding #59).
+export const MAX_ROW_DETAIL_ROWS = 500;
+
+export const analyticsImportRowSummaryDtoSchema = z.object({
+  sheetName: z.string().min(1).max(200),
+  sourceRowNumber: z.number().int().min(1),
+  classification: z.enum(ANALYTICS_ROW_CLASSIFICATIONS),
+  outcome: z.enum(ANALYTICS_ROW_OUTCOME_GROUPS),
+  recordKind: z.enum(["content", "channel"]).nullable(),
+  identityLabel: z.string().max(4200).nullable(),
+  conflictingBatchRef: z.string().min(1).nullable(),
+  commitFailureReason: z.string().min(1).max(2000).nullable(),
+  detail: z.string().min(1).max(2000).nullable(),
+});
+
+// --- Import batch row detail (analyticsImportBatchRowDetails/{batchUid}) --
+// Finding #59: History/resume must be able to show the SAME per-row
+// outcome/detail table the Review and Results steps show, not just
+// aggregate counts - a user recovering a quarantined batch days later
+// needs to see WHICH rows and WHY, not just "12 quarantined". The
+// AnalyticsImportBatchDoc itself deliberately does NOT carry this (a
+// History LIST fetch pulls many batch docs at once - bloating every one
+// of them with up to MAX_ROW_DETAIL_ROWS rows would be wasteful for a
+// view that never renders them); this lives in its own doc, fetched only
+// by the single-batch detail read. Overwritten (not merged) on every
+// execute/resume of the batch, so it always reflects the LATEST rows,
+// consistent with the batch doc's own aggregate counts.
+export const analyticsImportBatchRowDetailDocSchema = z.object({
+  batchUid: z.string().min(1),
+  rows: z.array(analyticsImportRowSummaryDtoSchema).max(MAX_ROW_DETAIL_ROWS),
+  rowsTruncated: z.boolean(),
+  updatedAt: z.string().min(1),
+});
+export type AnalyticsImportBatchRowDetailDoc = z.infer<typeof analyticsImportBatchRowDetailDocSchema>;
 
 // --- Result/error plumbing - mirrors Content's/Assignments' own exactly --
 export type AnalyticsDenialReason = "not_authenticated" | "feature_denied" | "action_denied" | "scope_denied";

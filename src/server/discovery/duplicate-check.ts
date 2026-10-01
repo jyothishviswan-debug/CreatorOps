@@ -1,4 +1,5 @@
 import { partnerAccountsCollection, partnersCollection } from "@/server/partners/firestore";
+import { normalizeHandle, normalizeProfileUrl as normalizeUrl } from "@/server/shared/account-identity";
 import { leadsCollection } from "./firestore";
 import type { DuplicateCheckResult, DuplicateMatch } from "./types";
 
@@ -13,14 +14,6 @@ function normalizeEmail(value: string): string {
 
 function normalizePhone(value: string): string {
   return value.replace(/[^\d+]/g, "");
-}
-
-function normalizeUrl(value: string): string {
-  return value.trim().toLowerCase().replace(/\/+$/, "");
-}
-
-function normalizeHandle(value: string): string {
-  return value.trim().toLowerCase().replace(/^@/, "");
 }
 
 function normalizeDisplayName(value: string): string {

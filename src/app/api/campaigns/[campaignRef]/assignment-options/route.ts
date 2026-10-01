@@ -16,6 +16,8 @@ export async function GET(request: Request, { params }: RouteParams) {
   const result = await getAssignmentCreateOptions(actor, campaignRef, {
     q: url.searchParams.get("q") ?? undefined,
     partnerRef: url.searchParams.get("partnerRef") ?? undefined,
+    vq: url.searchParams.get("vq") ?? undefined,
+    vendorRef: url.searchParams.get("vendorRef") ?? undefined,
   });
   return toCampaignsHttpResponse(result);
 }

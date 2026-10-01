@@ -59,8 +59,8 @@ describe("payment-affecting rows", () => {
   });
 
   it("maps the supported qualifying units to their labels and flags unsupported wording as Needs mapping (as written)", () => {
-    expect(byKey(rows, "qualifyingUnit")).toMatchObject({ value: "Approved Content", flag: null });
-    expect(byKey(buildCommercialRows(terms({ commercial: { qualifyingUnit: "approved_current_link" } })), "qualifyingUnit").value).toBe("Approved current link");
+    expect(byKey(rows, "qualifyingUnit")).toMatchObject({ value: "Approved Content (legacy)", flag: null });
+    expect(byKey(buildCommercialRows(terms({ commercial: { qualifyingUnit: "approved_current_link" } })), "qualifyingUnit").value).toBe("Approved current link (legacy)");
     expect(byKey(buildCommercialRows(terms({ commercial: { qualifyingUnit: "reel" } })), "qualifyingUnit")).toMatchObject({ value: "reel", flag: NEEDS_MAPPING_LABEL });
   });
 

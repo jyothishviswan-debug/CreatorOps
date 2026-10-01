@@ -165,6 +165,7 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_commercial: true,
         manage_asset_decision: true,
         manage_manager_assignment: true,
+        manage_owner_assignment: true,
         manage_kyc: true,
         transition_lifecycle: true,
         convert_lead: true,
@@ -257,6 +258,7 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // same-scope role denial - see content.emulator.test.ts.
       content: featureGrant(true, {
         create: true,
+        record_content_links: true,
         review_content: true,
         cancel_content: true,
         manage_notes: true,
@@ -338,6 +340,7 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
         manage_commercial: true,
         manage_asset_decision: true,
         manage_manager_assignment: true,
+        manage_owner_assignment: true,
         manage_kyc: true,
         transition_lifecycle: true,
         convert_lead: true,
@@ -407,6 +410,7 @@ const ACCESS_GRANTS: Record<Role, Pick<AccessGrantDoc, "features">> = {
       // Vendors'/Campaigns' own head-only governance split above.
       content: featureGrant(true, {
         create: true,
+        record_content_links: true,
         review_content: true,
         cancel_content: true,
         manage_notes: true,

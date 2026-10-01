@@ -167,7 +167,7 @@ describe("value lines", () => {
     expect(valueLines("performanceTargets", [{ targetRef: "t", metricId: "reach", targetValue: 5, unit: "accounts", comparison: "at_least", period: "Every 30 days", affectsPayment: false }])).toEqual(["Reach: at least 5 accounts · Every 30 days"]);
     expect(valueLines("lfcSfc", { byFormat: { Reel: "SFC", Video: "LFC" } })).toEqual(["Reel: SFC", "Video: LFC"]);
     expect(valueLines("qualifyingUnit", "reel")).toEqual(["reel"]);
-    expect(valueLines("qualifyingUnit", "approved_content_thread")).toEqual(["Approved Content"]);
+    expect(valueLines("qualifyingUnit", "approved_content_thread")).toEqual(["Approved Content (legacy)"]);
   });
 });
 

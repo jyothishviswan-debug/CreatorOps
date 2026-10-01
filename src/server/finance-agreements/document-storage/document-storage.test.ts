@@ -191,23 +191,43 @@ describe("the in-memory fake", () => {
 });
 
 describe("which storage a process uses (pure resolution + seam)", () => {
-  const configured = { credentialsPath: "/k.json", partnersFolderId: PARTNERS_FOLDER, vendorsFolderId: VENDORS_FOLDER, mode: undefined } as const;
+  // "configured" now means the FULL explicit opt-in: mode=real AND the shared external-services switch
+  // AND credentials/folder - this is the remediation-plan Wave A shape (see finding #69). Nothing short
+  // of all three ever selects real Drive.
+  const configured = { credentialsPath: "/k.json", partnersFolderId: PARTNERS_FOLDER, vendorsFolderId: VENDORS_FOLDER, mode: "real", allowRealExternalServices: true } as const;
 
-  it("FINANCE_AGREEMENT_DRIVE_MODE=fake selects the fake everywhere EXCEPT production", () => {
-    for (const nodeEnv of ["development", "test", undefined]) expect(resolveAgreementDocumentStorageKind({ env: { ...configured, mode: "fake" }, nodeEnv, testRun: false })).toBe("FAKE");
-    expect(resolveAgreementDocumentStorageKind({ env: { ...configured, mode: "fake" }, nodeEnv: "production", testRun: false })).toBe("GOOGLE_DRIVE");
-    // ... and in production with no real config it is NOT_CONFIGURED, never the fake.
-    expect(resolveAgreementDocumentStorageKind({ env: { credentialsPath: undefined, partnersFolderId: undefined, vendorsFolderId: undefined, mode: "fake" }, nodeEnv: "production", testRun: false })).toEqual({ notConfigured: "missing_credentials" });
+  it("credentials and folder ids being PRESENT is never enough on its own: without mode=real AND the external-services switch, the answer is FAKE (dev) or NOT_CONFIGURED (production) - never GOOGLE_DRIVE", () => {
+    // this is the exact live gap the remediation plan's Wave A closes: a real .env.local carrying real
+    // credentials/folder ids with no explicit opt-in must never resolve to real Drive.
+    const presentButNotOptedIn = { credentialsPath: "/k.json", partnersFolderId: PARTNERS_FOLDER, vendorsFolderId: VENDORS_FOLDER, mode: undefined, allowRealExternalServices: false } as const;
+    for (const nodeEnv of ["development", "test", undefined]) expect(resolveAgreementDocumentStorageKind({ env: presentButNotOptedIn, nodeEnv, testRun: false })).toBe("FAKE");
+    expect(resolveAgreementDocumentStorageKind({ env: presentButNotOptedIn, nodeEnv: "production", testRun: false })).toEqual({ notConfigured: "drive_mode_not_enabled" });
   });
 
-  it("NOT_CONFIGURED without credentials or without any folder; real Drive only when both are present", () => {
+  it("mode=real WITHOUT the shared ALLOW_REAL_EXTERNAL_SERVICES switch never reaches Drive, even with full credentials/folder", () => {
+    expect(resolveAgreementDocumentStorageKind({ env: { ...configured, allowRealExternalServices: false }, nodeEnv: "development", testRun: false })).toEqual({ notConfigured: "real_external_services_not_allowed" });
+    expect(resolveAgreementDocumentStorageKind({ env: { ...configured, allowRealExternalServices: false }, nodeEnv: "production", testRun: false })).toEqual({ notConfigured: "real_external_services_not_allowed" });
+  });
+
+  it("the shared ALLOW_REAL_EXTERNAL_SERVICES switch WITHOUT mode=real never reaches Drive either - both gates are required", () => {
+    expect(resolveAgreementDocumentStorageKind({ env: { ...configured, mode: undefined }, nodeEnv: "development", testRun: false })).toBe("FAKE");
+    expect(resolveAgreementDocumentStorageKind({ env: { ...configured, mode: "fake" }, nodeEnv: "development", testRun: false })).toBe("FAKE");
+  });
+
+  it("FINANCE_AGREEMENT_DRIVE_MODE=fake selects the fake everywhere EXCEPT production (unchanged - it's just no longer needed to keep Drive off by default)", () => {
+    for (const nodeEnv of ["development", "test", undefined]) expect(resolveAgreementDocumentStorageKind({ env: { ...configured, mode: "fake", allowRealExternalServices: false }, nodeEnv, testRun: false })).toBe("FAKE");
+    // production with mode=fake still never gets the fake, but ALSO never silently gets real Drive - it's a truthful NOT_CONFIGURED
+    expect(resolveAgreementDocumentStorageKind({ env: { ...configured, mode: "fake", allowRealExternalServices: false }, nodeEnv: "production", testRun: false })).toEqual({ notConfigured: "drive_mode_not_enabled" });
+  });
+
+  it("with BOTH explicit gates on: NOT_CONFIGURED without credentials or without any folder; real Drive only when both are present", () => {
     expect(resolveAgreementDocumentStorageKind({ env: { ...configured, credentialsPath: "  " }, nodeEnv: "development", testRun: false })).toEqual({ notConfigured: "missing_credentials" });
     expect(resolveAgreementDocumentStorageKind({ env: { ...configured, partnersFolderId: undefined, vendorsFolderId: undefined }, nodeEnv: "development", testRun: false })).toEqual({ notConfigured: "missing_folder" });
     expect(resolveAgreementDocumentStorageKind({ env: { ...configured, vendorsFolderId: undefined }, nodeEnv: "development", testRun: false })).toBe("GOOGLE_DRIVE");
     expect(resolveAgreementDocumentStorageKind({ env: configured, nodeEnv: "production", testRun: false })).toBe("GOOGLE_DRIVE");
   });
 
-  it("an automated test run never resolves to real Drive, even with full configuration", () => {
+  it("an automated test run never resolves to real Drive, even with full configuration and both gates on", () => {
     expect(resolveAgreementDocumentStorageKind({ env: configured, nodeEnv: "test", testRun: true })).toEqual({ notConfigured: "live_drive_disabled_in_tests" });
   });
 
@@ -224,29 +244,35 @@ describe("which storage a process uses (pure resolution + seam)", () => {
     expect(() => setAgreementDocumentStorageForTests(fake)).toThrow(/test run/);
   });
 
-  it("configuration comes only from the environment: blank counts as absent, and only the exact value 'fake' selects the fake", () => {
+  it("configuration comes only from the environment: blank counts as absent, and only the exact value 'real' opts into Drive (case-sensitive)", () => {
     vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", "  ");
     vi.stubEnv("FINANCE_AGREEMENT_DRIVE_PARTNERS_FOLDER_ID", "");
     vi.stubEnv("FINANCE_AGREEMENT_DRIVE_VENDORS_FOLDER_ID", " vendors_folder_id_0002 ");
-    vi.stubEnv("FINANCE_AGREEMENT_DRIVE_MODE", "FAKE");
-    expect(getFinanceAgreementDriveEnv()).toEqual({ credentialsPath: undefined, partnersFolderId: undefined, vendorsFolderId: "vendors_folder_id_0002", mode: undefined });
-    vi.stubEnv("FINANCE_AGREEMENT_DRIVE_MODE", "fake");
-    expect(getFinanceAgreementDriveEnv().mode).toBe("fake");
+    vi.stubEnv("FINANCE_AGREEMENT_DRIVE_MODE", "REAL");
+    vi.stubEnv("ALLOW_REAL_EXTERNAL_SERVICES", "TRUE");
+    expect(getFinanceAgreementDriveEnv()).toEqual({ credentialsPath: undefined, partnersFolderId: undefined, vendorsFolderId: "vendors_folder_id_0002", mode: undefined, allowRealExternalServices: false });
+    vi.stubEnv("FINANCE_AGREEMENT_DRIVE_MODE", "real");
+    vi.stubEnv("ALLOW_REAL_EXTERNAL_SERVICES", "true");
+    expect(getFinanceAgreementDriveEnv().mode).toBe("real");
+    expect(getFinanceAgreementDriveEnv().allowRealExternalServices).toBe(true);
   });
 
-  it("FINANCE_AGREEMENT_DRIVE_MODE=fake makes getAgreementDocumentStorage return the in-memory fake (links on the .invalid host), and it is stable across calls", async () => {
+  it("FINANCE_AGREEMENT_DRIVE_MODE=fake does NOT bypass the live-test-run guard: getAgreementDocumentStorage (this process's own isAutomatedTestRun() is true) still answers NOT_CONFIGURED without an explicit override - the PURE resolver (exercised above) is what proves the non-test-run default is FAKE", () => {
     vi.stubEnv("FINANCE_AGREEMENT_DRIVE_MODE", "fake");
-    const first = getAgreementDocumentStorage();
-    const second = getAgreementDocumentStorage();
-    expect(first).toMatchObject({ state: "CONFIGURED", mode: "FAKE" });
-    expect(second).toMatchObject({ state: "CONFIGURED", mode: "FAKE" });
-    if (first.state !== "CONFIGURED" || second.state !== "CONFIGURED") return;
-    expect(second.storage).toBe(first.storage);
-    const stored = await first.storage.store(input());
+    expect(getAgreementDocumentStorage()).toEqual({ state: "NOT_CONFIGURED", reason: "live_drive_disabled_in_tests" });
+    // an explicit test override is the real way to get the fake inside a live test run (proven earlier in this file)
+  });
+
+  it("createInMemoryAgreementDocumentStorage() itself (the same adapter FAKE resolves to) records links on the .invalid host", async () => {
+    const storage = createInMemoryAgreementDocumentStorage();
+    const stored = await storage.store(input());
     expect(stored.ok && stored.data.webViewLink.startsWith("https://drive.invalid/fake/")).toBe(true);
-    // production ignores it: (pure resolver covers the whole matrix; here the live process env says 'test')
+  });
+
+  it("production without an explicit real opt-in never silently uses the fake either - truthful NOT_CONFIGURED", () => {
+    vi.stubEnv("FINANCE_AGREEMENT_DRIVE_MODE", "fake");
     vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", "");
-    expect(resolveAgreementDocumentStorageKind({ env: getFinanceAgreementDriveEnv(), nodeEnv: "production", testRun: false })).toEqual({ notConfigured: "missing_credentials" });
+    expect(resolveAgreementDocumentStorageKind({ env: getFinanceAgreementDriveEnv(), nodeEnv: "production", testRun: false })).toEqual({ notConfigured: "drive_mode_not_enabled" });
   });
 
   it("with no override and no configuration in this test run, the answer is a truthful NOT_CONFIGURED (never a real adapter)", () => {

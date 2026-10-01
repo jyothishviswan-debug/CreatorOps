@@ -11,10 +11,18 @@ export { submissionRecipientTypeSchema, type SubmissionRecipientType } from "@/s
 // already-published links through the existing public page, a Manager
 // reviews the submitted links and either approves (closing the work) or
 // requests revision (reopening the SAME public page/token for correction
-// and resubmission), repeating until approved. Exactly ONE canonical
-// Content thread exists per Assignment (never one per numbered required
-// slot - that machinery is retired, see fulfillment-service.ts). Finance
-// never calculates, gates, mutates, or owns anything here - unchanged.
+// and resubmission), repeating until approved. Finance never calculates,
+// gates, mutates, or owns anything here - unchanged.
+//
+// Finding #50 (reopened): an Assignment may carry MULTIPLE qualifying
+// Content records over its lifetime, one per submission cycle - never one
+// per numbered required slot (that machinery stays retired). At most ONE
+// NON-TERMINAL thread exists per Assignment at a time (see
+// resolveOrCreateContentThread in content-service.ts and
+// contentAssignmentThreadClaimDocSchema below); once a thread reaches
+// APPROVED/CANCELLED, the next submission cycle opens a genuinely new
+// one. requiredCount (Assignment.brief) is fulfilled by the COUNT of an
+// Assignment's APPROVED Content records - see fulfillment-service.ts.
 
 // --- Status ----------------------------------------------------------
 export const CONTENT_STATUSES = ["OPEN", "UNDER_REVIEW", "REVISION_REQUESTED", "APPROVED", "CANCELLED"] as const;
@@ -59,8 +67,9 @@ export const qualifyingFulfillmentSchema = z
 export type QualifyingFulfillment = z.infer<typeof qualifyingFulfillmentSchema>;
 
 // --- Content root document (content/{uid}) -------------------------------
-// One canonical thread per Assignment - see fulfillment-service.ts /
-// contentAssignmentThreadClaimDocSchema below for the uniqueness lock.
+// An Assignment may own several of these over its lifetime (one per
+// submission cycle) - at most one NON-TERMINAL at a time, see
+// fulfillment-service.ts / contentAssignmentThreadClaimDocSchema below.
 export const contentDocSchema = z.object({
   uid: z.string().min(1),
   contentRef: z.string().min(1),
@@ -142,12 +151,17 @@ export const contentRevisionDocSchema = z
   .strict();
 export type ContentRevisionDoc = z.infer<typeof contentRevisionDocSchema>;
 
-// --- One-canonical-thread-per-Assignment claim (contentAssignmentThreadClaims/{assignmentRef}) --
+// --- Current-thread-per-Assignment claim (contentAssignmentThreadClaims/{assignmentRef}) --
 // Doc id IS the assignmentRef directly (one field, no composite key
-// needed) - existence-is-the-lock, same idiom as
-// assignmentActiveClaims/vendorPartnerActiveClaims. Permanent once
-// created - there is no "release" concept, matching Assignment's own
-// canonical-pair-claim precedent.
+// needed). Finding #50 (reopened): this is no longer "the one thread this
+// Assignment will ever have" - it points at the Assignment's CURRENT
+// thread (its latest submission cycle). The doc itself is never deleted
+// (still permanent, matching Assignment's own canonical-pair-claim
+// precedent), but its payload IS repointed - transactionally overwritten,
+// never merged - to a new contentUid once the previously-claimed thread
+// reaches a terminal status (APPROVED/CANCELLED). The real invariant is
+// "at most one NON-TERMINAL thread claimed per Assignment at a time" -
+// see resolveOrCreateContentThread in content-service.ts, the only writer.
 export const contentAssignmentThreadClaimDocSchema = z.object({
   assignmentRef: z.string().min(1),
   contentRef: z.string().min(1),

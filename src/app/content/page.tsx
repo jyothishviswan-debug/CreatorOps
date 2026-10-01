@@ -3,6 +3,7 @@ import { EmptyState } from "@/ui/States";
 import { ContentWorkspace } from "@/features/content/ContentWorkspace";
 import { resolveRequestActor } from "@/server/content/http";
 import { listContent } from "@/server/content/content-service";
+import { canPerformAction } from "@/server/authz/capabilities";
 
 export default async function ContentPage() {
   const actor = await resolveRequestActor();
@@ -10,6 +11,10 @@ export default async function ContentPage() {
   // Campaigns' own page component (Step 10B's own precedent) - a denied
   // actor never causes a Content read to happen at all.
   const initial = await listContent(actor, { limit: 10 });
+  // Finding #46: same single action-level UI gate as the detail page
+  // (src/app/content/[contentId]/page.tsx) - computed once, server-side,
+  // threaded down to gate the list's own row-level Approve quick action.
+  const actorCanReview = actor ? await canPerformAction(actor, "content", "review_content") : false;
 
   if (!initial.ok) {
     return (
@@ -37,7 +42,7 @@ export default async function ContentPage() {
         </div>
       </div>
 
-      <ContentWorkspace initialContent={initial.data.content} initialNextCursor={initial.data.nextCursor} />
+      <ContentWorkspace initialContent={initial.data.content} initialNextCursor={initial.data.nextCursor} actorCanReview={actorCanReview} />
     </AppShell>
   );
 }

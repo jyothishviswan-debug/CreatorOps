@@ -15,6 +15,12 @@ import { addPartnerRestrictedIdentityLinkEvidence, getPartnerRestrictedIdentity,
 export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: string }) {
   const [state, setState] = useState<"idle" | "loading" | "denied" | "error" | "ready">("idle");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
+  // Findings #2/#3 (user-decided): same read-only/edit toggle as Discovery's Agreement/Commercial
+  // panels. No `confirmed` concept exists on this record - gated on `existingVersion > 0` instead (has
+  // this ever been saved at all). Cancel re-fetches from the server (`load()`) rather than keeping a
+  // separate pristine snapshot, since every field here already doubles as both the loaded AND the
+  // in-progress-edit value - re-fetching is the simplest way to genuinely discard an unsaved edit.
+  const [editing, setEditing] = useState(false);
   const [panNumber, setPanNumber] = useState("");
   const [aadhaarNumber, setAadhaarNumber] = useState("");
   const [accountHolderName, setAccountHolderName] = useState("");
@@ -78,6 +84,12 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
       return;
     }
     setExistingVersion(result.data.version);
+    setEditing(false);
+  }
+
+  async function cancelEditing() {
+    setEditing(false);
+    await load();
   }
 
   return (
@@ -103,7 +115,45 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
             </button>
           </div>
         )}
-        {state === "ready" && (
+        {state === "ready" && !editing && existingVersion > 0 && (
+          <div>
+            <p className="foundationnote">These values are never shown outside this authorized panel.</p>
+            {panNumber && (
+              <div className="kv">
+                <span>PAN</span>
+                <b>{panNumber}</b>
+              </div>
+            )}
+            {aadhaarNumber && (
+              <div className="kv">
+                <span>Aadhaar number</span>
+                <b>{aadhaarNumber}</b>
+              </div>
+            )}
+            {accountNumber && (
+              <div className="kv">
+                <span>Bank</span>
+                <b>
+                  {accountHolderName} · {accountNumber} · {ifsc} · {bankName} ({branchName})
+                </b>
+              </div>
+            )}
+            <div className="kv">
+              <span>GST</span>
+              <b>{gstApplicable ? gstNumber : "Not applicable"}</b>
+            </div>
+            {address && (
+              <div className="kv">
+                <span>Registered / billing address</span>
+                <b>{address}</b>
+              </div>
+            )}
+            <button type="button" className="btn" style={{ marginTop: 10 }} onClick={() => setEditing(true)}>
+              Edit
+            </button>
+          </div>
+        )}
+        {state === "ready" && (editing || existingVersion === 0) && (
           <form onSubmit={handleSubmit}>
             <p className="foundationnote">These values are never shown outside this authorized panel.</p>
             <div className="fields">
@@ -160,6 +210,11 @@ export function PartnerRestrictedIdentityPanel({ partnerRef }: { partnerRef: str
             )}
 
             <div className="actions" style={{ marginTop: 12 }}>
+              {existingVersion > 0 && (
+                <button type="button" className="btn" onClick={() => void cancelEditing()} disabled={saving}>
+                  Cancel
+                </button>
+              )}
               <button type="submit" className="btn primary" disabled={saving}>
                 {saving ? "Saving…" : "Save restricted identity"}
               </button>
@@ -206,6 +261,17 @@ function EvidenceManager({
   const [file, setFile] = useState<File | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Finding #5 (user-decided): same fix as Discovery's own KycAttachments - switching document type
+  // or source (link/upload) clears any stale link/file already entered for the PREVIOUS type,
+  // adjusted during render rather than inside a useEffect (see KycAttachments's own comment).
+  const [resetKey, setResetKey] = useState(`${docType}-${mode}`);
+  const currentResetKey = `${docType}-${mode}`;
+  if (currentResetKey !== resetKey) {
+    setResetKey(currentResetKey);
+    setLinkUrl("");
+    setFile(null);
+  }
 
   async function handleAdd(e: FormEvent) {
     e.preventDefault();
@@ -262,12 +328,13 @@ function EvidenceManager({
             </select>
           </div>
           {mode === "link" ? (
-            <div className="field full" key="link">
+            <div className="field full" key={`link-${docType}`}>
               <label htmlFor="ri-evidence-url">Document link</label>
               <input id="ri-evidence-url" type="url" placeholder="https://…" value={linkUrl} onChange={(e) => setLinkUrl(e.target.value)} required />
             </div>
           ) : (
-            <div className="field full" key="upload">
+            // Keyed on docType too, same reasoning as Discovery's own KycAttachments (finding #5).
+            <div className="field full" key={`upload-${docType}`}>
               <label htmlFor="ri-evidence-file">Choose file</label>
               <input id="ri-evidence-file" type="file" onChange={(e) => setFile(e.target.files?.[0] ?? null)} required />
             </div>
@@ -288,8 +355,9 @@ function EvidenceManager({
           {evidence.map((e, i) => (
             <li key={`${e.docType}-${e.addedAt}-${i}`}>
               <b>{DOC_TYPE_LABELS[e.docType]}</b> ·{" "}
+              {/* Finding #6 (user-decided): matches Finance Agreement's own "Open ___ document" anchor convention. */}
               <a href={e.url} target="_blank" rel="noreferrer">
-                {e.kind === "upload" ? (e.fileName ?? "Uploaded file") : "Open link"}
+                {e.kind === "upload" ? (e.fileName ?? `Open ${DOC_TYPE_LABELS[e.docType]} document`) : `Open ${DOC_TYPE_LABELS[e.docType]} document`}
               </a>
             </li>
           ))}

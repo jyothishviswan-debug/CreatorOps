@@ -9,7 +9,13 @@ import { assignmentPlatformsArraySchema, platformIdentifierSchema } from "./type
 // genuinely unauthenticated, bearer-token-only entry point), and keeping
 // its schemas apart makes that boundary easy to audit in one place.
 
-export const SUBMISSION_RECIPIENT_TYPES = ["PARTNER", "VENDOR"] as const;
+// Finding #44 (user-decided): "MANAGER" is a real, honest third value - a Manager recording content
+// links on the Partner's behalf (an authenticated-actor write, never the public bearer-token page) is
+// neither the Partner nor a Vendor submitting for themselves; content-revision provenance must say so
+// truthfully, not misrepresent the recorder as one of the other two. Never offered by the external-
+// submission share dialog itself (that UI only ever creates PARTNER/VENDOR sessions) - only used by
+// content/manager-submission-service.ts's own internal write.
+export const SUBMISSION_RECIPIENT_TYPES = ["PARTNER", "VENDOR", "MANAGER"] as const;
 export const submissionRecipientTypeSchema = z.enum(SUBMISSION_RECIPIENT_TYPES);
 export type SubmissionRecipientType = z.infer<typeof submissionRecipientTypeSchema>;
 
@@ -138,10 +144,31 @@ export type AssignmentExternalSubmissionDoc = z.infer<typeof assignmentExternalS
 // The ONLY shape the unauthenticated public resolve route ever returns -
 // no internal ids, no scope, no restricted identity, no Finance, no
 // history, no secret.
+// Finding #47: exactly the 3 creator-safe Campaign Resource types (LINK/UPLOAD/TEXT) ever reach the
+// public page - the legacy DOCUMENT/BRIEF/ASSET/OTHER types (still readable internally for old
+// Campaigns, per findings #36/#37) are omitted here as "unavailable" for this surface. `url` is
+// already the safe, resolved value for both LINK (external URL) and UPLOAD (the storage layer's own
+// creator-facing view link) - never a raw bucket/storage path (campaigns/types.ts's own
+// campaignResourceSchema guarantees this at the source; nothing here re-derives or re-authorizes a
+// path). `content` is TEXT's plain body, rendered as text, never treated as or turned into a URL.
+export type PublicCampaignResource = { label: string; type: "LINK" | "UPLOAD" | "TEXT"; url: string | null; content: string | null };
+
 export type PublicAssignmentSubmissionDto = {
   campaignName: string;
-  assignmentDisplayContext: string;
+  // Finding #47: the Campaign's own Objective, snapshotted onto the brief at Assignment creation
+  // (types.ts's own documented frozen-snapshot policy - never re-synced by a later Campaign edit).
+  campaignObjective: string | null;
+  // Finding #47: the owning Campaign's own CURRENT active Resources, read live (the same
+  // live-join precedent finding #38 already established for the internal, authenticated
+  // AssignmentDto's own campaignResources - deliberately NOT snapshotted, so a Resource removed
+  // from the Campaign after this Assignment was created is never shown here; disclosed as a
+  // considered choice between two real existing precedents, not a default).
+  campaignResources: PublicCampaignResource[];
   instructions: string | null;
+  // Finding #47/#52: a genuinely optional Assignment-specific override/clarification - no longer
+  // pretends to carry inherited Campaign context (never falls back to campaignName), and the public
+  // page only renders a section for it when it is actually populated.
+  contentRequirementSummary: string | null;
   dueAt: string | null;
   language: string | null;
   hashtags: string[];
@@ -149,6 +176,12 @@ export type PublicAssignmentSubmissionDto = {
   allowedPlatforms: string[];
   resourceLinks: { label: string; url: string }[];
   reviewPolicyNote: string | null;
+  // Finding #50: the number of published links this Assignment's one
+  // submission thread needs before it can fulfill the obligation - so the
+  // submitter knows the real target, not just "at least one". Always a
+  // small positive integer (MAX_ASSIGNMENT_REQUIRED_COUNT, 10) - never
+  // the Agreement's own separate monthly deliverable requirement.
+  requiredCount: number;
   // Step 11A.1: drives the public page's own state machine (Section 10) -
   // see src/features/assignments/public/PublicSubmissionPage.tsx. Only
   // ever the thread's own status/statusReason/currentLinks, mapped down

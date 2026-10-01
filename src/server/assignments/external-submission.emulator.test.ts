@@ -10,7 +10,7 @@ import { resolveActor } from "@/server/authz/actor";
 import { seedAccessControlData, TEST_IDENTITIES } from "@/server/authz/seed-access-data";
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminAuth } from "@/server/firebase/admin";
-import { createCampaign } from "@/server/campaigns/campaign-service";
+import { addCampaignResource, createCampaign, removeCampaignResource } from "@/server/campaigns/campaign-service";
 import { transitionCampaignLifecycle } from "@/server/campaigns/campaign-lifecycle-service";
 import { getCampaign } from "@/server/campaigns/campaign-service";
 import { seedCampaignsData } from "@/server/campaigns/seed-campaigns-data";
@@ -316,14 +316,17 @@ describe("Public DTO / privacy", () => {
     expect(Object.keys(dto).sort()).toEqual(
       [
         "allowedPlatforms",
-        "assignmentDisplayContext",
         "campaignName",
+        "campaignObjective",
+        "campaignResources",
+        "contentRequirementSummary",
         "currentLinks",
         "dueAt",
         "formats",
         "hashtags",
         "instructions",
         "language",
+        "requiredCount",
         "resourceLinks",
         "reviewPolicyNote",
         "revisionNote",
@@ -389,6 +392,146 @@ describe("Public DTO / privacy", () => {
     expect(resolved.ok).toBe(true);
     if (!resolved.ok) throw new Error("unreachable");
     expect(resolved.data.resourceLinks).toHaveLength(0);
+  });
+});
+
+// Finding #47: Campaign Objective + Resources reaching the public submission page. Objective is
+// the existing frozen-snapshot brief field (campaignObjective), just newly exposed. Resources are
+// read LIVE from the owning Campaign (the same precedent finding #38 already established for the
+// internal AssignmentDto) - the tests below pin that choice directly, including the "removed after
+// Assignment creation -> no longer shown" behavior a snapshot approach would NOT have produced.
+describe("Campaign Objective + Resources on the public page (finding #47)", () => {
+  async function createAssignedAssignmentWithCampaign(head: ActorContext, campaignOverrides: Record<string, unknown> = {}, briefOverrides: Record<string, unknown> = {}) {
+    const createdCampaign = await createCampaign(
+      head,
+      {
+        name: uniqueName("Resource Test Campaign"),
+        objective: "Raise awareness of the new product line.",
+        platforms: ["instagram", "youtube"],
+        startDate: "2026-01-01",
+        endDate: "2026-06-01",
+        regionIds: ["Kerala"],
+        defaultReviewPolicy: "REVIEW_REQUIRED",
+        ...campaignOverrides,
+      },
+      "req",
+    );
+    if (!createdCampaign.ok) throw new Error("unreachable");
+    const planned = await transitionCampaignLifecycle(head, createdCampaign.data.campaignRef, { to: "PLANNED", expectedVersion: createdCampaign.data.version }, "req");
+    if (!planned.ok) throw new Error("unreachable");
+    const created = await createAssignment(head, { campaignRef: createdCampaign.data.campaignRef, partnerRef: "seed-partner-direct", brief: { platforms: ["instagram", "youtube"], ...briefOverrides } }, "req");
+    if (!created.ok) throw new Error("unreachable");
+    const assigned = await transitionAssignmentLifecycle(head, created.data.assignmentRef, { to: "ASSIGNED", expectedVersion: created.data.version }, "req");
+    if (!assigned.ok) throw new Error("unreachable");
+    const refetched = await getAssignment(head, created.data.assignmentRef);
+    if (!refetched.ok) throw new Error("unreachable");
+    return { campaignRef: createdCampaign.data.campaignRef, assignment: refetched.data };
+  }
+
+  it("Campaign Objective reaches the public page", async () => {
+    const head = await actorFor("partnership_head");
+    const { assignment } = await createAssignedAssignmentWithCampaign(head, { objective: "A very specific real objective." });
+    const session = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!session.ok) throw new Error("unreachable");
+    const resolved = await resolveExternalSubmission(session.data.rawToken);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error("unreachable");
+    expect(resolved.data.campaignObjective).toBe("A very specific real objective.");
+  });
+
+  it("LINK and TEXT Resources reach the public page, in Campaign order; legacy resource types are omitted", async () => {
+    const head = await actorFor("partnership_head");
+    const { campaignRef, assignment } = await createAssignedAssignmentWithCampaign(head);
+    const campaignBefore = await getCampaign(head, campaignRef);
+    if (!campaignBefore.ok) throw new Error("unreachable");
+    const withLink = await addCampaignResource(head, campaignRef, { label: "Brand guidelines", type: "LINK", url: "https://example.com/brand.pdf", expectedVersion: campaignBefore.data.version }, "req-res-1");
+    if (!withLink.ok) throw new Error("unreachable");
+    const withText = await addCampaignResource(head, campaignRef, { label: "Key message", type: "TEXT", content: "Always mention the launch date.", expectedVersion: withLink.data.version }, "req-res-2");
+    if (!withText.ok) throw new Error("unreachable");
+
+    const session = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!session.ok) throw new Error("unreachable");
+    const resolved = await resolveExternalSubmission(session.data.rawToken);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error("unreachable");
+    expect(resolved.data.campaignResources).toEqual([
+      { label: "Brand guidelines", type: "LINK", url: "https://example.com/brand.pdf", content: null },
+      { label: "Key message", type: "TEXT", url: null, content: "Always mention the launch date." },
+    ]);
+  });
+
+  it("a legacy/new Campaign with no resources shows a clean empty campaignResources array - no empty section", async () => {
+    const head = await actorFor("partnership_head");
+    const { assignment } = await createAssignedAssignmentWithCampaign(head);
+    const session = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!session.ok) throw new Error("unreachable");
+    const resolved = await resolveExternalSubmission(session.data.rawToken);
+    expect(resolved.ok).toBe(true);
+    if (!resolved.ok) throw new Error("unreachable");
+    expect(resolved.data.campaignResources).toEqual([]);
+  });
+
+  it("a Resource removed from the Campaign after Assignment creation is no longer shown (live join, not a stale snapshot)", async () => {
+    const head = await actorFor("partnership_head");
+    const { campaignRef, assignment } = await createAssignedAssignmentWithCampaign(head);
+    const before = await getCampaign(head, campaignRef);
+    if (!before.ok) throw new Error("unreachable");
+    const withLink = await addCampaignResource(head, campaignRef, { label: "Temporary link", type: "LINK", url: "https://example.com/temp.pdf", expectedVersion: before.data.version }, "req-res-3");
+    if (!withLink.ok) throw new Error("unreachable");
+
+    const session = await createExternalSubmissionSession(head, assignment.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!session.ok) throw new Error("unreachable");
+    const withResource = await resolveExternalSubmission(session.data.rawToken);
+    expect(withResource.ok).toBe(true);
+    if (!withResource.ok) throw new Error("unreachable");
+    expect(withResource.data.campaignResources).toHaveLength(1);
+
+    const resourceRef = withLink.data.resources[withLink.data.resources.length - 1]!.resourceRef;
+    const removed = await removeCampaignResource(head, campaignRef, { resourceRef, expectedVersion: withLink.data.version }, "req-res-4");
+    expect(removed.ok).toBe(true);
+
+    const afterRemoval = await resolveExternalSubmission(session.data.rawToken);
+    expect(afterRemoval.ok).toBe(true);
+    if (!afterRemoval.ok) throw new Error("unreachable");
+    expect(afterRemoval.data.campaignResources).toEqual([]);
+  });
+
+  it("a token for one Campaign's Assignment can never surface a different Campaign's Resources", async () => {
+    const head = await actorFor("partnership_head");
+    const { campaignRef: campaignARef } = await createAssignedAssignmentWithCampaign(head, { name: uniqueName("Campaign A") });
+    const { assignment: assignmentB } = await createAssignedAssignmentWithCampaign(head, { name: uniqueName("Campaign B") });
+
+    const campaignA = await getCampaign(head, campaignARef);
+    if (!campaignA.ok) throw new Error("unreachable");
+    const addedToA = await addCampaignResource(head, campaignARef, { label: "Campaign A only", type: "LINK", url: "https://example.com/a.pdf", expectedVersion: campaignA.data.version }, "req-res-5");
+    expect(addedToA.ok).toBe(true);
+
+    const sessionB = await createExternalSubmissionSession(head, assignmentB.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!sessionB.ok) throw new Error("unreachable");
+    const resolvedB = await resolveExternalSubmission(sessionB.data.rawToken);
+    expect(resolvedB.ok).toBe(true);
+    if (!resolvedB.ok) throw new Error("unreachable");
+    expect(resolvedB.data.campaignResources).toEqual([]);
+    expect(JSON.stringify(resolvedB.data)).not.toContain("Campaign A only");
+  });
+
+  it("contentRequirementSummary renders only when actually populated - never falls back to campaignName", async () => {
+    const head = await actorFor("partnership_head");
+    const { assignment: withoutSummary } = await createAssignedAssignmentWithCampaign(head);
+    const sessionA = await createExternalSubmissionSession(head, withoutSummary.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!sessionA.ok) throw new Error("unreachable");
+    const resolvedA = await resolveExternalSubmission(sessionA.data.rawToken);
+    expect(resolvedA.ok).toBe(true);
+    if (!resolvedA.ok) throw new Error("unreachable");
+    expect(resolvedA.data.contentRequirementSummary).toBeNull();
+
+    const { assignment: withSummary } = await createAssignedAssignmentWithCampaign(head, {}, { contentRequirementSummary: "Focus on the eco-friendly packaging angle." });
+    const sessionB = await createExternalSubmissionSession(head, withSummary.assignmentRef, { recipientType: "PARTNER" }, "req");
+    if (!sessionB.ok) throw new Error("unreachable");
+    const resolvedB = await resolveExternalSubmission(sessionB.data.rawToken);
+    expect(resolvedB.ok).toBe(true);
+    if (!resolvedB.ok) throw new Error("unreachable");
+    expect(resolvedB.data.contentRequirementSummary).toBe("Focus on the eco-friendly packaging angle.");
   });
 });
 

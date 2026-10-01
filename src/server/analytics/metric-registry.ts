@@ -86,6 +86,20 @@ export function parseSupportedMetric(rawValue: unknown): number | null {
   return null;
 }
 
+// Remediation-plan Wave B / finding #65 re-audit: a string date is only ever accepted in an
+// EXPLICIT ISO 8601 shape - date-only ("YYYY-MM-DD") or datetime ("YYYY-MM-DD[T ]HH:MM[:SS[.sss]]",
+// with an optional trailing zone). Everything else (a bare `new Date(string)` call, which this
+// function used to make directly) is REJECTED as unparseable rather than guessed - the general
+// ECMA-262 Date-string grammar treats any non-ISO string as LOCAL time, so a genuinely common
+// real-world export value like "09/23/2026" would silently shift to the previous or next calendar
+// day depending on the server's timezone (confirmed by direct testing during this re-audit), and a
+// slash-separated date is inherently locale-ambiguous (MM/DD vs DD/MM) besides. ISO date-only stays
+// UTC midnight (unchanged, already correct per spec); an ISO datetime with NO explicit zone is
+// likewise treated as UTC (never the server's local zone) - both are documented, deterministic
+// choices, not an implicit fallback.
+const ISO_DATE_ONLY_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const ISO_DATE_TIME_PATTERN = /^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)(Z|[+-]\d{2}:?\d{2})?$/;
+
 // Best-effort ISO-8601 normalization for a source-reported date/time
 // string - returns `null` (never throws, never a blocking error) when the
 // raw value cannot be confidently parsed. Used by every content adapter
@@ -108,8 +122,21 @@ export function parseSupportedDateTime(rawValue: unknown): string | null {
   if (typeof rawValue === "string") {
     const trimmed = rawValue.trim();
     if (trimmed.length === 0) return null;
-    const parsed = new Date(trimmed);
-    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+
+    if (ISO_DATE_ONLY_PATTERN.test(trimmed)) {
+      const parsed = new Date(`${trimmed}T00:00:00Z`);
+      return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+    }
+
+    const dateTimeMatch = ISO_DATE_TIME_PATTERN.exec(trimmed);
+    if (dateTimeMatch) {
+      const [, datePart, timePart, zonePart] = dateTimeMatch;
+      const parsed = new Date(`${datePart}T${timePart}${zonePart ?? "Z"}`);
+      return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+    }
+
+    // Not an ISO shape - never guessed via the ambiguous general Date-string grammar.
+    return null;
   }
 
   return null;

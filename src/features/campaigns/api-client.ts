@@ -152,6 +152,39 @@ export function removeCampaignResource(campaignRef: string, input: RemoveCampaig
   return call(`/api/campaigns/${encodeURIComponent(campaignRef)}/resources`, { method: "DELETE", body: JSON.stringify(input) });
 }
 
+// Findings #36/#37: a real file upload - deliberately bypasses `call`'s
+// JSON Content-Type header (FormData needs the browser to set its own
+// multipart boundary), mirroring Discovery's own uploadKycAttachment.
+export async function addCampaignResourceUpload(
+  campaignRef: string,
+  input: { label: string; description?: string; file: File; expectedVersion: number },
+): Promise<CampaignsApiResult<CampaignDto>> {
+  const form = new FormData();
+  form.set("label", input.label);
+  if (input.description) form.set("description", input.description);
+  form.set("expectedVersion", String(input.expectedVersion));
+  form.set("file", input.file);
+
+  let res: Response;
+  try {
+    res = await fetch(`/api/campaigns/${encodeURIComponent(campaignRef)}/resources/upload`, { method: "POST", body: form });
+  } catch {
+    return { ok: false, status: 0, code: "network_error", error: "Could not reach the server. Check your connection and try again." };
+  }
+
+  if (res.ok) return { ok: true, data: (await res.json()) as CampaignDto };
+
+  let error = "Something went wrong.";
+  try {
+    const body = (await res.json()) as { error?: string };
+    if (typeof body.error === "string") error = body.error;
+  } catch {
+    // No JSON body - keep the generic message.
+  }
+  const code: CampaignsApiErrorCode = res.status === 401 || res.status === 403 ? "unauthorized" : res.status === 404 ? "not_found" : res.status === 400 ? "invalid_input" : res.status === 409 ? "stale_write" : "internal";
+  return { ok: false, status: res.status, code, error };
+}
+
 // ---- Owner picker ----
 
 export function searchCampaignOwnerCandidates(emailPrefix: string): Promise<CampaignsApiResult<CampaignOwnerCandidateDto[]>> {
@@ -168,7 +201,12 @@ export function getCampaignDownstream(campaignRef: string): Promise<CampaignsApi
 }
 
 // Partner search (`q`, bounded to 10 server-side) OR one Partner's selectable
-// Partner Accounts + existing-Assignment state (`partnerRef`). Never both.
-export function getAssignmentCreateOptions(campaignRef: string, input: { q?: string; partnerRef?: string } = {}, signal?: AbortSignal): Promise<CampaignsApiResult<AssignmentCreateOptionsDto>> {
-  return call(`/api/campaigns/${encodeURIComponent(campaignRef)}/assignment-options${query({ q: input.q, partnerRef: input.partnerRef })}`, { signal });
+// Partner Accounts + existing-Assignment state (`partnerRef`) OR (finding #40) Vendor search (`vq`) OR
+// one Vendor's own ACTIVE-linked Partners (`vendorRef`). Exactly one of these at a time.
+export function getAssignmentCreateOptions(
+  campaignRef: string,
+  input: { q?: string; partnerRef?: string; vq?: string; vendorRef?: string } = {},
+  signal?: AbortSignal,
+): Promise<CampaignsApiResult<AssignmentCreateOptionsDto>> {
+  return call(`/api/campaigns/${encodeURIComponent(campaignRef)}/assignment-options${query({ q: input.q, partnerRef: input.partnerRef, vq: input.vq, vendorRef: input.vendorRef })}`, { signal });
 }

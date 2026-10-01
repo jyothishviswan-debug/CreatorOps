@@ -49,17 +49,23 @@ export async function loadAuthorizedContent(
   return { ok: true, content };
 }
 
-// ---- Resolve-or-create the Assignment's one canonical Content thread ----
+// ---- Resolve-or-create the Assignment's CURRENT Content thread ----
 
 type ResolveOrCreateTxResult = { kind: "existing"; doc: ContentDoc } | { kind: "created"; doc: ContentDoc };
 
-// Step 11A.1's sole trusted create entry point for Content, replacing
-// the retired generateContentFromAssignment/manual "Plan Content"
-// operation entirely. Idempotent get-or-create: the first time a
-// submission session is created for an Assignment, this either returns
-// its already-existing canonical thread or atomically creates a new one
-// (status OPEN) plus its one-per-Assignment uniqueness claim. Called only
-// from the session-creation flow in
+// Finding #50 (reopened): an Assignment may carry MULTIPLE qualifying
+// Content records over its lifetime - one per submission cycle - not
+// exactly one forever. The invariant this function (and the claim doc
+// below) enforces is "at most one NON-TERMINAL thread per Assignment at a
+// time", never "at most one thread ever". Idempotent get-or-create WHILE
+// the current cycle is still open: the first time a submission session is
+// created for an Assignment, or any time one is created again before the
+// current thread reaches a terminal status (APPROVED/CANCELLED), this
+// returns that same thread. Once the current thread IS terminal, the next
+// call creates a genuinely NEW thread (status OPEN) and re-points the
+// claim at it - the claim doc is permanent in that it is never deleted,
+// but its payload is repointed, not a one-time write. Called only from
+// the session-creation flow in
 // @/server/assignments/external-submission-service.ts (a one-directional
 // assignments -> content dependency, mirroring content's own existing
 // content -> assignments dependency).
@@ -82,7 +88,13 @@ export async function resolveOrCreateContentThread(assignmentRef: string, actorU
         const existingSnap = await tx.get(contentCollection().doc(claim.data.contentUid));
         if (existingSnap.exists) {
           const parsed = contentDocSchema.safeParse(existingSnap.data());
-          if (parsed.success) return { kind: "existing", doc: parsed.data };
+          // A non-terminal thread is still the SAME live conversation -
+          // reuse it. A terminal one (APPROVED/CANCELLED) has closed its
+          // own cycle - fall through and start a genuinely new one,
+          // repointing the claim below.
+          if (parsed.success && parsed.data.status !== "APPROVED" && parsed.data.status !== "CANCELLED") {
+            return { kind: "existing", doc: parsed.data };
+          }
         }
       }
     }

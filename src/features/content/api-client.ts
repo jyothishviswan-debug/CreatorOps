@@ -16,6 +16,7 @@ import type { ContentHistoryEventDto, ListContentHistoryInput, ListContentInput 
 import type { ApproveContentThreadInput, CancelContentInput, RequestContentRevisionInput } from "@/server/content/content-lifecycle-service";
 import type { ContentListCursor } from "@/server/content/firestore";
 import type { ContentEventListCursor } from "@/server/content/content-events";
+import type { RecordContentLinksOnBehalfInput } from "@/server/content/manager-submission-service";
 
 export type ContentApiErrorCode = "unauthorized" | "not_found" | "invalid_input" | "stale_write" | "not_ready" | "conflict" | "internal" | "network_error";
 
@@ -105,6 +106,12 @@ export function requestContentRevision(contentRef: string, input: RequestContent
 
 export function cancelContent(contentRef: string, input: CancelContentInput): Promise<ContentApiResult<ContentDto>> {
   return call(`/api/content/${encodeURIComponent(contentRef)}/cancel`, { method: "POST", body: JSON.stringify(input) });
+}
+
+// Finding #44 (user-decided): a Manager recording content links on the Partner's behalf. Keyed by
+// assignmentRef (the Content thread may not exist yet).
+export function recordContentLinksOnBehalf(input: RecordContentLinksOnBehalfInput): Promise<ContentApiResult<ContentDto>> {
+  return call("/api/content/record-links", { method: "POST", body: JSON.stringify(input) });
 }
 
 // ---- History (Detail page's History dialog) ----

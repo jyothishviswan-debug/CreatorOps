@@ -1,6 +1,8 @@
 import { getUserDoc } from "@/server/authz/firestore";
 import { getCampaignDocByRef, getCampaignDocsByRefs } from "@/server/campaigns/firestore";
+import type { CampaignResource } from "@/server/campaigns/types";
 import { getPartnerAccountDocByRef, getPartnerAccountDocsByRefs, getPartnerDocByRef, getPartnerDocsByRefs } from "@/server/partners/firestore";
+import { getVendorDocByRef, getVendorDocsByRefs } from "@/server/vendors/firestore";
 import type { AssignmentBrief, AssignmentDoc, AssignmentStatus } from "./types";
 
 // The only shape of an Assignment ever handed to the browser - no
@@ -18,10 +20,19 @@ export type AssignmentDto = {
   version: number;
   campaignRef: string;
   campaignName: string | null;
+  // Finding #38: the owning Campaign's own current Resources (LINK/UPLOAD/TEXT), read-only -
+  // reused directly by the WhatsApp share-message builder (whatsapp.ts) so it never needs a
+  // second fetch. Already exposed verbatim on CampaignDto itself (same DTO-boundary decision,
+  // not a new exposure); each type's own canonical/safe URL field, never an internal locator.
+  campaignResources: CampaignResource[];
   partnerRef: string;
   partnerDisplayName: string | null;
   partnerAccountRefs: string[];
   partnerAccountLabels: string[];
+  // Finding #40: read-only provenance - which Vendor (if any) this Assignment's Partner was routed
+  // through at creation. Never the assignee (that is always partnerRef/partnerDisplayName above).
+  routedThroughVendorRef: string | null;
+  routedThroughVendorDisplayName: string | null;
   status: AssignmentStatus;
   statusReason: string | null;
   brief: AssignmentBrief;
@@ -47,11 +58,12 @@ async function resolveUserRefAndName(uid: string | null): Promise<{ ref: string 
 // allowance) rather than the bulk-chunked helpers the list path below
 // uses.
 export async function toAssignmentDto(doc: AssignmentDoc): Promise<AssignmentDto> {
-  const [owner, campaign, partner, accounts] = await Promise.all([
+  const [owner, campaign, partner, accounts, routedThroughVendor] = await Promise.all([
     resolveUserRefAndName(doc.ownerUid),
     getCampaignDocByRef(doc.campaignRef),
     getPartnerDocByRef(doc.partnerRef),
     Promise.all(doc.partnerAccountRefs.map((ref) => getPartnerAccountDocByRef(ref))),
+    doc.routedThroughVendorRef ? getVendorDocByRef(doc.routedThroughVendorRef) : Promise.resolve(null),
   ]);
 
   return {
@@ -59,10 +71,13 @@ export async function toAssignmentDto(doc: AssignmentDoc): Promise<AssignmentDto
     version: doc.version,
     campaignRef: doc.campaignRef,
     campaignName: campaign?.name ?? null,
+    campaignResources: campaign?.resources ?? [],
     partnerRef: doc.partnerRef,
     partnerDisplayName: partner?.displayName ?? null,
     partnerAccountRefs: doc.partnerAccountRefs,
     partnerAccountLabels: accounts.map((a) => a?.displayName).filter((label): label is string => Boolean(label)),
+    routedThroughVendorRef: doc.routedThroughVendorRef,
+    routedThroughVendorDisplayName: routedThroughVendor?.displayName ?? null,
     status: doc.status,
     statusReason: doc.statusReason,
     brief: doc.brief,
@@ -90,11 +105,13 @@ export async function toAssignmentDtos(docs: AssignmentDoc[]): Promise<Assignmen
   const campaignRefs = docs.map((d) => d.campaignRef);
   const partnerRefs = docs.map((d) => d.partnerRef);
   const partnerAccountRefs = docs.flatMap((d) => d.partnerAccountRefs);
+  const vendorRefs = docs.map((d) => d.routedThroughVendorRef).filter((ref): ref is string => Boolean(ref));
 
-  const [campaigns, partners, accounts] = await Promise.all([
+  const [campaigns, partners, accounts, vendors] = await Promise.all([
     getCampaignDocsByRefs(campaignRefs),
     getPartnerDocsByRefs(partnerRefs),
     getPartnerAccountDocsByRefs(partnerAccountRefs),
+    getVendorDocsByRefs(vendorRefs),
   ]);
 
   return docs.map((doc) => {
@@ -104,10 +121,13 @@ export async function toAssignmentDtos(docs: AssignmentDoc[]): Promise<Assignmen
       version: doc.version,
       campaignRef: doc.campaignRef,
       campaignName: campaigns.get(doc.campaignRef)?.name ?? null,
+      campaignResources: campaigns.get(doc.campaignRef)?.resources ?? [],
       partnerRef: doc.partnerRef,
       partnerDisplayName: partners.get(doc.partnerRef)?.displayName ?? null,
       partnerAccountRefs: doc.partnerAccountRefs,
       partnerAccountLabels: doc.partnerAccountRefs.map((ref) => accounts.get(ref)?.displayName).filter((label): label is string => Boolean(label)),
+      routedThroughVendorRef: doc.routedThroughVendorRef,
+      routedThroughVendorDisplayName: doc.routedThroughVendorRef ? (vendors.get(doc.routedThroughVendorRef)?.displayName ?? null) : null,
       status: doc.status,
       statusReason: doc.statusReason,
       brief: doc.brief,

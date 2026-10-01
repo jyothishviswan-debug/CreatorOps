@@ -5,11 +5,10 @@ import Link from "next/link";
 
 import { DialogShell } from "@/ui/Dialog";
 import { SearchInput } from "@/ui/Table";
-import type { AssignmentOptionAccount, AssignmentOptionPartner, AssignmentOptionsCampaignContext, AssignmentOptionsSelectedPartner } from "@/server/campaigns/assignment-options-service";
-import { createAssignment } from "@/features/assignments/api-client";
-import { STATUS_LABELS as ASSIGNMENT_STATUS_LABELS } from "@/features/assignments/format";
+import type { AssignmentOptionPartner, AssignmentOptionVendor, AssignmentOptionsCampaignContext } from "@/server/campaigns/assignment-options-service";
+import { createAssignmentsForPartners } from "@/features/assignments/api-client";
 import { getAssignmentCreateOptions } from "./api-client";
-import { buildCreateAssignmentInput, EMPTY_CREATE_ASSIGNMENT_FORM, LIMITS, type CreateAssignmentFormValues } from "./create-assignment-form";
+import { buildCreateAssignmentsForPartnersInput, EMPTY_CREATE_ASSIGNMENT_FORM, LIMITS, type CreateAssignmentFormValues } from "./create-assignment-form";
 import { dateLabel } from "./format";
 
 const SEARCH_DEBOUNCE_MS = 250;
@@ -24,24 +23,33 @@ const SEARCH_DEBOUNCE_MS = 250;
 // any action cursor. Colors: #5a6572 on #eceff2 = 5.14:1 contrast (>= 4.5:1).
 const DISABLED_FOOTER_BUTTON_STYLE: CSSProperties = { background: "#eceff2", borderColor: "#d5dae0", color: "#5a6572", cursor: "not-allowed" };
 
-type CreateResult = { kind: "created"; assignmentRef: string } | { kind: "existing"; assignmentRef: string | null };
+type BulkResult = { partnerRef: string; outcome: "created" | "existing" | "error"; assignmentRef: string | null; error: string | null };
 
-// Step 12C.1: the contextual "Create Assignment" focused action on Campaign
-// Detail - the accepted DialogShell (native <dialog>: focus trap, Esc,
-// focus restore), never a new page/tab/panel. The Campaign is FIXED by the
-// `campaignRef` prop (the route context); the dialog has no Campaign
-// selector and the trusted server re-loads and re-authorizes the Campaign
-// on every request. Partner and Partner Account choices come exclusively
-// from the trusted, bounded GET .../assignment-options endpoint - never a
-// browser-side fetch-all - and the final write is the already-accepted
-// POST /api/assignments, which re-validates every choice independently.
+// One added "Through Vendor" section - a chosen Vendor plus its own independent, searched-and-loaded
+// list of ACTIVE mapped Partners and its own selection within that list.
+type VendorSection = {
+  vendor: AssignmentOptionVendor;
+  partners: AssignmentOptionPartner[];
+  loading: boolean;
+  error: string | null;
+  selected: Map<string, AssignmentOptionPartner>;
+};
+
+// Finding #40 (user-decided, corrected): Direct and Through-Vendor selection are ADDITIVE, never a
+// mutually-exclusive mode choice - the dialog shows a "Direct Partners" panel and any number of "Through
+// Vendor" panels (add a Vendor, pick its mapped Partners, repeat) at once, and one submit sends the
+// combined selection as ONE bulk request (POST /api/assignments/bulk) - this dialog is a thin client of
+// that one endpoint, never its own N-call orchestrator. The server is the authority on merging/rejecting
+// overlap (the same Partner picked both directly and through a Vendor is merged, preserving the Vendor
+// route; the same Partner picked through two different Vendors is rejected as ambiguous) - this dialog
+// does not pre-empt that logic client-side. Every new Assignment created this way starts IN_PROGRESS (not
+// Draft) - the old Draft/Issue/Accept steps are not part of this normal flow.
 //
-// Deliberately absent (Step 12C.1 boundaries): any owner field (the backend
-// snapshots owner/regions/teams from the Campaign, so an Assignment has no
-// separately-settable owner), review policy, Finance/commercial terms,
-// Target Audience, analytics targets, and any call that would issue/accept
-// the Assignment, create Content, mint a public token/session or open
-// WhatsApp - creation only ever produces a DRAFT.
+// Deliberately absent (same Step 12C.1 boundaries as before): any owner field, review policy, Finance/
+// commercial terms, Target Audience, analytics targets, per-Partner Partner Account selection (there is no
+// single sensible "the accounts" for a batch of different Partners - see create-assignment-form.ts's own
+// comment), and any call that would issue/accept an Assignment, create Content, mint a public token/
+// session or open WhatsApp.
 export function CreateAssignmentDialog({ campaignRef, onClose }: { campaignRef: string; onClose: (changed: boolean) => void }) {
   const uid = useId();
   const id = (name: string) => `${uid}-${name}`;
@@ -49,35 +57,54 @@ export function CreateAssignmentDialog({ campaignRef, onClose }: { campaignRef: 
   const [context, setContext] = useState<AssignmentOptionsCampaignContext | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
 
+  // Direct Partners panel: search + multi-select, always visible.
   const [query, setQuery] = useState("");
   const [partners, setPartners] = useState<AssignmentOptionPartner[]>([]);
   const [hasMorePartners, setHasMorePartners] = useState(false);
   const [searching, setSearching] = useState(true);
+  const [directSelected, setDirectSelected] = useState<Map<string, AssignmentOptionPartner>>(new Map());
 
-  const [partner, setPartner] = useState<AssignmentOptionPartner | null>(null);
-  const [partnerDetail, setPartnerDetail] = useState<AssignmentOptionsSelectedPartner | null>(null);
-  const [detailLoading, setDetailLoading] = useState(false);
-  const [detailError, setDetailError] = useState<string | null>(null);
-  const [selectedAccountRefs, setSelectedAccountRefs] = useState<string[]>([]);
+  // Through-Vendor panels: zero or more added Vendor sections, each independent.
+  const [vendorSections, setVendorSections] = useState<VendorSection[]>([]);
+  const [addingVendor, setAddingVendor] = useState(false);
+  const [vendorQuery, setVendorQuery] = useState("");
+  const [vendorResults, setVendorResults] = useState<AssignmentOptionVendor[]>([]);
+  const [vendorSearching, setVendorSearching] = useState(false);
 
+  const [platforms, setPlatforms] = useState<string[]>([]);
   const [values, setValues] = useState<CreateAssignmentFormValues>(EMPTY_CREATE_ASSIGNMENT_FORM);
   const [formErrors, setFormErrors] = useState<string[]>([]);
   const [submitError, setSubmitError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [result, setResult] = useState<CreateResult | null>(null);
-  const [conflictNoLink, setConflictNoLink] = useState(false);
+  const [results, setResults] = useState<BulkResult[] | null>(null);
 
-  const detailToken = useRef(0);
   const submittingRef = useRef(false);
   const listRef = useRef<HTMLDivElement>(null);
   const resultRef = useRef<HTMLDivElement>(null);
+  // Finding #48: due date defaults from the Campaign's own end date (already shown on screen two
+  // rows up) instead of a blank retype - but only ONCE, on the first successful context load, and
+  // never once the person has deliberately touched the field themselves (same touched-state
+  // discipline already established in DiscoveryLeadForm.tsx/PartnerForm.tsx for a not-quite-
+  // identical "derive from an already-known value, but never clobber an edit" case - kept as real
+  // state, not a ref, because whether the field is still "the default" also drives the hint text
+  // below, and reading a ref during render is unsafe/disallowed).
+  const [dueAtTouched, setDueAtTouched] = useState(false);
+  const [dueAtPrefilled, setDueAtPrefilled] = useState(false);
+  // Finding #49: Language is likewise ONE shared value for the whole batch (same "Instructions
+  // (shared across every selected Partner)" scope). Its valid choices are the UNION of the
+  // currently-selected Partners' own recorded canonical languageIds - never a fixed global list
+  // (none exists for this domain) and never inferred from name/region/Campaign text/platform. This
+  // union changes as partners are added/removed, so (unlike #48's due-date, which prefills once)
+  // this re-derives whenever the union itself actually changes - `lastLanguageUnionKey` (state, not
+  // a ref, since it must be compared during render - see the "Adjusting state when a prop changes"
+  // pattern at https://react.dev/learn/you-might-not-need-an-effect) tracks the previous key.
+  const [languageTouched, setLanguageTouched] = useState(false);
+  const [lastLanguageUnionKey, setLastLanguageUnionKey] = useState<string | null>(null);
 
-  // Debounced, abortable Partner search. `q` may be empty - the server then
-  // returns its own bounded default page (max 10 ACTIVE Partners). Every
-  // setState happens inside the timer/async callback, never synchronously
-  // in the effect body.
+  // Debounced, abortable Direct Partner search. `q` may be empty - the server then returns its own
+  // bounded default page. Always active (Direct is no longer a "mode" that can be switched away from).
   useEffect(() => {
-    if (partner) return;
+    if (results) return;
     const controller = new AbortController();
     const timeout = setTimeout(
       async () => {
@@ -100,82 +127,175 @@ export function CreateAssignmentDialog({ campaignRef, onClose }: { campaignRef: 
       controller.abort();
       clearTimeout(timeout);
     };
-  }, [query, partner, campaignRef]);
+  }, [query, campaignRef, results]);
+
+  // Debounced, abortable Vendor search, only while the "add a Vendor" picker is open.
+  useEffect(() => {
+    if (!addingVendor || results) return;
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      async () => {
+        setVendorSearching(true);
+        const response = await getAssignmentCreateOptions(campaignRef, { vq: vendorQuery.trim() }, controller.signal);
+        if (controller.signal.aborted) return;
+        setVendorSearching(false);
+        if (!response.ok) {
+          setLoadError(response.error);
+          return;
+        }
+        setLoadError(null);
+        setContext(response.data.campaign);
+        setVendorResults(response.data.vendors);
+      },
+      vendorQuery.length === 0 ? 0 : SEARCH_DEBOUNCE_MS,
+    );
+    return () => {
+      controller.abort();
+      clearTimeout(timeout);
+    };
+  }, [vendorQuery, addingVendor, campaignRef, results]);
 
   useEffect(() => {
-    if (result) resultRef.current?.focus();
-  }, [result]);
+    if (results) resultRef.current?.focus();
+  }, [results]);
 
-  async function choosePartner(next: AssignmentOptionPartner) {
-    const token = (detailToken.current += 1);
-    setPartner(next);
-    setPartnerDetail(null);
-    setDetailError(null);
-    setDetailLoading(true);
-    setSelectedAccountRefs([]);
-    setFormErrors([]);
-    setSubmitError(null);
-    const response = await getAssignmentCreateOptions(campaignRef, { partnerRef: next.partnerRef });
-    if (token !== detailToken.current) return;
-    setDetailLoading(false);
-    if (!response.ok || !response.data.selectedPartner) {
-      setDetailError(response.ok ? "Could not load this Partner's accounts." : response.error);
+  async function addVendorSection(candidate: AssignmentOptionVendor) {
+    if (vendorSections.some((section) => section.vendor.vendorRef === candidate.vendorRef)) {
+      setAddingVendor(false);
+      setVendorQuery("");
+      setVendorResults([]);
       return;
     }
-    const detail = response.data.selectedPartner;
-    setPartnerDetail(detail);
-    const selectable = detail.accounts.filter((account) => account.selectable);
-    // Convenience only: with exactly one compatible account there is
-    // nothing to choose between. The user can still untick it.
-    if (selectable.length === 1) setSelectedAccountRefs([selectable[0]!.partnerAccountRef]);
+    setAddingVendor(false);
+    setVendorQuery("");
+    setVendorResults([]);
+    setVendorSections((current) => [...current, { vendor: candidate, partners: [], loading: true, error: null, selected: new Map() }]);
+    const response = await getAssignmentCreateOptions(campaignRef, { vendorRef: candidate.vendorRef });
+    setVendorSections((current) =>
+      current.map((section) =>
+        section.vendor.vendorRef === candidate.vendorRef
+          ? response.ok
+            ? { ...section, loading: false, partners: response.data.vendorPartners }
+            : { ...section, loading: false, error: response.error }
+          : section,
+      ),
+    );
   }
 
-  function changePartner() {
-    detailToken.current += 1;
-    setPartner(null);
-    setPartnerDetail(null);
-    setDetailError(null);
-    setDetailLoading(false);
-    setSelectedAccountRefs([]);
-    setFormErrors([]);
-    setSubmitError(null);
-    setConflictNoLink(false);
-    setQuery("");
+  function removeVendorSection(vendorRef: string) {
+    setVendorSections((current) => current.filter((section) => section.vendor.vendorRef !== vendorRef));
   }
 
-  function toggleAccount(account: AssignmentOptionAccount, checked: boolean) {
-    setSelectedAccountRefs((current) => (checked ? [...new Set([...current, account.partnerAccountRef])] : current.filter((ref) => ref !== account.partnerAccountRef)));
+  function toggleDirectPartner(partner: AssignmentOptionPartner, checked: boolean) {
+    setDirectSelected((current) => {
+      const next = new Map(current);
+      if (checked) next.set(partner.partnerRef, partner);
+      else next.delete(partner.partnerRef);
+      return next;
+    });
+  }
+
+  function toggleVendorPartner(vendorRef: string, partner: AssignmentOptionPartner, checked: boolean) {
+    setVendorSections((current) =>
+      current.map((section) => {
+        if (section.vendor.vendorRef !== vendorRef) return section;
+        const next = new Map(section.selected);
+        if (checked) next.set(partner.partnerRef, partner);
+        else next.delete(partner.partnerRef);
+        return { ...section, selected: next };
+      }),
+    );
+  }
+
+  function togglePlatform(platform: string, checked: boolean) {
+    setPlatforms((current) => (checked ? [...new Set([...current, platform])] : current.filter((p) => p !== platform)));
   }
 
   function setValue<K extends keyof CreateAssignmentFormValues>(key: K, value: CreateAssignmentFormValues[K]) {
     setValues((current) => ({ ...current, [key]: value }));
   }
 
-  function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      listRef.current?.querySelector("button")?.focus();
+  // Finding #48: prefills due date from the Campaign's own endDate, but only ONCE, on the first
+  // successful context load, and only when the person hasn't already typed a due date themselves.
+  // A Campaign always has a real endDate today (required at creation), but this still never
+  // fabricates one if it were ever absent. Adjusted directly during render (React's own documented
+  // "Adjusting state when a prop changes" pattern - https://react.dev/learn/you-might-not-need-an-
+  // effect - comparing STATE, never a ref, since a ref cannot safely be read during render) rather
+  // than inside a useEffect, whose own setState-in-effect would itself cause an extra cascading
+  // render for no benefit here.
+  if (context && !dueAtPrefilled) {
+    setDueAtPrefilled(true);
+    if (!dueAtTouched && !values.dueAt && context.endDate) {
+      setValues((current) => ({ ...current, dueAt: context.endDate }));
     }
   }
 
-  function onResultsKeyDown(event: KeyboardEvent<HTMLDivElement>) {
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    const buttons = [...(listRef.current?.querySelectorAll("button") ?? [])];
-    const index = buttons.indexOf(document.activeElement as HTMLButtonElement);
-    if (index === -1) return;
-    event.preventDefault();
-    if (event.key === "ArrowDown") buttons[Math.min(index + 1, buttons.length - 1)]?.focus();
-    else if (index === 0) document.getElementById(id("partner-search"))?.focus();
-    else buttons[index - 1]?.focus();
+  // Finding #49: the union of every currently-selected Partner's (Direct + every Vendor section's
+  // selected Partners) own recorded languageIds - Vendor-routed Partners resolve through the exact
+  // same AssignmentOptionPartner shape as Direct ones (assignment-options-service.ts's
+  // toSafePartnerOption is the single source for both), so this naturally uses Partner data only,
+  // never Vendor data. Filtered to values the stored brief can actually accept (<=60 chars,
+  // AssignmentBrief.language's own bound) so a picker option can never itself fail server validation.
+  const selectedPartnersForLanguage = [...directSelected.values(), ...vendorSections.flatMap((section) => [...section.selected.values()])];
+  const languageUnion = [...new Set(selectedPartnersForLanguage.flatMap((p) => p.languageIds))].filter((l) => l.length <= LIMITS.language).sort();
+  const languageUnionKey = languageUnion.join("\u0000");
+  const campaignLanguageIds = context?.languageIds ?? [];
+  const languageMismatch = campaignLanguageIds.length > 0 && languageUnion.length > 0 && !languageUnion.some((l) => campaignLanguageIds.includes(l));
+
+  // Same render-time "adjust state when a derived value changes" pattern as #48 above, keyed on the
+  // union's own identity so it only reacts to an actual Partner-selection change, not every render.
+  if (languageUnionKey !== lastLanguageUnionKey) {
+    setLastLanguageUnionKey(languageUnionKey);
+    if (!languageTouched) {
+      // Deterministic preselection only when exactly one distinct known language exists - never
+      // guessed/inferred, and cleared back to unset the moment the union stops being singular.
+      const next = languageUnion.length === 1 ? languageUnion[0]! : "";
+      if (values.language !== next) setValues((current) => ({ ...current, language: next }));
+    } else if (values.language && !languageUnion.includes(values.language)) {
+      // The person's own explicit choice no longer belongs to the current selection's option set
+      // (e.g. the Partner it came from was deselected) - a closed picker cannot keep an orphaned
+      // value selected, so it clears and asks for a fresh, explicit choice rather than silently
+      // keeping a value that no longer corresponds to any selected Partner.
+      setLanguageTouched(false);
+      setValues((current) => ({ ...current, language: "" }));
+    }
   }
 
-  const existing = partnerDetail?.existingAssignment ?? null;
-  const selectedAccounts = (partnerDetail?.accounts ?? []).filter((account) => account.selectable && selectedAccountRefs.includes(account.partnerAccountRef));
-  const canSubmit = Boolean(partner && partnerDetail && !existing && selectedAccounts.length > 0 && !submitting && !result);
+  function onSearchKeyDown(event: KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      listRef.current?.querySelector<HTMLElement>("input,button")?.focus();
+    }
+  }
+
+  // The distinct Partner count across Direct + every Vendor section, deduped for display - the server is
+  // the one that actually resolves/merges a Partner picked in more than one place at submit time, but the
+  // button label and brief-field visibility should reflect the real distinct count, not an inflated sum.
+  const allSelectedPartnerRefs = new Set<string>([...directSelected.keys(), ...vendorSections.flatMap((section) => [...section.selected.keys()])]);
+  const selectedCount = allSelectedPartnerRefs.size;
+  const canSubmit = selectedCount > 0 && !submitting && !results;
+
+  // A partner's display info, looked up across every panel that could have surfaced it (available or
+  // selected, Direct or any Vendor section) - used for the post-submit results list and the pre-submit
+  // combined summary alike.
+  function findPartnerDisplay(partnerRef: string): AssignmentOptionPartner | undefined {
+    return (
+      partners.find((p) => p.partnerRef === partnerRef) ??
+      directSelected.get(partnerRef) ??
+      vendorSections.flatMap((section) => section.partners).find((p) => p.partnerRef === partnerRef) ??
+      vendorSections.flatMap((section) => [...section.selected.values()]).find((p) => p.partnerRef === partnerRef)
+    );
+  }
 
   async function submit() {
-    if (submittingRef.current || !partner || !partnerDetail || existing) return;
-    const built = buildCreateAssignmentInput({ campaignRef, partnerRef: partner.partnerRef, selectedAccounts, values });
+    if (submittingRef.current) return;
+    const built = buildCreateAssignmentsForPartnersInput({
+      campaignRef,
+      directPartnerRefs: [...directSelected.keys()],
+      vendorSelections: vendorSections.filter((section) => section.selected.size > 0).map((section) => ({ vendorRef: section.vendor.vendorRef, partnerRefs: [...section.selected.keys()] })),
+      platforms,
+      values,
+    });
     if (!built.ok) {
       setFormErrors(built.errors);
       return;
@@ -184,27 +304,19 @@ export function CreateAssignmentDialog({ campaignRef, onClose }: { campaignRef: 
     setSubmitError(null);
     submittingRef.current = true;
     setSubmitting(true);
-    const response = await createAssignment(built.input);
+    const response = await createAssignmentsForPartners(built.input);
     submittingRef.current = false;
     setSubmitting(false);
     if (!response.ok) {
-      // 409 = the permanent (Campaign, Partner) claim exists but the
-      // existing Assignment is outside this actor's own Assignment scope:
-      // still a safe "already exists" conflict, just without a link.
-      if (response.status === 409) {
-        setConflictNoLink(true);
-        setResult({ kind: "existing", assignmentRef: null });
-        return;
-      }
       setSubmitError(response.error);
       return;
     }
-    setResult(response.data.outcome === "created" ? { kind: "created", assignmentRef: response.data.assignment.assignmentRef } : { kind: "existing", assignmentRef: response.data.assignment.assignmentRef });
+    setResults(response.data.results);
   }
 
-  const handleClose = () => onClose(result !== null);
+  const handleClose = () => onClose(Boolean(results?.some((r) => r.outcome === "created")));
 
-  const footer = result ? (
+  const footer = results ? (
     <button type="button" className="btn primary" onClick={handleClose}>
       Done
     </button>
@@ -214,13 +326,13 @@ export function CreateAssignmentDialog({ campaignRef, onClose }: { campaignRef: 
         Cancel
       </button>
       <button type="button" className="btn primary" onClick={() => void submit()} disabled={!canSubmit} style={canSubmit ? undefined : DISABLED_FOOTER_BUTTON_STYLE}>
-        {submitting ? "Creating…" : "Create Assignment"}
+        {submitting ? "Creating…" : selectedCount > 1 ? `Create ${selectedCount} Assignments` : "Create Assignment"}
       </button>
     </>
   );
 
   return (
-    <DialogShell open title="Create Assignment" onClose={handleClose} footer={footer}>
+    <DialogShell open title="Create Assignment(s)" onClose={handleClose} footer={footer}>
       {loadError && !context && (
         <div className="banner" role="alert">
           {loadError}
@@ -241,265 +353,322 @@ export function CreateAssignmentDialog({ campaignRef, onClose }: { campaignRef: 
               <span>{context.name}</span>
             </div>
             <div className="kv">
-              <span>Platforms</span>
-              <span>{context.platforms.length > 0 ? context.platforms.map((p) => p.platformLabel).join(", ") : "—"}</span>
-            </div>
-            <div className="kv">
-              <span>Regions</span>
-              <span>{context.regionIds.length > 0 ? context.regionIds.join(", ") : "—"}</span>
-            </div>
-            <div className="kv">
               <span>Dates</span>
               <span>
                 {dateLabel(context.startDate)} – {dateLabel(context.endDate)}
               </span>
             </div>
-            <div className="kv">
-              <span>Objective</span>
-              <span>{context.objective}</span>
-            </div>
           </div>
 
-          {result?.kind === "created" && (
-            <div ref={resultRef} tabIndex={-1} role="status" className="banner" style={{ marginTop: 16, marginBottom: 0, flexWrap: "wrap" }}>
-              <b>Assignment created as Draft — it has not been issued.</b>
-              <Link href={`/assignments/${encodeURIComponent(result.assignmentRef)}`} className="btn primary">
-                Open Assignment
-              </Link>
+          {results && (
+            <div ref={resultRef} tabIndex={-1} role="status" className="banner" style={{ marginTop: 16, marginBottom: 0, flexDirection: "column", alignItems: "flex-start", gap: 8 }}>
+              <b>
+                {results.filter((r) => r.outcome === "created").length} created, {results.filter((r) => r.outcome === "existing").length} already existed,{" "}
+                {results.filter((r) => r.outcome === "error").length} failed.
+              </b>
+              {results.map((r) => {
+                const partner = findPartnerDisplay(r.partnerRef);
+                return (
+                  <div key={r.partnerRef} style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                    <span>{partner?.displayName ?? r.partnerRef}</span>
+                    {r.outcome === "created" && r.assignmentRef && (
+                      <Link href={`/assignments/${encodeURIComponent(r.assignmentRef)}`} className="btn">
+                        Created — open
+                      </Link>
+                    )}
+                    {r.outcome === "existing" && <small>{r.assignmentRef ? "Already has an Assignment" : "Already has an Assignment (not visible to you)"}</small>}
+                    {r.outcome === "error" && <small style={{ color: "var(--red)" }}>{r.error}</small>}
+                  </div>
+                );
+              })}
             </div>
           )}
 
-          {result?.kind === "existing" && (
-            <div ref={resultRef} tabIndex={-1} role="status" className="banner" style={{ marginTop: 16, marginBottom: 0, flexWrap: "wrap" }}>
-              <b>An Assignment already exists for this Partner and Campaign.</b>
-              {result.assignmentRef && !conflictNoLink && (
-                <Link href={`/assignments/${encodeURIComponent(result.assignmentRef)}`} className="btn">
-                  Open existing Assignment
-                </Link>
-              )}
-            </div>
-          )}
-
-          {!result && (
+          {!results && (
             <div style={{ marginTop: 16 }}>
               <div className="field full">
-                <label htmlFor={id("partner-search")}>Partner</label>
-                {partner ? (
-                  <div className="banner" style={{ marginBottom: 0 }}>
-                    <span>
-                      <b>{partner.displayName}</b>
-                      {partner.regionLabels.length > 0 && <small> · {partner.regionLabels.join(", ")}</small>}
-                    </span>
-                    <button type="button" className="btn" onClick={changePartner} aria-label={`Change Partner ${partner.displayName}`}>
-                      Change
-                    </button>
+                <label htmlFor={id("partner-search")}>Direct Partners</label>
+                <SearchInput id={id("partner-search")} placeholder="Search Partners by name…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onSearchKeyDown} autoComplete="off" />
+                {searching && (
+                  <small role="status" aria-live="polite">
+                    Searching Partners…
+                  </small>
+                )}
+                {!searching && partners.length === 0 && <small role="status">{query.trim() ? `No active Partners match “${query.trim()}”.` : "No active Partners are available to you."}</small>}
+                {partners.length > 0 && (
+                  <div className="searchresults" style={{ marginTop: 6 }} ref={listRef} role="group" aria-label="Partner results">
+                    {partners.map((candidate) => {
+                      const inputId = id(`partner-${candidate.partnerRef}`);
+                      return (
+                        <label key={candidate.partnerRef} htmlFor={inputId} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}>
+                          <input id={inputId} type="checkbox" checked={directSelected.has(candidate.partnerRef)} onChange={(event) => toggleDirectPartner(candidate, event.target.checked)} />
+                          <span>
+                            <b>{candidate.displayName}</b>
+                            {candidate.regionLabels.length > 0 && <small> · {candidate.regionLabels.join(", ")}</small>}
+                          </span>
+                        </label>
+                      );
+                    })}
                   </div>
-                ) : (
-                  <>
-                    <SearchInput id={id("partner-search")} placeholder="Search Partners by name…" value={query} onChange={(event) => setQuery(event.target.value)} onKeyDown={onSearchKeyDown} autoComplete="off" />
-                    {searching && (
-                      <small role="status" aria-live="polite">
-                        Searching Partners…
-                      </small>
+                )}
+                {hasMorePartners && !searching && <small>Showing the first {partners.length} Partners — type to narrow the search.</small>}
+              </div>
+
+              <div className="field full" style={{ marginTop: 16 }}>
+                <label>Through Vendor</label>
+
+                {vendorSections.map((section) => (
+                  <div key={section.vendor.vendorRef} className="banner" style={{ flexDirection: "column", alignItems: "flex-start", gap: 8, marginTop: 8, marginBottom: 0 }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
+                      <b>{section.vendor.displayName}</b>
+                      <button type="button" className="btn" onClick={() => removeVendorSection(section.vendor.vendorRef)} aria-label={`Remove Vendor ${section.vendor.displayName}`}>
+                        Remove
+                      </button>
+                    </div>
+                    {section.loading && (
+                      <p role="status" aria-live="polite" style={{ margin: 0 }}>
+                        Loading this Vendor&apos;s Partners…
+                      </p>
                     )}
-                    {loadError && context && (
-                      <div className="banner" role="alert" style={{ marginTop: 8, marginBottom: 0 }}>
-                        {loadError}
+                    {section.error && (
+                      <div className="banner" role="alert" style={{ margin: 0 }}>
+                        {section.error}
                       </div>
                     )}
-                    {!searching && !loadError && partners.length === 0 && (
-                      <small role="status">{query.trim() ? `No active Partners match “${query.trim()}”.` : "No active Partners are available to you."}</small>
+                    {!section.loading && !section.error && section.partners.length === 0 && (
+                      <div className="banner" role="status" style={{ margin: 0 }}>
+                        This Vendor has no active linked Partners.
+                      </div>
                     )}
-                    {partners.length > 0 && (
-                      <div className="searchresults" style={{ marginTop: 6 }} ref={listRef} onKeyDown={onResultsKeyDown} role="group" aria-label="Partner results">
-                        {partners.map((candidate) => (
-                          <button key={candidate.partnerRef} type="button" onClick={() => void choosePartner(candidate)}>
+                    {section.partners.length > 0 && (
+                      <div className="searchresults" style={{ width: "100%" }} role="group" aria-label={`${section.vendor.displayName} Partner results`}>
+                        {section.partners.map((candidate) => {
+                          const inputId = id(`vendor-${section.vendor.vendorRef}-partner-${candidate.partnerRef}`);
+                          return (
+                            <label key={candidate.partnerRef} htmlFor={inputId} style={{ display: "flex", alignItems: "center", gap: 8, padding: "6px 0" }}>
+                              <input
+                                id={inputId}
+                                type="checkbox"
+                                checked={section.selected.has(candidate.partnerRef)}
+                                onChange={(event) => toggleVendorPartner(section.vendor.vendorRef, candidate, event.target.checked)}
+                              />
+                              <span>
+                                <b>{candidate.displayName}</b>
+                                {candidate.regionLabels.length > 0 && <small> · {candidate.regionLabels.join(", ")}</small>}
+                              </span>
+                            </label>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </div>
+                ))}
+
+                {addingVendor ? (
+                  <div style={{ marginTop: 8 }}>
+                    <SearchInput id={id("vendor-search")} placeholder="Search Vendors by name…" value={vendorQuery} onChange={(event) => setVendorQuery(event.target.value)} autoComplete="off" />
+                    {vendorSearching && (
+                      <small role="status" aria-live="polite">
+                        Searching Vendors…
+                      </small>
+                    )}
+                    {!vendorSearching && vendorResults.length === 0 && <small role="status">{vendorQuery.trim() ? `No active Vendors match “${vendorQuery.trim()}”.` : "No active Vendors are available to you."}</small>}
+                    {vendorResults.length > 0 && (
+                      <div className="searchresults" style={{ marginTop: 6 }} role="group" aria-label="Vendor results">
+                        {vendorResults.map((candidate) => (
+                          <button key={candidate.vendorRef} type="button" disabled={vendorSections.some((s) => s.vendor.vendorRef === candidate.vendorRef)} onClick={() => void addVendorSection(candidate)}>
                             <b>{candidate.displayName}</b>
-                            {candidate.regionLabels.length > 0 && (
-                              <>
-                                <br />
-                                <small>{candidate.regionLabels.join(", ")}</small>
-                              </>
-                            )}
+                            {vendorSections.some((s) => s.vendor.vendorRef === candidate.vendorRef) && <small> · already added</small>}
                           </button>
                         ))}
                       </div>
                     )}
-                    {hasMorePartners && !searching && <small>Showing the first {partners.length} Partners — type to narrow the search.</small>}
-                  </>
+                    <div style={{ marginTop: 6 }}>
+                      <button type="button" className="btn" onClick={() => { setAddingVendor(false); setVendorQuery(""); setVendorResults([]); }}>
+                        Cancel
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ marginTop: 8 }}>
+                    <button type="button" className="btn" onClick={() => setAddingVendor(true)}>
+                      + Add Vendor
+                    </button>
+                  </div>
                 )}
               </div>
 
-              {partner && detailLoading && (
-                <p role="status" aria-live="polite" style={{ marginTop: 12 }}>
-                  Loading Partner Accounts…
-                </p>
-              )}
-              {partner && detailError && (
-                <div className="banner" role="alert" style={{ marginTop: 12, marginBottom: 0 }}>
-                  {detailError}
-                </div>
-              )}
-
-              {partnerDetail && existing && (
-                <div className="banner" role="status" style={{ marginTop: 12, marginBottom: 0, flexWrap: "wrap" }}>
-                  <span>
-                    <b>An Assignment already exists for this Partner and Campaign.</b>
-                    {existing.status && <small> It is currently {ASSIGNMENT_STATUS_LABELS[existing.status]}.</small>}
-                  </span>
-                  {existing.canOpen && existing.assignmentRef && (
-                    <Link href={`/assignments/${encodeURIComponent(existing.assignmentRef)}`} className="btn">
-                      Open existing Assignment
-                    </Link>
-                  )}
-                </div>
-              )}
-
-              {partnerDetail && !existing && (
+              {selectedCount > 0 && (
                 <>
-                  <fieldset className="field full" style={{ border: 0, padding: 0, margin: "16px 0 0" }}>
-                    <legend style={{ fontSize: 11, fontWeight: 550, padding: 0, marginBottom: 6 }}>Partner Accounts</legend>
-                    {partnerDetail.accounts.length === 0 && (
-                      <div className="banner" role="status" style={{ marginBottom: 0, flexWrap: "wrap" }}>
-                        <span>This Partner has no Partner Accounts yet, so an Assignment cannot be created for them.</span>
-                        <Link href={`/partners/${encodeURIComponent(partnerDetail.partnerRef)}`} className="btn">
-                          Open Partner record
-                        </Link>
-                      </div>
-                    )}
-                    {partnerDetail.accounts.length > 0 && !partnerDetail.accounts.some((account) => account.selectable) && (
-                      <div className="banner" role="status" style={{ marginBottom: 8, flexWrap: "wrap" }}>
-                        <span>None of this Partner&apos;s accounts can be used - only active accounts on the Campaign&apos;s platforms are eligible.</span>
-                        <Link href={`/partners/${encodeURIComponent(partnerDetail.partnerRef)}`} className="btn">
-                          Open Partner record
-                        </Link>
-                      </div>
-                    )}
-                    {partnerDetail.accounts.map((account) => {
-                      const inputId = id(`account-${account.partnerAccountRef}`);
-                      return (
-                        <label key={account.partnerAccountRef} htmlFor={inputId} style={{ display: "flex", alignItems: "flex-start", gap: 8, fontWeight: 450, fontSize: 12, padding: "6px 0", opacity: account.selectable ? 1 : 0.65 }}>
-                          <input id={inputId} type="checkbox" disabled={!account.selectable} checked={selectedAccountRefs.includes(account.partnerAccountRef)} onChange={(event) => toggleAccount(account, event.target.checked)} />
-                          <span>
-                            <b>{account.label}</b> · {account.platformLabel}
-                            {account.handle ? ` · @${account.handle.replace(/^@/, "")}` : ""}
-                            {account.primary ? " · Primary" : ""}
-                            {account.unavailableReason && (
-                              <>
-                                <br />
-                                <small>{account.unavailableReason}</small>
-                              </>
-                            )}
+                  <div className="field full" style={{ marginTop: 16 }}>
+                    <label>Selection summary</label>
+                    <div className="banner" style={{ flexDirection: "column", alignItems: "flex-start", gap: 4, marginBottom: 0 }}>
+                      {directSelected.size > 0 && (
+                        <span>
+                          <b>Direct:</b> {[...directSelected.values()].map((p) => p.displayName).join(", ")}
+                        </span>
+                      )}
+                      {vendorSections
+                        .filter((section) => section.selected.size > 0)
+                        .map((section) => (
+                          <span key={section.vendor.vendorRef}>
+                            <b>{section.vendor.displayName}:</b> {[...section.selected.values()].map((p) => p.displayName).join(", ")}
                           </span>
+                        ))}
+                    </div>
+                  </div>
+
+                  <fieldset className="field full" style={{ border: 0, padding: 0, margin: "16px 0 0" }}>
+                    <legend style={{ fontSize: 11, fontWeight: 550, padding: 0, marginBottom: 6 }}>Platform(s)</legend>
+                    {context.platforms.map((p) => {
+                      const inputId = id(`platform-${p.platform}`);
+                      return (
+                        <label key={p.platform} htmlFor={inputId} style={{ display: "inline-flex", alignItems: "center", gap: 6, marginRight: 14, fontWeight: 450, fontSize: 12 }}>
+                          <input id={inputId} type="checkbox" checked={platforms.includes(p.platform)} onChange={(event) => togglePlatform(p.platform, event.target.checked)} />
+                          {p.platformLabel}
                         </label>
                       );
                     })}
                   </fieldset>
 
-                  {partnerDetail.accounts.some((account) => account.selectable) && (
-                    <div className="fields" style={{ marginTop: 16 }}>
-                      <div className="field full">
-                        <label htmlFor={id("instructions")}>Partner-specific instructions</label>
-                        <textarea id={id("instructions")} maxLength={LIMITS.instructions} value={values.instructions} onChange={(event) => setValue("instructions", event.target.value)} />
-                      </div>
-                      <div className="field full">
-                        <label htmlFor={id("summary")}>Content requirement summary</label>
-                        <textarea id={id("summary")} maxLength={LIMITS.contentRequirementSummary} value={values.contentRequirementSummary} onChange={(event) => setValue("contentRequirementSummary", event.target.value)} />
-                      </div>
-                      <div className="field">
-                        <label htmlFor={id("count")}>Required count</label>
-                        <input id={id("count")} type="number" inputMode="numeric" min={1} max={LIMITS.requiredCountMax} step={1} value={values.requiredCount} onChange={(event) => setValue("requiredCount", event.target.value)} />
-                      </div>
-                      <div className="field">
-                        <label htmlFor={id("due")}>Due date</label>
-                        <input id={id("due")} type="date" value={values.dueAt} onChange={(event) => setValue("dueAt", event.target.value)} />
-                      </div>
-                      <div className="field">
-                        <label htmlFor={id("formats")}>Format(s)</label>
-                        <input id={id("formats")} type="text" value={values.formats} onChange={(event) => setValue("formats", event.target.value)} />
-                        <small>Comma-separated, e.g. Reel, Story</small>
-                      </div>
-                      <div className="field">
-                        <label htmlFor={id("language")}>Language</label>
-                        <input id={id("language")} type="text" maxLength={LIMITS.language} value={values.language} onChange={(event) => setValue("language", event.target.value)} />
-                      </div>
-                      <div className="field full">
-                        <label htmlFor={id("hashtags")}>Hashtags</label>
-                        <input id={id("hashtags")} type="text" value={values.hashtags} onChange={(event) => setValue("hashtags", event.target.value)} />
-                        <small>Comma-separated; a leading # is removed.</small>
-                      </div>
-
-                      <fieldset className="field full" style={{ border: 0, padding: 0, margin: 0 }}>
-                        <legend style={{ fontSize: 11, fontWeight: 550, padding: 0, marginBottom: 6 }}>Resource links (optional)</legend>
-                        {values.resourceLinks.map((row, index) => (
-                          <div key={index} className="fields" style={{ marginBottom: 10 }}>
-                            <div className="field">
-                              <label htmlFor={id(`link-label-${index}`)}>Link {index + 1} label</label>
-                              <input
-                                id={id(`link-label-${index}`)}
-                                type="text"
-                                value={row.label}
-                                onChange={(event) => setValue("resourceLinks", values.resourceLinks.map((r, i) => (i === index ? { ...r, label: event.target.value } : r)))}
-                              />
-                            </div>
-                            <div className="field">
-                              <label htmlFor={id(`link-url-${index}`)}>Link {index + 1} URL</label>
-                              <input
-                                id={id(`link-url-${index}`)}
-                                type="url"
-                                inputMode="url"
-                                placeholder="https://"
-                                value={row.url}
-                                onChange={(event) => setValue("resourceLinks", values.resourceLinks.map((r, i) => (i === index ? { ...r, url: event.target.value } : r)))}
-                              />
-                            </div>
-                            <label htmlFor={id(`link-share-${index}`)} className="field full" style={{ flexDirection: "row", alignItems: "center", gap: 8, fontWeight: 450 }}>
-                              <input
-                                id={id(`link-share-${index}`)}
-                                type="checkbox"
-                                checked={row.shareExternally}
-                                onChange={(event) => setValue("resourceLinks", values.resourceLinks.map((r, i) => (i === index ? { ...r, shareExternally: event.target.checked } : r)))}
-                              />
-                              Share this link with the Partner on the public submission page
-                            </label>
-                            <div className="field full">
-                              <button type="button" className="btn" onClick={() => setValue("resourceLinks", values.resourceLinks.filter((_, i) => i !== index))}>
-                                Remove link {index + 1}
-                              </button>
-                            </div>
-                          </div>
+                  <div className="fields" style={{ marginTop: 16 }}>
+                    <div className="field full">
+                      <label htmlFor={id("instructions")}>Instructions (shared across every selected Partner)</label>
+                      <textarea id={id("instructions")} maxLength={LIMITS.instructions} value={values.instructions} onChange={(event) => setValue("instructions", event.target.value)} />
+                      {/* Finding #52: distinguishes this field from Content requirement summary below - recipient-facing guidance for THIS Assignment, not a place to repeat the Campaign's own Objective/Resources. */}
+                      <small>What the recipient(s) should actually do. Don&rsquo;t repeat the Campaign&rsquo;s own Objective or Resources - those already reach the submission page automatically.</small>
+                    </div>
+                    <div className="field full">
+                      <label htmlFor={id("summary")}>Content requirement summary (optional override)</label>
+                      <textarea id={id("summary")} maxLength={LIMITS.contentRequirementSummary} value={values.contentRequirementSummary} onChange={(event) => setValue("contentRequirementSummary", event.target.value)} />
+                      <small>Only fill this in if the Campaign&rsquo;s Objective, Resources and the structured fields here (platform, due date, required count) genuinely aren&rsquo;t enough on their own. Leave blank otherwise.</small>
+                    </div>
+                    <div className="field">
+                      <label htmlFor={id("count")}>Required count</label>
+                      <input id={id("count")} type="number" inputMode="numeric" min={1} max={LIMITS.requiredCountMax} step={1} value={values.requiredCount} onChange={(event) => setValue("requiredCount", event.target.value)} />
+                    </div>
+                    <div className="field">
+                      <label htmlFor={id("due")}>Due date</label>
+                      <input
+                        id={id("due")}
+                        type="date"
+                        value={values.dueAt}
+                        onChange={(event) => {
+                          setDueAtTouched(true);
+                          setValue("dueAt", event.target.value);
+                        }}
+                      />
+                      {values.dueAt && !dueAtTouched && <small>Defaulted from the Campaign&rsquo;s own end date - editable here.</small>}
+                    </div>
+                    <div className="field">
+                      <label htmlFor={id("formats")}>Format(s)</label>
+                      <input id={id("formats")} type="text" value={values.formats} onChange={(event) => setValue("formats", event.target.value)} />
+                      <small>Comma-separated, e.g. Reel, Story</small>
+                    </div>
+                    <div className="field">
+                      <label htmlFor={id("language")}>Language</label>
+                      <select
+                        id={id("language")}
+                        value={values.language}
+                        disabled={languageUnion.length === 0}
+                        onChange={(event) => {
+                          setLanguageTouched(true);
+                          setValue("language", event.target.value);
+                        }}
+                      >
+                        <option value="">{languageUnion.length === 0 ? "No known language for the selected Partner(s)" : "No language specified"}</option>
+                        {languageUnion.map((lang) => (
+                          <option key={lang} value={lang}>
+                            {lang}
+                          </option>
                         ))}
-                        {values.resourceLinks.length < LIMITS.resourceLinksMax && (
-                          <div>
-                            <button type="button" className="btn" onClick={() => setValue("resourceLinks", [...values.resourceLinks, { label: "", url: "", shareExternally: false }])}>
-                              Add resource link
+                      </select>
+                      {languageUnion.length === 1 && values.language === languageUnion[0] && !languageTouched && (
+                        <small>Defaulted from the selected Partner&rsquo;s own recorded language - editable here.</small>
+                      )}
+                      {languageMismatch && (
+                        <small className="fielderror" role="alert">
+                          The Campaign&rsquo;s own language requirement ({campaignLanguageIds.join(", ")}) has no overlap with the selected Partner(s)&rsquo; recorded language(s) ({languageUnion.join(", ")}
+                          ).
+                        </small>
+                      )}
+                    </div>
+                    <div className="field full">
+                      <label htmlFor={id("hashtags")}>Hashtags</label>
+                      <input id={id("hashtags")} type="text" value={values.hashtags} onChange={(event) => setValue("hashtags", event.target.value)} />
+                      <small>Comma-separated; a leading # is removed.</small>
+                    </div>
+
+                    <fieldset className="field full" style={{ border: 0, padding: 0, margin: 0 }}>
+                      <legend style={{ fontSize: 11, fontWeight: 550, padding: 0, marginBottom: 6 }}>Resource links (optional)</legend>
+                      {values.resourceLinks.map((row, index) => (
+                        <div key={index} className="fields" style={{ marginBottom: 10 }}>
+                          <div className="field">
+                            <label htmlFor={id(`link-label-${index}`)}>Link {index + 1} label</label>
+                            <input
+                              id={id(`link-label-${index}`)}
+                              type="text"
+                              value={row.label}
+                              onChange={(event) => setValue("resourceLinks", values.resourceLinks.map((r, i) => (i === index ? { ...r, label: event.target.value } : r)))}
+                            />
+                          </div>
+                          <div className="field">
+                            <label htmlFor={id(`link-url-${index}`)}>Link {index + 1} URL</label>
+                            <input
+                              id={id(`link-url-${index}`)}
+                              type="url"
+                              inputMode="url"
+                              placeholder="https://"
+                              value={row.url}
+                              onChange={(event) => setValue("resourceLinks", values.resourceLinks.map((r, i) => (i === index ? { ...r, url: event.target.value } : r)))}
+                            />
+                          </div>
+                          <label htmlFor={id(`link-share-${index}`)} className="field full" style={{ flexDirection: "row", alignItems: "center", gap: 8, fontWeight: 450 }}>
+                            <input
+                              id={id(`link-share-${index}`)}
+                              type="checkbox"
+                              checked={row.shareExternally}
+                              onChange={(event) => setValue("resourceLinks", values.resourceLinks.map((r, i) => (i === index ? { ...r, shareExternally: event.target.checked } : r)))}
+                            />
+                            Share this link with the Partner on the public submission page
+                          </label>
+                          <div className="field full">
+                            <button type="button" className="btn" onClick={() => setValue("resourceLinks", values.resourceLinks.filter((_, i) => i !== index))}>
+                              Remove link {index + 1}
                             </button>
                           </div>
-                        )}
-                      </fieldset>
-                    </div>
-                  )}
-
-                  {formErrors.length > 0 && (
-                    <div className="banner" role="alert" style={{ marginTop: 14, marginBottom: 0, display: "block" }}>
-                      {formErrors.map((message) => (
-                        <div key={message}>{message}</div>
+                        </div>
                       ))}
-                    </div>
-                  )}
-                  {submitError && (
-                    <div className="banner" role="alert" style={{ marginTop: 14, marginBottom: 0 }}>
-                      {submitError}
-                    </div>
-                  )}
-                  {submitting && (
-                    <p role="status" aria-live="polite" style={{ marginTop: 12 }}>
-                      Creating Assignment…
-                    </p>
-                  )}
-                  <p style={{ marginTop: 14, marginBottom: 0 }}>The Assignment is created as a Draft. Issuing it to the Partner is a separate step on the Assignment itself.</p>
+                      {values.resourceLinks.length < LIMITS.resourceLinksMax && (
+                        <div>
+                          <button type="button" className="btn" onClick={() => setValue("resourceLinks", [...values.resourceLinks, { label: "", url: "", shareExternally: false }])}>
+                            Add resource link
+                          </button>
+                        </div>
+                      )}
+                    </fieldset>
+                  </div>
                 </>
               )}
+
+              {formErrors.length > 0 && (
+                <div className="banner" role="alert" style={{ marginTop: 14, marginBottom: 0, display: "block" }}>
+                  {formErrors.map((message) => (
+                    <div key={message}>{message}</div>
+                  ))}
+                </div>
+              )}
+              {submitError && (
+                <div className="banner" role="alert" style={{ marginTop: 14, marginBottom: 0 }}>
+                  {submitError}
+                </div>
+              )}
+              {submitting && (
+                <p role="status" aria-live="polite" style={{ marginTop: 12 }}>
+                  Creating Assignment(s)…
+                </p>
+              )}
+              <p style={{ marginTop: 14, marginBottom: 0 }}>Each new Assignment is created In Progress — Partner Accounts and further edits are managed on the Assignment itself.</p>
             </div>
           )}
         </>

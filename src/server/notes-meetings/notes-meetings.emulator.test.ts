@@ -149,7 +149,7 @@ async function realCampaign(name: string): Promise<string> {
 
 async function realLead(displayName: string): Promise<string> {
   const manager = await actorFor("partnership_manager");
-  const result = await createLead(manager, { displayName, source: { type: "research" }, regionIds: ["Kerala"] }, requestId());
+  const result = await createLead(manager, { displayName, phone: `+91 9${Math.floor(Math.random() * 1_000_000_000)}`, source: { type: "research" }, regionIds: ["Kerala"] }, requestId());
   if (!result.ok) throw new Error(`createLead failed: ${result.code} - ${result.message}`);
   const leadRef = (result.data as { leadRef: string }).leadRef;
   leadRefs.push(leadRef);

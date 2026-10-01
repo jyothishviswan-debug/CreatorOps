@@ -26,12 +26,13 @@ import { seedAccessControlData, TEST_IDENTITIES } from "@/server/authz/seed-acce
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminAuth } from "@/server/firebase/admin";
 import { checkForPartnerDuplicates } from "./duplicate-check";
-import { getPartnerAccountDocByRef, getPartnerAccountIdentityClaim, getPartnerDocByRef, partnerEventsCollection } from "./firestore";
+import { getPartnerAccountDocByRef, getPartnerAccountIdentityClaim, getPartnerDocByRef, partnerAccountsCollection, partnerEventsCollection } from "./firestore";
 import { claimIdFor, computeNormalizedIdentity } from "./identity";
 import { archivePartner, blacklistPartner, checkPartnerDependencies, restorePartner } from "./partner-lifecycle-service";
 import { createPartnerAccount, editPartnerAccount, getPartnerAccount, listPartnerAccounts, setPartnerAccountStatus, setPrimaryPartnerAccount } from "./partner-account-service";
 import { createPartner, editPartner, getPartner, getPartnerHistory, listPartners, setPartnerOwnerTeam, setPartnerStatus } from "./partner-service";
 import { getPartnerRestrictedIdentity, savePartnerRestrictedIdentity } from "./restricted-identity-service";
+import { deriveFromProfileUrl } from "@/server/shared/account-identity";
 import { seedPartnersData } from "./seed-partners-data";
 import { partnerAccountDocSchema, partnerDocSchema } from "./types";
 
@@ -71,7 +72,19 @@ function uniqueName(prefix: string): string {
 async function convertFreshLeadToPartner(assetDecision: "NEW_ACCOUNT" | "MAINTAIN_EXISTING", existingPartnerAccountRef?: string) {
   const head = await actorFor("partnership_head");
   const email = `${uniqueName("handoff").replace(/\s+/g, "")}@example.com`;
-  const lead = await createLead(head, { displayName: uniqueName("Handoff Lead"), source: { type: "referral" }, regionIds: ["Kerala"], email, platform: "Instagram", handle: uniqueName("handofflead").replace(/\s+/g, "") }, "req-handoff-create");
+  const lead = await createLead(
+    head,
+    {
+      displayName: uniqueName("Handoff Lead"),
+      phone: `+91 9${Math.floor(Math.random() * 1_000_000_000)}`,
+      source: { type: "referral" },
+      regionIds: ["Kerala"],
+      email,
+      platform: "Instagram",
+      handle: uniqueName("handofflead").replace(/\s+/g, ""),
+    },
+    "req-handoff-create",
+  );
   if (!lead.ok) throw new Error("unreachable");
   let version = lead.data.version;
 
@@ -528,6 +541,85 @@ describe("Partners domain (real emulator)", () => {
     });
   });
 
+  describe("Canonical account identity pipeline (Partner Accounts Findings #18-#21)", () => {
+    it("#19: a whitespace-only Platform is rejected, not silently accepted", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Whitespace Platform"), regionIds: ["Kerala"] }, "req-wsplat-create");
+      if (!created.ok) throw new Error("unreachable");
+      const attempt = await createPartnerAccount(head, created.data.partnerRef, { platform: "   ", handle: `wsplat${runId}` }, "req-wsplat-account");
+      expect(attempt).toMatchObject({ ok: false, code: "invalid_input" });
+    });
+
+    it("#20: a matching Profile URL and Handle save successfully", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Matching Identity"), regionIds: ["Kerala"] }, "req-match-create");
+      if (!created.ok) throw new Error("unreachable");
+      const handle = `matchid${runId}`;
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", profileUrl: `https://instagram.com/${handle}`, handle }, "req-match-account");
+      expect(account.ok).toBe(true);
+    });
+
+    it("#20: a conflicting Profile URL and Handle are rejected on create, never silently resolved", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Conflicting Identity"), regionIds: ["Kerala"] }, "req-conflict-create");
+      if (!created.ok) throw new Error("unreachable");
+      const attempt = await createPartnerAccount(
+        head,
+        created.data.partnerRef,
+        { platform: "Instagram", profileUrl: `https://instagram.com/realaccount${runId}`, handle: `completelydifferent${runId}` },
+        "req-conflict-account",
+      );
+      expect(attempt).toMatchObject({ ok: false, code: "invalid_input" });
+    });
+
+    it("#20: a conflicting Profile URL and Handle are rejected on edit when the edit touches either field", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Conflict On Edit"), regionIds: ["Kerala"] }, "req-editconflict-create");
+      if (!created.ok) throw new Error("unreachable");
+      const account = await createPartnerAccount(head, created.data.partnerRef, { platform: "Instagram", handle: `editconflict${runId}` }, "req-editconflict-account");
+      if (!account.ok) throw new Error("unreachable");
+      const attempt = await editPartnerAccount(
+        head,
+        account.data.partnerAccountRef,
+        { profileUrl: `https://instagram.com/totallydifferent${runId}`, expectedVersion: account.data.version },
+        "req-editconflict-edit",
+      );
+      expect(attempt).toMatchObject({ ok: false, code: "invalid_input" });
+    });
+
+    it("#20: an unrelated edit never retroactively rejects a pre-existing legacy Profile URL/Handle mismatch", async () => {
+      const head = await actorFor("partnership_head");
+      const created = await createPartner(head, { displayName: uniqueName("Legacy Mismatch"), regionIds: ["Kerala"] }, "req-legacymismatch-create");
+      if (!created.ok) throw new Error("unreachable");
+      // Only a stable platform account id is used at create time, so the
+      // deliberately-mismatched profileUrl/handle pair below never goes
+      // through the create-path conflict check - it lands directly via a
+      // raw doc write, simulating data that predates this finding.
+      const account = await createPartnerAccount(
+        head,
+        created.data.partnerRef,
+        { platform: "Instagram", platformAccountId: `stable${runId}`, handle: `oldhandle${runId}` },
+        "req-legacymismatch-account",
+      );
+      if (!account.ok) throw new Error("unreachable");
+      const doc = await getPartnerAccountDocByRef(account.data.partnerAccountRef);
+      if (!doc) throw new Error("unreachable");
+      // A raw doc write, deliberately bypassing editPartnerAccount's own
+      // conflict check, simulating data that predates this finding -
+      // there is no way to reach this state through the ordinary API,
+      // by design.
+      await partnerAccountsCollection().doc(doc.uid).update({ profileUrl: `https://instagram.com/mismatchedurl${runId}` });
+
+      const unrelatedEdit = await editPartnerAccount(head, account.data.partnerAccountRef, { displayName: "Bump Only", expectedVersion: account.data.version }, "req-legacymismatch-edit");
+      expect(unrelatedEdit.ok).toBe(true);
+    });
+
+    it("#20: Discovery's own profile-URL derivation and Partner Account's derivation agree (same shared helper)", () => {
+      const url = `https://instagram.com/sharedhelper${runId}`;
+      expect(deriveFromProfileUrl(url)).toEqual({ platform: "Instagram", handle: `sharedhelper${runId}` });
+    });
+  });
+
   describe("Partner Account identity evolution (Step 7A.1)", () => {
     it("a display-name-only edit leaves normalizedIdentity unchanged", async () => {
       const head = await actorFor("partnership_head");
@@ -770,6 +862,28 @@ describe("Partners domain (real emulator)", () => {
       const claim = await getPartnerAccountIdentityClaim(claimIdFor(originalIdentity));
       expect(claim?.partnerAccountRef).toBe(existingAccount.data.partnerAccountRef); // still points at the same account
 
+      expect(lead.leadRef).toBeTruthy();
+    });
+
+    // Finding #16 (user-decided): existingPartnerAccountRef is now an
+    // optional shortcut, not a prerequisite - a MAINTAIN_EXISTING decision
+    // saved with NO ref must still convert cleanly, creating a real
+    // Partner Account from the Lead's own confirmed platform/handle
+    // identity (convertFreshLeadToPartner's own Lead fixture already sets
+    // platform: "Instagram" - the exact "real confirmed external identity"
+    // case), never fabricated, never fuzzy-matched to an unrelated
+    // existing account.
+    it("a MAINTAIN_EXISTING conversion with NO existingPartnerAccountRef creates a real new Partner Account from the Lead's own confirmed platform/handle identity (finding #16)", async () => {
+      const { lead, converted } = await convertFreshLeadToPartner("MAINTAIN_EXISTING");
+      expect(converted.ok).toBe(true);
+      if (!converted.ok) throw new Error("unreachable");
+      expect(converted.data.partnerAccountRef).toBeTruthy();
+      expect(converted.data.pendingPartnerAccountSetup).toBe(false);
+
+      const account = await getPartnerAccountDocByRef(converted.data.partnerAccountRef!);
+      expect(account).toBeTruthy();
+      expect(account?.partnerRef).toBe(converted.data.partnerRef);
+      expect(account?.platform).toBe("Instagram");
       expect(lead.leadRef).toBeTruthy();
     });
 

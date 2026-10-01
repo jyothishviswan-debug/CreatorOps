@@ -4,6 +4,7 @@
 // everything this file cannot represent from the existing contracts is left null/empty rather than invented.
 import type { AgreementDocumentDto, ContractArtifactDto, ExtractionResultDto } from "@/server/finance-agreements/client-dto";
 import type { AgreementParty, AgreementPartyRole } from "@/server/finance-agreements/types";
+import type { CounterpartyPartnerAccountDto } from "@/server/finance-agreements/workspace-dto";
 
 import { humanizeExtractionWarning } from "../format";
 import type { FieldViewModel } from "../field-view-model";
@@ -166,20 +167,28 @@ export function partyViews(counterparty: IntakeCounterparty | null, parties: rea
 }
 
 // --- Accounts (Partner-account scope of the primary counterparty only - the only account data the registry carries) -----------------------
-export function accountViews(counterparty: IntakeCounterparty | null): AccountScopeView[] {
+// Finding #27: `accounts` is the SAME canonical Partner Account identity the intake preview already loads
+// (`useIntake().preview.partnerAccounts`, the identical CounterpartyPartnerAccountDto shape PartiesKycStep's own
+// KYC section already reads elsewhere) - matched by partnerAccountRef, never a second/duplicated lookup. A ref
+// with no match in `accounts` (the preview hasn't loaded yet, or a stale ref) stays honestly null, never fabricated.
+export function accountViews(counterparty: IntakeCounterparty | null, accounts: readonly CounterpartyPartnerAccountDto[] = []): AccountScopeView[] {
   if (!counterparty || counterparty.type !== "PARTNER") return [];
+  const byRef = new Map(accounts.map((account) => [account.partnerAccountRef, account]));
   if (counterparty.accountRefs.length === 0) {
     return counterparty.platforms.map((platform, i) => ({ id: `platform-${i}`, platform, displayName: null, handle: null, url: null, partnerAccountRef: null, state: "PARTNER_LEVEL" as const }));
   }
-  return counterparty.accountRefs.map((ref, i) => ({
-    id: ref,
-    platform: counterparty.platforms[i] ?? counterparty.platforms[0] ?? "",
-    displayName: null,
-    handle: null,
-    url: null,
-    partnerAccountRef: ref,
-    state: "MATCHED" as const,
-  }));
+  return counterparty.accountRefs.map((ref, i) => {
+    const matched = byRef.get(ref) ?? null;
+    return {
+      id: ref,
+      platform: counterparty.platforms[i] ?? counterparty.platforms[0] ?? "",
+      displayName: matched?.displayName ?? null,
+      handle: matched?.handle ?? null,
+      url: matched?.profileUrl ?? null,
+      partnerAccountRef: ref,
+      state: "MATCHED" as const,
+    };
+  });
 }
 
 // --- Content obligations (the repeatable array field; the legacy scalar pair is folded in as one row when the array is empty) --------------

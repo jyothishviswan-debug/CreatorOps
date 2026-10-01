@@ -13,7 +13,7 @@ import { classifyHeaders, fieldValueGetter, toSafeString, type RawSheetRow } fro
 export const INSTAGRAM_CONTENT_HEADER_ALIASES: Record<AnalyticsMetricId, string[]> = {
   postId: ["Platform Content ID", "Post ID", "Media ID"],
   postUrl: ["Post URL", "Link to Post", "Permalink"],
-  postDateTime: ["Post Date", "Date Posted", "Published Date", "Post Date/Time"],
+  postDateTime: ["Post Date", "Date Posted", "Published Date", "Post Date/Time", "Published At", "Published"],
   postType: ["Post Type", "Media Type", "Content Type"],
   postMediaUrl: ["Media URL", "Image URL", "Thumbnail URL"],
   postCaption: ["Caption", "Post Caption", "Description"],
@@ -52,7 +52,7 @@ export type InstagramContentCandidateRow = {
   ignoredColumns: string[]; // headers recognized as unsupported metrics, dropped
 };
 
-export function classifyInstagramContentSheet(headers: string[]): { isRecognized: boolean; recognizedHeaderCount: number; unsupportedHeaders: string[]; unrecognizedHeaders: string[] } {
+export function classifyInstagramContentSheet(headers: string[]): { isRecognized: boolean; recognizedHeaderCount: number; unsupportedHeaders: string[]; unrecognizedHeaders: string[]; ambiguousHeaders: string[] } {
   const classification = classifyHeaders(headers, INSTAGRAM_CONTENT_HEADER_ALIASES);
   const recognizedFieldIds = new Set(classification.recognized.values());
   const isRecognized = recognizedFieldIds.has("postId") || recognizedFieldIds.has("postUrl");
@@ -61,6 +61,9 @@ export function classifyInstagramContentSheet(headers: string[]): { isRecognized
     recognizedHeaderCount: classification.recognized.size,
     unsupportedHeaders: [...classification.unsupported.keys()],
     unrecognizedHeaders: classification.unrecognized,
+    // Wave B / finding #55 re-audit: every raw header involved in a same-field collision - never
+    // silently resolved to one column. See classifyHeaders' own comment for the full mechanism.
+    ambiguousHeaders: [...classification.ambiguous.values()].flat(),
   };
 }
 

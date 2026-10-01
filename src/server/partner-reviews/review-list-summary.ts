@@ -44,7 +44,7 @@ function sumReported(values: Array<number | null | undefined>): number | null {
 // metric value this counts, so the summary of the two is identical (the Review Detail derives its
 // independent summaries from the actor view with this very function; nothing is re-derived in React).
 export type SummarySnapshot = {
-  production: { assignments: ReadonlyArray<{ completed: boolean; cancelled: boolean; thread: { status: string } | null }> };
+  production: { assignments: ReadonlyArray<{ completed: boolean; cancelled: boolean; threads: ReadonlyArray<{ status: string }> }> };
   compliance: { assignments: ReadonlyArray<Pick<EvidenceComplianceAssignment, "submittedAt" | "submittedBeforeDue" | "revisionRequestCount" | "hasNoThread" | "threadOpenWithNoLinks" | "notCompletedPastDue">> };
   performance: { records: ReadonlyArray<{ platform: string; matchedPartnerAccountRef: string | null; metrics: Record<string, number | null> }> };
   commercial?: {
@@ -105,8 +105,12 @@ export function computeReviewListSummary(snapshot: SummarySnapshot): ReviewListS
     production: {
       assignmentsIncluded: production.length,
       completedAssignments: production.filter((item) => item.completed).length,
-      underReviewContent: production.filter((item) => item.thread?.status === UNDER_REVIEW).length,
-      approvedContent: production.filter((item) => item.thread?.status === APPROVED).length,
+      // Finding #50 (reopened): a true Content-RECORD count across every
+      // one of an Assignment's threads, not "how many assignments have a
+      // thread in that status" - an Assignment with 2 approved records
+      // now correctly contributes 2, not 1.
+      underReviewContent: production.reduce((sum, item) => sum + item.threads.filter((t) => t.status === UNDER_REVIEW).length, 0),
+      approvedContent: production.reduce((sum, item) => sum + item.threads.filter((t) => t.status === APPROVED).length, 0),
       cancelledFlagged: production.filter((item) => item.cancelled).length,
     },
     commercial: {

@@ -39,27 +39,74 @@ export function isSupportedQualifyingUnit(value: string): value is QualifyingUni
 }
 
 // A qualifying unit source is canonical APPROVED Content evidence ONLY: an
-// in-period, non-cancelled Assignment whose canonical Content thread status is
-// APPROVED. A raw submitted URL, or the links of a thread that is OPEN /
+// in-period, non-cancelled Assignment's own APPROVED Content thread(s). A
+// raw submitted URL, or the links of a thread that is OPEN /
 // UNDER_REVIEW / REVISION_REQUESTED / CANCELLED, never count.
-export function qualifyingThreadUnits(production: readonly EvidenceProductionAssignment[], unit: QualifyingUnit): Array<EvidenceCountUnit & { formats: string[] }> {
-  const units: Array<EvidenceCountUnit & { formats: string[] }> = [];
+//
+// Finding #50 (reopened): an Assignment can now carry SEVERAL Content
+// threads (one per submission cycle) - every one of them that reached
+// APPROVED contributes its own unit independently, never collapsed to at
+// most one per Assignment.
+//
+// assignmentRef/contentRef are always REAL non-null strings here (never the analytics_post identity
+// shape) - narrowed back from EvidenceCountUnit's own now-nullable fields (see types.ts) so every
+// thread-based caller keeps working without a cast.
+type ThreadCountUnit = Omit<EvidenceCountUnit, "assignmentRef" | "contentRef"> & { assignmentRef: string; contentRef: string };
+
+export function qualifyingThreadUnits(production: readonly EvidenceProductionAssignment[], unit: QualifyingUnit): Array<ThreadCountUnit & { formats: string[] }> {
+  const units: Array<ThreadCountUnit & { formats: string[] }> = [];
   for (const assignment of production) {
     if (assignment.cancelled) continue;
-    const thread = assignment.thread;
-    if (!thread || thread.status !== "APPROVED") continue;
-    units.push({
-      assignmentRef: assignment.assignmentRef,
-      contentRef: thread.contentRef,
-      unitCount: unit === "approved_current_link" ? thread.linkCount : 1,
-      formats: assignment.formats,
-    });
+    for (const thread of assignment.threads) {
+      if (thread.status !== "APPROVED") continue;
+      units.push({
+        assignmentRef: assignment.assignmentRef,
+        contentRef: thread.contentRef,
+        sourceRecordRef: null,
+        unitCount: unit === "approved_current_link" ? thread.linkCount : 1,
+        formats: assignment.formats,
+      });
+    }
   }
   return units;
 }
 
-function stripFormats(units: Array<EvidenceCountUnit & { formats: string[] }>): EvidenceCountUnit[] {
-  return units.map(({ assignmentRef, contentRef, unitCount }) => ({ assignmentRef, contentRef, unitCount }));
+function stripFormats(units: Array<ThreadCountUnit & { formats: string[] }>): EvidenceCountUnit[] {
+  return units.map(({ assignmentRef, contentRef, unitCount }) => ({ assignmentRef, contentRef, sourceRecordRef: null, unitCount }));
+}
+
+// Finding #30 (user-decided): the monthly commercial fulfillment counter for an Agreement governed by
+// "qualifying_analytics_post" - a DISTINCT counter from Assignment/Content-thread fulfillment above
+// (qualifyingThreadUnits), based on distinct Analytics posts matched to the Partner/Partner Account
+// (a resolved matchedPartnerAccountRef - see import-pipeline.ts's buildContentRowOutcome for the full
+// matching hierarchy that produces it; a missing Content/Assignment thread never by itself excludes a
+// post here). Distinctness is on normalized platform + post URL - a defensive, self-contained key
+// computed here, never the stored doc's own row identity (which folds in reportingPeriod, and so is not
+// safe to treat as "the same real post" across imports). When the same distinct post has more than one
+// source record (a correction or a duplicate that slipped past row-identity for any reason), the LOWEST
+// sourceRecordRef is the deterministic canonical one - never "whichever happened to be first in this
+// particular input order".
+//
+// Finding #57 correction: this counter no longer also requires `matchState === "MATCHED"`. Before #57,
+// an Account-only (Content-unmatched) ownership resolution was silently PROMOTED to matchState
+// "MATCHED" as a side effect, which is what let the old matchState check here work at all - #57 stopped
+// that promotion (a row now stays honestly Content-unmatched even when ownership resolved), so gating
+// on matchState here would have silently EXCLUDED exactly the spontaneous/unassigned posts this
+// counter's own original comment above already says must count. matchedPartnerAccountRef alone is a
+// real, independent, deterministic Account-identity signal (partner-account-matcher.ts never leaves it
+// set for an AMBIGUOUS or UNMATCHED account match), so it is sufficient on its own.
+export function qualifyingAnalyticsPostUnits(records: readonly EvidencePerformanceRecord[]): Array<{ sourceRecordRef: string; unitCount: number }> {
+  const refsByKey = new Map<string, string[]>();
+  for (const record of records) {
+    if (record.matchedPartnerAccountRef === null) continue;
+    if (!record.postUrl) continue;
+    const key = `${record.platform}|${record.postUrl}`;
+    const refs = refsByKey.get(key) ?? [];
+    refs.push(record.sourceRecordRef);
+    refsByKey.set(key, refs);
+  }
+  const units = [...refsByKey.values()].map((refs) => ({ sourceRecordRef: [...refs].sort()[0]!, unitCount: 1 }));
+  return units.sort((a, b) => (a.sourceRecordRef < b.sourceRecordRef ? -1 : 1));
 }
 
 // --- Monthly deliverable ---------------------------------------------------------
@@ -100,9 +147,33 @@ function evaluateMonthlyDeliverable(input: CommercialBuildInput): EvidenceMonthl
   const copied = { requiredCount: requirement.requiredCount, requirementSource };
 
   if (!isSupportedQualifyingUnit(requirement.qualifyingUnit)) return unavailableDeliverable("unsupported_qualifying_unit", copied);
-  if (input.assignmentsTruncated) return unavailableDeliverable("evidence_truncated", { ...copied, qualifyingUnit: requirement.qualifyingUnit });
 
   const unit = requirement.qualifyingUnit;
+
+  // Finding #30 (user-decided): a DELIBERATELY SEPARATE counting basis - distinct matched Analytics
+  // posts, never Assignment/Content-thread evidence. See qualifyingAnalyticsPostUnits' own comment.
+  if (unit === "qualifying_analytics_post") {
+    if (input.analyticsTruncated) return unavailableDeliverable("evidence_truncated", { ...copied, qualifyingUnit: unit });
+    const counted = qualifyingAnalyticsPostUnits(input.records);
+    const actual = counted.length;
+    const variance = actual - requirement.requiredCount;
+    return {
+      ...copied,
+      qualifyingUnit: unit,
+      actualQualifyingCount: actual,
+      actualCountSources: {
+        sourceType: "analytics_post",
+        units: counted.map(({ sourceRecordRef, unitCount }) => ({ assignmentRef: null, contentRef: null, sourceRecordRef, unitCount })),
+      },
+      variance,
+      evaluation: variance === 0 ? "met" : variance < 0 ? "below_requirement" : "exceeded",
+      unavailableReason: null,
+      affectsPayment: true,
+    };
+  }
+
+  if (input.assignmentsTruncated) return unavailableDeliverable("evidence_truncated", { ...copied, qualifyingUnit: unit });
+
   const counted = qualifyingThreadUnits(input.production, unit);
   const actual = counted.reduce((sum, entry) => sum + entry.unitCount, 0);
   const variance = actual - requirement.requiredCount;
@@ -174,6 +245,13 @@ function evaluateLfcSfc(input: CommercialBuildInput): EvidenceLfcSfc {
     unit = requirement.qualifyingUnit;
     unitSource = "agreement_requirement";
   }
+
+  // Finding #30 (user-decided): LFC/SFC format classification is inherently a Content-thread concept -
+  // it classifies an Assignment's OWN brief formats. An Agreement governed by the Analytics-post unit has
+  // no thread/format basis to classify at all, so this is honestly unavailable rather than silently
+  // reinterpreted as a content-thread count (qualifyingThreadUnits has no meaning for this unit).
+  if (unit === "qualifying_analytics_post") return unavailableLfcSfc("qualifying_unit_not_applicable_to_lfc_sfc", { ruleRef: rule.ruleRef, ruleSource, qualifyingUnit: unit, qualifyingUnitSource: unitSource });
+
   if (input.assignmentsTruncated) return unavailableLfcSfc("evidence_truncated", { ruleRef: rule.ruleRef, ruleSource, qualifyingUnit: unit, qualifyingUnitSource: unitSource });
 
   const units: EvidenceLfcSfcUnit[] = [];

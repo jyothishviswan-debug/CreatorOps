@@ -51,10 +51,12 @@ import { createPartnerReviewRevision, finalizePartnerReview, submitPartnerReview
 import {
   deriveNeedsReview,
   generatePartnerReviewDraft,
+  generateReviewsForItems,
   getPartnerReview,
   getPartnerReviewVersion,
   inspectPartnerReviewFreshness,
   listPartnerReviewHeads,
+  MAX_BULK_REVIEW_ITEMS,
   refreshPartnerReviewEvidence,
 } from "./partner-review-service";
 import { reviewRefFor } from "./period";
@@ -476,7 +478,7 @@ describe("logical identity and generation", () => {
     const production = version.snapshot.production.assignments;
     expect(production).toHaveLength(1);
     expect(production[0]).toMatchObject({ assignmentRef: assignment.assignmentRef, campaignName: "PR Test Campaign", status: "IN_PROGRESS", eventDate: "2019-03-10", eventDateSource: "dueAt", requiredCount: 2, completed: false });
-    expect(production[0]!.thread).toMatchObject({ contentRef: thread.contentRef, status: "UNDER_REVIEW", linkCount: 1, currentRevisionNumber: 1 });
+    expect(production[0]!.threads[0]).toMatchObject({ contentRef: thread.contentRef, status: "UNDER_REVIEW", linkCount: 1, currentRevisionNumber: 1 });
 
     // Compliance: raw facts only.
     expect(version.snapshot.compliance.assignments[0]).toMatchObject({ assignmentRef: assignment.assignmentRef, submittedBeforeDue: true, revisionRequestCount: 0, hasNoThread: false, notCompletedPastDue: true });
@@ -536,6 +538,223 @@ describe("logical identity and generation", () => {
       expect(result.ok).toBe(false);
       if (!result.ok) expect(result.code).toBe("invalid_input");
     }
+    expect((await partnerReviewsCollection().where("partnerRef", "==", partner.partnerRef).get()).size).toBe(0);
+  });
+});
+
+// ---- Bulk generate (finding #63) ------------------------------------------------------------
+// generateReviewsForItems is a thin per-item loop over the exact, unmodified generatePartnerReviewDraft -
+// deterministic reviewRef, scope check and #64/#66 evidence derivation are all inherited for free, so these
+// tests focus on the bulk-specific contract: per-item results, dedup, partial success and no new duplicate
+// version under replay/concurrency. Fixtures use a bare seedPartner() throughout - generation has no evidence
+// minimum, so none of these need real Assignment/Content/Analytics data.
+describe("finding #63: bulk generate (generateReviewsForItems)", () => {
+  it("a single item behaves exactly like generatePartnerReviewDraft", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+
+    const result = await generateReviewsForItems(manager, { items: [{ partnerRef: partner.partnerRef, periodKey: "2019-03" }] }, "req-bulk-single");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.results).toHaveLength(1);
+    const [only] = result.data.results;
+    expect(only).toMatchObject({ outcome: "created", error: null });
+    expect(only!.reviewRef).toBe(reviewRefFor(partner.partnerRef, "2019-03"));
+    reviewRefsToClean.add(only!.reviewRef!);
+  });
+
+  it("multiple Partners, same period: each resolves independently", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partners = await Promise.all([seedPartner(), seedPartner(), seedPartner()]);
+
+    const result = await generateReviewsForItems(manager, { items: partners.map((p) => ({ partnerRef: p.partnerRef, periodKey: "2019-03" })) }, "req-bulk-multi-partner");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.results).toHaveLength(3);
+    for (const r of result.data.results) {
+      expect(r.outcome).toBe("created");
+      reviewRefsToClean.add(r.reviewRef!);
+    }
+    expect(new Set(result.data.results.map((r) => r.reviewRef)).size).toBe(3);
+  });
+
+  it("one Partner, multiple periods: each period resolves independently", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+
+    const result = await generateReviewsForItems(
+      manager,
+      { items: [{ partnerRef: partner.partnerRef, periodKey: "2019-03" }, { partnerRef: partner.partnerRef, periodKey: "2019-02" }] },
+      "req-bulk-multi-period",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.results).toHaveLength(2);
+    expect(result.data.results.every((r) => r.outcome === "created")).toBe(true);
+    const marchRef = result.data.results.find((r) => r.item.periodKey === "2019-03")!.reviewRef!;
+    const febRef = result.data.results.find((r) => r.item.periodKey === "2019-02")!.reviewRef!;
+    expect(marchRef).not.toBe(febRef);
+    reviewRefsToClean.add(marchRef);
+    reviewRefsToClean.add(febRef);
+  });
+
+  it("the same item named twice in one request dedupes to a single result", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+
+    const result = await generateReviewsForItems(
+      manager,
+      { items: [{ partnerRef: partner.partnerRef, periodKey: "2019-03" }, { partnerRef: partner.partnerRef, periodKey: "2019-03" }] },
+      "req-bulk-dedupe",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.results).toHaveLength(1);
+    expect(result.data.results[0]!.outcome).toBe("created");
+    reviewRefsToClean.add(result.data.results[0]!.reviewRef!);
+  });
+
+  it("an existing current Review is returned as existing, not duplicated", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+    const pre = await generateFor(manager, partner.partnerRef, "2019-03");
+    const reviewRef = pre.review.head.reviewRef;
+
+    const result = await generateReviewsForItems(manager, { items: [{ partnerRef: partner.partnerRef, periodKey: "2019-03" }] }, "req-bulk-existing");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.results[0]).toMatchObject({ outcome: "existing", reviewRef, error: null });
+    expect(await subcollectionCount(reviewRef, PARTNER_REVIEWS_COLLECTIONS.versions)).toBe(1);
+  });
+
+  it("a finalized Review is never silently overwritten by bulk generate", async () => {
+    const partner = await seedPartner();
+    const { reviewRef, finalized } = await generateAndFinalize(partner.partnerRef, "2019-03");
+    const docVersionBefore = finalized.selectedVersion!.docVersion;
+
+    const manager = await actorFor("partnership_manager");
+    const result = await generateReviewsForItems(manager, { items: [{ partnerRef: partner.partnerRef, periodKey: "2019-03" }] }, "req-bulk-finalized");
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.results[0]).toMatchObject({ outcome: "existing", reviewRef, error: null });
+
+    expect(await subcollectionCount(reviewRef, PARTNER_REVIEWS_COLLECTIONS.versions)).toBe(1);
+    const headAfter = JSON.parse(await rawDoc(partnerReviewsCollection().doc(reviewRef)));
+    expect(headAfter.docVersion).toBe(docVersionBefore);
+    expect(headAfter.latestStatus).toBe("FINALIZED");
+  });
+
+  it("a mixed batch of new and already-existing items returns per-item results without failing the batch", async () => {
+    const manager = await actorFor("partnership_manager");
+    const existingPartner = await seedPartner();
+    const pre = await generateFor(manager, existingPartner.partnerRef, "2019-03");
+    const newPartner = await seedPartner();
+
+    const result = await generateReviewsForItems(
+      manager,
+      {
+        items: [
+          { partnerRef: existingPartner.partnerRef, periodKey: "2019-03" },
+          { partnerRef: newPartner.partnerRef, periodKey: "2019-03" },
+        ],
+      },
+      "req-bulk-mixed",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    const outcomes = result.data.results.map((r) => r.outcome).sort();
+    expect(outcomes).toEqual(["created", "existing"]);
+    const created = result.data.results.find((r) => r.outcome === "created")!;
+    reviewRefsToClean.add(created.reviewRef!);
+    expect(result.data.results.find((r) => r.outcome === "existing")!.reviewRef).toBe(pre.review.head.reviewRef);
+  });
+
+  it("an out-of-scope Partner item is denied safely and does not block the rest of the batch", async () => {
+    const manager = await actorFor("partnership_manager");
+    const outOfScope = await seedPartner({ regionIds: ["Karnataka"] });
+    const inScope = await seedPartner({ regionIds: ["Kerala"] });
+
+    const result = await generateReviewsForItems(
+      manager,
+      {
+        items: [
+          { partnerRef: outOfScope.partnerRef, periodKey: "2019-03" },
+          { partnerRef: inScope.partnerRef, periodKey: "2019-03" },
+        ],
+      },
+      "req-bulk-scope",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.results).toHaveLength(2);
+    const denied = result.data.results.find((r) => r.item.partnerRef === outOfScope.partnerRef)!;
+    expect(denied.outcome).toBe("error");
+    expect(denied.error).toMatch(/scope_denied/);
+    expect(denied.reviewRef).toBeNull();
+    const allowed = result.data.results.find((r) => r.item.partnerRef === inScope.partnerRef)!;
+    expect(allowed.outcome).toBe("created");
+    reviewRefsToClean.add(allowed.reviewRef!);
+    expect((await partnerReviewsCollection().where("partnerRef", "==", outOfScope.partnerRef).get()).size).toBe(0);
+  });
+
+  it("an unknown Partner and an invalid period are per-item errors, not batch failures", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+
+    const result = await generateReviewsForItems(
+      manager,
+      {
+        items: [
+          { partnerRef: partner.partnerRef, periodKey: "2019-03" },
+          { partnerRef: "no-such-partner", periodKey: "2019-03" },
+          { partnerRef: partner.partnerRef, periodKey: "2999-01" },
+        ],
+      },
+      "req-bulk-invalid-items",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) return;
+    expect(result.data.results).toHaveLength(3);
+    const valid = result.data.results.find((r) => r.item.partnerRef === partner.partnerRef && r.item.periodKey === "2019-03")!;
+    expect(valid.outcome).toBe("created");
+    reviewRefsToClean.add(valid.reviewRef!);
+    expect(result.data.results.find((r) => r.item.partnerRef === "no-such-partner")!.outcome).toBe("error");
+    expect(result.data.results.find((r) => r.item.periodKey === "2999-01")!.outcome).toBe("error");
+  });
+
+  it("two concurrent bulk requests for the same Partner+period produce no duplicate Review version", async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+
+    const results = await Promise.all(
+      [1, 2].map(() => generateReviewsForItems(manager, { items: [{ partnerRef: partner.partnerRef, periodKey: "2019-03" }] }, "req-bulk-concurrent")),
+    );
+    expect(results.every((r) => r.ok)).toBe(true);
+    const outcomes = results.map((r) => (r.ok ? r.data.results[0]!.outcome : "error")).sort();
+    expect(outcomes).toEqual(["created", "existing"]);
+
+    const reviewRef = reviewRefFor(partner.partnerRef, "2019-03");
+    reviewRefsToClean.add(reviewRef);
+    expect((await partnerReviewsCollection().where("partnerRef", "==", partner.partnerRef).get()).size).toBe(1);
+    expect(await subcollectionCount(reviewRef, PARTNER_REVIEWS_COLLECTIONS.versions)).toBe(1);
+  });
+
+  it(`exceeding MAX_BULK_REVIEW_ITEMS (${MAX_BULK_REVIEW_ITEMS}) is rejected up front, writing nothing`, async () => {
+    const manager = await actorFor("partnership_manager");
+    const partner = await seedPartner();
+    const items = Array.from({ length: MAX_BULK_REVIEW_ITEMS + 1 }, (_, i) => ({ partnerRef: partner.partnerRef, periodKey: `20${String(19 + Math.floor(i / 12)).padStart(2, "0")}-${String((i % 12) + 1).padStart(2, "0")}` }));
+
+    const result = await generateReviewsForItems(manager, { items }, "req-bulk-too-many");
+    expect(result).toMatchObject({ ok: false, code: "invalid_input" });
+    expect((await partnerReviewsCollection().where("partnerRef", "==", partner.partnerRef).get()).size).toBe(0);
+  });
+
+  it("a caller without create access is denied the whole request up front (action_denied), writing nothing", async () => {
+    const viewer = await actorFor("viewer");
+    const partner = await seedPartner();
+
+    const result = await generateReviewsForItems(viewer, { items: [{ partnerRef: partner.partnerRef, periodKey: "2019-03" }] }, "req-bulk-unauthorized");
+    expect(result).toMatchObject({ ok: false, code: "unauthorized", reason: "action_denied" });
     expect((await partnerReviewsCollection().where("partnerRef", "==", partner.partnerRef).get()).size).toBe(0);
   });
 });
@@ -1234,12 +1453,12 @@ function expectAll(json: string, needles: string[]) {
 // Everything in a production/compliance/performance row that is NOT identity (must be canonical for every actor).
 function sanitizedRows(snapshot: { production: { assignments: object[] }; compliance: { assignments: object[] }; performance: { records: object[] } }) {
   const drop = (row: object, keys: string[]) => Object.fromEntries(Object.entries(row).filter(([key]) => !keys.includes(key)));
-  const thread = (row: object) => {
-    const t = (row as { thread: object | null }).thread;
-    return t ? drop(t, ["contentRef", "links", "redactedContext"]) : null;
+  const threads = (row: object) => {
+    const list = (row as { threads: object[] }).threads;
+    return list.map((t) => drop(t, ["contentRef", "links", "redactedContext"]));
   };
   return {
-    production: snapshot.production.assignments.map((row) => ({ ...drop(row, ["itemKey", "assignmentRef", "campaignRef", "campaignName", "thread", "redactedContext"]), thread: thread(row) })),
+    production: snapshot.production.assignments.map((row) => ({ ...drop(row, ["itemKey", "assignmentRef", "campaignRef", "campaignName", "threads", "redactedContext"]), threads: threads(row) })),
     compliance: snapshot.compliance.assignments.map((row) => drop(row, ["itemKey", "assignmentRef", "redactedContext"])),
     performance: snapshot.performance.records.map((row) => {
       const provenance = drop((row as { provenance: object }).provenance, ["batchRef", "sheetName", "sourceRowNumber"]);
@@ -1369,7 +1588,7 @@ describe("actor-scoped source context (Step 13A.1)", () => {
     expect(hiddenRows).toHaveLength(1);
     expect(hiddenRows[0]).toMatchObject({ campaignRef: null, campaignName: null, status: "IN_PROGRESS", dueAt: "2019-03-12", eventDate: "2019-03-12", requiredCount: 2 });
     expect(hiddenRows[0]!.redactedContext).toEqual(expect.arrayContaining([{ sourceType: "assignment", redacted: true }, { sourceType: "campaign", redacted: true }, { sourceType: "content", redacted: true }]));
-    expect(hiddenRows[0]!.thread).toMatchObject({ contentRef: null, links: null, linkCount: 1, status: "UNDER_REVIEW" });
+    expect(hiddenRows[0]!.threads[0]).toMatchObject({ contentRef: null, links: null, linkCount: 1, status: "UNDER_REVIEW" });
     expect(typeof hiddenRows[0]!.itemKey).toBe("string");
     const hiddenRecord = m.snapshot.performance.records.find((r) => r.sourceRecordRef === null)!;
     expect(hiddenRecord).toMatchObject({ postUrl: null, matchedContentRef: null, provenance: { batchRef: null, sheetName: null, sourceRowNumber: null }, metrics: { likes: 222 } });
@@ -1453,7 +1672,7 @@ describe("actor-scoped source context (Step 13A.1)", () => {
     expectNone(analystJson, [fx.r2.sourceRef, fx.r2.batchRef, fx.r2.sheetName, '"sourceRowNumber":4417', fx.campOut.name, fx.campOut.campaignRef, fx.t2.contentRef]);
     // No Assignment/Content access: those rows carry no Assignment or Content identity.
     for (const row of an.snapshot.production.assignments) expect(row).toMatchObject({ assignmentRef: null, campaignRef: null, campaignName: null });
-    for (const row of an.snapshot.production.assignments) expect(row.thread?.contentRef ?? null).toBeNull();
+    for (const row of an.snapshot.production.assignments) for (const thread of row.threads) expect(thread.contentRef).toBeNull();
     expect(an.withheldSourceCounts).toEqual({ assignment: 3, campaign: 2, content: 2, analyticsSourceRecord: 1 });
     expect(an.sourceRefs).toEqual([{ type: "analyticsSourceRecord", ref: fx.r1.sourceRef }]);
   });
@@ -1863,7 +2082,7 @@ describe("commercial evidence in the stored snapshot (Step 13A.1 revised)", () =
       requirementSource: { agreementRef: `agr-${fx.tag}`, agreementVersion: 3, requirementSourceRef: `req-${fx.tag}` },
       qualifyingUnit: "approved_content_thread",
       actualQualifyingCount: 1,
-      actualCountSources: { sourceType: "content_thread", units: [{ assignmentRef: fx.a1.assignmentRef, contentRef: fx.t1.contentRef, unitCount: 1 }] },
+      actualCountSources: { sourceType: "content_thread", units: [{ assignmentRef: fx.a1.assignmentRef, contentRef: fx.t1.contentRef, sourceRecordRef: null, unitCount: 1 }] },
       variance: -1,
       evaluation: "below_requirement",
       unavailableReason: null,

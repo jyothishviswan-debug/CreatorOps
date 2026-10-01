@@ -43,6 +43,10 @@ export type DocumentView = {
 
 export const STORING_TEXT = "Storing the original Agreement…";
 
+// Finding #31: the rationale a PENDING-but-not-yet-storable version's copy was missing - storage is
+// deliberately deferred until confirmation (never for a still-mutable draft), not an incomplete/broken state.
+export const STORAGE_DEFERRED_UNTIL_CONFIRMED_TEXT = "Storage is deferred until this version is confirmed and its terms are frozen, so a Drive record is never created for content that could still change. It is stored automatically once confirmed.";
+
 // The server sends a Drive link only to a holder of the contract-detail category. A link is still rendered only when it is a plain http(s) URL -
 // never a script / data URL, whatever a stored value might be.
 export function safeDocumentLink(link: string | null | undefined): string | null {
@@ -76,7 +80,7 @@ export function buildDocumentView(input: { document: AgreementDocumentDto; canMa
     case "PENDING":
       return document.canStore
         ? { ...base, headline: "The original signed Agreement is not stored yet.", note: "It is kept safely until it is stored. A version with its own signed file must have it stored before it can be activated." }
-        : { ...base, headline: "The original signed Agreement is stored after this version is confirmed.", note: null, action: null };
+        : { ...base, headline: "The original signed Agreement is stored after this version is confirmed.", note: STORAGE_DEFERRED_UNTIL_CONFIRMED_TEXT, action: null };
     case "FAILED":
       return {
         ...base,

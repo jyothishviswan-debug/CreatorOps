@@ -24,6 +24,7 @@ import { buildHeadDisplay, carriedFinalized, computeReviewListSummary } from "./
 import { resolveActorSourceAccess } from "./source-access";
 import { redactVersionForActor } from "./source-context-redaction";
 import {
+  normalizeStoredEvidenceSnapshot,
   PARTNER_REVIEW_OPEN_STATUSES,
   partnerReviewHeadDocSchema,
   partnerReviewsConflictResult,
@@ -395,6 +396,65 @@ export async function generatePartnerReviewDraft(actor: ActorContext | null, raw
   return { ok: true, data: { outcome: "created", review: await buildReviewDetail({ actor: actor!, head: txResult.head, partner, version: txResult.version, evidence, includeFreshness: true }) } };
 }
 
+// --- Bulk generate (finding #63) ---------------------------------------------------------------
+// A batch with more items than this in one request is an anomaly, not a normal bulk action - fail
+// loud with a clear validation error rather than accepting an unbounded array.
+export const MAX_BULK_REVIEW_ITEMS = 50;
+
+const generateReviewItemSchema = z.object({ partnerRef: z.string().min(1), periodKey: z.string() }).strict();
+const generateReviewsForItemsInputSchema = z.object({ items: z.array(generateReviewItemSchema).min(1).max(MAX_BULK_REVIEW_ITEMS) }).strict();
+export type GenerateReviewsForItemsInput = z.input<typeof generateReviewsForItemsInputSchema>;
+
+export type BulkReviewItemResult = { item: { partnerRef: string; periodKey: string }; outcome: "created" | "existing" | "error"; reviewRef: string | null; error: string | null };
+export type GenerateReviewsForItemsResult = { results: BulkReviewItemResult[] };
+
+// Finding #63 (bulk Generate Review): one logical bulk request covering any number of Partner+period
+// items - the browser sends ONE request, the server orchestrates. Deliberately does NOT duplicate
+// `generatePartnerReviewDraft`'s own gate/scope/evidence-derivation/idempotent-generate logic - it
+// calls that exact, unmodified canonical function once per item. `generatePartnerReviewDraft`
+// already: (a) independently re-checks Record Scope for EACH item's own named Partner (a batch
+// authorized for Partner Reviews globally can still name one Partner outside the actor's own scope
+// among many items, and only that ONE item fails); (b) is idempotent by construction (reviewRef is
+// deterministic in partnerRef+periodKey, so a retried or concurrently-racing item can only ever
+// resolve to the ONE canonical review - see its own header comment); (c) never overwrites a
+// finalized/in-review version, since generate() has no write path to an existing head at all - an
+// existing review of ANY lifecycle state is returned read-only, never mutated; (d) inherits #64's
+// inception-period narrowing and #66's reporting-period derivation exactly, since both live entirely
+// inside the unmodified call. A single item's failure never aborts or rolls back the rest of the
+// batch - matching this codebase's own established bulk-orchestration shape
+// (e.g. Assignments' own createAssignmentsForPartners).
+export async function generateReviewsForItems(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<PartnerReviewsServiceResult<GenerateReviewsForItemsResult>> {
+  const access = await requirePartnerReviewsAccess(actor, "create");
+  if (!access.ok) return partnerReviewsUnauthorizedResult(access.reason);
+
+  const parsed = generateReviewsForItemsInputSchema.safeParse(rawInput);
+  if (!parsed.success) return partnerReviewsInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
+
+  // Dedup an identical item named more than once in the SAME request - generatePartnerReviewDraft's
+  // own idempotency already makes a repeat safe either way, but this avoids a wasted second
+  // transaction attempt (and a confusing duplicate result row) for the literal same identity.
+  const seen = new Set<string>();
+  const items: { partnerRef: string; periodKey: string }[] = [];
+  for (const item of parsed.data.items) {
+    const key = `${item.partnerRef}|${item.periodKey}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(item);
+  }
+
+  const results: BulkReviewItemResult[] = [];
+  for (const item of items) {
+    const result = await generatePartnerReviewDraft(actor, item, requestId);
+    if (!result.ok) {
+      results.push({ item, outcome: "error", reviewRef: null, error: result.message });
+      continue;
+    }
+    results.push({ item, outcome: result.data.outcome, reviewRef: result.data.review.head.reviewRef, error: null });
+  }
+
+  return { ok: true, data: { results } };
+}
+
 // --- Refresh Draft / In Review evidence ------------------------------------------------------
 
 const refreshInputSchema = z
@@ -442,7 +502,7 @@ export async function refreshPartnerReviewEvidence(actor: ActorContext | null, r
   const txResult = await db.runTransaction<RefreshTxResult>(async (tx) => {
     const [headSnap, versionSnap] = await Promise.all([tx.get(headRef), tx.get(versionRef)]);
     const headParsed = headSnap.exists ? partnerReviewHeadDocSchema.safeParse(headSnap.data()) : null;
-    const versionParsed = versionSnap.exists ? partnerReviewVersionDocSchema.safeParse(versionSnap.data()) : null;
+    const versionParsed = versionSnap.exists ? partnerReviewVersionDocSchema.safeParse(normalizeStoredEvidenceSnapshot(versionSnap.data())) : null;
     if (!headParsed?.success || !versionParsed?.success) return { kind: "not_found" };
     const freshHead = headParsed.data;
     const freshVersion = versionParsed.data;

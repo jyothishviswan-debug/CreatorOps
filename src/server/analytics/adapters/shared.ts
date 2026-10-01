@@ -4,9 +4,19 @@ import { isUnsupportedMetricId, type AnalyticsMetricId, type UnsupportedMetricId
 // recognized headers + platform evidence, never guessing" discipline
 // every adapter (Instagram/YouTube content, channel snapshot) builds on.
 // Case-insensitive, whitespace-tolerant header matching - one normalizer,
-// reused by every adapter's own alias table lookup.
+// reused by every adapter's own alias table lookup. Also folds underscores
+// and hyphens to spaces so a real snake_case/kebab-case export (e.g. a
+// Supermetrics "post_id"/"post_url" column) matches the same alias as its
+// spaced Title Case equivalent ("Post ID"/"Post URL") - no alias string
+// declared anywhere uses underscores/hyphens itself, so this only adds
+// matches, never removes one.
 export function normalizeHeaderKey(header: string): string {
-  return header.trim().toLowerCase().replace(/\s+/g, " ");
+  return header
+    .trim()
+    .toLowerCase()
+    .replace(/[_-]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 }
 
 export type HeaderAliasMap<TFieldId extends string> = Record<TFieldId, string[]>;
@@ -34,6 +44,12 @@ export type HeaderClassification<TFieldId extends string> = {
   unsupported: Map<string, UnsupportedMetricId>;
   // original header text, verbatim, left completely alone
   unrecognized: string[];
+  // Remediation-plan Wave B / finding #55 re-audit: canonical field id -> the RAW header strings
+  // (>= 2, verbatim) that all normalized to it. A collision NEVER silently picks the
+  // last-in-column-order header (the pre-fix behavior) - the field is pulled out of `recognized`
+  // entirely and reported here instead, so no column is guessed and every colliding original
+  // header stays visible to the caller.
+  ambiguous: Map<TFieldId, string[]>;
 };
 
 function buildLookup<TFieldId extends string>(aliasMap: HeaderAliasMap<TFieldId>): Map<string, TFieldId> {
@@ -47,17 +63,31 @@ function buildLookup<TFieldId extends string>(aliasMap: HeaderAliasMap<TFieldId>
 // Classifies every header in a sheet into exactly one bucket: recognized
 // (mapped to a canonical, SUPPORTED metric-registry field id),
 // unsupported (recognized as belonging to a metric this registry
-// deliberately rejects), or unrecognized (left alone, verbatim, never
-// coerced). A header can never land in more than one bucket - the
-// adapter's own alias table always wins over the shared unsupported list
-// when the SAME header text happens to appear in both (it never does in
-// practice, since the two tables are deliberately disjoint, but
-// recognized is checked first for safety).
+// deliberately rejects), unrecognized (left alone, verbatim, never
+// coerced), or ambiguous (Wave B / finding #55 re-audit - see below). A
+// header can never land in more than one bucket - the adapter's own
+// alias table always wins over the shared unsupported list when the SAME
+// header text happens to appear in both (it never does in practice,
+// since the two tables are deliberately disjoint, but recognized is
+// checked first for safety).
+//
+// COLLISION SAFETY (the re-audit's own finding): folding underscores/
+// hyphens to spaces (normalizeHeaderKey) means two DIFFERENTLY-SPELLED
+// real headers (e.g. a sheet with both "Post_ID" and "Post-ID") can now
+// normalize to the same canonical field. Before this fix, both were
+// inserted into `recognized` under their own distinct raw-header keys,
+// and `fieldValueGetter` (below) would then silently let whichever one
+// came LAST in column order win, discarding the other's entire column
+// with zero indication anywhere. Fixed by grouping every header that
+// WOULD recognize to the same field first: exactly one candidate keeps
+// it in `recognized`; two or more moves the field to `ambiguous` instead
+// (never guessed) with every colliding raw header preserved for the
+// caller to surface.
 export function classifyHeaders<TFieldId extends string>(headers: string[], aliasMap: HeaderAliasMap<TFieldId>): HeaderClassification<TFieldId> {
   const recognizedLookup = buildLookup(aliasMap);
   const unsupportedLookup = buildLookup(SHARED_UNSUPPORTED_HEADER_ALIASES);
 
-  const recognized = new Map<string, TFieldId>();
+  const candidatesByField = new Map<TFieldId, string[]>();
   const unsupported = new Map<string, UnsupportedMetricId>();
   const unrecognized: string[] = [];
 
@@ -65,7 +95,9 @@ export function classifyHeaders<TFieldId extends string>(headers: string[], alia
     const key = normalizeHeaderKey(header);
     const recognizedField = recognizedLookup.get(key);
     if (recognizedField !== undefined) {
-      recognized.set(header, recognizedField);
+      const existing = candidatesByField.get(recognizedField);
+      if (existing) existing.push(header);
+      else candidatesByField.set(recognizedField, [header]);
       continue;
     }
     const unsupportedField = unsupportedLookup.get(key);
@@ -76,7 +108,14 @@ export function classifyHeaders<TFieldId extends string>(headers: string[], alia
     unrecognized.push(header);
   }
 
-  return { recognized, unsupported, unrecognized };
+  const recognized = new Map<string, TFieldId>();
+  const ambiguous = new Map<TFieldId, string[]>();
+  for (const [fieldId, rawHeaders] of candidatesByField) {
+    if (rawHeaders.length === 1) recognized.set(rawHeaders[0]!, fieldId);
+    else ambiguous.set(fieldId, rawHeaders);
+  }
+
+  return { recognized, unsupported, unrecognized, ambiguous };
 }
 
 // A generic header-keyed row (exactly what the xlsx-parser hands back

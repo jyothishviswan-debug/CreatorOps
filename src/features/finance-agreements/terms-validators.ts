@@ -126,9 +126,10 @@ export function validateQualifyingCount(text: string): ValidationResult<number> 
   return okResult(count);
 }
 
-// Only the two supported operational units; anything else must be mapped by the person first.
+// The current unit, or (backward compat only) a legacy unit an existing Agreement already has confirmed;
+// anything else must be mapped by the person first.
 export function validateQualifyingUnit(value: string): ValidationResult<string> {
-  return isSupportedQualifyingUnit(value) ? okResult(value) : fail("Choose Approved Content or Approved current link.");
+  return isSupportedQualifyingUnit(value) ? okResult(value) : fail("Choose Monthly required posts/content.");
 }
 
 // --- Platforms -----------------------------------------------------------------------------------------------------------------------------

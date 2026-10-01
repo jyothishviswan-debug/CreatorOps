@@ -89,6 +89,12 @@ export function PublicSubmissionPage({ token, initial }: { token: string; initia
     if (initial && initial.threadStatus === "REVISION_REQUESTED" && initial.currentLinks.length > 0) {
       return initial.currentLinks.map((link) => ({ platform: link.platform, url: link.url }));
     }
+    // Finding #50 (reopened): requiredCount counts separate approved
+    // Content records across submission cycles, never links inside one
+    // submission - so this form always starts from a single row
+    // ("+ Add another link" below is for cross-posting one deliverable to
+    // several platforms, a different thing). Pre-filling requiredCount
+    // rows here was the old, now-reverted assumption.
     return [{ platform: initial?.allowedPlatforms[0] ?? "", url: "" }];
   });
   const [busy, setBusy] = useState(false);
@@ -116,15 +122,36 @@ export function PublicSubmissionPage({ token, initial }: { token: string; initia
         <div className="publiccard">
           <div className="panel" style={{ marginBottom: 16 }}>
             <div className="panelbody">
+              {/* Finding #47/#52 presentation order: 1) Campaign Objective, 2) Campaign Resources,
+                  3) structured Assignment requirements, 4) Partner-specific instructions if
+                  present, 5) optional Assignment-specific override if present. No empty
+                  cards/headings - every section below only renders when it has real content. */}
               <h1 style={{ fontSize: 20 }}>{initial.campaignName}</h1>
-              <p className="detailcopy" style={{ marginTop: 4 }}>
-                {initial.assignmentDisplayContext}
-              </p>
-
-              {initial.instructions && (
-                <p className="detailcopy" style={{ marginTop: 14 }}>
-                  {initial.instructions}
+              {initial.campaignObjective && (
+                <p className="detailcopy" style={{ marginTop: 4 }}>
+                  {initial.campaignObjective}
                 </p>
+              )}
+
+              {initial.campaignResources.length > 0 && (
+                <div style={{ marginTop: 14 }}>
+                  <p className="foundationnote" style={{ marginBottom: 6 }}>
+                    Resources
+                  </p>
+                  {initial.campaignResources.map((resource, index) => (
+                    <div key={`${resource.type}-${index}`} style={{ marginBottom: 4 }}>
+                      {resource.type === "TEXT" ? (
+                        <p className="detailcopy">
+                          <b>{resource.label}:</b> {resource.content}
+                        </p>
+                      ) : resource.url ? (
+                        <a href={resource.url} target="_blank" rel="noreferrer noopener">
+                          {resource.label}
+                        </a>
+                      ) : null}
+                    </div>
+                  ))}
+                </div>
               )}
 
               <div style={{ marginTop: 14 }}>
@@ -144,6 +171,12 @@ export function PublicSubmissionPage({ token, initial }: { token: string; initia
                   <div className="kv">
                     <span>Formats</span>
                     <b>{initial.formats.join(", ")}</b>
+                  </div>
+                )}
+                {initial.requiredCount > 1 && (
+                  <div className="kv">
+                    <span>Submissions required</span>
+                    <b>{initial.requiredCount} approved in total</b>
                   </div>
                 )}
               </div>
@@ -167,6 +200,21 @@ export function PublicSubmissionPage({ token, initial }: { token: string; initia
                       </a>
                     </div>
                   ))}
+                </div>
+              )}
+
+              {initial.instructions && (
+                <p className="detailcopy" style={{ marginTop: 14 }}>
+                  {initial.instructions}
+                </p>
+              )}
+
+              {initial.contentRequirementSummary && (
+                <div style={{ marginTop: 14 }}>
+                  <p className="foundationnote" style={{ marginBottom: 4 }}>
+                    Additional notes for this submission
+                  </p>
+                  <p className="detailcopy">{initial.contentRequirementSummary}</p>
                 </div>
               )}
 

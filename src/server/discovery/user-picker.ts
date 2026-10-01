@@ -32,3 +32,20 @@ export async function searchManagerCandidates(actor: ActorContext | null, rawInp
   const page = await listUserDocs({ limit: parsed.data.limit ?? 8, active: true, emailPrefix: parsed.data.emailPrefix.toLowerCase() });
   return { ok: true, data: page.users.map((user) => ({ userRef: user.userRef, displayName: user.displayName, email: user.email })) };
 }
+
+// Finding #12: same bounded search over the same underlying users
+// collection as Manager's own picker, gated by the owner-assignment
+// action instead.
+export type OwnerCandidateDto = { userRef: string; displayName: string; email: string };
+
+export async function searchOwnerCandidates(actor: ActorContext | null, rawInput: unknown): Promise<DiscoveryServiceResult<OwnerCandidateDto[]>> {
+  if (!actor) return discoveryUnauthorizedResult("not_authenticated");
+  const gate = await requireDiscoveryAccess(actor, "manage_owner_assignment");
+  if (!gate.ok) return discoveryUnauthorizedResult(gate.reason);
+
+  const parsed = searchInputSchema.safeParse(rawInput);
+  if (!parsed.success) return discoveryInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
+
+  const page = await listUserDocs({ limit: parsed.data.limit ?? 8, active: true, emailPrefix: parsed.data.emailPrefix.toLowerCase() });
+  return { ok: true, data: page.users.map((user) => ({ userRef: user.userRef, displayName: user.displayName, email: user.email })) };
+}

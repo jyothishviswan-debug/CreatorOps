@@ -1,4 +1,5 @@
 import { listAssignments } from "@/server/assignments/assignment-service";
+import { isAssignmentOverdue } from "@/server/assignments/overdue";
 import type { ActorContext } from "@/server/authz/types";
 import { getCampaign } from "@/server/campaigns/campaign-service";
 import { listContent } from "@/server/content/content-service";
@@ -40,7 +41,7 @@ export async function runCampaignDeliveryReport(actor: ActorContext, appliedFilt
   const now = generatedAt;
 
   const completedAssignmentCount = assignments.filter((a) => a.status === "COMPLETED").length;
-  const overdueAssignmentCount = assignments.filter((a) => a.brief.dueAt !== null && a.brief.dueAt < now && a.status !== "COMPLETED" && a.status !== "CANCELLED").length;
+  const overdueAssignmentCount = assignments.filter((a) => isAssignmentOverdue(a, now)).length;
   const contentApprovedCount = content.filter((c) => c.status === "APPROVED").length;
   const contentUnderReviewCount = content.filter((c) => c.status === "UNDER_REVIEW" || c.status === "REVISION_REQUESTED").length;
 
@@ -50,7 +51,7 @@ export async function runCampaignDeliveryReport(actor: ActorContext, appliedFilt
     partnerDisplayName: a.partnerDisplayName,
     status: a.status,
     dueAt: a.brief.dueAt,
-    overdue: a.brief.dueAt !== null && a.brief.dueAt < now && a.status !== "COMPLETED" && a.status !== "CANCELLED",
+    overdue: isAssignmentOverdue(a, now),
   }));
 
   const rows: ReportRow[] = [

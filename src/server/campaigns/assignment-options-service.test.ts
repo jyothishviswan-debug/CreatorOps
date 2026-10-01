@@ -13,11 +13,12 @@ import {
 // what actually leaves the server for the Partner/Account pickers.
 
 describe("toSafePartnerOption", () => {
-  it("exposes ONLY partnerRef, displayName and region labels - never email/phone/legalName/owner", () => {
+  it("exposes ONLY partnerRef, displayName, region labels and languageIds - never email/phone/legalName/owner", () => {
     const leaky = {
       partnerRef: "p-1",
       displayName: "Creator House",
       regionIds: ["Kerala"],
+      languageIds: ["Malayalam", "English"],
       email: "secret@example.com",
       phone: "+91 99999 99999",
       legalName: "Creator House Pvt Ltd",
@@ -26,11 +27,17 @@ describe("toSafePartnerOption", () => {
       tier: "gold",
     };
     const option = toSafePartnerOption(leaky);
-    expect(option).toEqual({ partnerRef: "p-1", displayName: "Creator House", regionLabels: ["Kerala"] });
+    expect(option).toEqual({ partnerRef: "p-1", displayName: "Creator House", regionLabels: ["Kerala"], languageIds: ["Malayalam", "English"] });
     const serialized = JSON.stringify(option);
     for (const forbidden of ["secret@example.com", "99999", "Pvt Ltd", "owner", "raw-firebase-uid", "gold", "email", "phone", "legalName"]) {
       expect(serialized).not.toContain(forbidden);
     }
+  });
+
+  // Finding #49's own root-cause claim, pinned directly: languageIds must survive this projection.
+  it("finding #49: languageIds survive the safe projection", () => {
+    expect(toSafePartnerOption({ partnerRef: "p-2", displayName: "Studio North", regionIds: [], languageIds: ["Hindi"] }).languageIds).toEqual(["Hindi"]);
+    expect(toSafePartnerOption({ partnerRef: "p-3", displayName: "No Languages Yet", regionIds: [], languageIds: [] }).languageIds).toEqual([]);
   });
 });
 
@@ -95,7 +102,7 @@ describe("buildCampaignContext", () => {
       startDate: "2026-01-01",
       endDate: "2026-06-01",
       // fields a full CampaignDto carries that must NOT be copied through:
-      ...({ campaignRef: "ref-1", defaultReviewPolicy: "REVIEW_REQUIRED", ownerRef: "o", criteria: { targetAudience: ["India 1"] } } as object),
+      ...({ campaignRef: "ref-1", defaultReviewPolicy: "REVIEW_REQUIRED", ownerRef: "o", criteria: { targetAudience: ["India 1"], languageIds: ["Malayalam"] } } as object),
     } as Parameters<typeof buildCampaignContext>[0]);
     expect(context).toEqual({
       name: "Civic Voices",
@@ -107,6 +114,7 @@ describe("buildCampaignContext", () => {
       regionIds: ["Kerala"],
       startDate: "2026-01-01",
       endDate: "2026-06-01",
+      languageIds: ["Malayalam"],
     });
     const serialized = JSON.stringify(context);
     for (const forbidden of ["ref-1", "REVIEW_REQUIRED", "defaultReviewPolicy", "targetAudience", "ownerRef"]) expect(serialized).not.toContain(forbidden);

@@ -2,7 +2,7 @@ import { afterEach, describe, expect, expectTypeOf, it, vi } from "vitest";
 import type { z } from "zod";
 
 import type { PartnerReviewVersionDto } from "./client-dto";
-import { buildCommercialEvidence, classifyFormats, isSupportedQualifyingUnit, selectFollowerSnapshotCandidates, type ChannelSnapshotRecordSource } from "./commercial-builder";
+import { buildCommercialEvidence, classifyFormats, isSupportedQualifyingUnit, qualifyingAnalyticsPostUnits, selectFollowerSnapshotCandidates, type ChannelSnapshotRecordSource } from "./commercial-builder";
 import { commercialOrNeutral, neutralCommercialEvidence } from "./commercial-neutral";
 import {
   CommercialPolicyContractError,
@@ -145,6 +145,7 @@ function input(over: Partial<BuildEvidenceInput> = {}): BuildEvidenceInput {
     assignmentScanTruncated: false,
     assignmentsScanned: ASSIGNMENTS.length,
     threads: THREADS,
+    contentScanTruncated: false,
     analyticsRecords: [],
     analyticsScanTruncated: false,
     analyticsRecordsScanned: 0,
@@ -214,8 +215,8 @@ describe("monthly deliverable (Agreement-governed, from canonical APPROVED Conte
       actualCountSources: {
         sourceType: "content_thread",
         units: [
-          { assignmentRef: "as-1", contentRef: "ct-1", unitCount: 1 },
-          { assignmentRef: "as-2", contentRef: "ct-2", unitCount: 1 },
+          { assignmentRef: "as-1", contentRef: "ct-1", sourceRecordRef: null, unitCount: 1 },
+          { assignmentRef: "as-2", contentRef: "ct-2", sourceRecordRef: null, unitCount: 1 },
         ],
       },
       variance: 0,
@@ -240,8 +241,8 @@ describe("monthly deliverable (Agreement-governed, from canonical APPROVED Conte
     expect(d.actualCountSources).toEqual({
       sourceType: "content_link",
       units: [
-        { assignmentRef: "as-1", contentRef: "ct-1", unitCount: 2 },
-        { assignmentRef: "as-2", contentRef: "ct-2", unitCount: 1 },
+        { assignmentRef: "as-1", contentRef: "ct-1", sourceRecordRef: null, unitCount: 2 },
+        { assignmentRef: "as-2", contentRef: "ct-2", sourceRecordRef: null, unitCount: 1 },
       ],
     });
   });
@@ -290,10 +291,97 @@ describe("monthly deliverable (Agreement-governed, from canonical APPROVED Conte
   });
 });
 
+// ---- Monthly deliverable: qualifying_analytics_post (finding #30, user-decided) -------------------------
+
+describe("monthly deliverable: qualifying_analytics_post - a SEPARATE counter from Assignment/Content-thread fulfillment", () => {
+  const REQUIREMENT_POSTS = { requiredCount: 2, qualifyingUnit: "qualifying_analytics_post", requirementSourceRef: "req-2" } as const;
+
+  it("counts distinct records that have a matchedPartnerAccountRef - MATCHED or genuinely Content-unmatched-but-owned (finding #57), never an account-less record", () => {
+    const records = [
+      record("ar-1", { matchedPartnerAccountRef: "acct-1" }),
+      record("ar-2", { normalizedUrl: "https://instagram.com/p/ar-2", matchedPartnerAccountRef: "acct-1" }),
+      // Finding #57 correction: Content-UNMATCHED but a real, deterministic Partner Account ref is
+      // still known (e.g. the handle-only account fallback, or a real-but-not-currently-valid Content
+      // claim) - this now counts. A missing Content/Assignment thread never by itself excludes a post
+      // (this counter's own top comment), and #57 stopped the old silent matchState "MATCHED" promotion
+      // that used to be the only reason this case worked at all - matchedPartnerAccountRef alone is
+      // the real, sufficient signal now.
+      record("ar-3", { normalizedUrl: "https://instagram.com/p/ar-3", matchState: "UNMATCHED", matchedContentRef: null, matchedAssignmentRef: null, matchedCampaignRef: null, matchedPartnerAccountRef: "acct-1" }),
+      // MATCHED but no Partner Account resolved at all: never counted (finding #30's own matching
+      // hierarchy fix is what makes this rare in practice, but the counter itself still requires it).
+      record("ar-4", { normalizedUrl: "https://instagram.com/p/ar-4", matchedPartnerAccountRef: null }),
+    ];
+    const d = commercialOf({ analyticsRecords: records, commercialPolicy: policyOf({ monthlyDeliverableRequirement: REQUIREMENT_POSTS }) }).monthlyDeliverable;
+    expect(d).toMatchObject({ qualifyingUnit: "qualifying_analytics_post", actualQualifyingCount: 3, variance: 1, evaluation: "exceeded", affectsPayment: true });
+    expect(d.actualCountSources).toEqual({
+      sourceType: "analytics_post",
+      units: [
+        { assignmentRef: null, contentRef: null, sourceRecordRef: "ar-1", unitCount: 1 },
+        { assignmentRef: null, contentRef: null, sourceRecordRef: "ar-2", unitCount: 1 },
+        { assignmentRef: null, contentRef: null, sourceRecordRef: "ar-3", unitCount: 1 },
+      ],
+    });
+  });
+
+  it("a spontaneous post with NO Content/Assignment thread at all still counts - lack of a thread never blocks a valid Partner Account match", () => {
+    // Finding #57: realistically Content-UNMATCHED (no thread exists to match against at all), not a
+    // silently-promoted "MATCHED" - the real signal this counter relies on is matchedPartnerAccountRef.
+    const spontaneous = record("ar-5", {
+      normalizedUrl: "https://instagram.com/p/ar-5",
+      matchState: "UNMATCHED",
+      matchEvidence: { tier: "published_url", value: "https://instagram.com/p/ar-5", reasonCode: "NO_CLAIM_FOUND", candidateCount: 0 },
+      matchedPartnerAccountRef: "acct-1",
+      matchedContentRef: null,
+      matchedAssignmentRef: null,
+      matchedCampaignRef: null,
+    });
+    const d = commercialOf({ assignments: [], threads: [], analyticsRecords: [spontaneous], commercialPolicy: policyOf({ monthlyDeliverableRequirement: { requiredCount: 1, qualifyingUnit: "qualifying_analytics_post" } }) }).monthlyDeliverable;
+    expect(d).toMatchObject({ actualQualifyingCount: 1, variance: 0, evaluation: "met" });
+  });
+
+  it("distinct is normalized platform + post URL - two source records of the exact same post count as ONE, picking the lowest ref deterministically; a different platform with the same URL counts separately", () => {
+    const built = build({
+      analyticsRecords: [
+        record("ar-9", { normalizedUrl: "https://instagram.com/p/x", matchedPartnerAccountRef: "acct-1" }),
+        record("ar-2", { normalizedUrl: "https://instagram.com/p/x", matchedPartnerAccountRef: "acct-1" }),
+        record("ar-3", { normalizedUrl: "https://instagram.com/p/x", platform: "youtube", matchedPartnerAccountRef: "acct-1" }),
+      ],
+    });
+    const units = qualifyingAnalyticsPostUnits(built.snapshot.performance.records);
+    expect(units).toEqual([
+      { sourceRecordRef: "ar-2", unitCount: 1 },
+      { sourceRecordRef: "ar-3", unitCount: 1 },
+    ]);
+  });
+
+  it("Assignment/Content-thread fulfillment (qualifying_content_thread etc.) is untouched by Analytics evidence, and vice versa - genuinely separate counters", () => {
+    // The exact same input that produces approved_content_thread=2 (see the earlier describe block)
+    // produces a completely independent qualifying_analytics_post count driven ONLY by Analytics records.
+    const withBoth = commercialOf({
+      analyticsRecords: [record("ar-1", { matchedPartnerAccountRef: "acct-1" })],
+      commercialPolicy: policyOf({ monthlyDeliverableRequirement: REQUIREMENT_POSTS }),
+    }).monthlyDeliverable;
+    expect(withBoth.actualQualifyingCount).toBe(1); // 1 Analytics post, NOT 2 (the Content-thread count) and not blended with it.
+  });
+
+  it("a truncated Analytics read refuses to evaluate (an undercount must never read as below_requirement)", () => {
+    const d = commercialOf({ analyticsScanTruncated: true, commercialPolicy: policyOf({ monthlyDeliverableRequirement: REQUIREMENT_POSTS }) }).monthlyDeliverable;
+    expect(d).toMatchObject({ evaluation: "unavailable", unavailableReason: "evidence_truncated", actualQualifyingCount: null, affectsPayment: false });
+  });
+});
+
 // ---- LFC / SFC -------------------------------------------------------------------------------------------
 
 describe("LFC / SFC classification", () => {
   const rule = { ruleRef: "rule-1", byFormat: { reel: "SFC", "long video": "LFC", VIDEO: "LFC" }, affectsPayment: true } as const;
+
+  it("qualifying_analytics_post is not applicable to LFC/SFC classification (format-based, a Content-thread concept) - honestly unavailable, never miscounted", () => {
+    const lfc = commercialOf({
+      analyticsRecords: [record("ar-1", { matchedPartnerAccountRef: "acct-1" })],
+      commercialPolicy: policyOf({ monthlyDeliverableRequirement: { requiredCount: 1, qualifyingUnit: "qualifying_analytics_post" }, lfcSfcRule: rule }),
+    }).lfcSfc;
+    expect(lfc).toMatchObject({ status: "unavailable", unavailableReason: "qualifying_unit_not_applicable_to_lfc_sfc", qualifyingUnit: "qualifying_analytics_post", qualifyingUnitSource: "agreement_requirement", lfcCount: null, sfcCount: null, units: [] });
+  });
 
   it("without an Agreement rule it is unavailable and NOTHING is inferred from platform / format / URL count / names", () => {
     const commercial = commercialOf({ commercialPolicy: policyOf({ monthlyDeliverableRequirement: REQUIREMENT_THREADS }) });
@@ -559,10 +647,18 @@ describe("followerGrowth (derived ONLY from channel snapshot Analytics records)"
 // ---- Fingerprint --------------------------------------------------------------------------------------------------------
 
 describe("source fingerprint and the commercial policy", () => {
-  // The exact fingerprint this fixture produced BEFORE commercial evidence
-  // existed (commit 1d84d38): a Partner with no governing policy must hash
-  // byte-for-byte the same, so existing versions stay current.
-  const PINNED_NULL_POLICY_FINGERPRINT = "2ec26bb8a9dedc20eb3b1228f324f5247c8cfad2ca53472c7f3e24724a6b00b1";
+  // The exact fingerprint this fixture produces for a Partner with no
+  // governing policy - re-pinned for finding #50 (reopened): schemaVersion
+  // bumped 1 -> 2 and the fingerprint's own `threads` facts now flat-map
+  // over every one of an Assignment's Content records (previously capped
+  // at one per assignmentRef), plus a new `truncated.contentScan` fact.
+  // Deliberately changes for every snapshot ever fingerprinted (an
+  // intentional one-time freshness nudge - see
+  // normalizeStoredEvidenceSnapshot's own comment in types.ts) - a Partner
+  // with no governing policy must still hash byte-for-byte the same as
+  // every OTHER no-policy Partner, which is what this test actually
+  // guards.
+  const PINNED_NULL_POLICY_FINGERPRINT = "f877ab73e7c2b2c2663b3e02f92a8ba3bd4658f63a7f5e85a8f899f4828b789e";
 
   function pinnedFixture(over: Partial<BuildEvidenceInput> = {}) {
     return buildEvidence({
@@ -591,6 +687,7 @@ describe("source fingerprint and the commercial policy", () => {
           updatedAt: "2026-03-09T10:00:00.000Z",
         },
       ],
+      contentScanTruncated: false,
       analyticsRecords: [record("src-1", { normalizedUrl: "https://instagram.com/p/a", likes: 120, matchEvidence: { tier: "published_url", value: "https://instagram.com/p/a", reasonCode: null, candidateCount: 1 } })],
       analyticsScanTruncated: false,
       analyticsRecordsScanned: 1,
@@ -1034,6 +1131,7 @@ describe("commercial evidence redaction (same per-source access sets as the rest
       assignmentScanTruncated: false,
       assignmentsScanned: 2,
       threads: [thread(S.contentA, S.assignA, { links: 2 }), thread(S.contentB, S.assignB, { links: 1 })],
+      contentScanTruncated: false,
       analyticsRecords: [record(S.recA, { likes: 60 })],
       analyticsScanTruncated: false,
       analyticsRecordsScanned: 1,
@@ -1184,5 +1282,64 @@ describe("buildCommercialEvidence is pure", () => {
     expect(a).toEqual(b);
     expect(a.commercial).toEqual(built.snapshot.commercial);
     expect(JSON.stringify(commercialInput)).toBe(frozen);
+  });
+});
+
+// ---- Finding #50 (reopened): multiple Content records feeding the Payable-facing handoff -----------------
+//
+// finance-payables/amount-determination.ts and money.ts only ever consume the
+// already-aggregated requiredCount / actualQualifyingCount numbers on this
+// handoff's monthlyDeliverable (confirmed by direct read - neither file has
+// any Content/thread awareness). So the correctness question this section
+// answers is entirely upstream of money: does a second APPROVED Content
+// record under the same Assignment genuinely get counted here, with the
+// handoff's shape otherwise identical to a single-thread scenario? A
+// self-contained fixture is used (not the shared ASSIGNMENTS/THREADS above,
+// which are deliberately one-thread-per-assignment and back several other
+// tests in this file) so this proof can put two threads on one assignmentRef
+// without disturbing anything else.
+describe("finalized-review handoff: multiple Content records under one Assignment (finding #50 reopened)", () => {
+  const twoThreadAssignments: AssignmentSource[] = [assignment("as-multi", { formats: ["reel"] })];
+  const twoApprovedThreads: ContentThreadSource[] = [thread("ct-multi-1", "as-multi", { status: "APPROVED" }), thread("ct-multi-2", "as-multi", { status: "APPROVED" })];
+  const policy = policyOf({ monthlyDeliverableRequirement: { requiredCount: 1, qualifyingUnit: "approved_content_thread", requirementSourceRef: "req-multi" } });
+
+  it("both APPROVED records are counted - actualQualifyingCount is 2, not silently collapsed to 1", () => {
+    const built = build({ assignments: twoThreadAssignments, threads: twoApprovedThreads, commercialPolicy: policy });
+    const { head, version } = finalizedDocs(built as ReturnType<typeof fullBuild>);
+    const handoff = buildFinalizedReviewHandoff({ head, version, partnerDisplayName: "Creator One" });
+
+    expect(handoff.paymentAffectingEvidence.monthlyDeliverable).toEqual({
+      requiredCount: 1,
+      requirementSource: { agreementRef: "agr-1", agreementVersion: 3, requirementSourceRef: "req-multi" },
+      qualifyingUnit: "approved_content_thread",
+      actualQualifyingCount: 2,
+      variance: 1,
+      evaluation: "exceeded",
+    });
+  });
+
+  it("the handoff shape is identical to an equivalent single-thread scenario - only the count differs, proving the money-facing structure is indifferent to how many Content records produced it", () => {
+    const singleBuilt = build({ assignments: twoThreadAssignments, threads: [thread("ct-single", "as-multi", { status: "APPROVED" })], commercialPolicy: policy });
+    const multiBuilt = build({ assignments: twoThreadAssignments, threads: twoApprovedThreads, commercialPolicy: policy });
+    const singleHandoff = buildFinalizedReviewHandoff({ ...finalizedDocs(singleBuilt as ReturnType<typeof fullBuild>), partnerDisplayName: "Creator One" });
+    const multiHandoff = buildFinalizedReviewHandoff({ ...finalizedDocs(multiBuilt as ReturnType<typeof fullBuild>), partnerDisplayName: "Creator One" });
+
+    expect(Object.keys(multiHandoff).sort()).toEqual(Object.keys(singleHandoff).sort());
+    expect(Object.keys(multiHandoff.paymentAffectingEvidence.monthlyDeliverable!).sort()).toEqual(Object.keys(singleHandoff.paymentAffectingEvidence.monthlyDeliverable!).sort());
+    expect(typeof multiHandoff.paymentAffectingEvidence.monthlyDeliverable!.actualQualifyingCount).toBe("number");
+    // Same shape, only the aggregated count (and the evaluation/variance it drives) differs.
+    expect(singleHandoff.paymentAffectingEvidence.monthlyDeliverable).toMatchObject({ actualQualifyingCount: 1, evaluation: "met", variance: 0 });
+    expect(multiHandoff.paymentAffectingEvidence.monthlyDeliverable).toMatchObject({ actualQualifyingCount: 2, evaluation: "exceeded", variance: 1 });
+  });
+
+  it("a CANCELLED thread among the two never counts - only the APPROVED one does", () => {
+    const built = build({
+      assignments: twoThreadAssignments,
+      threads: [thread("ct-multi-1", "as-multi", { status: "APPROVED" }), thread("ct-multi-2", "as-multi", { status: "CANCELLED" })],
+      commercialPolicy: policyOf({ monthlyDeliverableRequirement: { requiredCount: 1, qualifyingUnit: "approved_content_thread" } }),
+    });
+    const { head, version } = finalizedDocs(built as ReturnType<typeof fullBuild>);
+    const handoff = buildFinalizedReviewHandoff({ head, version, partnerDisplayName: "Creator One" });
+    expect(handoff.paymentAffectingEvidence.monthlyDeliverable).toMatchObject({ actualQualifyingCount: 1, evaluation: "met", variance: 0 });
   });
 });

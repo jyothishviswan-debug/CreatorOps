@@ -79,6 +79,7 @@ function built(over: Partial<BuildEvidenceInput> = {}): EvidenceSnapshot {
     assignmentScanTruncated: false,
     assignmentsScanned: 1,
     threads: [thread()],
+    contentScanTruncated: false,
     analyticsRecords: [record()],
     analyticsScanTruncated: false,
     analyticsRecordsScanned: 1,

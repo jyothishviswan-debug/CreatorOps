@@ -30,4 +30,25 @@ describe("YouTube content adapter", () => {
     expect(candidate.ignoredColumns).toEqual(["Watch Time Minutes"]);
     expect(candidate.rawPostUrl).toBe("https://youtube.com/watch?v=x");
   });
+
+  // Remediation-plan Wave B / finding #65 re-audit: no existing test exercised postDateTime alias
+  // matching at all before this.
+  it.each(["Post Date", "Publish Date", "Upload Date", "Published Date", "Published At", "Published", "published_at", "published-at"])(
+    "recognizes %s as postDateTime and parses a real ISO date value from it",
+    (header) => {
+      const headers = ["Video URL", header];
+      const rows = [{ "Video URL": "https://youtube.com/watch?v=abc", [header]: "2026-09-23T18:57:26+05:30" }];
+      const [candidate] = mapYoutubeContentRows("Sheet1", rows, headers);
+      expect(candidate.rawPostDateTime).toBe("2026-09-23T18:57:26+05:30");
+      expect(candidate.postDateTimeIso).toBe(new Date("2026-09-23T18:57:26+05:30").toISOString());
+    },
+  );
+
+  it("an invalid postDateTime value stays null, with the raw value still preserved (never dropped without a trace)", () => {
+    const headers = ["Video URL", "Post Date"];
+    const rows = [{ "Video URL": "https://youtube.com/watch?v=abc", "Post Date": "not a real date" }];
+    const [candidate] = mapYoutubeContentRows("Sheet1", rows, headers);
+    expect(candidate.postDateTimeIso).toBeNull();
+    expect(candidate.rawPostDateTime).toBe("not a real date");
+  });
 });

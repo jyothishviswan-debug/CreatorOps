@@ -20,12 +20,15 @@ describe("target-registry", () => {
     expect(getImportTarget("__totally_unregistered_kind__")).toBeNull();
   });
 
-  it("lists every registered target, and it includes both real registrants once register-targets.ts has run", async () => {
+  it("lists every registered target, and it includes every real registrant once register-targets.ts has run", async () => {
     const { registerImportTargets } = await import("./register-targets");
     registerImportTargets();
     const kinds = listImportTargets().map((t) => t.kind);
     expect(kinds).toContain("analytics");
     expect(kinds).toContain("contract_bundle");
+    // Finding #44 (user-decided): a separate, semantically correct target kind - confirms it never
+    // needed a third AnalyticsTargetKind value to exist.
+    expect(kinds).toContain("content_links");
   });
 
   it("ImportAdapterError carries its classified error through", () => {

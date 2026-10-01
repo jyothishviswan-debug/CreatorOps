@@ -11,6 +11,7 @@ import type { AddKycLinkAttachmentInput, LeadKycDto, SaveKycInput } from "@/serv
 import type { ConversionDto, ConvertLeadInput } from "@/server/discovery/conversion-service";
 import type {
   AssignManagerInput,
+  AssignOwnerInput,
   CreateLeadInput,
   ListLeadHistoryInput,
   ListLeadsInput,
@@ -27,7 +28,7 @@ import type { LeadListCursor } from "@/server/discovery/firestore";
 import type { LeadEventListCursor } from "@/server/discovery/lead-events";
 import type { LeadEvent, ReadinessResult, DuplicateCheckResult, LeadKycAttachment } from "@/server/discovery/types";
 import type { RestoreLeadInput, TransitionLeadInput } from "@/server/discovery/lifecycle-service";
-import type { ManagerCandidateDto } from "@/server/discovery/user-picker";
+import type { ManagerCandidateDto, OwnerCandidateDto } from "@/server/discovery/user-picker";
 
 export type DiscoveryApiErrorCode = "unauthorized" | "not_found" | "invalid_input" | "stale_write" | "not_ready" | "internal" | "network_error";
 
@@ -164,6 +165,10 @@ export function assignManager(leadRef: string, input: AssignManagerInput): Promi
   return call(`/api/discovery/leads/${encodeURIComponent(leadRef)}/manager`, { method: "POST", body: JSON.stringify(input) });
 }
 
+export function assignOwner(leadRef: string, input: AssignOwnerInput): Promise<DiscoveryApiResult<LeadDto>> {
+  return call(`/api/discovery/leads/${encodeURIComponent(leadRef)}/owner`, { method: "POST", body: JSON.stringify(input) });
+}
+
 // ---- KYC ----
 
 export function getLeadKyc(leadRef: string): Promise<DiscoveryApiResult<LeadKycDto | null>> {
@@ -243,4 +248,10 @@ export function getLeadHistory(leadRef: string, input: ListLeadHistoryInput = {}
 
 export function searchManagerCandidates(emailPrefix: string): Promise<DiscoveryApiResult<ManagerCandidateDto[]>> {
   return call(`/api/discovery/users/search${query({ emailPrefix })}`);
+}
+
+// ---- Owner picker (finding #12) ----
+
+export function searchOwnerCandidates(emailPrefix: string): Promise<DiscoveryApiResult<OwnerCandidateDto[]>> {
+  return call(`/api/discovery/users/search-owners${query({ emailPrefix })}`);
 }

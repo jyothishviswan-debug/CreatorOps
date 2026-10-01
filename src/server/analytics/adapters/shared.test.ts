@@ -34,6 +34,45 @@ describe("classifyHeaders", () => {
     expect(result.unsupported.size).toBe(0);
     expect(result.unrecognized).toEqual(["Totally Unknown Header"]);
   });
+
+  // Remediation-plan Wave B / finding #55 re-audit: collision safety. Before this fix, two
+  // differently-spelled headers normalizing to the same field silently let whichever came LAST in
+  // column order win - the earlier column's entire data was dropped with zero indication anywhere.
+  describe("collision safety", () => {
+    it("two DIFFERENT raw headers normalizing to the SAME field are NEVER silently resolved to one - both are reported as ambiguous, neither stays in recognized", () => {
+      const result = classifyHeaders(["Post_ID", "Post-ID"], ALIASES);
+      expect(result.recognized.size).toBe(0);
+      expect(result.ambiguous.get("postId")?.sort()).toEqual(["Post-ID", "Post_ID"].sort());
+      // deterministic regardless of column order
+      const reversed = classifyHeaders(["Post-ID", "Post_ID"], ALIASES);
+      expect(reversed.recognized.size).toBe(0);
+      expect(reversed.ambiguous.get("postId")?.sort()).toEqual(["Post-ID", "Post_ID"].sort());
+    });
+
+    it("a collision on ONE field never affects a different, unambiguous field in the same sheet", () => {
+      const result = classifyHeaders(["Post_ID", "Post-ID", "Post URL"], ALIASES);
+      expect(result.ambiguous.has("postId")).toBe(true);
+      expect(result.recognized.get("Post URL")).toBe("postUrl");
+    });
+
+    it("three or more colliding headers are ALL reported, not just the first two", () => {
+      const result = classifyHeaders(["Post ID", "Post_ID", "Post-ID"], ALIASES);
+      expect(result.ambiguous.get("postId")?.sort()).toEqual(["Post ID", "Post-ID", "Post_ID"].sort());
+    });
+
+    it("fieldValueGetter never reads ANY of the colliding columns' data once a field is ambiguous", () => {
+      const classification = classifyHeaders(["Post_ID", "Post-ID"], ALIASES);
+      const row: RawSheetRow = { Post_ID: "wrong-one", "Post-ID": "also-wrong" };
+      const get = fieldValueGetter(classification.recognized, row);
+      expect(get("postId")).toBeUndefined();
+    });
+
+    it("a literal duplicate header string (identical text twice) is ALSO treated as ambiguous, never assumed to be the same column - classifyHeaders can't safely tell two same-named columns apart from one column listed twice, so it never guesses either way. Real-world duplicate headers are additionally rejected earlier, structurally, by xlsx-parser - see xlsx-parser.test.ts", () => {
+      const result = classifyHeaders(["Post ID", "Post ID"], ALIASES);
+      expect(result.recognized.size).toBe(0);
+      expect(result.ambiguous.get("postId")).toEqual(["Post ID", "Post ID"]);
+    });
+  });
 });
 
 describe("fieldValueGetter", () => {

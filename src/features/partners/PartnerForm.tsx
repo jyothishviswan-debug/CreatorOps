@@ -198,7 +198,7 @@ export function PartnerForm(props: Props) {
             </div>
           )}
           <Fields>
-            <Field label="Full name">
+            <Field label="Full name" required>
               <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={200} />
             </Field>
             <Field label="Target Audience">

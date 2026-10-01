@@ -108,7 +108,7 @@ export function DiscoveryLeadForm(props: Props) {
       const result = await createLead({
         displayName,
         email: email.trim() || undefined,
-        phone: phone.trim() || undefined,
+        phone: phone.trim(),
         profileUrl: profileUrl.trim() || undefined,
         platform: platform.trim() || undefined,
         handle: handle.trim() || undefined,
@@ -163,7 +163,7 @@ export function DiscoveryLeadForm(props: Props) {
             </div>
           )}
           <Fields>
-            <Field label="Full name">
+            <Field label="Full name" required>
               <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} required maxLength={200} />
             </Field>
             <Field label="Profile URL">
@@ -219,8 +219,8 @@ export function DiscoveryLeadForm(props: Props) {
             <Field label="Email address">
               <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} />
             </Field>
-            <Field label="Mobile number">
-              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} />
+            <Field label="Mobile number" required={props.mode === "create"}>
+              <input type="tel" value={phone} onChange={(e) => setPhone(e.target.value)} required={props.mode === "create"} />
             </Field>
           </Fields>
 
@@ -263,7 +263,7 @@ export function DiscoveryLeadForm(props: Props) {
             <Link href={cancelHref} className="btn">
               Cancel
             </Link>
-            <button type="submit" className="btn primary" disabled={saving || !displayName.trim()}>
+            <button type="submit" className="btn primary" disabled={saving || !displayName.trim() || (props.mode === "create" && !phone.trim())}>
               {saving ? "Saving…" : props.mode === "create" ? "Create lead" : "Save changes"}
             </button>
           </div>

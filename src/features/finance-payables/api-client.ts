@@ -155,6 +155,16 @@ export function createPayable(input: PayableSourceRequestInput, options?: Payabl
   return postJson("/api/finance/payables", input, options);
 }
 
+// Finding #62: the ONE bulk-orchestration request for multiple counterparty/period items - never a
+// client-side loop of individual createPayable() calls. Always 200 with a per-item results array;
+// a single item's failure never fails the whole request.
+export type BulkPayableItemResultDto = { item: PayableSourceRequestInput; outcome: "created" | "existing" | "error"; payableRef: string | null; error: string | null };
+export type CreatePayablesForItemsResultDto = { results: BulkPayableItemResultDto[] };
+
+export function createPayablesForItems(items: PayableSourceRequestInput[], options?: PayablesRequestOptions): Promise<PayablesApiResult<CreatePayablesForItemsResultDto>> {
+  return postJson("/api/finance/payables/bulk", { items }, options);
+}
+
 // --- Read one -------------------------------------------------------------------------------------------------------------------------
 export function getPayable(payableRef: string, input: { version?: number } = {}, options?: PayablesRequestOptions): Promise<PayablesApiResult<PayableDetailDto>> {
   return getJson(payablePath(payableRef, queryString({ version: input.version })), options);

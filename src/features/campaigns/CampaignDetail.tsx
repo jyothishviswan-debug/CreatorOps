@@ -9,7 +9,7 @@ import type { CampaignDto } from "@/server/campaigns/client-dto";
 import type { CampaignDownstreamSummaryDto } from "@/server/campaigns/detail-downstream-service";
 import type { NotesMeetingsUiPermissions } from "@/server/notes-meetings";
 import { NotesMeetingsSection } from "@/features/notes-meetings/NotesMeetingsSection";
-import { absoluteTime, dateLabel, platformLabel, REVIEW_POLICY_LABELS, STATUS_LABELS, statusTone } from "./format";
+import { absoluteTime, dateLabel, platformLabel, REVIEW_POLICY_LABELS, sameNormalizedSet, STATUS_LABELS, statusTone } from "./format";
 import { CampaignHistoryPanel } from "./CampaignHistoryPanel";
 import { CampaignLifecyclePanel } from "./CampaignLifecyclePanel";
 import { CampaignDownstreamPanel } from "./CampaignDownstreamPanel";
@@ -166,14 +166,19 @@ export function CampaignDetail({ initialCampaign, initialDownstream, notesMeetin
                 <span>Languages</span>
                 <span>{campaign.criteria.languageIds.length > 0 ? campaign.criteria.languageIds.join(", ") : "—"}</span>
               </div>
-              <div className="kv">
-                <span>Categories</span>
-                <span>{campaign.criteria.categoryIds.length > 0 ? campaign.criteria.categoryIds.join(", ") : "—"}</span>
-              </div>
-              <div className="kv">
-                <span>Targeting platforms</span>
-                <span>{campaign.criteria.platforms.length > 0 ? campaign.criteria.platforms.map(platformLabel).join(", ") : "—"}</span>
-              </div>
+              {/* Finding #34: "Targeting platforms" is no longer independently user-maintained -
+                  the server mirrors it from the canonical Platforms row above on every edit that
+                  touches either field, so for any Campaign created or edited since this fix the
+                  two are always identical, and showing both would just be the exact duplicate
+                  display the finding's own test list forbids ("no duplicate platform display").
+                  Shown ONLY when a genuinely divergent legacy value survives from before this fix
+                  (historical Campaigns remain readable, never silently hidden). */}
+              {!sameNormalizedSet(campaign.platforms, campaign.criteria.platforms) && (
+                <div className="kv">
+                  <span>Targeting platforms (legacy)</span>
+                  <span>{campaign.criteria.platforms.length > 0 ? campaign.criteria.platforms.map(platformLabel).join(", ") : "—"}</span>
+                </div>
+              )}
               <div className="kv">
                 <span>Default review policy</span>
                 <span>{REVIEW_POLICY_LABELS[campaign.defaultReviewPolicy]}</span>

@@ -19,8 +19,9 @@ export { INVOICE_DOCUMENT_MIME_TYPE as INVOICE_PDF_MIME_TYPE, MAX_INVOICE_DOCUME
 //      never Drive) - a bare `store()` call from an un-overridden automated test would otherwise
 //      silently pass against the fake, defeating a test that means to prove storage is wired through
 //      a fake it controls, exactly like Agreements' real-Drive guard prevents an accidental real call;
-//   3. real Google Drive ONLY when FINANCE_INVOICE_DRIVE_PROVIDER is explicitly "google_drive" AND
-//      both credentials and a folder id are configured - configuration merely being PRESENT is never
+//   3. real Google Drive ONLY when FINANCE_INVOICE_DRIVE_PROVIDER is explicitly "google_drive" AND the
+//      shared ALLOW_REAL_EXTERNAL_SERVICES master switch (remediation-plan Wave A) is also explicitly on
+//      AND both credentials and a folder id are configured - configuration merely being PRESENT is never
 //      enough (section 7: "do not silently switch to Drive when env values happen to exist"), and a
 //      Drive configuration problem never silently falls back to the fake (section 20);
 //   4. the in-memory FAKE otherwise, as long as this is not a production runtime;
@@ -32,6 +33,7 @@ type ResolveInputs = { env: FinanceInvoiceDriveEnv; nodeEnv: string | undefined;
 export function resolveInvoiceDocumentStorageKind(inputs: ResolveInputs): "FAKE" | "GOOGLE_DRIVE" | { notConfigured: InvoiceDocumentStorageNotConfiguredReason } {
   if (inputs.testRun) return { notConfigured: "live_backend_disabled_in_tests" };
   if (inputs.env.provider === "google_drive") {
+    if (!inputs.env.allowRealExternalServices) return { notConfigured: "real_external_services_not_allowed" };
     if (!inputs.env.credentialsPath?.trim()) return { notConfigured: "missing_credentials" };
     if (!inputs.env.folderId) return { notConfigured: "missing_folder" };
     return "GOOGLE_DRIVE";

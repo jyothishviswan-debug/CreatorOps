@@ -546,20 +546,26 @@ describe("Agreement document storage (Drive) boundaries", () => {
     expect(read(path.join(moduleDir, "document-storage/google-drive.ts"))).not.toMatch(/^import[^;]*from\s+"googleapis"/m);
   });
 
-  it("no TEST file can reach real Drive: only the adapter's own mocked-googleapis unit test imports the real adapter or 'googleapis'", () => {
+  it("no TEST file can reach real Drive: only each Drive-backed module's own mocked-googleapis unit test imports a real adapter or 'googleapis'", () => {
+    // Findings #36/#37 added a second, structurally-identical Drive integration (Campaign Resource
+    // uploads, src/server/campaigns/resource-storage/) - its own mocked-googleapis unit test is exempted
+    // here exactly like this module's own document-storage.test.ts, never a repo-wide free pass.
+    const ownTestSuffixes = [`document-storage${path.sep}document-storage.test.ts`, `resource-storage${path.sep}resource-storage.test.ts`];
     const offenders = allSource
-      .filter((file) => isTest(file) && !file.endsWith(`document-storage${path.sep}document-storage.test.ts`))
+      .filter((file) => isTest(file) && !ownTestSuffixes.some((suffix) => file.endsWith(suffix)))
       .filter((file) => {
         const source = read(file);
-        return /createGoogleDriveAgreementStorage|document-storage\/google-drive|from\s+"googleapis"|import\(\s*"googleapis"\s*\)|vi\.mock\(\s*"googleapis"/.test(source);
+        return /createGoogleDriveAgreementStorage|createGoogleDriveCampaignResourceStorage|document-storage\/google-drive|resource-storage\/google-drive|from\s+"googleapis"|import\(\s*"googleapis"\s*\)|vi\.mock\(\s*"googleapis"/.test(source);
       })
       .map(rel);
     // (any module's own *-static.test.ts legitimately names these identifiers inside string / regex
     // literals for its OWN Drive-boundary guards - e.g. Finance Invoices' equivalent guard, Step 16E -
-    // without ever actually importing the real adapter or 'googleapis' itself)
+    // without ever actually importing a real adapter or 'googleapis' itself)
     expect(offenders.filter((name) => !/-static\.test\.ts$/.test(name))).toEqual([]);
     const own = read(path.join(moduleDir, "document-storage/document-storage.test.ts"));
     expect(own).toMatch(/vi\.mock\(\s*"googleapis"/);
+    const resourceStorageOwn = read(path.join(repoRoot, "src/server/campaigns/resource-storage/resource-storage.test.ts"));
+    expect(resourceStorageOwn).toMatch(/vi\.mock\(\s*"googleapis"/);
   });
 
   it("the real adapter checks the automated-test-run guard FIRST on every call, and the guard covers both NODE_ENV=test and VITEST", () => {
@@ -591,9 +597,10 @@ describe("Agreement document storage (Drive) boundaries", () => {
     expect(example).toMatch(/^# FINANCE_AGREEMENT_DRIVE_MODE=fake/m);
   });
 
-  it("the fake selection is honoured only outside production, and the fake link host is the reserved .invalid one", () => {
+  it("real Drive requires BOTH an explicit mode='real' opt-in AND the shared external-services switch (remediation-plan Wave A / finding #69); the fake link host is the reserved .invalid one", () => {
     const resolver = code.get("src/server/finance-agreements/document-storage/index.ts")!;
-    expect(resolver).toMatch(/mode === "fake" && inputs\.nodeEnv !== "production"/);
+    expect(resolver).toMatch(/env\.mode === "real"/);
+    expect(resolver).toMatch(/env\.allowRealExternalServices/);
     expect(read(path.join(moduleDir, "document-storage/in-memory.ts"))).toMatch(/https:\/\/drive\.invalid\/fake\//);
   });
 

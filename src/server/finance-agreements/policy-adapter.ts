@@ -33,10 +33,24 @@ import { agreementHeadDocSchema, type AgreementVersionDoc } from "./types";
 //                             effectiveFrom. So a forward revision (v2 from July) leaves v1 governing
 //                             the months before July - historical reviews keep their Agreement - while a
 //                             same-dates correction (v2 from the same date) leaves v1 governing nothing.
-//   4. The version governs a month only if its range COVERS THE WHOLE MONTH (first to last UTC day).
-//      A month the range covers only partly (an Agreement starting on the 15th, or ending / being
-//      superseded mid-month) has NO governing version: a monthly requirement is never applied to a
-//      partial month, and nothing is prorated (there is no money calculation anywhere).
+//   4. The version governs a month only if its range COVERS THE WHOLE MONTH (first to last UTC day),
+//      WITH ONE NAMED EXCEPTION (Step 14D): an Agreement's very FIRST version (version 1) also
+//      governs its own INCEPTION MONTH - the one calendar month effectiveFrom itself falls inside -
+//      even though that month starts before effectiveFrom. A real Agreement's life always begins on
+//      a real signed date, not on the 1st of a month; treating that first, partial month as ungoverned
+//      forever (rather than as running from the signed date through month end) would mean a Partner's
+//      very first period of real work is permanently excluded from any commercial evidence. This is a
+//      ONE-TIME exception for the month version 1 itself starts in - every OTHER month (including this
+//      same version's later months, an ending/superseding mid-month, or any version after the first)
+//      still requires the range to cover the month's FULL first-to-last span, exactly as before.
+//      Nothing about the monthly required-content COUNT changes for that inception month: it stays the
+//      Agreement's full stated monthly figure, unscaled by the number of days actually covered. The
+//      Partner Review's own evidence window (partner-reviews/period.ts) is unchanged too - still the
+//      full calendar month - so the ACTUAL delivered count reflects only what the Partner could
+//      realistically produce in the shorter real window. The already-existing base-provision proration
+//      (amount-determination.ts Step 15C: serviceBase = fixed / requiredCount * min(actual, required))
+//      is what turns that into a fair amount - a partial inception month is never a reason to invent a
+//      second, day-based proration on top of it.
 //   5. When several versions of one Agreement cover the month, the HIGHEST version number wins.
 //   6. When two DIFFERENT Agreements of the same Partner both govern the month, the answer is
 //      ambiguous: the adapter does NOT pick one, does NOT merge and does NOT throw. It returns the neutral
@@ -63,7 +77,7 @@ import { agreementHeadDocSchema, type AgreementVersionDoc } from "./types";
 // Partner Reviews' supported qualifying units (partner-reviews/types QUALIFYING_UNITS). Kept as a
 // local list because the Finance boundary allows exactly ONE Partner Reviews import (the policy
 // contract); policy-adapter.test.ts pins this list to the Partner Reviews constant so it cannot drift.
-export const PARTNER_REVIEW_QUALIFYING_UNITS = ["approved_content_thread", "approved_current_link"] as const;
+export const PARTNER_REVIEW_QUALIFYING_UNITS = ["approved_content_thread", "approved_current_link", "qualifying_analytics_post"] as const;
 
 // A Partner with more Agreement heads than this is an anomaly, not a normal book: fail loud.
 export const MAX_ADAPTER_AGREEMENT_HEADS = 50;
@@ -117,14 +131,32 @@ function coversMonth(version: AgreementVersionDoc, byNumber: Map<number, Agreeme
   if (!GOVERNING_STATUSES.has(version.status) || !version.confirmation || !version.terms || !version.effective) return false;
   const end = governingEnd(version, byNumber);
   if (end === "none") return false;
-  return version.effective.effectiveFrom <= month.first && (end === null || end >= month.last);
+  if (end !== null && end < month.last) return false;
+
+  const effectiveFrom = version.effective.effectiveFrom;
+  // Step 14D inception exception (see the file-header comment): version 1 additionally governs the
+  // one month effectiveFrom itself falls inside, even when that month starts before effectiveFrom.
+  // Scoped to exactly that month - never to any earlier or later month - so it can never widen into a
+  // general partial-month allowance.
+  if (version.version === 1 && effectiveFrom > month.first && effectiveFrom <= month.last) return true;
+  return effectiveFrom <= month.first;
 }
 
-function buildPolicy(agreementRef: string, version: AgreementVersionDoc): GoverningCommercialPolicy {
+function buildPolicy(agreementRef: string, version: AgreementVersionDoc, month: MonthBounds): GoverningCommercialPolicy {
   const terms = version.terms!;
   const { commercial } = terms;
   const sourceRef = `${agreementRef}@${version.version}`;
   const policy: GoverningCommercialPolicy = { agreementRef, agreementVersion: version.version };
+
+  // Step 14D re-audit (remediation plan Wave B, finding #64): the SAME inception-month condition
+  // coversMonth checks above - kept as an explicit, separate re-check here (not threaded through as
+  // a return value) so this file has exactly one place, read top-to-bottom, that states the whole
+  // Step 14D rule. `evidenceWindowStart` is what actually narrows evidence-collector.ts's Assignment/
+  // Analytics selection window for this one governed month - everything else about the policy
+  // (the deliverable requirement's own count) stays the Agreement's full, unscaled monthly figure.
+  if (version.version === 1 && version.effective!.effectiveFrom > month.first && version.effective!.effectiveFrom <= month.last) {
+    policy.evidenceWindowStart = version.effective!.effectiveFrom;
+  }
 
   if (commercial.monthlyRequiredQualifyingContentCount !== null && commercial.qualifyingUnit !== null && (PARTNER_REVIEW_QUALIFYING_UNITS as readonly string[]).includes(commercial.qualifyingUnit)) {
     policy.monthlyDeliverableRequirement = { requiredCount: commercial.monthlyRequiredQualifyingContentCount, qualifyingUnit: commercial.qualifyingUnit, requirementSourceRef: sourceRef };
@@ -182,7 +214,7 @@ export async function getAgreementCommercialPolicy(partnerRef: string, periodKey
   }
 
   const only = governing[0]!;
-  const parsed = governingCommercialPolicySchema.safeParse(buildPolicy(only.agreementRef, only.version));
+  const parsed = governingCommercialPolicySchema.safeParse(buildPolicy(only.agreementRef, only.version, month));
   if (!parsed.success) throw new AgreementPolicyError(`The Agreement commercial policy failed validation: ${parsed.error.issues.map((issue) => `${issue.path.join(".") || "(root)"}: ${issue.message}`).join("; ")}`);
   return parsed.data;
 }

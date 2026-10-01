@@ -13,6 +13,7 @@ import {
   partnersCollection,
   runPartnerAccountMutation,
 } from "./firestore";
+import { profileUrlHandleConflict } from "@/server/shared/account-identity";
 import { claimIdFor, computeNormalizedIdentity } from "./identity";
 import { generatePartnerAccountRef } from "./ids";
 import { writePartnerEvent } from "./partner-events";
@@ -55,8 +56,23 @@ async function loadAuthorizedAccount(
 
 // ---- Create ----
 
+// Step 18-21 (#19): trimmed and rejected when whitespace-only - the same
+// bound Partner Account has always applied, just closing the gap where
+// "   " passed the raw min(1) check. Deliberately NOT lowercased/closed
+// to a hard enum here - Partner Account platform has always been free
+// text server-side (see @/server/shared/platform's own doc comment),
+// and Discovery's own equivalent Platform field (which the UI dropdown
+// below mirrors exactly, including its "Other" free-text fallback) is
+// not a closed server enum either. "No second platform taxonomy" is
+// satisfied by the UI reusing DISCOVERY_PLATFORMS directly rather than
+// this schema inventing its own closed set.
 const createPartnerAccountInputSchema = z.object({
-  platform: z.string().min(1).max(60),
+  platform: z
+    .string()
+    .min(1)
+    .max(60)
+    .transform((value) => value.trim())
+    .refine((value) => value.length > 0, { message: "Platform cannot be empty or whitespace-only." }),
   handle: z.string().min(1).max(120).optional(),
   displayName: z.string().min(1).max(200).optional(),
   profileUrl: z.string().min(1).max(500).optional(),
@@ -92,6 +108,17 @@ export async function createPartnerAccount(actor: ActorContext | null, partnerRe
   const parsed = createPartnerAccountInputSchema.safeParse(rawInput);
   if (!parsed.success) return partnersInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
   const input = parsed.data;
+
+  // Finding #20: Profile URL and Handle disagreeing is a real identity
+  // conflict, never silently resolved by picking one - reject rather
+  // than fabricate/guess which is correct. Only checked when neither is
+  // overridden by a stable platformAccountId (computeNormalizedIdentity's
+  // own priority order below) - once a stable id is present, profileUrl/
+  // handle are secondary metadata, not competing identity evidence, so a
+  // mismatch between them is no longer an identity conflict.
+  if (!input.platformAccountId && input.profileUrl && input.handle && profileUrlHandleConflict(input.profileUrl, input.handle)) {
+    return partnersInvalidInputResult("Profile URL and Handle appear to identify different accounts. Correct one of them, or leave Handle blank to derive it from the Profile URL.");
+  }
 
   const normalizedIdentity = computeNormalizedIdentity({ platform: input.platform, platformAccountId: input.platformAccountId, profileUrl: input.profileUrl, handle: input.handle });
   if (!normalizedIdentity) return partnersInvalidInputResult("At least one of platformAccountId, profileUrl, or handle is required to establish account identity.");
@@ -248,6 +275,22 @@ export async function editPartnerAccount(actor: ActorContext | null, partnerAcco
   const effectivePlatformAccountId = input.platformAccountId !== undefined ? input.platformAccountId : current.platformAccountId;
   const effectiveProfileUrl = input.profileUrl !== undefined ? input.profileUrl : current.profileUrl;
   const effectiveHandle = input.handle !== undefined ? input.handle : current.handle;
+
+  // Finding #20: only checked when THIS request actually touches
+  // profileUrl and/or handle - an unrelated edit (e.g. follower count)
+  // must never retroactively reject a legacy value pair that already
+  // disagreed before this edit. Also skipped once a stable
+  // platformAccountId is in play, matching the create-path rationale
+  // above.
+  if (
+    !effectivePlatformAccountId &&
+    (input.profileUrl !== undefined || input.handle !== undefined) &&
+    effectiveProfileUrl &&
+    effectiveHandle &&
+    profileUrlHandleConflict(effectiveProfileUrl, effectiveHandle)
+  ) {
+    return partnersInvalidInputResult("Profile URL and Handle appear to identify different accounts. Correct one of them, or leave Handle blank to derive it from the Profile URL.");
+  }
 
   // Replacing (or clearing) an already-set stable platform id is
   // rejected in this ordinary edit path - see the function doc comment.

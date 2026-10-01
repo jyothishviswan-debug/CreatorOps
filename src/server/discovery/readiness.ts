@@ -1,4 +1,5 @@
 import { getUserDoc } from "@/server/authz/firestore";
+import { getPartnerAccountDocByRef } from "@/server/partners/firestore";
 import { isResearchComplete } from "./research";
 import type { LeadDoc, ReadinessIssue, ReadinessResult } from "./types";
 
@@ -29,6 +30,17 @@ export async function evaluateLeadReadiness(lead: LeadDoc): Promise<ReadinessRes
     warnings.push({ code: "SINGLE_CONTACT_METHOD", message: "Only one contact method (email or phone) is on file." });
   }
 
+  // Finding #26 (user-decided): a contact number is mandatory "from
+  // Discovery itself" - creation already enforces this for every NEW Lead
+  // (lead-service.ts's createLead), but a Lead created before that rule
+  // existed can still be missing one. Rather than breaking reads/edits for
+  // those old records, remediation is required at this progression
+  // boundary instead - a Lead without a phone on file can never read as
+  // conversion-ready until one is added.
+  if (!lead.phone) {
+    blockers.push(blocker("PHONE_MISSING", "A contact number is required before this Lead can proceed - add one on the Lead's own edit page."));
+  }
+
   if (!isResearchComplete(lead.research)) {
     blockers.push(blocker("RESEARCH_INCOMPLETE", "Research is not complete - an approved Target Audience has not been recorded."));
   }
@@ -50,6 +62,29 @@ export async function evaluateLeadReadiness(lead: LeadDoc): Promise<ReadinessRes
 
   if (!lead.assetDecision) {
     blockers.push(blocker("ASSET_DECISION_MISSING", "An asset decision has not been recorded."));
+  } else if (lead.assetDecision.decision !== "NEW_ACCOUNT") {
+    // Finding #15, evolved by finding #16 (user-decided): the old
+    // invariant was "MAINTAIN/TRANSFER always requires
+    // existingPartnerAccountRef." The new one is "MAINTAIN/TRANSFER
+    // requires a real, identifiable account - EITHER a validated internal
+    // ref OR sufficient confirmed external identity (this Lead's own
+    // platform, captured on Profile essentials)" - never fabricated,
+    // never fuzzy-matched. A present-but-inconsistent asset decision must
+    // still block readiness, not just a wholly missing one -
+    // saveAssetDecision no longer enforces a ref requirement at write
+    // time (see its own comment), so this holistic check is now the ONLY
+    // place both branches are actually verified before conversion.
+    if (lead.assetDecision.existingPartnerAccountRef) {
+      const account = await getPartnerAccountDocByRef(lead.assetDecision.existingPartnerAccountRef);
+      if (!account) blockers.push(blocker("ASSET_DECISION_INVALID", "The asset decision references a Partner Account that no longer exists. Re-save the Asset Setup decision."));
+    } else if (!lead.platform) {
+      blockers.push(
+        blocker(
+          "ASSET_DECISION_INVALID",
+          `The asset decision ("${lead.assetDecision.decision}") has neither a valid existing Partner Account reference nor confirmed external account identity (Platform) on this Lead. Add one before converting.`,
+        ),
+      );
+    }
   }
 
   if (!lead.managerUid) {

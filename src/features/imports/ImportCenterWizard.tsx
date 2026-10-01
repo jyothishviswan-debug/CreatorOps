@@ -1,13 +1,16 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { Icon } from "@/ui/icons";
 import { LocalTabs } from "@/ui/LocalTabs";
 import { Pill } from "@/ui/Badge";
+import { listPartners } from "@/features/partners/api-client";
+import type { PartnerDto } from "@/server/partners/client-dto";
 
-import { dryRunImport, executeImport, previewImportFile, resumeAnalyticsImport, type ImportModuleArg } from "./api-client";
-import { classificationLabel, batchStatusLabel, ERROR_CATEGORY_LABELS, MODULE_DESCRIPTIONS, MODULE_LABELS, outcomeLabel, outcomeTone } from "./copy";
+import { downloadAnalyticsTemplate, dryRunImport, executeImport, previewImportFile, resumeAnalyticsImport, type ImportModuleArg } from "./api-client";
+import { batchStatusLabel, ERROR_CATEGORY_LABELS, MODULE_DESCRIPTIONS, MODULE_LABELS } from "./copy";
+import { CountsSummary, RowsTable } from "./RowsTable";
 import type { ClassifiedImportError, ImportFilePreviewResult, ImportRunResult } from "./types";
 
 // Import Center Completion - the real governed flow:
@@ -19,11 +22,17 @@ import type { ClassifiedImportError, ImportFilePreviewResult, ImportRunResult } 
 // API. Every earlier step (preview, dry-run) is read-only, and the
 // Import button itself is disabled unless the actor has both (a)
 // explicitly acknowledged the Review counts AND (b) not changed the
-// selected file since that review ran (`reviewedSignature` below) - a
-// changed file always forces a brand-new dry-run before Import
-// re-enables. The server independently re-validates/re-authorizes on
-// execute regardless (see import-service.ts) - this is a UX guard, not
-// the actual safety boundary.
+// selected file OR any interpretation option (moduleKey/targetKind/
+// channelPlatform/defaultRegionId) since that review ran
+// (`reviewedSignature`, see `reviewSignature()` below) - changing either
+// always forces a brand-new dry-run before Import re-enables, since step
+// tabs let a user jump back to "Choose data" and flip the target after
+// already acknowledging a review for a different one (finding #54). The
+// server independently re-validates/re-authorizes on execute regardless
+// (see import-service.ts, which also now rejects an execute whose
+// targetKind mismatches an already-completed batch for the same file
+// hash) - this client guard is a UX safeguard, not the sole safety
+// boundary.
 
 type Step = "choose" | "upload" | "preview" | "mapping" | "review" | "results";
 const STEP_ORDER: Step[] = ["choose", "upload", "preview", "mapping", "review", "results"];
@@ -33,78 +42,22 @@ function fileSignature(file: File): string {
   return `${file.name}:${file.size}:${file.lastModified}`;
 }
 
+// Finding #54: a review must go stale on ANY change that alters how the
+// file will be interpreted, not just a changed file. Step tabs let a user
+// jump back to "Choose data" (up to maxReachedIndex) and flip targetKind/
+// channelPlatform/moduleKey after already reviewing and acknowledging a
+// dry-run for a DIFFERENT target - the file's own signature alone can't
+// catch that, so the reviewed signature must fold in the full options set.
+function reviewSignature(file: File, moduleKey: ImportModuleArg, options: Record<string, unknown>): string {
+  return `${fileSignature(file)}|${moduleKey}|${JSON.stringify(options)}`;
+}
+
 function ErrorBanner({ error }: { error: ClassifiedImportError }) {
   return (
     <div className="banner" role="alert">
       <strong>{ERROR_CATEGORY_LABELS[error.category]}: </strong>
       {error.message}
       {!error.correctable && <span> This is not something you can fix by changing the file - contact support if it continues.</span>}
-    </div>
-  );
-}
-
-function CountsSummary({ counts }: { counts: Record<string, number> }) {
-  const entries = Object.entries(counts).filter(([, count]) => count > 0);
-  if (entries.length === 0) return <p className="foundationnote">No rows counted.</p>;
-  return (
-    <div className="fields">
-      {entries.map(([key, count]) => (
-        <div className="field" key={key}>
-          <Pill tone={outcomeTone(key)}>
-            {outcomeLabel(key) !== key ? outcomeLabel(key) : classificationLabel(key)}: {count}
-          </Pill>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function RowsTable({ rows, rowsTruncated }: { rows: NonNullable<ImportRunResult["rows"]>; rowsTruncated?: boolean }) {
-  const [filter, setFilter] = useState<string | null>(null);
-  const outcomes = useMemo(() => [...new Set(rows.map((r) => r.outcome))], [rows]);
-  const visible = filter ? rows.filter((r) => r.outcome === filter) : rows;
-
-  if (rows.length === 0) return <p className="foundationnote">No row-level detail to show.</p>;
-
-  return (
-    <div>
-      <div className="toolbar" role="group" aria-label="Filter rows by outcome">
-        <button type="button" className={filter === null ? "btn primary" : "btn"} onClick={() => setFilter(null)}>
-          All ({rows.length})
-        </button>
-        {outcomes.map((outcome) => (
-          <button key={outcome} type="button" className={filter === outcome ? "btn primary" : "btn"} onClick={() => setFilter(outcome)}>
-            {outcomeLabel(outcome) !== outcome ? outcomeLabel(outcome) : classificationLabel(outcome)} ({rows.filter((r) => r.outcome === outcome).length})
-          </button>
-        ))}
-      </div>
-      <div className="tablewrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Sheet</th>
-              <th>Row</th>
-              <th>Outcome</th>
-              <th>Identity</th>
-              <th>Detail</th>
-            </tr>
-          </thead>
-          <tbody>
-            {visible.map((row, i) => (
-              <tr key={`${row.sheetName}-${row.sourceRowNumber}-${i}`}>
-                <td>{row.sheetName}</td>
-                <td>{row.sourceRowNumber}</td>
-                <td>
-                  <Pill tone={outcomeTone(row.outcome)}>{outcomeLabel(row.outcome) !== row.outcome ? outcomeLabel(row.outcome) : classificationLabel(row.outcome)}</Pill>
-                </td>
-                <td>{row.identityLabel ?? "—"}</td>
-                <td>{row.detail ?? "—"}</td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-      {rowsTruncated && <p className="foundationnote">Showing a bounded sample of rows - the counts above cover every row in the file.</p>}
     </div>
   );
 }
@@ -185,6 +138,68 @@ export function ImportCenterWizard() {
   const [resumeBusy, setResumeBusy] = useState(false);
   const [resumeError, setResumeError] = useState<ClassifiedImportError | null>(null);
 
+  // Finding #56: Download Template - state scoped entirely to the Choose Data step, independent of
+  // the main upload/preview/review flow above (downloading a template never touches `file`/`step`).
+  const [templateOpen, setTemplateOpen] = useState(false);
+  const [templateContentPlatform, setTemplateContentPlatform] = useState<"instagram" | "youtube">("instagram");
+  const [templatePartnerMode, setTemplatePartnerMode] = useState<"all" | "selected">("all");
+  const [templatePartnerQuery, setTemplatePartnerQuery] = useState("");
+  const [templatePartnerResults, setTemplatePartnerResults] = useState<PartnerDto[]>([]);
+  const [templatePartnerSearching, setTemplatePartnerSearching] = useState(false);
+  const [templateSelectedPartners, setTemplateSelectedPartners] = useState<Map<string, string>>(new Map());
+  const [templateDownloading, setTemplateDownloading] = useState(false);
+  const [templateError, setTemplateError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!templateOpen || templatePartnerMode !== "selected") return;
+    const controller = new AbortController();
+    const timeout = setTimeout(
+      async () => {
+        setTemplatePartnerSearching(true);
+        const result = await listPartners({ status: "ACTIVE", displayNamePrefix: templatePartnerQuery.trim() || undefined, limit: 10 });
+        if (controller.signal.aborted) return;
+        setTemplatePartnerSearching(false);
+        if (result.ok) setTemplatePartnerResults(result.data.partners);
+      },
+      templatePartnerQuery.length === 0 ? 0 : 250,
+    );
+    return () => {
+      controller.abort();
+      clearTimeout(timeout);
+    };
+  }, [templateOpen, templatePartnerMode, templatePartnerQuery]);
+
+  async function handleDownloadTemplate() {
+    setTemplateDownloading(true);
+    setTemplateError(null);
+    const result = await downloadAnalyticsTemplate({
+      targetKind,
+      contentPlatform: targetKind === "campaign_content" ? templateContentPlatform : undefined,
+      channelPlatform: targetKind === "channel_account" ? channelPlatform : undefined,
+      partnerSelection: templatePartnerMode === "all" ? { mode: "all" } : { mode: "selected", partnerRefs: [...templateSelectedPartners.keys()] },
+    });
+    setTemplateDownloading(false);
+    if (!result.ok) {
+      setTemplateError(result.error.message);
+      return;
+    }
+    const url = URL.createObjectURL(result.data.blob);
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = result.data.filename;
+    link.click();
+    URL.revokeObjectURL(url);
+  }
+
+  function toggleTemplatePartner(partner: PartnerDto, checked: boolean) {
+    setTemplateSelectedPartners((current) => {
+      const next = new Map(current);
+      if (checked) next.set(partner.partnerRef, partner.displayName);
+      else next.delete(partner.partnerRef);
+      return next;
+    });
+  }
+
   const options = useMemo(() => {
     if (moduleKey === "analytics") return { targetKind, ...(targetKind === "channel_account" ? { channelPlatform } : {}) };
     return { ...(defaultRegionId ? { defaultRegionId } : {}) };
@@ -241,7 +256,7 @@ export function ImportCenterWizard() {
       return;
     }
     setDryRunResult(result.data);
-    setReviewedSignature(fileSignature(file));
+    setReviewedSignature(reviewSignature(file, moduleKey, options));
     setAcknowledgedReview(false);
 
     const mappingNeeded = result.data.sourceSheetInventory.some((s) => s.recognizedAs === "unrecognized") || result.data.safeErrorSummary.some((m) => m.toLowerCase().includes("ignored unsupported column"));
@@ -275,7 +290,7 @@ export function ImportCenterWizard() {
     setExecuteResult(result.data);
   }
 
-  const isStale = file && reviewedSignature !== fileSignature(file);
+  const isStale = file && reviewedSignature !== reviewSignature(file, moduleKey, options);
   const hasUnrecognizedSheet = dryRunResult?.sourceSheetInventory.some((s) => s.recognizedAs === "unrecognized") ?? false;
   const canImport = Boolean(dryRunResult) && !isStale && acknowledgedReview && !executeBusy && !hasUnrecognizedSheet;
 
@@ -304,6 +319,7 @@ export function ImportCenterWizard() {
             >
               <option value="analytics">{MODULE_LABELS.analytics}</option>
               <option value="contract_bundle">{MODULE_LABELS.contract_bundle}</option>
+              <option value="content_links">{MODULE_LABELS.content_links}</option>
             </select>
             <small>{MODULE_DESCRIPTIONS[moduleKey]}</small>
           </div>
@@ -325,6 +341,84 @@ export function ImportCenterWizard() {
                 </div>
               )}
               <div className="scopebox">Accepted formats: .xlsx, .xls, .csv (max 10 MB). Matched deterministically against canonical Content and Partner Account records - never merged on display name alone.</div>
+
+              <div className="field full">
+                {!templateOpen ? (
+                  <button type="button" className="btn" onClick={() => setTemplateOpen(true)}>
+                    Download Template
+                  </button>
+                ) : (
+                  <div className="scopebox" style={{ display: "grid", gap: 10 }}>
+                    <strong>Download Template</strong>
+                    <small>A blank .xlsx pre-filled with the exact recognized column headers for this data kind - starts you from a correct-by-construction file instead of guessing headers.</small>
+
+                    {targetKind === "campaign_content" && (
+                      <div className="field">
+                        <label htmlFor="template-content-platform">Template platform</label>
+                        <select id="template-content-platform" value={templateContentPlatform} onChange={(e) => setTemplateContentPlatform(e.target.value as "instagram" | "youtube")}>
+                          <option value="instagram">Instagram</option>
+                          <option value="youtube">YouTube</option>
+                        </select>
+                        <small>Instagram and YouTube use slightly different column names - pick the one matching your export.</small>
+                      </div>
+                    )}
+
+                    <fieldset style={{ border: 0, padding: 0, margin: 0 }}>
+                      <legend style={{ fontSize: 11, fontWeight: 550, padding: 0, marginBottom: 6 }}>Partners to prefill</legend>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, marginRight: 14, fontWeight: 450, fontSize: 12 }}>
+                        <input type="radio" name="template-partner-mode" checked={templatePartnerMode === "all"} onChange={() => setTemplatePartnerMode("all")} />
+                        All eligible (up to 100, your authorized scope only)
+                      </label>
+                      <label style={{ display: "inline-flex", alignItems: "center", gap: 6, fontWeight: 450, fontSize: 12 }}>
+                        <input type="radio" name="template-partner-mode" checked={templatePartnerMode === "selected"} onChange={() => setTemplatePartnerMode("selected")} />
+                        Selected Partners
+                      </label>
+                    </fieldset>
+
+                    {templatePartnerMode === "selected" && (
+                      <div className="field full">
+                        <input type="text" placeholder="Search Partners by name…" value={templatePartnerQuery} onChange={(e) => setTemplatePartnerQuery(e.target.value)} />
+                        {templatePartnerSearching ? (
+                          <small>Searching…</small>
+                        ) : (
+                          <div style={{ maxHeight: 140, overflow: "auto", marginTop: 6 }}>
+                            {templatePartnerResults.map((partner) => {
+                              const inputId = `template-partner-${partner.partnerRef}`;
+                              return (
+                                <label key={partner.partnerRef} htmlFor={inputId} style={{ display: "flex", alignItems: "center", gap: 8, padding: "4px 0", fontSize: 12 }}>
+                                  <input id={inputId} type="checkbox" checked={templateSelectedPartners.has(partner.partnerRef)} onChange={(e) => toggleTemplatePartner(partner, e.target.checked)} />
+                                  {partner.displayName}
+                                </label>
+                              );
+                            })}
+                          </div>
+                        )}
+                        {templateSelectedPartners.size > 0 && <small>{templateSelectedPartners.size} selected: {[...templateSelectedPartners.values()].join(", ")}</small>}
+                      </div>
+                    )}
+
+                    {templateError && (
+                      <div className="banner" role="alert">
+                        {templateError}
+                      </div>
+                    )}
+
+                    <div style={{ display: "flex", gap: 10 }}>
+                      <button type="button" className="btn" onClick={() => setTemplateOpen(false)}>
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        className="btn primary"
+                        disabled={templateDownloading || (templatePartnerMode === "selected" && templateSelectedPartners.size === 0)}
+                        onClick={handleDownloadTemplate}
+                      >
+                        {templateDownloading ? "Preparing…" : "Download .xlsx"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
             </>
           )}
 
@@ -339,6 +433,12 @@ export function ImportCenterWizard() {
                 reported for manual review through the ordinary Agreement-led onboarding screen.
               </div>
             </>
+          )}
+
+          {moduleKey === "content_links" && (
+            <div className="scopebox">
+              Columns: Assignment Ref, Platform, URL. Rows for the same Assignment Ref are grouped and recorded together as one submission - always requires a real, in-progress Assignment; never creates unassigned Content.
+            </div>
           )}
 
           <div className="field full">
@@ -392,7 +492,10 @@ export function ImportCenterWizard() {
             </div>
           )}
 
-          <div className="field full">
+          <div className="field full" style={{ display: "flex", gap: 10 }}>
+            <button type="button" className="btn" onClick={() => goTo("choose")}>
+              Back
+            </button>
             <button type="button" className="btn primary" disabled={!file || previewBusy} onClick={handleRunPreview}>
               {previewBusy ? "Reading file…" : "Continue to preview"}
             </button>
@@ -404,7 +507,10 @@ export function ImportCenterWizard() {
         <div>
           <SheetPreviewView preview={previewResult} />
           {dryRunError && <ErrorBanner error={dryRunError} />}
-          <div className="field full" style={{ marginTop: 16 }}>
+          <div className="field full" style={{ marginTop: 16, display: "flex", gap: 10 }}>
+            <button type="button" className="btn" onClick={() => goTo("upload")}>
+              Back
+            </button>
             <button type="button" className="btn primary" disabled={dryRunBusy} onClick={handleRunValidation}>
               {dryRunBusy ? "Validating…" : "Continue to validation"}
             </button>
@@ -484,7 +590,11 @@ export function ImportCenterWizard() {
           )}
           {dryRunResult.rows && <RowsTable rows={dryRunResult.rows} rowsTruncated={dryRunResult.rowsTruncated} />}
 
-          {isStale && <div className="banner" role="alert">The selected file has changed since this review ran. Go back and re-validate before importing.</div>}
+          {isStale && (
+            <div className="banner" role="alert">
+              The selected file or import target (module/target kind/platform/region) has changed since this review ran. Go back and re-validate before importing.
+            </div>
+          )}
           {executeError && <ErrorBanner error={executeError} />}
 
           <div className="field full" style={{ marginTop: 16 }}>

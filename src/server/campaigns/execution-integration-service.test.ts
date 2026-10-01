@@ -45,9 +45,9 @@ describe("isObligationOverdue", () => {
     expect(isObligationOverdue(obligation({ dueAt: FAR_FUTURE, assignmentStatus: "ASSIGNED" }), "2026-01-01T00:00:00.000Z")).toBe(false);
   });
 
-  it("is overdue when dueAt has passed and the assignment/content are still open", () => {
+  it("is overdue when dueAt has passed and the assignment is IN_PROGRESS with open content", () => {
     expect(isObligationOverdue(obligation({ dueAt: FAR_PAST, assignmentStatus: "IN_PROGRESS", contentStatus: "UNDER_REVIEW" }), "2026-01-01T00:00:00.000Z")).toBe(true);
-    expect(isObligationOverdue(obligation({ dueAt: FAR_PAST, assignmentStatus: "ASSIGNED", contentStatus: null }), "2026-01-01T00:00:00.000Z")).toBe(true);
+    expect(isObligationOverdue(obligation({ dueAt: FAR_PAST, assignmentStatus: "IN_PROGRESS", contentStatus: null }), "2026-01-01T00:00:00.000Z")).toBe(true);
   });
 
   it("is never overdue once the assignment is COMPLETED, even with a past dueAt", () => {
@@ -56,6 +56,15 @@ describe("isObligationOverdue", () => {
 
   it("is never overdue once the assignment is CANCELLED, even with a past dueAt", () => {
     expect(isObligationOverdue(obligation({ dueAt: FAR_PAST, assignmentStatus: "CANCELLED" }), "2026-01-01T00:00:00.000Z")).toBe(false);
+  });
+
+  // Findings #42/#51 (user-decided): a legacy-stranded DRAFT/ASSIGNED/ACCEPTED Assignment is never
+  // "overdue" any more, even with a past dueAt - it isn't active work in progress, it needs the narrow
+  // recovery action instead. Strictly narrower than the old "not COMPLETED/CANCELLED" rule.
+  it("is never overdue while the assignment is DRAFT, ASSIGNED or ACCEPTED (legacy-only states now), even with a past dueAt", () => {
+    for (const legacyStatus of ["DRAFT", "ASSIGNED", "ACCEPTED"] as const) {
+      expect(isObligationOverdue(obligation({ dueAt: FAR_PAST, assignmentStatus: legacyStatus, contentStatus: null }), "2026-01-01T00:00:00.000Z")).toBe(false);
+    }
   });
 
   it("is never overdue once Content is APPROVED, even with a past dueAt", () => {
@@ -102,7 +111,7 @@ describe("computeCampaignExecutionSummary", () => {
   it("aggregates every field over a mixed set of obligations", () => {
     const obligations: CampaignExecutionObligation[] = [
       obligation({ assignmentRef: "a1", partnerRef: "p1", assignmentStatus: "COMPLETED", contentStatus: "APPROVED", contentCurrentLinksCount: 1 }),
-      obligation({ assignmentRef: "a2", partnerRef: "p1", assignmentStatus: "IN_PROGRESS", contentStatus: "UNDER_REVIEW", contentCurrentLinksCount: 1 }),
+      obligation({ assignmentRef: "a2", partnerRef: "p1", assignmentStatus: "IN_PROGRESS", contentStatus: "UNDER_REVIEW", contentCurrentLinksCount: 1, dueAt: FAR_PAST }),
       obligation({ assignmentRef: "a3", partnerRef: "p2", assignmentStatus: "ACCEPTED", contentStatus: "REVISION_REQUESTED", contentCurrentLinksCount: 1, dueAt: FAR_PAST }),
       obligation({ assignmentRef: "a4", partnerRef: "p3", assignmentStatus: "ASSIGNED", contentStatus: null, contentCurrentLinksCount: 0, dueAt: FAR_PAST }),
     ];
@@ -113,7 +122,9 @@ describe("computeCampaignExecutionSummary", () => {
     expect(summary.totalObligations).toBe(4);
     expect(summary.approvedCount).toBe(1);
     expect(summary.distinctPartnerCount).toBe(3);
-    expect(summary.overdueCount).toBe(2); // a3 (REVISION_REQUESTED) and a4 (ASSIGNED), both past-due and not APPROVED/COMPLETED/CANCELLED
+    // Findings #42/#51: only a2 (IN_PROGRESS, past-due, not APPROVED) counts - a3 (ACCEPTED) and a4
+    // (ASSIGNED) are legacy-only states now and are never overdue, however past-due their dueAt is.
+    expect(summary.overdueCount).toBe(1);
     expect(summary.deliveryState).toEqual({ completed: 1, inProgress: 2, notStarted: 1 });
     expect(summary.deliveryState.completed + summary.deliveryState.inProgress + summary.deliveryState.notStarted).toBe(summary.totalObligations);
     expect(summary.underReviewCount).toBe(1);

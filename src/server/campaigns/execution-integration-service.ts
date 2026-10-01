@@ -112,10 +112,16 @@ export type CampaignExecutionOverview = {
 // time) supplied by the caller - never client-supplied - kept as an
 // explicit parameter here purely so this rule is independently, exactly
 // unit-testable against synthetic data without a real clock.
+// Findings #42/#51 (user-decided): tightened from "not COMPLETED/CANCELLED" (a broad negative list that
+// let a legacy DRAFT/ASSIGNED/ACCEPTED Assignment count as overdue too) to "must BE IN_PROGRESS" - the
+// only status a normal, non-legacy Assignment is ever created in or actively worked through now. A
+// legacy-stranded Assignment isn't active, delayed work; it needs its own narrow recovery action, never a
+// portfolio-level overdue flag. Strictly narrower than before - every previously-overdue IN_PROGRESS
+// obligation stays overdue exactly as before.
 export function isObligationOverdue(obligation: CampaignExecutionObligation, nowIso: string): boolean {
   if (!obligation.dueAt) return false;
   if (obligation.dueAt >= nowIso) return false; // ISO 8601 timestamps compare lexicographically like dates.
-  if (obligation.assignmentStatus === "COMPLETED" || obligation.assignmentStatus === "CANCELLED") return false;
+  if (obligation.assignmentStatus !== "IN_PROGRESS") return false;
   if (obligation.contentStatus === "APPROVED") return false;
   return true;
 }

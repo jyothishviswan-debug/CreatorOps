@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-const { getUserDocMock } = vi.hoisted(() => ({ getUserDocMock: vi.fn() }));
+const { getUserDocMock, getPartnerAccountDocByRefMock } = vi.hoisted(() => ({ getUserDocMock: vi.fn(), getPartnerAccountDocByRefMock: vi.fn() }));
 vi.mock("@/server/authz/firestore", () => ({ getUserDoc: getUserDocMock }));
+vi.mock("@/server/partners/firestore", () => ({ getPartnerAccountDocByRef: getPartnerAccountDocByRefMock }));
 
 import { evaluateLeadReadiness } from "./readiness";
 import type { LeadDoc } from "./types";
@@ -66,11 +67,16 @@ describe("evaluateLeadReadiness", () => {
     expect(result.blockers.map((b) => b.code)).toContain("IDENTITY_CONTACT_MISSING");
   });
 
-  it("warns (does not block) when only one contact method is on file", async () => {
+  it("warns (does not block IDENTITY_CONTACT_MISSING) when only one contact method is on file - but finding #26 separately requires phone specifically for progression", async () => {
     getUserDocMock.mockResolvedValue({ uid: "manager-uid", active: true });
     const result = await evaluateLeadReadiness(fullyReadyLead({ phone: null }));
     expect(result.blockers.map((b) => b.code)).not.toContain("IDENTITY_CONTACT_MISSING");
     expect(result.warnings.map((w) => w.code)).toContain("SINGLE_CONTACT_METHOD");
+    // Finding #26 (user-decided): a Lead missing phone specifically is
+    // blocked from progression regardless of having email - old Leads stay
+    // readable, but cannot read as conversion-ready until remediated.
+    expect(result.blockers.map((b) => b.code)).toContain("PHONE_MISSING");
+    expect(result.ready).toBe(false);
   });
 
   it("blocks when research is not complete", async () => {
@@ -102,6 +108,50 @@ describe("evaluateLeadReadiness", () => {
     getUserDocMock.mockResolvedValue({ uid: "manager-uid", active: true });
     const result = await evaluateLeadReadiness(fullyReadyLead({ assetDecision: null }));
     expect(result.blockers.map((b) => b.code)).toContain("ASSET_DECISION_MISSING");
+  });
+
+  // Finding #15, evolved by finding #16 (user-decided): the old invariant
+  // ("non-NEW_ACCOUNT always requires existingPartnerAccountRef") is
+  // replaced by "requires EITHER a valid ref OR the Lead's own confirmed
+  // platform identity" - a decision with neither is still invalid, but
+  // one with real platform identity (even without a ref) is now fine.
+  it("blocks (ASSET_DECISION_INVALID) when a non-NEW_ACCOUNT decision has NEITHER an existingPartnerAccountRef NOR a platform on the Lead", async () => {
+    getUserDocMock.mockResolvedValue({ uid: "manager-uid", active: true });
+    const result = await evaluateLeadReadiness(fullyReadyLead({ platform: null, assetDecision: { decision: "MAINTAIN_EXISTING", decidedAt: "2026-01-01T00:00:00.000Z", decidedByUserRef: "ref-1" } }));
+    expect(result.blockers.map((b) => b.code)).toContain("ASSET_DECISION_INVALID");
+    expect(getPartnerAccountDocByRefMock).not.toHaveBeenCalled();
+  });
+
+  it("is ready (finding #16) when a non-NEW_ACCOUNT decision has no ref but the Lead has a confirmed platform - never fabricated, uses real captured identity", async () => {
+    getUserDocMock.mockResolvedValue({ uid: "manager-uid", active: true });
+    const result = await evaluateLeadReadiness(fullyReadyLead({ platform: "Instagram", assetDecision: { decision: "MAINTAIN_EXISTING", decidedAt: "2026-01-01T00:00:00.000Z", decidedByUserRef: "ref-1" } }));
+    expect(result.blockers.map((b) => b.code)).not.toContain("ASSET_DECISION_INVALID");
+    expect(getPartnerAccountDocByRefMock).not.toHaveBeenCalled();
+  });
+
+  it("blocks (ASSET_DECISION_INVALID) when the referenced Partner Account no longer exists - both MAINTAIN_EXISTING and TRANSFER_AND_MAINTAIN", async () => {
+    getUserDocMock.mockResolvedValue({ uid: "manager-uid", active: true });
+    getPartnerAccountDocByRefMock.mockResolvedValue(null);
+
+    const maintain = await evaluateLeadReadiness(
+      fullyReadyLead({ assetDecision: { decision: "MAINTAIN_EXISTING", existingPartnerAccountRef: "gone-account", decidedAt: "2026-01-01T00:00:00.000Z", decidedByUserRef: "ref-1" } }),
+    );
+    expect(maintain.blockers.map((b) => b.code)).toContain("ASSET_DECISION_INVALID");
+
+    const transfer = await evaluateLeadReadiness(
+      fullyReadyLead({ assetDecision: { decision: "TRANSFER_AND_MAINTAIN", existingPartnerAccountRef: "gone-account", decidedAt: "2026-01-01T00:00:00.000Z", decidedByUserRef: "ref-1" } }),
+    );
+    expect(transfer.blockers.map((b) => b.code)).toContain("ASSET_DECISION_INVALID");
+  });
+
+  it("is ready when the asset decision references a Partner Account that genuinely exists", async () => {
+    getUserDocMock.mockResolvedValue({ uid: "manager-uid", active: true });
+    getPartnerAccountDocByRefMock.mockResolvedValue({ uid: "acct-1" });
+    const result = await evaluateLeadReadiness(
+      fullyReadyLead({ assetDecision: { decision: "MAINTAIN_EXISTING", existingPartnerAccountRef: "real-account", decidedAt: "2026-01-01T00:00:00.000Z", decidedByUserRef: "ref-1" } }),
+    );
+    expect(result.blockers.map((b) => b.code)).not.toContain("ASSET_DECISION_INVALID");
+    expect(result.ready).toBe(true);
   });
 
   it("blocks when no manager is assigned, and separately when the assigned manager is no longer active", async () => {
@@ -139,9 +189,16 @@ describe("evaluateLeadReadiness", () => {
 
   it("returns blockers and warnings as separate lists, never merged", async () => {
     getUserDocMock.mockResolvedValue({ uid: "manager-uid", active: true });
-    const result = await evaluateLeadReadiness(fullyReadyLead({ phone: null }));
+    const result = await evaluateLeadReadiness(fullyReadyLead({ duplicateCheck: { status: "possible", matches: [], checkedAt: "2026-01-01T00:00:00.000Z" } }));
     expect(result.ready).toBe(true);
     expect(result.blockers).toEqual([]);
     expect(result.warnings.length).toBeGreaterThan(0);
+  });
+
+  it("blocks progression (PHONE_MISSING) when phone is absent, even with a valid email on file - finding #26", async () => {
+    getUserDocMock.mockResolvedValue({ uid: "manager-uid", active: true });
+    const result = await evaluateLeadReadiness(fullyReadyLead({ phone: null }));
+    expect(result.ready).toBe(false);
+    expect(result.blockers.map((b) => b.code)).toContain("PHONE_MISSING");
   });
 });

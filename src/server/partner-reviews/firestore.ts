@@ -14,7 +14,7 @@ import {
   type MergeCandidate,
   type SortDirection,
 } from "@/server/shared/scoped-list";
-import { partnerReviewHeadDocSchema, partnerReviewVersionDocSchema, type PartnerReviewHeadDoc, type PartnerReviewVersionDoc } from "./types";
+import { normalizeStoredEvidenceSnapshot, partnerReviewHeadDocSchema, partnerReviewVersionDocSchema, type PartnerReviewHeadDoc, type PartnerReviewVersionDoc } from "./types";
 
 export const PARTNER_REVIEWS_COLLECTIONS = {
   partnerReviews: "partnerReviews",
@@ -60,7 +60,7 @@ export async function getPartnerReviewHeadDoc(reviewRef: string): Promise<Partne
 export async function getPartnerReviewVersionDoc(reviewRef: string, version: number): Promise<PartnerReviewVersionDoc | null> {
   const snapshot = await partnerReviewVersionsCollection(reviewRef).doc(versionDocId(version)).get();
   if (!snapshot.exists) return null;
-  const result = partnerReviewVersionDocSchema.safeParse(snapshot.data());
+  const result = partnerReviewVersionDocSchema.safeParse(normalizeStoredEvidenceSnapshot(snapshot.data()));
   return result.success ? result.data : null;
 }
 
@@ -75,7 +75,7 @@ export async function listPartnerReviewVersionDocs(reviewRef: string, limit = MA
 
   const versions: PartnerReviewVersionDoc[] = [];
   for (const doc of snapshot.docs.slice(0, bound)) {
-    const parsed = partnerReviewVersionDocSchema.safeParse(doc.data());
+    const parsed = partnerReviewVersionDocSchema.safeParse(normalizeStoredEvidenceSnapshot(doc.data()));
     if (parsed.success) versions.push(parsed.data);
   }
   return { versions, hasMore: snapshot.docs.length > bound };

@@ -360,7 +360,19 @@ async function generateAndFinalize(partnerRef: string, periodKey: string) {
 // build a long month history without running the collector once per month.
 async function seedDirectReview(partner: PartnerDoc, periodKey: string, over: { status?: "DRAFT" | "IN_REVIEW" | "FINALIZED"; noDisplay?: boolean; hint?: "refresh_available" | "revision_available" | "current" | null } = {}) {
   const period = derivePeriod(periodKey)!;
-  const built = buildEvidence({ partnerRef: partner.partnerRef, period, evidenceCutoff: "2017-01-01T00:00:00.000Z", assignments: [], assignmentScanTruncated: false, assignmentsScanned: 0, threads: [], analyticsRecords: [], analyticsScanTruncated: false, analyticsRecordsScanned: 0 });
+  const built = buildEvidence({
+    partnerRef: partner.partnerRef,
+    period,
+    evidenceCutoff: "2017-01-01T00:00:00.000Z",
+    assignments: [],
+    assignmentScanTruncated: false,
+    assignmentsScanned: 0,
+    threads: [],
+    contentScanTruncated: false,
+    analyticsRecords: [],
+    analyticsScanTruncated: false,
+    analyticsRecordsScanned: 0,
+  });
   const reviewRef = reviewRefFor(partner.partnerRef, periodKey);
   const status = over.status ?? "DRAFT";
   const now = "2017-01-02T00:00:00.000Z";

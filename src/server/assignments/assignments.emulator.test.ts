@@ -12,11 +12,15 @@ import { getAdminAuth } from "@/server/firebase/admin";
 import { createCampaign } from "@/server/campaigns/campaign-service";
 import { transitionCampaignLifecycle } from "@/server/campaigns/campaign-lifecycle-service";
 import { editCampaign, getCampaign } from "@/server/campaigns/campaign-service";
+import { getCampaignDownstreamSummary } from "@/server/campaigns/detail-downstream-service";
 import { seedCampaignsData } from "@/server/campaigns/seed-campaigns-data";
 import { seedDiscoveryData } from "@/server/discovery/seed-discovery-data";
+import { createPartner } from "@/server/partners/partner-service";
 import { seedPartnersData } from "@/server/partners/seed-partners-data";
+import { createVendorPartnerLink, endVendorPartnerLink } from "@/server/vendors/vendor-partner-link-service";
+import { createVendor } from "@/server/vendors/vendor-service";
 import { seedVendorsData } from "@/server/vendors/seed-vendors-data";
-import { createAssignment, editAssignmentBrief, getAssignment, getAssignmentHistory, listAssignments } from "./assignment-service";
+import { createAssignment, createAssignmentsForPartners, editAssignmentBrief, getAssignment, getAssignmentHistory, listAssignments } from "./assignment-service";
 import { transitionAssignmentLifecycle } from "./assignment-lifecycle-service";
 import { seedAssignmentsData } from "./seed-assignments-data";
 import type { AssignmentDto } from "./client-dto";
@@ -179,6 +183,29 @@ describe("Assignment contract", () => {
     expect(result.message).toMatch(/Partner Account/);
   });
 
+  // Finding #50 (reopened): requiredCount can never exceed
+  // MAX_ASSIGNMENT_REQUIRED_COUNT (10) - counting separate approved Content
+  // records, not links inside one thread. The cap is a sanity ceiling
+  // against a clearly-wrong data-entry value (Assignments are bounded units
+  // of work, not open-ended recurring obligations), not a number tied to any
+  // per-thread link cap.
+  it("rejects a requiredCount beyond the sanity ceiling, on both create and edit", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const tooHigh = await createAssignment(head, { campaignRef: campaign.campaignRef, partnerRef: "seed-partner-direct", brief: { platforms: ["instagram"], requiredCount: 11 } }, "req");
+    expect(tooHigh.ok).toBe(false);
+    if (tooHigh.ok) throw new Error("unreachable");
+    expect(tooHigh.code).toBe("invalid_input");
+
+    const atMax = await createRealAssignment(head, { campaignRef: campaign.campaignRef, brief: { platforms: ["instagram"], requiredCount: 10 } });
+    expect(atMax.brief.requiredCount).toBe(10);
+
+    const badEdit = await editAssignmentBrief(head, atMax.assignmentRef, { requiredCount: 11, expectedVersion: atMax.version }, "req-edit");
+    expect(badEdit.ok).toBe(false);
+    if (badEdit.ok) throw new Error("unreachable");
+    expect(badEdit.code).toBe("invalid_input");
+  });
+
   it("has no Finance/Agreement/Payable/Invoice/Payment field anywhere on the created DTO", async () => {
     const head = await actorFor("partnership_head");
     const assignment = await createRealAssignment(head);
@@ -238,6 +265,386 @@ describe("Uniqueness / concurrency", () => {
     },
     20_000,
   );
+});
+
+// Findings #40/#42/#51 (user-decided, #40 corrected): the server-orchestrated bulk-create path - dedupes
+// Partner refs across Direct + every Vendor section TOGETHER, authorizes the Campaign/brief once, starts
+// every new Assignment IN_PROGRESS (never DRAFT), reuses the exact same per-pair claim as the legacy
+// single-create path (so a repeat call is naturally idempotent), and never aborts the whole batch for one
+// bad Partner. Direct and Through-Vendor selection are ADDITIVE, not mutually exclusive - see
+// `CreatorOps_Finding_40_Mixed_Partner_Vendor_Assignment_Correction.md`.
+describe("Bulk create (createAssignmentsForPartners)", () => {
+  it("[1] direct-only: creates one Assignment per distinct Partner, each IN_PROGRESS (never DRAFT), and dedupes a repeated ref", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, directPartnerRefs: ["seed-partner-direct", "creator-house", "seed-partner-direct"], brief: { platforms: ["instagram"] } },
+      "req-bulk-1",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(2); // deduped
+    expect(result.data.results.every((r) => r.outcome === "created" && r.assignmentRef)).toBe(true);
+
+    for (const row of result.data.results) {
+      const fetched = await getAssignment(head, row.assignmentRef!);
+      if (!fetched.ok) throw new Error("unreachable");
+      expect(fetched.data.status).toBe("IN_PROGRESS"); // [10]
+      expect(fetched.data.routedThroughVendorRef).toBeNull(); // [11] no Vendor-owned Assignment
+      expect(fetched.data.partnerRef).toBe(row.partnerRef); // [11] the assignee is always the Partner
+    }
+  });
+
+  it("[2] vendor-only: creates Assignments purely from one Vendor's mapped Partners, no directPartnerRefs at all", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, vendorSelections: [{ vendorRef: "seed-vendor-agency", partnerRefs: ["creator-house"] }], brief: { platforms: ["instagram"] } },
+      "req-bulk-2",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toEqual([expect.objectContaining({ partnerRef: "creator-house", outcome: "created" })]);
+    const fetched = await getAssignment(head, result.data.results[0]!.assignmentRef!);
+    if (!fetched.ok) throw new Error("unreachable");
+    expect(fetched.data.status).toBe("IN_PROGRESS"); // [10]
+    expect(fetched.data.routedThroughVendorRef).toBe("seed-vendor-agency");
+  });
+
+  it("[3] mixed: one request with both Direct Partners and Through-Vendor Partners creates all of them correctly routed", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const result = await createAssignmentsForPartners(
+      head,
+      {
+        campaignRef: campaign.campaignRef,
+        directPartnerRefs: ["seed-partner-direct"],
+        vendorSelections: [{ vendorRef: "seed-vendor-agency", partnerRefs: ["creator-house"] }],
+        brief: { platforms: ["instagram"] },
+      },
+      "req-bulk-3",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(2);
+    const byRef = new Map(result.data.results.map((r) => [r.partnerRef, r]));
+    expect(byRef.get("seed-partner-direct")).toMatchObject({ outcome: "created" });
+    expect(byRef.get("creator-house")).toMatchObject({ outcome: "created" });
+
+    const direct = await getAssignment(head, byRef.get("seed-partner-direct")!.assignmentRef!);
+    const routed = await getAssignment(head, byRef.get("creator-house")!.assignmentRef!);
+    if (!direct.ok || !routed.ok) throw new Error("unreachable");
+    expect(direct.data.routedThroughVendorRef).toBeNull();
+    expect(direct.data.status).toBe("IN_PROGRESS"); // [10]
+    expect(routed.data.routedThroughVendorRef).toBe("seed-vendor-agency");
+    expect(routed.data.status).toBe("IN_PROGRESS"); // [10]
+  });
+
+  it("[4] same Partner selected Direct AND through a Vendor in one request: exactly one Assignment, the explicit Vendor route is preserved", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const result = await createAssignmentsForPartners(
+      head,
+      {
+        campaignRef: campaign.campaignRef,
+        directPartnerRefs: ["creator-house"],
+        vendorSelections: [{ vendorRef: "seed-vendor-agency", partnerRefs: ["creator-house"] }],
+        brief: { platforms: ["instagram"] },
+      },
+      "req-bulk-4",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(1); // one Assignment, not two
+    expect(result.data.results[0]).toMatchObject({ partnerRef: "creator-house", outcome: "created" });
+    const fetched = await getAssignment(head, result.data.results[0]!.assignmentRef!);
+    if (!fetched.ok) throw new Error("unreachable");
+    expect(fetched.data.routedThroughVendorRef).toBe("seed-vendor-agency"); // Vendor route wins over Direct
+  });
+
+  it("[5] same Partner selected through two DIFFERENT Vendors in one request: rejected as ambiguous for the whole request, never a guess", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    // creator-house is only ever genuinely ACTIVE-linked to seed-vendor-agency (the data model enforces at
+    // most one ACTIVE Vendor per Partner) - this request names it under a SECOND, different real Vendor too,
+    // purely to prove the server catches the request-shape conflict before touching Firestore at all, not a
+    // scenario the UI's own per-Vendor Partner lists could ever legitimately produce.
+    const result = await createAssignmentsForPartners(
+      head,
+      {
+        campaignRef: campaign.campaignRef,
+        vendorSelections: [
+          { vendorRef: "seed-vendor-agency", partnerRefs: ["creator-house"] },
+          { vendorRef: "seed-vendor-manager", partnerRefs: ["creator-house"] },
+        ],
+        brief: { platforms: ["instagram"] },
+      },
+      "req-bulk-5",
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("invalid_input");
+    expect(result.message).toMatch(/more than one Vendor/i);
+    expect(result.message).toContain("creator-house");
+  });
+
+  it("[6] multiple Vendors, each with its own different mapped Partners, all created correctly in one request", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const result = await createAssignmentsForPartners(
+      head,
+      {
+        campaignRef: campaign.campaignRef,
+        vendorSelections: [
+          { vendorRef: "seed-vendor-agency", partnerRefs: ["creator-house"] },
+          { vendorRef: "seed-vendor-manager", partnerRefs: ["seed-partner-direct"] },
+        ],
+        brief: { platforms: ["instagram"] },
+      },
+      "req-bulk-6",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(2);
+    const byRef = new Map(result.data.results.map((r) => [r.partnerRef, r]));
+    const creatorHouse = await getAssignment(head, byRef.get("creator-house")!.assignmentRef!);
+    const seedDirect = await getAssignment(head, byRef.get("seed-partner-direct")!.assignmentRef!);
+    if (!creatorHouse.ok || !seedDirect.ok) throw new Error("unreachable");
+    expect(creatorHouse.data.routedThroughVendorRef).toBe("seed-vendor-agency");
+    expect(seedDirect.data.routedThroughVendorRef).toBe("seed-vendor-manager");
+  });
+
+  it("[7] a Partner whose relationship with the selected Vendor has ENDED (not ACTIVE) is rejected, not silently treated as active", async () => {
+    const head = await actorFor("partnership_head");
+    const vendor = await createVendor(head, { displayName: uniqueName("Ended-Link Vendor"), vendorType: "AGENCY", regionIds: ["Kerala"] }, "req-ended-vendor");
+    const partner = await createPartner(head, { displayName: uniqueName("Ended-Link Partner"), regionIds: ["Kerala"] }, "req-ended-partner");
+    if (!vendor.ok || !partner.ok) throw new Error("unreachable");
+    const link = await createVendorPartnerLink(head, vendor.data.vendorRef, { partnerRef: partner.data.partnerRef, relationshipType: "AGENCY", effectiveFrom: new Date().toISOString() }, "req-ended-link-create");
+    if (!link.ok) throw new Error("unreachable");
+    const ended = await endVendorPartnerLink(head, link.data.vendorPartnerLinkRef, { effectiveTo: new Date().toISOString(), expectedVersion: link.data.version }, "req-ended-link-end");
+    if (!ended.ok) throw new Error("unreachable");
+
+    const campaign = await createFreshPlannedCampaign(head);
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, vendorSelections: [{ vendorRef: vendor.data.vendorRef, partnerRefs: [partner.data.partnerRef] }], brief: { platforms: ["instagram"] } },
+      "req-bulk-7",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results[0]).toMatchObject({ outcome: "error" });
+    expect(result.data.results[0]!.error).toMatch(/no ACTIVE relationship/i);
+  });
+
+  it("[8] a spoofed Vendor mapping (Partner has NO relationship at all with the claimed Vendor) is rejected server-side, never a fabricated route", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    // seed-partner-direct's only real link is to seed-vendor-manager - claiming seed-vendor-agency for it
+    // is a fabricated/spoofed mapping the server must catch independently of the client's own UI.
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, vendorSelections: [{ vendorRef: "seed-vendor-agency", partnerRefs: ["seed-partner-direct"] }], brief: { platforms: ["instagram"] } },
+      "req-bulk-8",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results[0]).toMatchObject({ outcome: "error" });
+    expect(result.data.results[0]!.error).toMatch(/no ACTIVE relationship/i);
+  });
+
+  it("[9] is idempotent: replaying the exact same mixed batch reports 'existing' for every already-created pair, never a second Assignment", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const input = {
+      campaignRef: campaign.campaignRef,
+      directPartnerRefs: ["seed-partner-direct"],
+      vendorSelections: [{ vendorRef: "seed-vendor-agency", partnerRefs: ["creator-house"] }],
+      brief: { platforms: ["instagram"] },
+    };
+    const first = await createAssignmentsForPartners(head, input, "req-bulk-9a");
+    const second = await createAssignmentsForPartners(head, input, "req-bulk-9b");
+    expect(first.ok && second.ok).toBe(true);
+    if (!first.ok || !second.ok) throw new Error("unreachable");
+    const firstByRef = new Map(first.data.results.map((r) => [r.partnerRef, r]));
+    const secondByRef = new Map(second.data.results.map((r) => [r.partnerRef, r]));
+    for (const partnerRef of ["seed-partner-direct", "creator-house"]) {
+      expect(firstByRef.get(partnerRef)).toMatchObject({ outcome: "created" });
+      expect(secondByRef.get(partnerRef)).toMatchObject({ outcome: "existing", assignmentRef: firstByRef.get(partnerRef)!.assignmentRef });
+    }
+  });
+
+  it("[12] Campaign downstream Assignment count reflects a mixed Direct+Vendor bulk create, no manual reload needed", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const before = await getCampaignDownstreamSummary(head, campaign.campaignRef);
+    if (!before.ok) throw new Error("unreachable");
+    if (!before.data.assignments.available) throw new Error("unreachable");
+    expect(before.data.assignments.total).toBe(0);
+
+    const result = await createAssignmentsForPartners(
+      head,
+      {
+        campaignRef: campaign.campaignRef,
+        directPartnerRefs: ["seed-partner-direct"],
+        vendorSelections: [{ vendorRef: "seed-vendor-agency", partnerRefs: ["creator-house"] }],
+        brief: { platforms: ["instagram"] },
+      },
+      "req-bulk-12",
+    );
+    expect(result.ok).toBe(true);
+
+    const after = await getCampaignDownstreamSummary(head, campaign.campaignRef);
+    if (!after.ok) throw new Error("unreachable");
+    if (!after.data.assignments.available) throw new Error("unreachable");
+    expect(after.data.assignments.total).toBe(2); // same plain-refetch aggregation as before - finding #41 unaffected
+  });
+
+  it("a bad Partner in a mixed batch is its own per-Partner error and never aborts the rest", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const result = await createAssignmentsForPartners(
+      head,
+      {
+        campaignRef: campaign.campaignRef,
+        directPartnerRefs: ["seed-partner-direct", "seed-partner-inactive", "not-a-real-partner"],
+        vendorSelections: [{ vendorRef: "seed-vendor-agency", partnerRefs: ["creator-house"] }],
+        brief: { platforms: ["instagram"] },
+      },
+      "req-bulk-bad",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results).toHaveLength(4);
+    const byRef = new Map(result.data.results.map((r) => [r.partnerRef, r]));
+    expect(byRef.get("seed-partner-direct")).toMatchObject({ outcome: "created" });
+    expect(byRef.get("seed-partner-inactive")).toMatchObject({ outcome: "error" });
+    expect(byRef.get("not-a-real-partner")).toMatchObject({ outcome: "error" });
+    expect(byRef.get("creator-house")).toMatchObject({ outcome: "created" });
+  });
+
+  it("Campaign-level validation (status, brief platforms) happens ONCE - it fails the whole call, not per-Partner", async () => {
+    const head = await actorFor("partnership_head");
+    const draftCampaign = await createCampaign(head, { name: uniqueName("Bulk Draft Campaign"), objective: "x", platforms: ["instagram"], startDate: "2026-01-01", endDate: "2026-06-01", regionIds: ["Kerala"], defaultReviewPolicy: "REVIEW_REQUIRED" }, "req");
+    if (!draftCampaign.ok) throw new Error("unreachable");
+    const stillDraft = await createAssignmentsForPartners(head, { campaignRef: draftCampaign.data.campaignRef, directPartnerRefs: ["seed-partner-direct"] }, "req-bulk-4a");
+    expect(stillDraft.ok).toBe(false);
+
+    const campaign = await createFreshPlannedCampaign(head, { platforms: ["instagram"] });
+    const badPlatform = await createAssignmentsForPartners(head, { campaignRef: campaign.campaignRef, directPartnerRefs: ["seed-partner-direct"], brief: { platforms: ["youtube"] } }, "req-bulk-4b");
+    expect(badPlatform.ok).toBe(false);
+    if (badPlatform.ok) throw new Error("unreachable");
+    expect(badPlatform.message).toMatch(/platform/i);
+  });
+
+  it("rejects a distinct-Partner count beyond the bulk sanity ceiling, counted across Direct + Vendor sections together", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, directPartnerRefs: Array.from({ length: 51 }, (_, i) => `partner-${i}`) },
+      "req-bulk-5-ceiling",
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("invalid_input");
+  });
+
+  it("rejects a vendorRef that does not resolve to a real Vendor", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, vendorSelections: [{ vendorRef: "not-a-real-vendor", partnerRefs: ["seed-partner-direct"] }] },
+      "req-bulk-vendor-2",
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("invalid_input");
+  });
+});
+
+// Finding #49: `brief.language` is validated against the UNION of the requested Partners' own
+// recorded canonical languageIds (assignment-options-service.ts's toSafePartnerOption now projects
+// this same set to the picker - see its own unit tests for the safe-projection half of this
+// finding). These are the real, server-side write-path guarantees behind that picker: a value
+// outside every requested Partner's own known languages is rejected for a NEW write, a Partner with
+// no recorded language at all never makes the field unusable, and a Vendor-routed Partner is
+// validated against ITS OWN languageIds, never the Vendor's (Vendors carry no language data at all).
+describe("Language validation (finding #49)", () => {
+  it("accepts a language that matches a selected Partner's own recorded languageIds", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const partner = await createPartner(head, { displayName: uniqueName("Language Partner"), regionIds: ["Kerala"], languageIds: ["Malayalam"] }, "req-lang-1");
+    if (!partner.ok) throw new Error("unreachable");
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, directPartnerRefs: [partner.data.partnerRef], brief: { platforms: ["instagram"], language: "Malayalam" } },
+      "req-lang-1b",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results[0]).toMatchObject({ outcome: "created" });
+  });
+
+  it("rejects arbitrary language text that matches none of the selected Partners' recorded languages, for a NEW write", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const partner = await createPartner(head, { displayName: uniqueName("Language Partner"), regionIds: ["Kerala"], languageIds: ["Malayalam"] }, "req-lang-2");
+    if (!partner.ok) throw new Error("unreachable");
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, directPartnerRefs: [partner.data.partnerRef], brief: { platforms: ["instagram"], language: "Klingon" } },
+      "req-lang-2b",
+    );
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("invalid_input");
+  });
+
+  it("no known language on any selected Partner => any language value still accepted, never fabricated a closed set to reject against", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const partner = await createPartner(head, { displayName: uniqueName("No-Language Partner"), regionIds: ["Kerala"] }, "req-lang-3");
+    if (!partner.ok) throw new Error("unreachable");
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, directPartnerRefs: [partner.data.partnerRef], brief: { platforms: ["instagram"], language: "Anything" } },
+      "req-lang-3b",
+    );
+    expect(result.ok).toBe(true);
+  });
+
+  it("a Vendor-routed Partner's language is validated against the PARTNER's own recorded languages, never Vendor data", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const vendor = await createVendor(head, { displayName: uniqueName("Language Vendor"), vendorType: "AGENCY", regionIds: ["Kerala"] }, "req-lang-4v");
+    const partner = await createPartner(head, { displayName: uniqueName("Vendor-Routed Language Partner"), regionIds: ["Kerala"], languageIds: ["Tamil"] }, "req-lang-4p");
+    if (!vendor.ok || !partner.ok) throw new Error("unreachable");
+    const link = await createVendorPartnerLink(head, vendor.data.vendorRef, { partnerRef: partner.data.partnerRef, relationshipType: "AGENCY", effectiveFrom: new Date().toISOString() }, "req-lang-4l");
+    if (!link.ok) throw new Error("unreachable");
+
+    const result = await createAssignmentsForPartners(
+      head,
+      { campaignRef: campaign.campaignRef, vendorSelections: [{ vendorRef: vendor.data.vendorRef, partnerRefs: [partner.data.partnerRef] }], brief: { platforms: ["instagram"], language: "Tamil" } },
+      "req-lang-4",
+    );
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.data.results[0]).toMatchObject({ outcome: "created" });
+  });
+
+  it("the single-Partner create path (createAssignment) enforces the same language validation as the bulk path", async () => {
+    const head = await actorFor("partnership_head");
+    const campaign = await createFreshPlannedCampaign(head);
+    const partner = await createPartner(head, { displayName: uniqueName("Single-Create Language Partner"), regionIds: ["Kerala"], languageIds: ["Hindi"] }, "req-lang-5");
+    if (!partner.ok) throw new Error("unreachable");
+    const result = await createAssignment(head, { campaignRef: campaign.campaignRef, partnerRef: partner.data.partnerRef, brief: { platforms: ["instagram"], language: "Klingon" } }, "req-lang-5b");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.code).toBe("invalid_input");
+  });
 });
 
 describe("Snapshot semantics", () => {

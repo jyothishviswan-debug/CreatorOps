@@ -394,7 +394,7 @@ describe("Assignment create options (trusted Partner / Partner Account picker)",
     expect(searched.data.hasMorePartners).toBe(true);
     expect(searched.data.selectedPartner).toBeNull();
     for (const partner of searched.data.partners) {
-      expect(Object.keys(partner).sort()).toEqual(["displayName", "partnerRef", "regionLabels"]);
+      expect(Object.keys(partner).sort()).toEqual(["displayName", "languageIds", "partnerRef", "regionLabels"]);
       expect(partner.displayName.startsWith(prefix)).toBe(true);
     }
     const serialized = JSON.stringify(searched.data);
@@ -446,7 +446,7 @@ describe("Assignment create options (trusted Partner / Partner Account picker)",
     const keys = collectKeys(options.data);
     for (const forbidden of ["normalizedIdentity", "platformAccountId", "followerSnapshot", "profileUrl", "uid", "ownerUid", "email", "phone", "legalName"]) expect(keys.has(forbidden)).toBe(false);
     // Campaign context is safe display fields only.
-    expect(Object.keys(options.data.campaign).sort()).toEqual(["endDate", "name", "objective", "platforms", "regionIds", "startDate"]);
+    expect(Object.keys(options.data.campaign).sort()).toEqual(["endDate", "languageIds", "name", "objective", "platforms", "regionIds", "startDate"]);
   });
 
   it("reports an existing (Campaign, Partner) Assignment - openable when in scope, ref hidden when out of scope", async () => {

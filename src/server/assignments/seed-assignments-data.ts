@@ -86,6 +86,7 @@ export async function seedAssignmentsData(): Promise<void> {
       version: 1,
       campaignRef,
       partnerRef,
+      routedThroughVendorRef: null,
       createdAt: nowIso,
       createdByUserRef: headUserRef,
       updatedAt: nowIso,

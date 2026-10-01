@@ -545,6 +545,65 @@ test.describe("WhatsApp sharing", () => {
     expect(storageDump).not.toContain("/submit/");
   });
 
+  // Finding #43: the server-side revoke/reissue APIs already existed with
+  // zero UI - this proves the new "Revoke and reissue" control in the
+  // conflict banner actually revokes the old session (its old link stops
+  // resolving), issues a genuinely new one (a different token, that DOES
+  // resolve), and never invents a second parallel token system.
+  test("conflict banner offers Revoke and reissue: old link stops working, new link works, exactly one revoke + two creates", async ({ page }) => {
+    const assignment = await createAssignedAssignmentViaApi(page);
+    await page.goto(`/assignments/${assignment.assignmentRef}`);
+
+    let sessionCreateCalls = 0;
+    let revokeCalls = 0;
+    page.on("request", (request) => {
+      if (request.method() !== "POST") return;
+      if (/\/submission-sessions\/[^/]+\/revoke$/.test(request.url())) revokeCalls += 1;
+      else if (request.url().includes("/submission-sessions")) sessionCreateCalls += 1;
+    });
+
+    await page.getByRole("button", { name: "Share via WhatsApp" }).click();
+    const dialog = page.getByRole("dialog");
+    await dialog.getByRole("checkbox", { name: "Include public submission link" }).check();
+
+    const [popup] = await Promise.all([page.waitForEvent("popup"), dialog.getByRole("button", { name: "Open WhatsApp" }).click()]);
+    await popup.waitForURL(/wa\.me|whatsapp\.com/, { waitUntil: "commit", timeout: 10_000 });
+    await popup.close();
+    const firstLink = await dialog.getByLabel("Generated submission link").inputValue();
+    expect(firstLink).toMatch(/\/submit\//);
+
+    await dialog.getByRole("button", { name: "Cancel" }).click();
+
+    // Re-open and attempt to share again for the SAME recipient (Partner
+    // is the default) while the first session is still active - the
+    // pre-check must surface a real conflict, not a silent second token.
+    await page.getByRole("button", { name: "Share via WhatsApp" }).click();
+    const dialog2 = page.getByRole("dialog");
+    await dialog2.getByRole("checkbox", { name: "Include public submission link" }).check();
+    await dialog2.getByRole("button", { name: "Open WhatsApp" }).click();
+    await expect(dialog2.getByText("An active submission link already exists for this recipient.")).toBeVisible();
+    const revokeButton = dialog2.getByRole("button", { name: "Revoke and reissue" });
+    await expect(revokeButton).toBeVisible();
+    expect(sessionCreateCalls).toBe(1);
+
+    await revokeButton.click();
+    await expect(dialog2.getByLabel("Generated submission link")).toBeVisible();
+    const secondLink = await dialog2.getByLabel("Generated submission link").inputValue();
+    expect(secondLink).toMatch(/\/submit\//);
+    expect(secondLink).not.toBe(firstLink);
+    expect(revokeCalls).toBe(1);
+    expect(sessionCreateCalls).toBe(2);
+
+    // The old token is genuinely dead, and the new one genuinely works -
+    // proven against the real public /submit page, not just the API shape.
+    await page.context().clearCookies();
+    await page.goto(firstLink);
+    await expect(page.getByText("This submission link is no longer available.")).toBeVisible();
+
+    await page.goto(secondLink);
+    await expect(page.getByText("Submit published links")).toBeVisible();
+  });
+
   test("double-click protection: the confirm button disables while creation is in flight, never issuing two sessions", async ({ page }) => {
     const assignment = await createAssignedAssignmentViaApi(page);
     await page.goto(`/assignments/${assignment.assignmentRef}`);

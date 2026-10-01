@@ -23,10 +23,12 @@ import {
   analyticsContentSourceRecordDocSchema,
   analyticsImportBatchClaimDocSchema,
   analyticsImportBatchDocSchema,
+  analyticsImportBatchRowDetailDocSchema,
   type AnalyticsChannelSourceRecordDoc,
   type AnalyticsContentSourceRecordDoc,
   type AnalyticsImportBatchClaimDoc,
   type AnalyticsImportBatchDoc,
+  type AnalyticsImportBatchRowDetailDoc,
 } from "./types";
 
 const MAX_SCOPE_IN_VALUES = 30;
@@ -34,6 +36,10 @@ const MAX_SCOPE_IN_VALUES = 30;
 export const ANALYTICS_COLLECTIONS = {
   analyticsImportBatches: "analyticsImportBatches",
   analyticsImportBatchClaims: "analyticsImportBatchClaims",
+  // Finding #59: per-batch row detail, doc id = batchUid - kept OUT of the
+  // main batch doc so a History list fetch never has to pull row-level
+  // payload for every batch it lists (see the schema's own comment).
+  analyticsImportBatchRowDetails: "analyticsImportBatchRowDetails",
   analyticsContentSourceRecords: "analyticsContentSourceRecords",
   analyticsChannelSourceRecords: "analyticsChannelSourceRecords",
   // Subcollection name under each source-record doc.
@@ -50,6 +56,25 @@ export function analyticsImportBatchesCollection() {
 
 export function analyticsImportBatchClaimsCollection() {
   return getAdminFirestore().collection(ANALYTICS_COLLECTIONS.analyticsImportBatchClaims);
+}
+
+export function analyticsImportBatchRowDetailsCollection() {
+  return getAdminFirestore().collection(ANALYTICS_COLLECTIONS.analyticsImportBatchRowDetails);
+}
+
+// Finding #59: write (overwrite, not merge) the batch's current row-level
+// detail - called at the end of every execute/resume so History always
+// reflects the LATEST rows, never a stale pre-resume snapshot.
+export async function setAnalyticsImportBatchRowDetail(batchUid: string, rows: AnalyticsImportBatchRowDetailDoc["rows"], rowsTruncated: boolean): Promise<void> {
+  const doc = analyticsImportBatchRowDetailDocSchema.parse({ batchUid, rows, rowsTruncated, updatedAt: new Date().toISOString() });
+  await analyticsImportBatchRowDetailsCollection().doc(batchUid).set(doc);
+}
+
+export async function getAnalyticsImportBatchRowDetail(batchUid: string): Promise<AnalyticsImportBatchRowDetailDoc | null> {
+  const snapshot = await analyticsImportBatchRowDetailsCollection().doc(batchUid).get();
+  if (!snapshot.exists) return null;
+  const result = analyticsImportBatchRowDetailDocSchema.safeParse(snapshot.data());
+  return result.success ? result.data : null;
 }
 
 export function analyticsContentSourceRecordsCollection() {
@@ -115,6 +140,21 @@ export async function getCompletedAnalyticsImportBatchBySourceHash(sourceHash: s
   if (snapshot.empty) return null;
   const result = analyticsImportBatchDocSchema.safeParse(snapshot.docs[0]!.data());
   return result.success ? result.data : null;
+}
+
+// Finding #67: the same lookup as above, but returns EVERY terminal batch
+// for this exact file content, not just one - once an explicit supersession
+// can mint a genuinely new batch for byte-identical content (see
+// claimOrJoinBatch's own comment), more than one terminal batch can
+// legitimately share a sourceHash (an original plus zero or more
+// supersessions of it, each with its own distinct supersedesBatchRef).
+// The caller matches on the full (sourceHash, supersedesBatchRef) identity
+// to find the one that's a genuine replay of ITS OWN specific request -
+// reuses the exact same sourceHash+status composite index as the
+// singular lookup above (no new index needed).
+export async function getCompletedAnalyticsImportBatchesBySourceHash(sourceHash: string): Promise<AnalyticsImportBatchDoc[]> {
+  const snapshot = await analyticsImportBatchesCollection().where("sourceHash", "==", sourceHash).where("status", "in", [...TERMINAL_BATCH_STATUSES]).get();
+  return snapshot.docs.map((doc) => analyticsImportBatchDocSchema.safeParse(doc.data())).filter((result): result is { success: true; data: AnalyticsImportBatchDoc } => result.success).map((result) => result.data);
 }
 
 export async function getAnalyticsImportBatchClaim(sourceHash: string): Promise<AnalyticsImportBatchClaimDoc | null> {

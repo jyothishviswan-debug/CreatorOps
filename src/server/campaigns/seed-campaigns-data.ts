@@ -58,8 +58,12 @@ export async function seedCampaignsData(): Promise<void> {
   const resourceFixture = (label: string) => ({
     resourceRef: `${label.toLowerCase().replace(/\s+/g, "-")}-resource`,
     label,
+    // Deliberately a legacy type (findings #36/#37 narrowed NEW creation to
+    // LINK/UPLOAD/TEXT, but this old-shape fixture proves a legacy-typed
+    // resource still reads/parses fine, unmigrated).
     type: "BRIEF" as const,
     url: "https://example.com/campaign-brief.pdf",
+    content: null,
     description: "Safe ordinary reference metadata only - no secrets, no restricted identity.",
     addedAt: nowIso,
     addedByUserRef: headUserRef,

@@ -9,6 +9,7 @@ import { checkImportFileSafety } from "@/server/imports/file-safety";
 import { matchContentSourceRow } from "./content-matcher";
 import { sha256HexBuffer } from "./firestore";
 import { matchPartnerAccountSourceRow } from "./partner-account-matcher";
+import { deriveReportingPeriodFromPostDateTime } from "./reporting-period";
 import { parseWorkbookBuffer, type ParsedSheet } from "./xlsx-parser";
 import {
   ANALYTICS_CLASSIFICATION_TO_OUTCOME,
@@ -58,6 +59,12 @@ export type PipelineRowOutcome = {
   // identity already belongs to. Never set for "unchanged" (that IS this
   // batch).
   conflictingBatchRef?: string | null;
+  // Remediation-plan Wave B / finding #60 re-audit: set only when this row's classification was
+  // downgraded to "quarantined" by a COMMIT-time failure (never a validation/dry-run failure - see
+  // import-service.ts's commitContentRow/commitChannelRow). A closed-list, SAFE, already-sanitized
+  // reason - never a raw stack, Zod internals, a Firestore path, or any signed/sensitive value. Null
+  // for every other classification.
+  commitFailureReason?: string | null;
 };
 
 export type AnalyticsImportPipelineInput = {
@@ -130,23 +137,62 @@ async function buildContentRowOutcome(
     };
   }
 
-  const rowIdentityKeyRaw = computeRowIdentityKey(targetKind, platform, strongest, reportingPeriod);
+  // Finding #66 (user-decided): a content row's own reportingPeriod is derived from its own
+  // postDateTimeIso (the UTC calendar month containing that instant - see reporting-period.ts's own
+  // header comment for why UTC, never the server's local timezone) whenever that date is present and
+  // parseable. The actor-supplied BATCH-level period (the pre-existing field, never actually collected by
+  // the real import UI) is only the fallback for a row whose own date could not be determined - never the
+  // other way around, since a per-post date is always more precise than one period applied to a whole
+  // sheet. Channel/account snapshot rows are untouched (see buildChannelRowOutcome below) - they carry no
+  // per-row post date at all.
+  const derivedPeriod = row.postDateTimeIso ? deriveReportingPeriodFromPostDateTime(row.postDateTimeIso) : null;
+  const rowReportingPeriod = derivedPeriod ?? reportingPeriod;
+
+  const rowIdentityKeyRaw = computeRowIdentityKey(targetKind, platform, strongest, rowReportingPeriod);
 
   const contentMatch = await matchContentSourceRow({ platform, platformContentId: row.rawPostId, rawUrl: row.rawPostUrl });
 
-  // Best-effort Partner Account enrichment - a SEPARATE resolution using
-  // whatever identity evidence this content row happens to carry
-  // (username only, ordinarily). Its own failure/ambiguity never blocks
-  // or downgrades the Content match itself.
-  let matchedPartnerAccountRef: string | null = null;
-  if (row.rawUsername) {
-    const accountMatch = await matchPartnerAccountSourceRow({ platform, platformAccountId: null, profileUrl: null, handle: row.rawUsername });
-    if (accountMatch.matchState === "MATCHED") matchedPartnerAccountRef = accountMatch.matchedPartnerAccountRef;
-  }
+  // Finding #30 (user-decided) + Finding #57: preserve the FULL matching hierarchy - exact Post URL ->
+  // Content -> Account -> Partner is tried first (highest precision, and the only path that can also
+  // resolve matchedContentRef/matchedAssignmentRef/matchedCampaignRef); a genuinely matched Partner
+  // Account (by handle - the only account-identity evidence a content row carries) is a real,
+  // independent ownership match on its own, tried whenever the row supplies a handle. A missing
+  // Content/Assignment thread must never by itself block a valid Partner Account match.
+  const accountMatch = row.rawUsername ? await matchPartnerAccountSourceRow({ platform, platformAccountId: null, profileUrl: null, handle: row.rawUsername }) : null;
+
+  // Finding #57: Partner/Account OWNERSHIP resolution is kept SEPARATE from Content/Campaign matching -
+  // matchState/matchEvidence/matchedContentRef/matchedAssignmentRef/matchedCampaignRef always reflect
+  // Content's own outcome alone (never promoted to MATCHED just because ownership resolved), so a row
+  // stays genuinely, visibly Content-unmatched whenever Content itself didn't resolve. Ownership prefers
+  // Content's own resolution (content-matcher.ts now also resolves ownership for a real-but-not-
+  // currently-valid Content claim - see its own comment) and falls back to the deterministic
+  // Partner-Account-only match only when Content resolved no ownership at all; an AMBIGUOUS account
+  // match is never accepted (accountMatch.matchState === "MATCHED" is the only accepted outcome, exactly
+  // as before).
+  const contentOwnershipKnown = contentMatch.matchedPartnerRef !== null;
+  const accountOwnershipApplies = !contentOwnershipKnown && accountMatch?.matchState === "MATCHED";
+
+  const resolvedMatch = {
+    matchState: contentMatch.matchState,
+    matchEvidence: contentMatch.matchEvidence,
+    matchedContentRef: contentMatch.matchedContentRef,
+    matchedAssignmentRef: contentMatch.matchedAssignmentRef,
+    matchedCampaignRef: contentMatch.matchedCampaignRef,
+    matchedPartnerRef: contentOwnershipKnown ? contentMatch.matchedPartnerRef : accountOwnershipApplies ? accountMatch!.matchedPartnerRef : null,
+    ownerUid: contentOwnershipKnown ? contentMatch.ownerUid : accountOwnershipApplies ? accountMatch!.ownerUid : null,
+    regionIds: contentOwnershipKnown ? contentMatch.regionIds : accountOwnershipApplies ? accountMatch!.regionIds : [],
+    teamIds: contentOwnershipKnown ? contentMatch.teamIds : accountOwnershipApplies ? accountMatch!.teamIds : [],
+  };
+
+  // The matchedPartnerAccountRef FIELD specifically (distinct from the ownership resolution above): a
+  // Content thread carries no Partner Account identity at all, so even a fully successful Content-path
+  // match leaves this field to the account match alone - set whenever it independently resolved one,
+  // regardless of which path decided matchState/ownership.
+  const matchedPartnerAccountRef = accountMatch?.matchState === "MATCHED" ? accountMatch.matchedPartnerAccountRef : null;
 
   const dateTimeSuppliedButUnparseable = Boolean(row.rawPostDateTime) && row.postDateTimeIso === null;
   const classification: AnalyticsRowClassification =
-    contentMatch.matchState === "MATCHED" && dateTimeSuppliedButUnparseable ? "warning" : (contentMatch.matchState.toLowerCase() as AnalyticsRowClassification);
+    resolvedMatch.matchState === "MATCHED" && dateTimeSuppliedButUnparseable ? "warning" : (resolvedMatch.matchState.toLowerCase() as AnalyticsRowClassification);
 
   const content: ContentRecordFields = {
     sheetName: row.sheetName,
@@ -173,17 +219,17 @@ async function buildContentRowOutcome(
     views: row.views,
     profileFollowers: row.profileFollowers,
     engagement: row.engagement,
-    reportingPeriod: reportingPeriod ?? null,
-    matchState: contentMatch.matchState,
-    matchEvidence: contentMatch.matchEvidence,
-    matchedContentRef: contentMatch.matchedContentRef,
-    matchedAssignmentRef: contentMatch.matchedAssignmentRef,
-    matchedCampaignRef: contentMatch.matchedCampaignRef,
-    matchedPartnerRef: contentMatch.matchedPartnerRef,
+    reportingPeriod: rowReportingPeriod ?? null,
+    matchState: resolvedMatch.matchState,
+    matchEvidence: resolvedMatch.matchEvidence,
+    matchedContentRef: resolvedMatch.matchedContentRef,
+    matchedAssignmentRef: resolvedMatch.matchedAssignmentRef,
+    matchedCampaignRef: resolvedMatch.matchedCampaignRef,
+    matchedPartnerRef: resolvedMatch.matchedPartnerRef,
     matchedPartnerAccountRef,
-    ownerUid: contentMatch.ownerUid,
-    regionIds: contentMatch.regionIds,
-    teamIds: contentMatch.teamIds,
+    ownerUid: resolvedMatch.ownerUid,
+    regionIds: resolvedMatch.regionIds,
+    teamIds: resolvedMatch.teamIds,
   };
 
   return {
@@ -253,18 +299,18 @@ async function buildChannelRowOutcome(targetKind: AnalyticsTargetKind, row: Chan
 // YouTube). The first adapter that recognizes sufficient headers wins
 // the sheet - a sheet is never split across two adapters, and is never
 // forced into a specific name.
-function classifySheetAdapter(targetKind: AnalyticsTargetKind, sheet: ParsedSheet): { recognizedAs: "campaign_content" | "channel_account" | "unrecognized"; unsupportedHeaders: string[] } {
+function classifySheetAdapter(targetKind: AnalyticsTargetKind, sheet: ParsedSheet): { recognizedAs: "campaign_content" | "channel_account" | "unrecognized"; unsupportedHeaders: string[]; ambiguousHeaders: string[] } {
   if (targetKind === "campaign_content") {
     const instagram = classifyInstagramContentSheet(sheet.headers);
-    if (instagram.isRecognized) return { recognizedAs: "campaign_content", unsupportedHeaders: instagram.unsupportedHeaders };
+    if (instagram.isRecognized) return { recognizedAs: "campaign_content", unsupportedHeaders: instagram.unsupportedHeaders, ambiguousHeaders: instagram.ambiguousHeaders };
     const youtube = classifyYoutubeContentSheet(sheet.headers);
-    if (youtube.isRecognized) return { recognizedAs: "campaign_content", unsupportedHeaders: youtube.unsupportedHeaders };
-    return { recognizedAs: "unrecognized", unsupportedHeaders: [] };
+    if (youtube.isRecognized) return { recognizedAs: "campaign_content", unsupportedHeaders: youtube.unsupportedHeaders, ambiguousHeaders: youtube.ambiguousHeaders };
+    return { recognizedAs: "unrecognized", unsupportedHeaders: [], ambiguousHeaders: [] };
   }
 
   const channel = classifyChannelSnapshotSheet(sheet.headers);
-  if (channel.isRecognized) return { recognizedAs: "channel_account", unsupportedHeaders: channel.unsupportedHeaders };
-  return { recognizedAs: "unrecognized", unsupportedHeaders: [] };
+  if (channel.isRecognized) return { recognizedAs: "channel_account", unsupportedHeaders: channel.unsupportedHeaders, ambiguousHeaders: channel.ambiguousHeaders };
+  return { recognizedAs: "unrecognized", unsupportedHeaders: [], ambiguousHeaders: [] };
 }
 
 export async function runAnalyticsImportPipeline(
@@ -291,11 +337,17 @@ export async function runAnalyticsImportPipeline(
   const rows: PipelineRowOutcome[] = [];
 
   for (const sheet of parsed.sheets) {
-    const { recognizedAs, unsupportedHeaders } = classifySheetAdapter(input.targetKind, sheet);
+    const { recognizedAs, unsupportedHeaders, ambiguousHeaders } = classifySheetAdapter(input.targetKind, sheet);
     sourceSheetInventory.push({ sheetName: sheet.sheetName, rowCount: sheet.rows.length, recognizedAs });
 
     if (unsupportedHeaders.length > 0) {
       safeErrorSummary.push(`Sheet "${sheet.sheetName}": ignored unsupported column(s) ${unsupportedHeaders.join(", ")}.`);
+    }
+    if (ambiguousHeaders.length > 0) {
+      // Wave B / finding #55 re-audit: two or more differently-spelled headers normalized to the
+      // SAME field - never silently resolved to one, so that field's data is skipped entirely for
+      // this sheet until the ambiguity is fixed in the source file and re-uploaded.
+      safeErrorSummary.push(`Sheet "${sheet.sheetName}": column(s) ${ambiguousHeaders.join(", ")} are ambiguous (they all match the same recognized field) - none of them were used. Rename or remove the extra column(s) and re-upload.`);
     }
 
     if (recognizedAs === "unrecognized") {
@@ -358,6 +410,8 @@ function identityLabelOf(row: PipelineRowOutcome): string | null {
 }
 
 export function summarizeRowOutcome(row: PipelineRowOutcome): AnalyticsImportRowSummaryDto {
+  const conflictingBatchRef = row.conflictingBatchRef ?? null;
+  const commitFailureReason = row.commitFailureReason ?? null;
   return {
     sheetName: row.sheetName,
     sourceRowNumber: row.sourceRowNumber,
@@ -365,6 +419,10 @@ export function summarizeRowOutcome(row: PipelineRowOutcome): AnalyticsImportRow
     outcome: ANALYTICS_CLASSIFICATION_TO_OUTCOME[row.classification],
     recordKind: row.recordKind,
     identityLabel: identityLabelOf(row),
-    conflictingBatchRef: row.conflictingBatchRef ?? null,
+    conflictingBatchRef,
+    commitFailureReason,
+    // The one safe display string every caller (generic wrapper or the real Analytics UI's own raw
+    // response) can read uniformly - see this field's own doc comment in types.ts for why it exists.
+    detail: conflictingBatchRef ? `Conflicts with batch ${conflictingBatchRef}` : commitFailureReason,
   };
 }

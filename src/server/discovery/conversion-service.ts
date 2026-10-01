@@ -7,12 +7,13 @@ import { claimIdFor, computeNormalizedIdentity } from "@/server/partners/identit
 import { generatePartnerAccountRef, generatePartnerRef } from "@/server/partners/ids";
 import { writePartnerEvent } from "@/server/partners/partner-events";
 import { partnerAccountDocSchema, partnerAccountIdentityClaimDocSchema, partnerDocSchema, type PartnerAccountDoc, type PartnerDoc } from "@/server/partners/types";
-import { requireDiscoveryAccess, requireDiscoveryFeatureAccess, requireLeadInScope } from "./discovery-gate";
+import { restrictedFinancialIdentitiesCollection, restrictedFinancialIdentityDocSchema, restrictedIdentityDocId } from "@/server/shared/restricted-financial-identity";
+import { requireDiscoveryAccess, requireDiscoveryFeatureAccess, requireDiscoveryKycSensitiveAccess, requireLeadInScope } from "./discovery-gate";
 import { checkForDuplicates } from "./duplicate-check";
-import { getLeadDocByRef, leadsCollection } from "./firestore";
+import { getLeadDocByRef, leadRestrictedKycCollection, leadsCollection } from "./firestore";
 import { writeLeadEvent } from "./lead-events";
 import { evaluateLeadReadiness } from "./readiness";
-import { discoveryInvalidInputResult, discoveryUnauthorizedResult, leadDocSchema, type DiscoveryServiceResult, type LeadDoc, type ReadinessResult } from "./types";
+import { discoveryInvalidInputResult, discoveryUnauthorizedResult, leadDocSchema, leadRestrictedKycDocSchema, type DiscoveryServiceResult, type LeadDoc, type ReadinessResult } from "./types";
 
 // ---- Readiness endpoint ----
 // Read-only - gated by Feature Access + Record Scope, same as get/list.
@@ -78,6 +79,19 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
   if (!actor) return discoveryUnauthorizedResult("not_authenticated");
   const gate = await requireDiscoveryAccess(actor, "convert_lead");
   if (!gate.ok) return discoveryUnauthorizedResult(gate.reason);
+  // Remediation-plan Wave B / finding #1 re-audit: convertLead reads the Lead's raw restricted KYC
+  // doc (pan/aadhaar/bank) and copies it into the new Partner's own restricted-identity record below
+  // - the exact same "touches raw KYC values" operation kyc-service.ts's requireKycAccess already
+  // gates behind BOTH requireDiscoveryAccess("manage_kyc") AND requireDiscoveryKycSensitiveAccess.
+  // Before this fix, convertLead only checked the "convert_lead" action grant, so a Partnership
+  // Manager (who has convert_lead + manage_kyc, but is deliberately NOT granted the discovery_kyc
+  // sensitive category - see authz/seed-access-data.ts) could still trigger this exact copy with no
+  // sensitive-access check at all. Unconditional, not conditioned on whether this particular Lead
+  // happens to have KYC yet: readiness.ts's own kycPackageComplete blocker means a Lead can never
+  // reach CONVERSION_READY without one, so every real conversion already touches real KYC - this
+  // adds no new friction to any legitimate no-KYC path, because none exists.
+  const sensitiveGate = await requireDiscoveryKycSensitiveAccess(actor);
+  if (!sensitiveGate.ok) return discoveryUnauthorizedResult(sensitiveGate.reason);
 
   if (typeof leadRef !== "string" || leadRef.length === 0) return discoveryInvalidInputResult("Missing leadRef.");
   const parsed = convertLeadInputSchema.safeParse(rawInput);
@@ -141,6 +155,7 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
 
   const db = getAdminFirestore();
   const leadDocRef = leadsCollection().doc(lead.uid);
+  const kycDocRef = leadRestrictedKycCollection().doc(lead.uid);
   const newPartnerRef = generatePartnerRef();
   const newPartnerUid = partnersCollection().doc().id;
 
@@ -156,11 +171,25 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
     existingAccountUid = existing.uid;
   }
 
+  // Finding #16 (user-decided): MAINTAIN_EXISTING/TRANSFER_AND_MAINTAIN no
+  // longer require a pre-existing internal existingPartnerAccountRef - an
+  // absent ref for either decision now falls through here exactly like it
+  // already did for NEW_ACCOUNT's own "create from the Lead's own
+  // confirmed evidence" path below. Never fabricated, never fuzzy-matched:
+  // readiness.ts's own ASSET_DECISION_INVALID blocker is what guarantees a
+  // Lead can never reach this point without EITHER a validated ref
+  // (resolved just above) OR real platform identity (checked by
+  // `Boolean(lead.platform)` below, the same condition readiness uses).
+  //
   // For a NEW canonical Partner Account created from the Lead's own
   // confirmed platform/handle/profile evidence - computed outside the
   // transaction (pure), the identity-claim lock itself is what's
-  // actually checked/written transactionally below.
-  const willCreateNewAccount = lead.assetDecision.decision === "NEW_ACCOUNT" ? false : !existingAccountUid && Boolean(lead.platform);
+  // actually checked/written transactionally below. NEW_ACCOUNT itself
+  // stays excluded here regardless of lead.platform - it always means
+  // "no account yet, pending setup" (unchanged from before this finding),
+  // never auto-created from incidental platform data captured earlier in
+  // Discovery.
+  const willCreateNewAccount = lead.assetDecision.decision !== "NEW_ACCOUNT" && !existingAccountUid && Boolean(lead.platform);
   const newAccountNormalizedIdentity = willCreateNewAccount && lead.platform ? computeNormalizedIdentity({ platform: lead.platform, profileUrl: lead.profileUrl, handle: lead.handle }) : null;
   const newAccountClaimId = newAccountNormalizedIdentity ? claimIdFor(newAccountNormalizedIdentity) : null;
   const newAccountUid = willCreateNewAccount ? partnerAccountsCollection().doc().id : null;
@@ -172,6 +201,12 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
     const parsedLead = leadDocSchema.safeParse(leadSnap.data());
     if (!parsedLead.success) return { kind: "not_found" };
     const freshLead = parsedLead.data;
+
+    // Read alongside the Lead itself - Firestore requires every
+    // transactional read before any transactional write, and this is
+    // consumed below (after the Partner doc is written) to carry the
+    // already-confirmed KYC package forward, never re-collected.
+    const kycSnap = await tx.get(kycDocRef);
 
     // Idempotent replay re-checked inside the transaction too, in case a
     // concurrent request already converted it between the read above and
@@ -258,6 +293,35 @@ export async function convertLead(actor: ActorContext | null, leadRef: unknown, 
       updatedByUserRef: actor!.userRef,
     });
     tx.set(partnersCollection().doc(newPartnerUid), partnerDoc);
+
+    // Carry Discovery's own restricted KYC package (Step 6B.1) forward
+    // into the Partner's own restrictedFinancialIdentities record (see
+    // shared/restricted-financial-identity.ts) - both share the same
+    // pan/aadhaar/bank/gst shape and the same evidence-entry shape, so
+    // this is a straight copy, never a re-derivation. A Partner created
+    // from a Lead whose KYC was already confirmed must never start out
+    // looking like KYC was never done. `address` has no Discovery-KYC
+    // equivalent, so it starts null rather than being fabricated.
+    const parsedKyc = kycSnap.exists ? leadRestrictedKycDocSchema.safeParse(kycSnap.data()) : null;
+    if (parsedKyc?.success) {
+      const kyc = parsedKyc.data;
+      const restrictedDocId = restrictedIdentityDocId("PARTNER", newPartnerUid);
+      const restrictedDoc = restrictedFinancialIdentityDocSchema.parse({
+        uid: restrictedDocId,
+        subjectType: "PARTNER",
+        subjectRef: newPartnerRef,
+        version: 1,
+        pan: kyc.pan,
+        aadhaar: kyc.aadhaar,
+        gst: kyc.gst,
+        bank: kyc.bank,
+        address: null,
+        evidence: kyc.attachments,
+        updatedAt: now,
+        updatedByUserRef: actor!.userRef,
+      });
+      tx.set(restrictedFinancialIdentitiesCollection().doc(restrictedDocId), restrictedDoc);
+    }
 
     let partnerAccountRef: string | null = null;
     if (freshLead.assetDecision.decision !== "NEW_ACCOUNT") {

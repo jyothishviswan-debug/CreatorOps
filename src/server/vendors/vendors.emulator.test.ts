@@ -715,7 +715,11 @@ describe("Regression", () => {
     };
     expect(await namedLikeLead()).toEqual([]);
 
-    const lead = await createLead(head, { displayName: leadName, source: { type: "referral" }, regionIds: ["Kerala"], email: `${uniqueName("novendor").replace(/\s+/g, "")}@example.com` }, "req-no-vendor-create");
+    const lead = await createLead(
+      head,
+      { displayName: leadName, phone: `+91 9${runId}01`, source: { type: "referral" }, regionIds: ["Kerala"], email: `${uniqueName("novendor").replace(/\s+/g, "")}@example.com` },
+      "req-no-vendor-create",
+    );
     if (!lead.ok) throw new Error("unreachable");
     let version = lead.data.version;
     const research = await saveResearch(head, lead.data.leadRef, { targetAudience: ["India 1"], expectedVersion: version }, "req-nv-research");

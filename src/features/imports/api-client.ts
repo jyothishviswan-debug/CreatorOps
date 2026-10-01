@@ -62,7 +62,29 @@ export async function resumeAnalyticsImport(batchRef: string, file: File, option
   return postJson<ImportRunResult>("/api/imports/resume", { module: "analytics", batchRef, filename: file.name, mimeType: file.type || "application/octet-stream", fileBase64, ...options });
 }
 
-export type ImportModuleArg = "analytics" | "contract_bundle";
+// Finding #56: unlike every other call above, this returns real file bytes (a .xlsx), not JSON - a
+// distinct Blob-returning path rather than forcing it through postJson.
+export type TemplatePartnerSelection = { mode: "all" } | { mode: "selected"; partnerRefs: string[] };
+
+export async function downloadAnalyticsTemplate(input: {
+  targetKind: "campaign_content" | "channel_account";
+  contentPlatform?: "instagram" | "youtube";
+  channelPlatform?: string;
+  partnerSelection: TemplatePartnerSelection;
+}): Promise<ApiResult<{ blob: Blob; filename: string }>> {
+  const response = await fetch("/api/imports/analytics/template", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(input) });
+  if (!response.ok) {
+    const body = await response.json().catch(() => null);
+    return { ok: false, error: normalizeErrorBody(body, response.status) };
+  }
+  const disposition = response.headers.get("Content-Disposition") ?? "";
+  const match = /filename="([^"]+)"/.exec(disposition);
+  const filename = match?.[1] ?? "analytics-import-template.xlsx";
+  const blob = await response.blob();
+  return { ok: true, data: { blob, filename } };
+}
+
+export type ImportModuleArg = "analytics" | "contract_bundle" | "content_links";
 
 export type ImportBatchListItem = Record<string, unknown> & { batchRef: string; status: string; createdAt: string; sourceFilename: string };
 

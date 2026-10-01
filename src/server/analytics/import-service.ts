@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 
+import { ZodError } from "zod";
+
 import type { ActorContext } from "@/server/authz/types";
 import { getAdminFirestore } from "@/server/firebase/admin";
-import { classifyServiceErrorCode, classifySystemError } from "@/server/imports/error-taxonomy";
+import { classifyImportReasonCode, classifyServiceErrorCode, classifySystemError } from "@/server/imports/error-taxonomy";
 import { ImportAdapterError, registerImportTarget } from "@/server/imports/target-registry";
 
 import { requireAnalyticsManageAccess, requireImportsModuleAccess } from "./analytics-gate";
@@ -17,6 +19,8 @@ import {
   getAnalyticsImportBatchByRef,
   getAnalyticsImportBatchByUid,
   getCompletedAnalyticsImportBatchBySourceHash,
+  getCompletedAnalyticsImportBatchesBySourceHash,
+  setAnalyticsImportBatchRowDetail,
   sha256HexBuffer,
 } from "./firestore";
 import { AnalyticsImportRejectedError, runAnalyticsImportPipeline, summarizeRowOutcome, type AnalyticsImportPipelineInput, type PipelineRowOutcome } from "./import-pipeline";
@@ -31,6 +35,7 @@ import {
   analyticsNotFoundResult,
   analyticsUnauthorizedResult,
   analyticsConflictResult,
+  MAX_ROW_DETAIL_ROWS,
   type AnalyticsBatchStatus,
   type AnalyticsChannelSourceRecordDoc,
   type AnalyticsContentSourceRecordDoc,
@@ -43,12 +48,6 @@ import {
   type AnalyticsSheetInventoryEntry,
   type AnalyticsTargetKind,
 } from "./types";
-
-// Import Center Completion (spec section 3/5): row-level detail sent to
-// the browser for the File/Sheet Preview and Review steps is always
-// bounded - never the full row set, even though the pipeline itself
-// processes every row server-side.
-const MAX_ROW_DETAIL_ROWS = 500;
 
 // Step 12A section 7-10: dryRunAnalyticsImport / executeAnalyticsImport -
 // both call the exact same runAnalyticsImportPipeline function
@@ -186,7 +185,18 @@ type ClaimResult = { won: true; batchUid: string; batchRef: string } | { won: fa
 
 async function claimOrJoinBatch(sourceHash: string, targetKind: AnalyticsTargetKind, filename: string, mimeType: string, extension: string, actorUserRef: string, supersedesBatchRef: string | null, reportingPeriod: AnalyticsReportingPeriod | null): Promise<ClaimResult> {
   const db = getAdminFirestore();
-  const claimRef = analyticsImportBatchClaimsCollection().doc(analyticsImportBatchClaimId(sourceHash));
+  // Finding #67: a plain re-upload claims by sourceHash alone (unchanged -
+  // this is what makes an accidental byte-identical replay a safe no-op).
+  // An EXPLICIT supersession claims by the COMPOUND (sourceHash,
+  // supersedesBatchRef) identity instead, so the exact same bytes can
+  // still get a genuinely new batch when the caller explicitly declares a
+  // new supersession intent (Scenario D: "intentional superseding import
+  // using the same bytes", e.g. re-asserting a correction) - while a
+  // REPLAY of that exact same superseding request (same bytes, same
+  // supersedesBatchRef) still races safely onto the SAME claim, never a
+  // duplicate.
+  const claimKey = supersedesBatchRef ? `${sourceHash}:supersedes:${supersedesBatchRef}` : sourceHash;
+  const claimRef = analyticsImportBatchClaimsCollection().doc(analyticsImportBatchClaimId(claimKey));
 
   return db.runTransaction<ClaimResult>(async (tx) => {
     const claimSnap = await tx.get(claimRef);
@@ -280,9 +290,29 @@ export function setAnalyticsCommitFaultHookForTests(hook: ((rowIdentityKeyRaw: s
   commitFaultHook = hook;
 }
 
-async function commitContentRow(row: PipelineRowOutcome, batchRef: string): Promise<{ classification: AnalyticsRowClassification; failed: boolean }> {
-  if (!row.content || !row.rowIdentityKeyRaw) return { classification: row.classification, failed: false };
-  if (row.classification === "duplicate" || row.classification === "unchanged") return { classification: row.classification, failed: false };
+// Remediation-plan Wave B / finding #60 re-audit: the real root cause the "1000 -> 4000" rawMediaUrl
+// widening never actually touched - a per-row commit failure's real error was fully discarded (a
+// bare `catch {}`, not even bound to a variable), leaving the batch's own safeErrorSummary and every
+// row's Detail column with nothing at all, no matter WHY the write failed. Reuses the ONE existing,
+// already-safe import error-classification surface (@/server/imports/error-taxonomy) rather than
+// inventing a parallel one - a schema-validation failure at commit time (the row's own resolved data
+// didn't fit the stored record shape) is distinguished from every other failure (a transient Firestore
+// write issue, or anything unclassified), since only the former is something the uploader can actually
+// act on. Both branches are FIXED, safe strings - never the caught error's own message/name/stack, a
+// Firestore path, a doc id, or a signed/sensitive URL value.
+function classifyCommitFailure(error: unknown): string {
+  if (error instanceof ZodError) {
+    return classifyImportReasonCode(
+      "ROW_COMMIT_INVALID_SHAPE",
+      "This row's data didn't fit the record shape expected when saving (a value was likely too long or in an unexpected format). No record was written for this row.",
+    ).message;
+  }
+  return classifySystemError().message;
+}
+
+async function commitContentRow(row: PipelineRowOutcome, batchRef: string): Promise<{ classification: AnalyticsRowClassification; failed: boolean; commitFailureReason: string | null }> {
+  if (!row.content || !row.rowIdentityKeyRaw) return { classification: row.classification, failed: false, commitFailureReason: null };
+  if (row.classification === "duplicate" || row.classification === "unchanged") return { classification: row.classification, failed: false, commitFailureReason: null };
 
   const docId = analyticsRowIdentityDocId(row.rowIdentityKeyRaw);
   const db = getAdminFirestore();
@@ -301,19 +331,21 @@ async function commitContentRow(row: PipelineRowOutcome, batchRef: string): Prom
       tx.set(docRef, doc);
       return row.classification;
     });
-    return { classification: finalClassification, failed: false };
-  } catch {
+    return { classification: finalClassification, failed: false, commitFailureReason: null };
+  } catch (error) {
     // Import Center Completion (spec section 9): a per-row COMMIT failure
     // (the row classified/validated fine; the write itself failed) is
     // "quarantined", not silently left at its prior classification - it
-    // is now visibly retryable via resumeAnalyticsImportBatch.
-    return { classification: "quarantined", failed: true };
+    // is now visibly retryable via resumeAnalyticsImportBatch. A Firestore
+    // transaction either fully commits or writes nothing at all, so
+    // reaching this catch means NO record was written for this row.
+    return { classification: "quarantined", failed: true, commitFailureReason: classifyCommitFailure(error) };
   }
 }
 
-async function commitChannelRow(row: PipelineRowOutcome, batchRef: string): Promise<{ classification: AnalyticsRowClassification; failed: boolean }> {
-  if (!row.channel || !row.rowIdentityKeyRaw) return { classification: row.classification, failed: false };
-  if (row.classification === "duplicate" || row.classification === "unchanged") return { classification: row.classification, failed: false };
+async function commitChannelRow(row: PipelineRowOutcome, batchRef: string): Promise<{ classification: AnalyticsRowClassification; failed: boolean; commitFailureReason: string | null }> {
+  if (!row.channel || !row.rowIdentityKeyRaw) return { classification: row.classification, failed: false, commitFailureReason: null };
+  if (row.classification === "duplicate" || row.classification === "unchanged") return { classification: row.classification, failed: false, commitFailureReason: null };
 
   const docId = analyticsRowIdentityDocId(row.rowIdentityKeyRaw);
   const db = getAdminFirestore();
@@ -332,9 +364,9 @@ async function commitChannelRow(row: PipelineRowOutcome, batchRef: string): Prom
       tx.set(docRef, doc);
       return row.classification;
     });
-    return { classification: finalClassification, failed: false };
-  } catch {
-    return { classification: "quarantined", failed: true };
+    return { classification: finalClassification, failed: false, commitFailureReason: null };
+  } catch (error) {
+    return { classification: "quarantined", failed: true, commitFailureReason: classifyCommitFailure(error) };
   }
 }
 
@@ -350,25 +382,52 @@ export async function executeAnalyticsImport(actor: ActorContext | null, rawInpu
   const input = validated.data;
 
   const supersedesBatchRef = rawInput.supersedesBatchRef ?? null;
+  const sourceHash = sha256HexBuffer(input.fileBuffer);
+
   if (supersedesBatchRef) {
     const target = await getAnalyticsImportBatchByRef(supersedesBatchRef);
     if (!target) return analyticsInvalidInputResult(`supersedesBatchRef "${supersedesBatchRef}" does not exist.`);
-    // Stale-correction guard - reject if some OTHER batch already
-    // supersedes this exact target (i.e. `target` is no longer the
-    // current latest revision in its own correction lineage).
+    // Stale-correction guard - reject if some OTHER, DIFFERENT correction
+    // already superseded this exact target (i.e. `target` is no longer
+    // the current latest revision in its own correction lineage).
+    // Finding #67: a REPLAY of the exact same successful superseding
+    // request (same target AND same file bytes as what's already on
+    // record) is not a stale correction - it's Scenario E, a safe
+    // idempotent replay - and must fall through to the identity lookup
+    // below rather than being rejected here.
     const alreadySuperseded = await findAnalyticsImportBatchSupersededBy(supersedesBatchRef);
-    if (alreadySuperseded) {
+    if (alreadySuperseded && alreadySuperseded.sourceHash !== sourceHash) {
       return analyticsConflictResult(`Batch "${supersedesBatchRef}" has already been superseded by a newer revision - this correction is stale.`);
     }
   }
 
-  const sourceHash = sha256HexBuffer(input.fileBuffer);
-
   // Batch-level idempotency - an identical re-upload of the exact same
-  // file content is a no-op that returns the already-committed result,
-  // never a duplicate batch/rows.
-  const existingCompleted = await getCompletedAnalyticsImportBatchBySourceHash(sourceHash);
-  if (existingCompleted) return { ok: true, data: batchToDto(existingCompleted, true) };
+  // file content, declaring the exact same supersession intent (or none),
+  // is a no-op that returns the already-committed result, never a
+  // duplicate batch/rows. Finding #67: source-hash equality ALONE must
+  // never be treated as "already imported" when the caller explicitly
+  // declares a DIFFERENT supersedesBatchRef than what's on record for
+  // this hash - that is Scenario D (an intentional superseding import
+  // using the same bytes, e.g. re-asserting a correction), a genuinely
+  // new revision, not a replay, so it must proceed to actually run
+  // rather than silently return someone else's unrelated result. Only an
+  // exact (sourceHash, supersedesBatchRef) match is a real replay.
+  // Finding #54: the source hash alone must also never silently override
+  // the caller's declared targetKind - if the matching batch was
+  // committed under a DIFFERENT targetKind, that is a genuine mismatch
+  // (stale client state or a malformed direct API call), not a safe
+  // replay, so it must be rejected rather than returning the other
+  // target's data under the label the caller didn't ask for.
+  const existingForHash = await getCompletedAnalyticsImportBatchesBySourceHash(sourceHash);
+  const existingCompleted = existingForHash.find((batch) => batch.supersedesBatchRef === supersedesBatchRef) ?? null;
+  if (existingCompleted) {
+    if (existingCompleted.targetKind !== input.targetKind) {
+      return analyticsConflictResult(
+        `This exact file was already imported as "${existingCompleted.targetKind}" (batch ${existingCompleted.batchRef}). Select the same target kind to view that import, or upload a different file if you intended to import as "${input.targetKind}".`,
+      );
+    }
+    return { ok: true, data: batchToDto(existingCompleted, true) };
+  }
 
   const extension = input.filename.slice(input.filename.lastIndexOf(".") + 1).toLowerCase();
 
@@ -385,6 +444,15 @@ export async function executeAnalyticsImport(actor: ActorContext | null, rawInpu
     // result, rather than creating a second batch/duplicating rows.
     const terminal = await waitForTerminalBatch(claim.batchUid);
     if (!terminal) return analyticsConflictResult("An import for this exact file is already in progress. Try again shortly.");
+    // Finding #54: same mismatch guard as the completed-batch shortcut above -
+    // a concurrent claim for this file's hash was made under a different
+    // targetKind, so joining it would silently hand back data under the
+    // wrong label instead of a genuine race-safe replay.
+    if (terminal.targetKind !== input.targetKind) {
+      return analyticsConflictResult(
+        `This exact file is being imported concurrently as "${terminal.targetKind}" (batch ${terminal.batchRef}). Select the same target kind to view that import, or upload a different file if you intended to import as "${input.targetKind}".`,
+      );
+    }
     return { ok: true, data: batchToDto(terminal, true) };
   }
 
@@ -400,12 +468,19 @@ export async function executeAnalyticsImport(actor: ActorContext | null, rawInpu
       if (row.recordKind === "content") {
         const outcome = await commitContentRow(row, claim.batchRef);
         row.classification = outcome.classification;
+        row.commitFailureReason = outcome.commitFailureReason;
         if (outcome.failed) failedRows += 1;
       } else if (row.recordKind === "channel") {
         const outcome = await commitChannelRow(row, claim.batchRef);
         row.classification = outcome.classification;
+        row.commitFailureReason = outcome.commitFailureReason;
         if (outcome.failed) failedRows += 1;
       }
+    }
+    // Wave B / finding #60 re-audit: fold every distinct safe commit-failure reason into the
+    // batch's own safeErrorSummary too (bounded/deduped), not just the per-row detail below.
+    for (const reason of new Set(result.rows.map((row) => row.commitFailureReason).filter((reason): reason is string => reason !== null && reason !== undefined))) {
+      result.safeErrorSummary.push(reason);
     }
 
     const finalCounts = Object.fromEntries(ANALYTICS_ROW_CLASSIFICATIONS.map((c) => [c, 0])) as Record<AnalyticsRowClassification, number>;
@@ -448,7 +523,12 @@ export async function executeAnalyticsImport(actor: ActorContext | null, rawInpu
     });
     await analyticsImportBatchesCollection().doc(claim.batchUid).set(finalBatchDoc);
 
-    return { ok: true, data: { ...batchToDto(finalBatchDoc, false, result.rows.map(summarizeRowOutcome)), counts: finalCounts } };
+    // Finding #59: persist the SAME bounded row summary the response
+    // carries, so History can show it later without requiring a re-upload.
+    const rowSummaries = result.rows.map(summarizeRowOutcome);
+    await setAnalyticsImportBatchRowDetail(claim.batchUid, rowSummaries.slice(0, MAX_ROW_DETAIL_ROWS), result.rows.length > MAX_ROW_DETAIL_ROWS);
+
+    return { ok: true, data: { ...batchToDto(finalBatchDoc, false, rowSummaries), counts: finalCounts } };
   } catch (error) {
     const now = new Date().toISOString();
     const message = error instanceof AnalyticsImportRejectedError ? error.message : "The import could not be processed.";
@@ -555,12 +635,18 @@ export async function resumeAnalyticsImportBatch(actor: ActorContext | null, raw
     if (row.recordKind === "content") {
       const outcome = await commitContentRow(row, original.batchRef);
       row.classification = outcome.classification;
+      row.commitFailureReason = outcome.commitFailureReason;
       if (outcome.failed) failedRows += 1;
     } else if (row.recordKind === "channel") {
       const outcome = await commitChannelRow(row, original.batchRef);
       row.classification = outcome.classification;
+      row.commitFailureReason = outcome.commitFailureReason;
       if (outcome.failed) failedRows += 1;
     }
+  }
+  // Wave B / finding #60 re-audit: same safeErrorSummary aggregation as executeAnalyticsImport.
+  for (const reason of new Set(result.rows.map((row) => row.commitFailureReason).filter((reason): reason is string => reason !== null && reason !== undefined))) {
+    result.safeErrorSummary.push(reason);
   }
 
   const finalCounts = Object.fromEntries(ANALYTICS_ROW_CLASSIFICATIONS.map((c) => [c, 0])) as Record<AnalyticsRowClassification, number>;
@@ -593,7 +679,13 @@ export async function resumeAnalyticsImportBatch(actor: ActorContext | null, raw
   });
   await analyticsImportBatchesCollection().doc(original.uid).set(updatedDoc);
 
-  return { ok: true, data: { ...batchToDto(updatedDoc, false, result.rows.map(summarizeRowOutcome)), counts: finalCounts } };
+  // Finding #59: overwrite the persisted row detail with this resume's
+  // full (re-parsed) row set, so History reflects the LATEST state, not
+  // the pre-resume snapshot.
+  const rowSummaries = result.rows.map(summarizeRowOutcome);
+  await setAnalyticsImportBatchRowDetail(original.uid, rowSummaries.slice(0, MAX_ROW_DETAIL_ROWS), result.rows.length > MAX_ROW_DETAIL_ROWS);
+
+  return { ok: true, data: { ...batchToDto(updatedDoc, false, rowSummaries), counts: finalCounts } };
 }
 
 // ---- Import Center target registration ---------------------------------
@@ -609,7 +701,11 @@ function toGenericRows(rows: AnalyticsImportRowSummaryDto[]) {
     classification: row.classification,
     outcome: row.outcome,
     identityLabel: row.identityLabel,
-    detail: row.conflictingBatchRef ? `Conflicts with batch ${row.conflictingBatchRef}` : null,
+    // Wave B re-audit: reuses the ONE shared computation (summarizeRowOutcome, import-pipeline.ts) -
+    // never recomputed here, so the generic-wrapper path and the real Analytics UI's own raw
+    // `/api/imports/execute` path (which never went through this function at all - see types.ts's
+    // own comment on AnalyticsImportRowSummaryDto.detail) can never drift apart again.
+    detail: row.detail,
   }));
 }
 

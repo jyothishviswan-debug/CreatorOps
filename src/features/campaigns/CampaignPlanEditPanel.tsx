@@ -36,8 +36,6 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
   const [targetAudience, setTargetAudience] = useState<TargetAudience[]>(campaign.criteria.targetAudience);
   const [regions, setRegions] = useState<string[]>(campaign.regionIds);
   const [languages, setLanguages] = useState(campaign.criteria.languageIds.join(", "));
-  const [categories, setCategories] = useState(campaign.criteria.categoryIds.join(", "));
-  const [criteriaPlatforms, setCriteriaPlatforms] = useState<string[]>(campaign.criteria.platforms);
   const [reviewPolicy, setReviewPolicy] = useState(campaign.defaultReviewPolicy);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,8 +57,16 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
         targetAudience,
         regionIds: regions,
         languageIds: fromCsv(languages),
-        categoryIds: fromCsv(categories),
-        platforms: criteriaPlatforms,
+        // Finding #32 (user-decided): Categories removed from the edit
+        // form - omitted here entirely so the server's merge
+        // (`{ ...current.criteria, ...input.criteria }`) leaves an
+        // already-stored categoryIds value untouched, never silently
+        // wiped by this edit.
+        //
+        // Finding #34: criteria.platforms is likewise omitted - the
+        // server mirrors it from the canonical `platforms` field above
+        // whenever this same edit touches platforms and/or criteria
+        // (single source of truth, enforced server-side).
       },
       expectedVersion: campaign.version,
     });
@@ -113,12 +119,6 @@ export function CampaignPlanEditPanel({ campaign, onSaved }: { campaign: Campaig
         </Field>
         <Field label="Languages">
           <input type="text" value={languages} onChange={(e) => setLanguages(e.target.value)} placeholder="Malayalam, English" />
-        </Field>
-        <Field label="Categories">
-          <input type="text" value={categories} onChange={(e) => setCategories(e.target.value)} placeholder="Lifestyle, Education" />
-        </Field>
-        <Field label="Targeting platforms" full>
-          <MultiSelectDropdown value={criteriaPlatforms} onChange={setCriteriaPlatforms} groups={PLATFORM_GROUPS} placeholder="Select platforms…" allowCustom customPlaceholder="Other platform…" />
         </Field>
         <Field label="Default review policy">
           <select value={reviewPolicy} onChange={(e) => setReviewPolicy(e.target.value as CampaignDto["defaultReviewPolicy"])}>

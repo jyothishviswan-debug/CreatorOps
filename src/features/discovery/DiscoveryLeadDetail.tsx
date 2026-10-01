@@ -11,6 +11,7 @@ import type { ReadinessResult } from "@/server/discovery/types";
 import { NotesMeetingsSection } from "@/features/notes-meetings/NotesMeetingsSection";
 import { getLeadReadiness } from "./api-client";
 import { AlternativeOutcomes } from "./AlternativeOutcomes";
+import { DiscoveryLeadOwnerPanel } from "./DiscoveryLeadOwnerPanel";
 import { absoluteTime, LIFECYCLE_LABELS, lifecycleTone } from "./format";
 import { HistoryPanel } from "./HistoryPanel";
 import { ConvertedStage, ReadyStage } from "./ReadyConvertedStages";
@@ -104,21 +105,29 @@ export function DiscoveryLeadDetail({ initialLead, initialReadiness, notesMeetin
         })}
       </div>
 
-      {/* Manager pairs with Alternative Outcomes as a 1x2 row on this
-          tab specifically; Restricted KYC gets its own full-width
+      {/* Owner pairs with Manager and Alternative Outcomes as a row on this
+          tab specifically (finding #12 - Owner is ambient/scope context,
+          not its own readiness-gating workflow stage, so it doesn't get a
+          dedicated stage tab); Restricted KYC gets its own full-width
           section right below (its form needs the full width) - every
           other stage keeps Alternative Outcomes as its own full-width
           panel below instead (see the else branch). */}
       {selectedStage === "manager" ? (
         <>
           <PanelGrid>
-            <Panel span={showAlternativeOutcomes ? 6 : 12}>
+            <Panel span={showAlternativeOutcomes ? 4 : 6}>
+              <PanelHead title="Owner" description="Who this Lead is scoped to - reassign at any time." />
+              <PanelBody>
+                <DiscoveryLeadOwnerPanel lead={lead} onSaved={handleLeadUpdated} />
+              </PanelBody>
+            </Panel>
+            <Panel span={showAlternativeOutcomes ? 4 : 6}>
               <PanelHead title="Manager" description={stageDescription(selectedStage, lead, blockers)} />
               <PanelBody>
                 <ManagerStage lead={lead} onSaved={handleLeadUpdated} />
               </PanelBody>
             </Panel>
-            {showAlternativeOutcomes && <AlternativeOutcomes lead={lead} onSaved={handleLeadUpdated} span={6} />}
+            {showAlternativeOutcomes && <AlternativeOutcomes lead={lead} onSaved={handleLeadUpdated} span={4} />}
           </PanelGrid>
           <PanelGrid>
             <Panel span={12}>

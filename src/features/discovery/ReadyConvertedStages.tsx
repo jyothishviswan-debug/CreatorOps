@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 
 import { DialogShell } from "@/ui/Dialog";
 import { Pill } from "@/ui/Badge";
@@ -11,7 +12,7 @@ import type { ConversionDto } from "@/server/discovery/conversion-service";
 import type { ReadinessResult } from "@/server/discovery/types";
 import { convertLead, transitionLifecycle } from "./api-client";
 import { DuplicateStatusBanner } from "./DuplicateStatus";
-import { absoluteTime } from "./format";
+import { absoluteTime, assetDecisionLabel } from "./format";
 
 type Props = {
   lead: LeadDto;
@@ -150,6 +151,7 @@ function ConversionDialog({
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ConversionDto | null>(null);
   const [idempotencyKey] = useState(() => `${lead.leadRef}-${Date.now()}`);
+  const router = useRouter();
 
   async function handleConfirm() {
     setConverting(true);
@@ -157,11 +159,20 @@ function ConversionDialog({
     const response = await convertLead(lead.leadRef, { idempotencyKey, expectedVersion: lead.version });
     setConverting(false);
     if (!response.ok) {
+      // Finding #17 (user-decided): navigation only ever follows a genuinely confirmed success - a
+      // validation/server failure leaves the operator on this dialog with the real error, never a
+      // partial/blind redirect.
       setError(response.error);
       return;
     }
     setResult(response.data);
     onConverted({ ...lead, lifecycle: "CONVERTED", conversion: { convertedAt: response.data.convertedAt, convertedByUserRef: "", partnerRef: response.data.partnerRef, partnerAccountRef: response.data.partnerAccountRef, idempotencyKey } });
+    // Auto-navigate to the resulting Partner - `response.data.partnerRef` is the server's own
+    // authoritative result for BOTH a fresh conversion and an idempotent replay (convertLead resolves
+    // the SAME real partnerRef either way), so a retried/idempotent confirm still lands on the correct
+    // existing Partner, never a fabricated or guessed one. The brief "Converted." view below still
+    // renders for the moment client navigation takes to complete.
+    router.push(`/partners/${response.data.partnerRef}`);
   }
 
   // Not rendered at all while closed - a native <dialog> that's merely
@@ -239,7 +250,10 @@ function ConversionDialog({
           </div>
           <div className="kv">
             <span>Asset decision</span>
-            <b>{lead.assetDecision?.decision ?? "None"}{lead.assetDecision?.decision === "NEW_ACCOUNT" ? " (no Partner Account created yet - pending setup)" : ""}</b>
+            <b>
+              {lead.assetDecision ? assetDecisionLabel(lead.assetDecision.decision) : "None"}
+              {lead.assetDecision?.decision === "NEW_ACCOUNT" ? " (no Partner Account created yet - pending setup)" : ""}
+            </b>
           </div>
           <div className="kv">
             <span>Manager</span>

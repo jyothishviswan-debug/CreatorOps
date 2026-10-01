@@ -165,9 +165,21 @@ export const OUTREACH_DIRECTIONS = ["OUTBOUND", "INBOUND"] as const;
 export const outreachDirectionSchema = z.enum(OUTREACH_DIRECTIONS);
 export type OutreachDirection = z.infer<typeof outreachDirectionSchema>;
 
+// Finding #7 (user-decided): a controlled Channel selector, not unrestricted free text. This is a
+// closed set for NEW writes only (recordOutreachInputSchema below) - the already-stored
+// `outreachSummary.lastChannel` field and past `lead_events` metadata stay permissive plain strings so
+// no historical value (including anything pre-dating this enum) is ever rejected on read; an unknown
+// old value simply renders as-is (see features/discovery/format.ts's `channelLabel`).
+export const OUTREACH_CHANNELS = ["email", "whatsapp", "instagram", "facebook", "youtube", "call", "other"] as const;
+export const outreachChannelSchema = z.enum(OUTREACH_CHANNELS);
+export type OutreachChannel = z.infer<typeof outreachChannelSchema>;
+
+// Finding #9 (user-decided): the real per-attempt shape, now actually used to type each
+// `outreach_recorded` event's metadata (see lead-service.ts's `recordOutreach`) - previously defined
+// but never wired to anything. `direction` dropped entirely per finding #10 (never accepted from a new
+// attempt going forward, same as recordOutreachInputSchema).
 export const outreachEntrySchema = z.object({
-  direction: outreachDirectionSchema,
-  channel: z.string().min(1).max(60),
+  channel: outreachChannelSchema,
   summary: z.string().min(1).max(1000),
   outcome: z.string().min(1).max(120),
   notes: z.string().min(1).max(2000).optional(),
@@ -185,7 +197,11 @@ export type LeadOutreachEntry = z.infer<typeof outreachEntrySchema>;
 // (see lead-events.ts).
 export const outreachSummarySchema = z.object({
   totalCount: z.number().int().min(0),
-  lastDirection: outreachDirectionSchema,
+  // Finding #10 (user-decided): Direction was removed from the outreach
+  // form entirely - kept nullable here only so an already-stored Lead's
+  // last-recorded Direction (from before this decision) stays readable;
+  // never written by a new outreach entry going forward.
+  lastDirection: outreachDirectionSchema.nullable().default(null),
   lastChannel: z.string().min(1),
   lastOutcome: z.string().min(1),
   lastAt: z.string().min(1),
@@ -438,6 +454,7 @@ export const LEAD_EVENT_KINDS = [
   "agreement_saved",
   "asset_decision_saved",
   "manager_assigned",
+  "owner_assigned",
   "kyc_updated",
   "duplicate_checked",
   "converted",

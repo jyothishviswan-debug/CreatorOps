@@ -1,16 +1,33 @@
 "use client";
 
-import { useEffect, useState, type FormEvent } from "react";
+import { useEffect, useRef, useState, type FormEvent } from "react";
 
 import { Panel, PanelBody, PanelHead } from "@/ui/Panel";
 import { Pill } from "@/ui/Badge";
 import { EmptyState, Skeleton } from "@/ui/States";
 import { Icon } from "@/ui/icons";
 import type { PartnerAccountDto } from "@/server/partners/client-dto";
+import { DISCOVERY_PLATFORMS } from "@/server/discovery/types";
+import { deriveFromProfileUrl, profileUrlHandleConflict } from "@/server/shared/account-identity";
 import { createPartnerAccount, editPartnerAccount, listPartnerAccounts, setPartnerAccountStatus, setPrimaryPartnerAccount } from "./api-client";
 import { relativeTime } from "./format";
 
-export function PartnerAccountsPanel({ partnerRef, pendingSetup, onChanged }: { partnerRef: string; pendingSetup: boolean; onChanged?: () => void }) {
+// Finding #18: prefilled from the owning Partner's own confirmed
+// Discovery Platform (partner.sourceDiscovery.snapshot.platform), passed
+// down from PartnerDetail.tsx - null for a Partner with no Discovery
+// origin, in which case Platform is left blank and must be explicitly
+// selected, exactly as before.
+export function PartnerAccountsPanel({
+  partnerRef,
+  pendingSetup,
+  sourceDiscoveryPlatform,
+  onChanged,
+}: {
+  partnerRef: string;
+  pendingSetup: boolean;
+  sourceDiscoveryPlatform?: string | null;
+  onChanged?: () => void;
+}) {
   const [accounts, setAccounts] = useState<PartnerAccountDto[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -73,6 +90,7 @@ export function PartnerAccountsPanel({ partnerRef, pendingSetup, onChanged }: { 
           <AccountForm
             mode="create"
             partnerRef={partnerRef}
+            sourceDiscoveryPlatform={sourceDiscoveryPlatform ?? null}
             onSaved={handleChanged}
             onCancel={() => setCreating(false)}
           />
@@ -205,11 +223,27 @@ function AccountRow({ account, onEdit, onChanged }: { account: PartnerAccountDto
   );
 }
 
-type AccountFormProps = { mode: "create"; partnerRef: string; onSaved: () => void; onCancel: () => void } | { mode: "edit"; account: PartnerAccountDto; onSaved: () => void; onCancel: () => void };
+type AccountFormProps =
+  | { mode: "create"; partnerRef: string; sourceDiscoveryPlatform: string | null; onSaved: () => void; onCancel: () => void }
+  | { mode: "edit"; account: PartnerAccountDto; onSaved: () => void; onCancel: () => void };
 
 function AccountForm(props: AccountFormProps) {
   const initial = props.mode === "edit" ? props.account : null;
-  const [platform, setPlatform] = useState(initial?.platform ?? "");
+  // Finding #18: create mode prefills from the Partner's own confirmed
+  // Discovery Platform when present - still just the field's initial
+  // value, never force-selected, so "require explicit selection when
+  // absent" and "never silently overwrite" both fall out naturally (a
+  // blank prop leaves the field blank; the value stays freely editable).
+  const [platform, setPlatform] = useState(() => (props.mode === "create" ? (props.sourceDiscoveryPlatform ?? "") : (initial?.platform ?? "")));
+  // Finding #19: the dropdown covers the canonical Discovery platform
+  // list; "Other" reveals a free-text fallback - platform stays free
+  // text server-side (same discipline as Discovery's own Lead.platform),
+  // so a prefilled or existing value outside the list still shows (and
+  // stays editable) via that fallback rather than being blanked.
+  const [platformOther, setPlatformOther] = useState(() => {
+    const value = props.mode === "create" ? (props.sourceDiscoveryPlatform ?? "") : (initial?.platform ?? "");
+    return value !== "" && !(DISCOVERY_PLATFORMS as readonly string[]).includes(value);
+  });
   const [handle, setHandle] = useState(initial?.handle ?? "");
   const [displayName, setDisplayName] = useState(initial?.displayName ?? "");
   const [profileUrl, setProfileUrl] = useState(initial?.profileUrl ?? "");
@@ -218,8 +252,29 @@ function AccountForm(props: AccountFormProps) {
   const [primary, setPrimary] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const platformTouched = useRef(props.mode === "edit");
+  const handleTouched = useRef(props.mode === "edit");
+
+  // Finding #20: Profile URL -> Handle (and, in create mode, Platform)
+  // derivation - deterministic only, never fuzzy, and never overwrites a
+  // field the operator (or the Discovery prefill above) already touched.
+  // Mirrors DiscoveryLeadForm.tsx's own identical effect exactly.
+  useEffect(() => {
+    if (props.mode !== "create" || !profileUrl) return;
+    const derived = deriveFromProfileUrl(profileUrl);
+    if (derived.platform && !platformTouched.current) {
+      setPlatform(derived.platform);
+      setPlatformOther(!(DISCOVERY_PLATFORMS as readonly string[]).includes(derived.platform));
+    }
+    if (derived.handle && !handleTouched.current) setHandle(derived.handle);
+  }, [profileUrl, props.mode]);
 
   const stableIdLocked = props.mode === "edit" && Boolean(initial?.platformAccountId);
+  // Finding #20: a real disagreement between Profile URL and Handle must
+  // be shown clearly, never silently resolved - a render-time check
+  // (not stored state), using the same shared deterministic-derivation
+  // helper the server itself validates with.
+  const identityConflict = Boolean(profileUrl.trim() && handle.trim() && profileUrlHandleConflict(profileUrl.trim(), handle.trim()));
 
   async function handleSubmit(e: FormEvent) {
     e.preventDefault();
@@ -263,29 +318,81 @@ function AccountForm(props: AccountFormProps) {
 
   return (
     <form onSubmit={handleSubmit} className="record" style={{ marginBottom: 14 }}>
+      {/* Finding #20: field order is Platform -> Profile URL -> Handle ->
+          remaining account fields. */}
       <div className="fields">
         <div className="field">
-          <label>Platform</label>
+          <label>Platform (required)</label>
           {props.mode === "create" ? (
-            <input type="text" value={platform} onChange={(e) => setPlatform(e.target.value)} placeholder="Instagram" required />
+            <>
+              <select
+                value={platformOther ? "other" : platform}
+                onChange={(e) => {
+                  platformTouched.current = true;
+                  const value = e.target.value;
+                  if (value === "other") {
+                    setPlatformOther(true);
+                    setPlatform("");
+                  } else {
+                    setPlatformOther(false);
+                    setPlatform(value);
+                  }
+                }}
+                required
+              >
+                <option value="">Select platform…</option>
+                {DISCOVERY_PLATFORMS.map((p) => (
+                  <option key={p} value={p}>
+                    {p}
+                  </option>
+                ))}
+                <option value="other">Other</option>
+              </select>
+              {platformOther && (
+                <input
+                  type="text"
+                  value={platform}
+                  placeholder="Platform name"
+                  style={{ marginTop: 8 }}
+                  onChange={(e) => {
+                    platformTouched.current = true;
+                    setPlatform(e.target.value);
+                  }}
+                  required
+                />
+              )}
+            </>
           ) : (
             <input type="text" value={platform} disabled />
           )}
         </div>
         <div className="field">
-          <label>Handle</label>
-          <input type="text" value={handle} onChange={(e) => setHandle(e.target.value)} placeholder="handle" />
-        </div>
-        <div className="field">
-          <label>Display name</label>
-          <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
-        </div>
-        <div className="field">
-          <label>Profile URL</label>
+          <label>Profile URL (optional)</label>
           <input type="url" value={profileUrl} onChange={(e) => setProfileUrl(e.target.value)} placeholder="https://instagram.com/handle" />
         </div>
         <div className="field">
-          <label>Stable platform account id {stableIdLocked && "(locked once set)"}</label>
+          <label>Handle (optional)</label>
+          <input
+            type="text"
+            value={handle}
+            onChange={(e) => {
+              handleTouched.current = true;
+              setHandle(e.target.value);
+            }}
+            placeholder="handle"
+          />
+          {identityConflict && (
+            <small role="alert" style={{ color: "var(--danger, #b91c1c)" }}>
+              Profile URL and Handle appear to identify different accounts. Correct one of them, or clear Handle to derive it from the Profile URL.
+            </small>
+          )}
+        </div>
+        <div className="field">
+          <label>Display name (optional)</label>
+          <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+        </div>
+        <div className="field">
+          <label>Stable platform account id (optional) {stableIdLocked && "(locked once set)"}</label>
           <input type="text" value={platformAccountId} onChange={(e) => setPlatformAccountId(e.target.value)} disabled={stableIdLocked} />
           {/* Reserved (not conditionally rendered) so this row's height
               never depends on stableIdLocked - `visibility: hidden` keeps
@@ -295,7 +402,7 @@ function AccountForm(props: AccountFormProps) {
           <small style={{ visibility: stableIdLocked ? "visible" : "hidden" }}>A stable id already on file cannot be replaced or cleared through an ordinary edit.</small>
         </div>
         <div className="field">
-          <label>Follower count</label>
+          <label>Follower count (optional)</label>
           <input type="number" min={0} value={followerCount} onChange={(e) => setFollowerCount(e.target.value)} />
           {/* Matches its row sibling's reserved hint line so both cells
               in this row are always the same height. */}
@@ -323,7 +430,7 @@ function AccountForm(props: AccountFormProps) {
         <button type="button" className="btn" onClick={props.onCancel} disabled={saving}>
           Cancel
         </button>
-        <button type="submit" className="btn primary" disabled={saving || (props.mode === "create" && !platform.trim())}>
+        <button type="submit" className="btn primary" disabled={saving || identityConflict || (props.mode === "create" && !platform.trim())}>
           {saving ? "Saving…" : props.mode === "create" ? "Create account" : "Save changes"}
         </button>
       </div>

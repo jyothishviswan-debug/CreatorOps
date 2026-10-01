@@ -320,7 +320,20 @@ export function createFixtures(tag: string) {
   // commercial section through the accepted pure builder (an Agreement-governed month).
   async function seedDirectReview(partner: PartnerDoc, periodKey: string, over: { status?: "DRAFT" | "IN_REVIEW" | "FINALIZED"; policy?: GoverningCommercialPolicy; latestVersion?: number; hint?: "refresh_available" | "revision_available" | "current" } = {}) {
     const period = derivePeriod(periodKey)!;
-    const built = buildEvidence({ partnerRef: partner.partnerRef, period, evidenceCutoff: "2017-01-01T00:00:00.000Z", assignments: [], assignmentScanTruncated: false, assignmentsScanned: 0, threads: [], analyticsRecords: [], analyticsScanTruncated: false, analyticsRecordsScanned: 0, commercialPolicy: over.policy ?? null });
+    const built = buildEvidence({
+      partnerRef: partner.partnerRef,
+      period,
+      evidenceCutoff: "2017-01-01T00:00:00.000Z",
+      assignments: [],
+      assignmentScanTruncated: false,
+      assignmentsScanned: 0,
+      threads: [],
+      contentScanTruncated: false,
+      analyticsRecords: [],
+      analyticsScanTruncated: false,
+      analyticsRecordsScanned: 0,
+      commercialPolicy: over.policy ?? null,
+    });
     const reviewRef = reviewRefFor(partner.partnerRef, periodKey);
     const status = over.status ?? "DRAFT";
     const stamp = "2017-01-02T00:00:00.000Z";

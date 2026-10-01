@@ -62,7 +62,7 @@ export interface AgreementDocumentStorage {
 }
 
 // What getAgreementDocumentStorage() answers: an adapter, or a truthful NOT_CONFIGURED state (never a fabricated link).
-export type AgreementDocumentStorageNotConfiguredReason = "missing_credentials" | "missing_folder" | "live_drive_disabled_in_tests" | "test_override";
+export type AgreementDocumentStorageNotConfiguredReason = "missing_credentials" | "missing_folder" | "live_drive_disabled_in_tests" | "test_override" | "real_external_services_not_allowed" | "drive_mode_not_enabled";
 
 export type AgreementDocumentStorageResolution =
   | { state: "CONFIGURED"; storage: AgreementDocumentStorage; mode: "GOOGLE_DRIVE" | "FAKE" | "TEST_OVERRIDE" }

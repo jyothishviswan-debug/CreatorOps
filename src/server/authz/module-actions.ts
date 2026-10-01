@@ -27,6 +27,7 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
     { id: "manage_commercial", label: "Save negotiation/agreement evidence" },
     { id: "manage_asset_decision", label: "Save asset decision" },
     { id: "manage_manager_assignment", label: "Assign manager" },
+    { id: "manage_owner_assignment", label: "Assign/reassign owner" },
     { id: "manage_kyc", label: "Manage restricted KYC" },
     { id: "transition_lifecycle", label: "Transition lifecycle (watchlist/reject/archive/restore)" },
     { id: "convert_lead", label: "Convert lead" },
@@ -98,6 +99,10 @@ export const MODULE_ACTIONS: Record<FeatureId, ModuleActionDef[]> = {
   // manual "Plan Content" action anymore).
   content: [
     { id: "create", label: "Create submission thread" },
+    // Finding #44 (user-decided): a Manager recording content links on the Partner's behalf - requires
+    // an Assignment context (never orphan/unassigned Content, matching the canonical Assignment->Content
+    // lifecycle everywhere else).
+    { id: "record_content_links", label: "Record content links on behalf of the Partner" },
     { id: "review_content", label: "Review (approve/request revision)" },
     { id: "cancel_content", label: "Cancel" },
     { id: "export", label: "Export" },

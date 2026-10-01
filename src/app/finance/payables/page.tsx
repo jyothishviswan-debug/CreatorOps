@@ -23,9 +23,14 @@ export default async function FinancePayablesPage({ searchParams }: { searchPara
   }
 
   const actions = result.data.permissions.canManage ? (
-    <Link className="btn primary" href={NEW_PAYABLE_HREF}>
-      Create Payable
-    </Link>
+    <>
+      <Link className="btn" href="/finance/payables/bulk-new">
+        Create multiple
+      </Link>
+      <Link className="btn primary" href={NEW_PAYABLE_HREF}>
+        Create Payable
+      </Link>
+    </>
   ) : undefined;
 
   return (

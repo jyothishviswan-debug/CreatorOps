@@ -23,7 +23,7 @@ const SET_ASIDE_TARGETS: { to: LeadLifecycle; label: string }[] = [
 // existing transitionLifecycle/restoreLead trusted endpoints - it never
 // decides what's allowed, the server does (a rejected transition simply
 // surfaces the server's own error).
-export function AlternativeOutcomes({ lead, onSaved, span = 12 }: { lead: LeadDto; onSaved: (lead: LeadDto) => void; span?: 6 | 12 }) {
+export function AlternativeOutcomes({ lead, onSaved, span = 12 }: { lead: LeadDto; onSaved: (lead: LeadDto) => void; span?: 4 | 6 | 12 }) {
   const [pending, setPending] = useState<LeadLifecycle | "restore" | null>(null);
   const [reason, setReason] = useState("");
   const [busy, setBusy] = useState(false);

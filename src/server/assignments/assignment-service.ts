@@ -3,10 +3,13 @@ import { z } from "zod";
 import { getUserDocByRef } from "@/server/authz/firestore";
 import { getActorScopeGrants, hasGlobalScope } from "@/server/authz/scope";
 import type { ActorContext } from "@/server/authz/types";
+import type { CampaignDoc } from "@/server/campaigns/types";
 import { getCampaignDocByRef } from "@/server/campaigns/firestore";
 import { requireCampaignInScope } from "@/server/campaigns/campaigns-gate";
+import type { PartnerDoc } from "@/server/partners/types";
 import { getPartnerAccountDocByRef, getPartnerDocByRef } from "@/server/partners/firestore";
 import { requirePartnerInScope } from "@/server/partners/partners-gate";
+import { getVendorDocByRef, listVendorPartnerLinkDocsForPartner } from "@/server/vendors/firestore";
 import { getAdminFirestore } from "@/server/firebase/admin";
 import { notifyAssignmentCreated } from "@/server/notifications";
 import { normalizePlatformIdentifier } from "@/server/shared/platform";
@@ -34,11 +37,13 @@ import {
   assignmentsInvalidInputResult,
   assignmentsNotFoundResult,
   assignmentsUnauthorizedResult,
+  MAX_ASSIGNMENT_REQUIRED_COUNT,
   type AssignmentActiveClaimDoc,
   type AssignmentDoc,
   type AssignmentEvent,
   type AssignmentsErrorResult,
   type AssignmentsServiceResult,
+  type AssignmentStatus,
 } from "./types";
 
 // Campaign lifecycle states that permit creating an Assignment under it
@@ -98,7 +103,7 @@ const createAssignmentBriefInputSchema = z
   .object({
     instructions: z.string().min(1).max(2000).optional(),
     contentRequirementSummary: z.string().min(1).max(1000).optional(),
-    requiredCount: z.number().int().min(1).max(1000).optional(),
+    requiredCount: z.number().int().min(1).max(MAX_ASSIGNMENT_REQUIRED_COUNT).optional(),
     formats: z.array(z.string().min(1).max(60)).max(20).optional(),
     platforms: assignmentPlatformsArraySchema.optional(),
     language: z.string().min(1).max(60).optional(),
@@ -157,6 +162,27 @@ async function validatePartnerAccountsForCampaign(args: {
   return null;
 }
 
+// Finding #49: `brief.language`, like `brief.platforms`, is ONE shared value applied to every
+// Assignment created in a request (never per-Partner - see the "Instructions (shared across every
+// selected Partner)" label right next to it in CreateAssignmentDialog.tsx) - so it is validated,
+// once per request, against the UNION of the requested Partners' own recorded canonical
+// `languageIds` (the same real, per-Partner-known set assignment-options-service.ts's
+// toSafePartnerOption now projects to the picker - there is no separate global language taxonomy
+// anywhere in this domain, unlike Region/TargetAudience). A historical stored Assignment's own
+// free-text `language` is never touched by this - it only gates NEW writes. When none of the
+// requested Partners have ANY recorded language yet (a real, common state for this brand-new
+// field), there is nothing to validate against - the value passes through unrestricted rather than
+// making language unusable for every Partner who hasn't backfilled it, a disclosed judgment call
+// since no closed set exists to reject against in that case.
+function validateBriefLanguageForPartners(language: string | null | undefined, partners: readonly { languageIds: readonly string[] }[]): AssignmentsErrorResult | null {
+  const trimmed = language?.trim();
+  if (!trimmed) return null;
+  const known = new Set(partners.flatMap((p) => p.languageIds));
+  if (known.size === 0) return null;
+  if (!known.has(trimmed)) return assignmentsInvalidInputResult(`Language "${trimmed}" is not a recorded language for any selected Partner.`);
+  return null;
+}
+
 // Every brief platform must be one of the Campaign's own platforms.
 function validateBriefPlatformsForCampaign(requestedPlatforms: readonly string[], campaignPlatforms: readonly string[]): AssignmentsErrorResult | null {
   const allowed = new Set(campaignPlatforms);
@@ -184,46 +210,38 @@ function validateBriefPlatformsForCampaign(requestedPlatforms: readonly string[]
 // Partner visibility still never broadens Assignment READ access (Step 10A
 // section 6) - requirePartnerInScope gates only who may create for a
 // Partner, never who may read the resulting Assignment.
-async function createAssignmentInternal(
-  actor: ActorContext | null,
-  rawInput: unknown,
-  requestId: string,
-  options: { enforceExistingScope: boolean },
-): Promise<AssignmentsServiceResult<CreateAssignmentOutcome>> {
-  const gate = await requireAssignmentsAccess(actor, "create");
-  if (!gate.ok) return assignmentsUnauthorizedResult(gate.reason);
+// Findings #40/#42/#51 (user-decided): the ONE definition of "claim-or-reuse the canonical Assignment
+// for a (campaignRef, partnerRef) pair" - the exact transaction/claim logic that already lived inline in
+// createAssignmentInternal, extracted so the new bulk path (createAssignmentsForPartners) and the
+// existing single-create path can never drift apart on this delicate concurrency-safe mechanism (the
+// same kind of duplication this whole program keeps finding and closing). `initialStatus` is the only
+// behavioral difference between the two callers - DRAFT for the legacy single-create path (unchanged),
+// IN_PROGRESS for a new Assignment created through the new bulk path (findings #42/#51: it skips
+// DRAFT/ASSIGNED/ACCEPTED entirely). `routedThroughVendorRef` is pure provenance, never validated here
+// (the caller already validated it, if applicable) and never affects claim/uniqueness semantics.
+type PairBriefInput = {
+  instructions?: string;
+  contentRequirementSummary?: string;
+  requiredCount?: number;
+  formats?: string[];
+  language?: string;
+  hashtags?: string[];
+  dueAt?: string;
+  resourceLinks?: Array<{ label: string; url: string; shareExternally?: boolean }>;
+};
 
-  const parsed = createAssignmentInputSchema.safeParse(rawInput);
-  if (!parsed.success) return assignmentsInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
-  const input = parsed.data;
-
-  const campaign = await getCampaignDocByRef(input.campaignRef);
-  if (!campaign) return assignmentsInvalidInputResult("campaignRef does not resolve to a real Campaign.");
-
-  const campaignScopeCheck = await requireCampaignInScope(actor!, campaign);
-  if (!campaignScopeCheck.ok) return assignmentsUnauthorizedResult("scope_denied");
-
-  if (!isCampaignStatusAllowingAssignmentCreation(campaign.status)) {
-    return assignmentsInvalidInputResult(`Cannot create an Assignment while the Campaign is ${campaign.status}.`);
-  }
-
-  const partner = await getPartnerDocByRef(input.partnerRef);
-  if (!partner) return assignmentsInvalidInputResult("partnerRef does not resolve to a real Partner.");
-
-  // Step 12C.2: Partner Record Scope, before ANY further validation or
-  // write (see the header comment above).
-  const partnerScopeCheck = await requirePartnerInScope(actor!, partner);
-  if (!partnerScopeCheck.ok) return assignmentsUnauthorizedResult("scope_denied");
-
-  if (partner.status !== "ACTIVE") return assignmentsInvalidInputResult(`This Partner is ${partner.status.toLowerCase()} and is not eligible for a new Assignment.`);
-
-  const partnerAccountRefs = input.partnerAccountRefs ?? [];
-  const accountsError = await validatePartnerAccountsForCampaign({ partnerRef: partner.partnerRef, accountRefs: partnerAccountRefs, campaignPlatforms: campaign.platforms, partnerPhrase: "this Partner" });
-  if (accountsError) return accountsError;
-
-  const requestedPlatforms = input.brief?.platforms ?? [];
-  const platformsError = validateBriefPlatformsForCampaign(requestedPlatforms, campaign.platforms);
-  if (platformsError) return platformsError;
+async function createOrReuseAssignmentForPair(args: {
+  actor: ActorContext;
+  requestId: string;
+  campaign: CampaignDoc;
+  partner: PartnerDoc;
+  partnerAccountRefs: readonly string[];
+  requestedPlatforms: readonly string[];
+  briefInput: PairBriefInput | undefined;
+  routedThroughVendorRef: string | null;
+  initialStatus: AssignmentStatus;
+}): Promise<CreateAssignmentTxResult> {
+  const { actor, requestId, campaign, partner, partnerAccountRefs, requestedPlatforms, briefInput, routedThroughVendorRef, initialStatus } = args;
 
   const now = new Date().toISOString();
   const uid = assignmentsCollection().doc().id;
@@ -235,18 +253,19 @@ async function createAssignmentInternal(
     campaignRef: campaign.campaignRef,
     partnerRef: partner.partnerRef,
     partnerAccountRefs,
-    status: "DRAFT",
+    routedThroughVendorRef,
+    status: initialStatus,
     statusReason: null,
     brief: assignmentBriefSchema.parse({
-      instructions: input.brief?.instructions ?? null,
-      contentRequirementSummary: input.brief?.contentRequirementSummary ?? null,
-      requiredCount: input.brief?.requiredCount ?? null,
-      formats: input.brief?.formats ?? [],
+      instructions: briefInput?.instructions ?? null,
+      contentRequirementSummary: briefInput?.contentRequirementSummary ?? null,
+      requiredCount: briefInput?.requiredCount ?? null,
+      formats: briefInput?.formats ?? [],
       platforms: requestedPlatforms,
-      language: input.brief?.language ?? null,
-      hashtags: input.brief?.hashtags ?? [],
-      dueAt: input.brief?.dueAt ?? null,
-      resourceLinks: input.brief?.resourceLinks ?? [],
+      language: briefInput?.language ?? null,
+      hashtags: briefInput?.hashtags ?? [],
+      dueAt: briefInput?.dueAt ?? null,
+      resourceLinks: briefInput?.resourceLinks ?? [],
       // Frozen Campaign-derived context - a point-in-time copy, never
       // re-synced by a later Campaign edit (Step 10A section 3).
       reviewPolicy: campaign.defaultReviewPolicy,
@@ -260,9 +279,9 @@ async function createAssignmentInternal(
     regionIds: campaign.regionIds,
     teamIds: campaign.teamIds,
     createdAt: now,
-    createdByUserRef: actor!.userRef,
+    createdByUserRef: actor.userRef,
     updatedAt: now,
-    updatedByUserRef: actor!.userRef,
+    updatedByUserRef: actor.userRef,
   });
 
   // Step 10A section 2's hard invariant: at most one canonical Assignment
@@ -304,6 +323,74 @@ async function createAssignmentInternal(
     return { kind: "created", doc };
   });
 
+  if (txResult.kind === "created") {
+    await writeAssignmentEvent({ assignmentUid: uid, kind: "created", actorUserRef: actor.userRef, metadata: { campaignRef: campaign.campaignRef, partnerRef: partner.partnerRef }, requestId });
+
+    // Notifications Completion (spec section 4/22): recipient is the new Assignment's own ownerUid
+    // (inherited from its Campaign - see this function's own `ownerUid: campaign.ownerUid` above) -
+    // projection only, after the transaction above has already committed.
+    await notifyAssignmentCreated({ assignmentRef: doc.assignmentRef, ownerUid: doc.ownerUid, actorUserRef: actor.userRef, requestId }).catch(() => undefined);
+  }
+
+  return txResult;
+}
+
+async function createAssignmentInternal(
+  actor: ActorContext | null,
+  rawInput: unknown,
+  requestId: string,
+  options: { enforceExistingScope: boolean },
+): Promise<AssignmentsServiceResult<CreateAssignmentOutcome>> {
+  const gate = await requireAssignmentsAccess(actor, "create");
+  if (!gate.ok) return assignmentsUnauthorizedResult(gate.reason);
+
+  const parsed = createAssignmentInputSchema.safeParse(rawInput);
+  if (!parsed.success) return assignmentsInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
+  const input = parsed.data;
+
+  const campaign = await getCampaignDocByRef(input.campaignRef);
+  if (!campaign) return assignmentsInvalidInputResult("campaignRef does not resolve to a real Campaign.");
+
+  const campaignScopeCheck = await requireCampaignInScope(actor!, campaign);
+  if (!campaignScopeCheck.ok) return assignmentsUnauthorizedResult("scope_denied");
+
+  if (!isCampaignStatusAllowingAssignmentCreation(campaign.status)) {
+    return assignmentsInvalidInputResult(`Cannot create an Assignment while the Campaign is ${campaign.status}.`);
+  }
+
+  const partner = await getPartnerDocByRef(input.partnerRef);
+  if (!partner) return assignmentsInvalidInputResult("partnerRef does not resolve to a real Partner.");
+
+  // Step 12C.2: Partner Record Scope, before ANY further validation or
+  // write (see the header comment above).
+  const partnerScopeCheck = await requirePartnerInScope(actor!, partner);
+  if (!partnerScopeCheck.ok) return assignmentsUnauthorizedResult("scope_denied");
+
+  if (partner.status !== "ACTIVE") return assignmentsInvalidInputResult(`This Partner is ${partner.status.toLowerCase()} and is not eligible for a new Assignment.`);
+
+  const partnerAccountRefs = input.partnerAccountRefs ?? [];
+  const accountsError = await validatePartnerAccountsForCampaign({ partnerRef: partner.partnerRef, accountRefs: partnerAccountRefs, campaignPlatforms: campaign.platforms, partnerPhrase: "this Partner" });
+  if (accountsError) return accountsError;
+
+  const requestedPlatforms = input.brief?.platforms ?? [];
+  const platformsError = validateBriefPlatformsForCampaign(requestedPlatforms, campaign.platforms);
+  if (platformsError) return platformsError;
+
+  const languageError = validateBriefLanguageForPartners(input.brief?.language, [partner]);
+  if (languageError) return languageError;
+
+  const txResult = await createOrReuseAssignmentForPair({
+    actor: actor!,
+    requestId,
+    campaign,
+    partner,
+    partnerAccountRefs,
+    requestedPlatforms,
+    briefInput: input.brief,
+    routedThroughVendorRef: null,
+    initialStatus: "DRAFT",
+  });
+
   if (txResult.kind === "conflict") {
     return { ok: false, code: "conflict", message: "This Campaign+Partner pair already has an Assignment, and it could not be resolved. Reload and try again." };
   }
@@ -317,15 +404,6 @@ async function createAssignmentInternal(
   if (txResult.kind === "idempotent" && options.enforceExistingScope) {
     const existingScope = await requireAssignmentInScope(actor!, txResult.doc);
     if (!existingScope.ok) return assignmentsConflictResult("An Assignment already exists for this Campaign and Partner.");
-  }
-
-  if (txResult.kind === "created") {
-    await writeAssignmentEvent({ assignmentUid: uid, kind: "created", actorUserRef: actor!.userRef, metadata: { campaignRef: campaign.campaignRef, partnerRef: partner.partnerRef }, requestId });
-
-    // Notifications Completion (spec section 4/22): recipient is the new Assignment's own ownerUid
-    // (inherited from its Campaign - see this function's own `ownerUid: campaign.ownerUid` above) -
-    // projection only, after the transaction above has already committed.
-    await notifyAssignmentCreated({ assignmentRef: doc.assignmentRef, ownerUid: doc.ownerUid, actorUserRef: actor!.userRef, requestId }).catch(() => undefined);
   }
 
   return { ok: true, data: { outcome: txResult.kind === "created" ? "created" : "existing", assignment: await toAssignmentDto(txResult.doc) } };
@@ -347,6 +425,196 @@ export async function createAssignment(actor: ActorContext | null, rawInput: unk
   const result = await createAssignmentInternal(actor, rawInput, requestId, { enforceExistingScope: false });
   if (!result.ok) return result;
   return { ok: true, data: result.data.assignment };
+}
+
+// ---- Bulk create (findings #40/#42/#51, user-decided) ----
+
+// A Partner with more Campaign+Partner pairs requested in one call than this is an anomaly, not a normal
+// bulk action - fail loud with a clear validation error rather than accepting an unbounded array.
+export const MAX_BULK_ASSIGNMENT_PARTNERS = 50;
+// A Vendor with more distinct Vendor sections selected in one call than this is likewise an anomaly.
+export const MAX_BULK_ASSIGNMENT_VENDORS = 20;
+
+// Finding #40 correction (user-directed): Direct and Through-Vendor selection are ADDITIVE, never
+// mutually exclusive - one request may name any mix of directly-selected Partners AND one or more
+// Vendors, each with its own selected mapped Partners. `vendorSelections` mirrors the UI's own natural
+// shape (one section per chosen Vendor) rather than a single batch-wide routedThroughVendorRef.
+const vendorSelectionInputSchema = z.object({
+  vendorRef: z.string().min(1),
+  partnerRefs: z.array(z.string().min(1)).min(1).max(MAX_BULK_ASSIGNMENT_PARTNERS),
+});
+
+const createAssignmentsForPartnersInputSchema = z
+  .object({
+    campaignRef: z.string().min(1),
+    directPartnerRefs: z.array(z.string().min(1)).max(MAX_BULK_ASSIGNMENT_PARTNERS).default([]),
+    vendorSelections: z.array(vendorSelectionInputSchema).max(MAX_BULK_ASSIGNMENT_VENDORS).default([]),
+    brief: createAssignmentBriefInputSchema.optional(),
+  })
+  .strict()
+  .refine((value) => value.directPartnerRefs.length > 0 || value.vendorSelections.some((v) => v.partnerRefs.length > 0), {
+    message: "At least one Partner must be selected, directly or through a Vendor.",
+  });
+export type CreateAssignmentsForPartnersInput = z.input<typeof createAssignmentsForPartnersInputSchema>;
+
+export type BulkAssignmentPartnerResult = { partnerRef: string; outcome: "created" | "existing" | "error"; assignmentRef: string | null; error: string | null };
+export type CreateAssignmentsForPartnersResult = { results: BulkAssignmentPartnerResult[] };
+
+// Findings #40/#42/#51 (user-decided, #40 corrected): one logical bulk request covering BOTH Direct and
+// Through-Vendor selection in the same call - additive, never mutually exclusive. Dedupes Partner refs
+// server-side (across Direct + every Vendor section together), authorizes the whole batch ONCE (Campaign
+// scope/status/brief-platform validation happen exactly once, never per-Partner), then calls the SAME
+// claim-or-reuse core (createOrReuseAssignmentForPair) as the legacy single-create path for each Partner,
+// so a Campaign+Partner pair that already has an Assignment is idempotent/safe-to-replay exactly the way
+// the single path always has been - this function invents no separate idempotency-key mechanism because
+// the underlying per-pair claim already provides one. A Partner named both directly and through exactly
+// one Vendor in the same request is not an error - the Vendor route wins (preserved as provenance). A
+// Partner named through two DIFFERENT Vendors in the same request is rejected for the whole request (not
+// guessed, not silently resolved) before any Firestore write happens. Every new Assignment created this
+// way starts IN_PROGRESS (finding #42/#51 - never DRAFT/ASSIGNED/ACCEPTED); the legacy
+// createAssignment/createAssignmentWithOutcome above are UNCHANGED (still DRAFT, still single-Partner)
+// for any other existing caller. A per-Partner failure (not found, out of scope, inactive, an invalid
+// Vendor-routing claim, or a genuine claim-resolution conflict) is reported as that one Partner's own
+// "error" result - it never aborts or rolls back the rest of the batch.
+export async function createAssignmentsForPartners(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<AssignmentsServiceResult<CreateAssignmentsForPartnersResult>> {
+  const gate = await requireAssignmentsAccess(actor, "create");
+  if (!gate.ok) return assignmentsUnauthorizedResult(gate.reason);
+
+  const parsed = createAssignmentsForPartnersInputSchema.safeParse(rawInput);
+  if (!parsed.success) return assignmentsInvalidInputResult(parsed.error.issues.map((issue) => issue.message).join("; "));
+  const input = parsed.data;
+
+  const campaign = await getCampaignDocByRef(input.campaignRef);
+  if (!campaign) return assignmentsInvalidInputResult("campaignRef does not resolve to a real Campaign.");
+
+  const campaignScopeCheck = await requireCampaignInScope(actor!, campaign);
+  if (!campaignScopeCheck.ok) return assignmentsUnauthorizedResult("scope_denied");
+
+  if (!isCampaignStatusAllowingAssignmentCreation(campaign.status)) {
+    return assignmentsInvalidInputResult(`Cannot create an Assignment while the Campaign is ${campaign.status}.`);
+  }
+
+  const requestedPlatforms = input.brief?.platforms ?? [];
+  const platformsError = validateBriefPlatformsForCampaign(requestedPlatforms, campaign.platforms);
+  if (platformsError) return platformsError;
+
+  // Merge Direct + every Vendor section into one map of partnerRef -> the set of distinct non-null
+  // Vendor refs it was requested under. A Partner named both directly AND through exactly one Vendor is
+  // NOT ambiguous - the explicit Vendor route wins (finding #40 correction: "create/reuse one Assignment
+  // and preserve the explicit Vendor route"). A Partner named through two DIFFERENT Vendors in the SAME
+  // request IS ambiguous and must be rejected outright rather than silently picking one - this can only
+  // happen from a malformed/inconsistent client request (a real Partner can hold at most one ACTIVE
+  // Vendor link at a time, enforced by `vendorPartnerActiveClaims`, so the UI's own per-Vendor Partner
+  // lists can never legitimately overlap this way).
+  const vendorRefsByPartner = new Map<string, Set<string>>();
+  for (const partnerRef of input.directPartnerRefs) {
+    if (!vendorRefsByPartner.has(partnerRef)) vendorRefsByPartner.set(partnerRef, new Set());
+  }
+  for (const selection of input.vendorSelections) {
+    for (const partnerRef of selection.partnerRefs) {
+      const set = vendorRefsByPartner.get(partnerRef) ?? new Set<string>();
+      set.add(selection.vendorRef);
+      vendorRefsByPartner.set(partnerRef, set);
+    }
+  }
+
+  const ambiguousPartnerRefs = [...vendorRefsByPartner.entries()].filter(([, vendorRefs]) => vendorRefs.size > 1).map(([partnerRef]) => partnerRef);
+  if (ambiguousPartnerRefs.length > 0) {
+    return assignmentsInvalidInputResult(`Partner(s) selected through more than one Vendor in the same request, which cannot be resolved automatically: ${ambiguousPartnerRefs.sort().join(", ")}.`);
+  }
+
+  if (vendorRefsByPartner.size > MAX_BULK_ASSIGNMENT_PARTNERS) {
+    return assignmentsInvalidInputResult(`No more than ${MAX_BULK_ASSIGNMENT_PARTNERS} distinct Partners may be selected in one request.`);
+  }
+
+  // Every distinct Vendor referenced anywhere in the request must be a real Vendor - resolved once, not
+  // per-Partner. Whether a Vendor ACTUALLY has an ACTIVE relationship with each specific Partner it was
+  // selected for is checked per-Partner below.
+  const distinctVendorRefs = [...new Set(input.vendorSelections.map((s) => s.vendorRef))];
+  for (const vendorRef of distinctVendorRefs) {
+    const vendor = await getVendorDocByRef(vendorRef);
+    if (!vendor) return assignmentsInvalidInputResult(`vendorRef "${vendorRef}" does not resolve to a real Vendor.`);
+  }
+
+  // Sort for a deterministic response order, regardless of what order the client happened to send.
+  const partnerRefs = [...vendorRefsByPartner.keys()].sort();
+
+  // Fetched once, up front, so both the whole-request language validation (finding #49 - the same
+  // shared-value-across-the-batch discipline as requestedPlatforms above) and the per-Partner loop
+  // below reuse the identical reads instead of fetching each Partner doc twice.
+  const partnerDocsByRef = new Map<string, Awaited<ReturnType<typeof getPartnerDocByRef>>>();
+  for (const partnerRef of partnerRefs) {
+    partnerDocsByRef.set(partnerRef, await getPartnerDocByRef(partnerRef));
+  }
+
+  const languageError = validateBriefLanguageForPartners(
+    input.brief?.language,
+    [...partnerDocsByRef.values()].filter((p): p is NonNullable<typeof p> => p !== null),
+  );
+  if (languageError) return languageError;
+
+  const results: BulkAssignmentPartnerResult[] = [];
+  for (const partnerRef of partnerRefs) {
+    const partner = partnerDocsByRef.get(partnerRef) ?? null;
+    if (!partner) {
+      results.push({ partnerRef, outcome: "error", assignmentRef: null, error: "Does not resolve to a real Partner." });
+      continue;
+    }
+
+    const partnerScopeCheck = await requirePartnerInScope(actor!, partner);
+    if (!partnerScopeCheck.ok) {
+      results.push({ partnerRef, outcome: "error", assignmentRef: null, error: "This Partner is outside your Record Scope." });
+      continue;
+    }
+
+    if (partner.status !== "ACTIVE") {
+      results.push({ partnerRef, outcome: "error", assignmentRef: null, error: `This Partner is ${partner.status.toLowerCase()} and is not eligible for a new Assignment.` });
+      continue;
+    }
+
+    // Exactly zero or one Vendor ref survives here per Partner - the ambiguous (2+) case was already
+    // rejected for the whole request above.
+    const [routedThroughVendorRef = null] = vendorRefsByPartner.get(partnerRef) ?? [];
+    if (routedThroughVendorRef !== null) {
+      const links = await listVendorPartnerLinkDocsForPartner(partner.partnerRef);
+      const hasActiveLink = links.some((link) => link.vendorRef === routedThroughVendorRef && link.status === "ACTIVE");
+      if (!hasActiveLink) {
+        results.push({ partnerRef, outcome: "error", assignmentRef: null, error: "This Partner has no ACTIVE relationship with the selected Vendor." });
+        continue;
+      }
+    }
+
+    const txResult = await createOrReuseAssignmentForPair({
+      actor: actor!,
+      requestId,
+      campaign,
+      partner,
+      partnerAccountRefs: [],
+      requestedPlatforms,
+      briefInput: input.brief,
+      routedThroughVendorRef,
+      initialStatus: "IN_PROGRESS",
+    });
+
+    if (txResult.kind === "conflict") {
+      results.push({ partnerRef, outcome: "error", assignmentRef: null, error: "This Campaign+Partner pair already has an Assignment, and it could not be resolved. Reload and try again." });
+      continue;
+    }
+
+    // Same scope discipline as the outcome-aware single-create path: an "existing" result never hands
+    // back an Assignment the actor may not read.
+    if (txResult.kind === "idempotent") {
+      const existingScope = await requireAssignmentInScope(actor!, txResult.doc);
+      if (!existingScope.ok) {
+        results.push({ partnerRef, outcome: "existing", assignmentRef: null, error: null });
+        continue;
+      }
+    }
+
+    results.push({ partnerRef, outcome: txResult.kind === "created" ? "created" : "existing", assignmentRef: txResult.doc.assignmentRef, error: null });
+  }
+
+  return { ok: true, data: { results } };
 }
 
 // ---- Read ----
@@ -407,7 +675,7 @@ const editAssignmentBriefInputSchema = z
   .object({
     instructions: z.string().min(1).max(2000).nullable().optional(),
     contentRequirementSummary: z.string().min(1).max(1000).nullable().optional(),
-    requiredCount: z.number().int().min(1).max(1000).nullable().optional(),
+    requiredCount: z.number().int().min(1).max(MAX_ASSIGNMENT_REQUIRED_COUNT).nullable().optional(),
     formats: z.array(z.string().min(1).max(60)).max(20).optional(),
     platforms: assignmentPlatformsArraySchema.optional(),
     language: z.string().min(1).max(60).nullable().optional(),

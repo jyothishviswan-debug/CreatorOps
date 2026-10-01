@@ -31,6 +31,17 @@ export const ASSIGNMENT_REASON_REQUIRED_STATUSES = ["CANCELLED"] as const satisf
 export const MAX_ASSIGNMENT_PLATFORMS = 20;
 export const assignmentPlatformsArraySchema = platformIdentifierArraySchema(MAX_ASSIGNMENT_PLATFORMS);
 
+// Finding #50 (reopened): requiredCount is the number of separate
+// approved Content RECORDS an Assignment requires (fulfillment-service.ts
+// counts them across the Assignment's own submission cycles - see
+// content-service.ts's resolveOrCreateContentThread) - never a count of
+// links inside any one thread; that coupling has been removed. This is a
+// sanity ceiling against a clearly-wrong data-entry value (someone typing
+// 100), not a structural limit tied to any per-thread link cap -
+// Assignments are bounded units of work, not open-ended recurring
+// obligations, so a double-digit ceiling stays generous.
+export const MAX_ASSIGNMENT_REQUIRED_COUNT = 10;
+
 // --- Brief / obligation snapshot ------------------------------------------
 // Captured ONCE at Assignment creation (campaignName/campaignObjective/
 // reviewPolicy are a point-in-time copy of the owning Campaign) and never
@@ -44,7 +55,7 @@ export const assignmentBriefSchema = z
   .object({
     instructions: z.string().min(1).max(2000).nullable().default(null),
     contentRequirementSummary: z.string().min(1).max(1000).nullable().default(null),
-    requiredCount: z.number().int().min(1).max(1000).nullable().default(null),
+    requiredCount: z.number().int().min(1).max(MAX_ASSIGNMENT_REQUIRED_COUNT).nullable().default(null),
     formats: z.array(z.string().min(1).max(60)).max(20).default([]),
     // Required/allowed platforms for THIS Assignment - validated against
     // the owning Campaign's own platforms at both creation and edit time
@@ -84,6 +95,13 @@ export const assignmentDocSchema = z.object({
   // Selected Partner Account reference(s) - only where genuinely required
   // by the brief (e.g. "post from this exact channel"), never mandatory.
   partnerAccountRefs: z.array(z.string().min(1)).max(10).default([]),
+
+  // Finding #40 (user-decided): the Partner is ALWAYS the assignee - a Vendor is never assignable and
+  // never appears here as one. This is purely provenance/relationship CONTEXT: set only when the Partner
+  // was selected THROUGH a Vendor at creation (never required, never editable afterward - a creation-
+  // time fact, not brief content), so a creator mapped to multiple Vendors doesn't lose which Vendor this
+  // specific Assignment came through. Direct selection leaves it null.
+  routedThroughVendorRef: z.string().min(1).nullable().default(null),
 
   status: assignmentStatusSchema,
   statusReason: z.string().min(1).max(1000).nullable().default(null),

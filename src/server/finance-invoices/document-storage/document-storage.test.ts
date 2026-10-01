@@ -187,25 +187,30 @@ describe("the in-memory fake (unchanged behavior)", () => {
 });
 
 describe("provider selection (pure resolution + seam)", () => {
-  const baseEnv = { credentialsPath: "/k.json", folderId: FOLDER, provider: undefined } as const;
+  const baseEnv = { credentialsPath: "/k.json", folderId: FOLDER, provider: undefined, allowRealExternalServices: false } as const;
 
   it("fake is the default local/test provider: no explicit provider selects the fake outside production, regardless of what else is configured", () => {
     for (const nodeEnv of ["development", "test", undefined]) expect(resolveInvoiceDocumentStorageKind({ env: baseEnv, nodeEnv, testRun: false })).toBe("FAKE");
-    expect(resolveInvoiceDocumentStorageKind({ env: { credentialsPath: undefined, folderId: undefined, provider: undefined }, nodeEnv: "development", testRun: false })).toBe("FAKE");
+    expect(resolveInvoiceDocumentStorageKind({ env: { credentialsPath: undefined, folderId: undefined, provider: undefined, allowRealExternalServices: false }, nodeEnv: "development", testRun: false })).toBe("FAKE");
   });
 
-  it("Drive requires the EXPLICIT provider setting - configuration merely being present is never enough", () => {
+  it("Drive requires the EXPLICIT provider setting AND the shared external-services switch - configuration merely being present is never enough", () => {
     expect(resolveInvoiceDocumentStorageKind({ env: baseEnv, nodeEnv: "production", testRun: false })).toEqual({ notConfigured: "not_implemented" });
-    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, provider: "google_drive" }, nodeEnv: "development", testRun: false })).toBe("GOOGLE_DRIVE");
+    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, provider: "google_drive" }, nodeEnv: "development", testRun: false })).toEqual({ notConfigured: "real_external_services_not_allowed" });
+    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, provider: "google_drive", allowRealExternalServices: true }, nodeEnv: "development", testRun: false })).toBe("GOOGLE_DRIVE");
+  });
+
+  it("the shared ALLOW_REAL_EXTERNAL_SERVICES switch WITHOUT provider=google_drive never reaches Drive either - both gates are required", () => {
+    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, allowRealExternalServices: true }, nodeEnv: "development", testRun: false })).toBe("FAKE");
   });
 
   it("missing Drive config fails closed to NOT_CONFIGURED - never a silent fallback to the fake", () => {
-    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, provider: "google_drive", credentialsPath: undefined }, nodeEnv: "development", testRun: false })).toEqual({ notConfigured: "missing_credentials" });
-    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, provider: "google_drive", folderId: undefined }, nodeEnv: "development", testRun: false })).toEqual({ notConfigured: "missing_folder" });
+    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, provider: "google_drive", allowRealExternalServices: true, credentialsPath: undefined }, nodeEnv: "development", testRun: false })).toEqual({ notConfigured: "missing_credentials" });
+    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, provider: "google_drive", allowRealExternalServices: true, folderId: undefined }, nodeEnv: "development", testRun: false })).toEqual({ notConfigured: "missing_folder" });
   });
 
   it("an automated test run never resolves to real Drive or the fake, even with full explicit configuration", () => {
-    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, provider: "google_drive" }, nodeEnv: "test", testRun: true })).toEqual({ notConfigured: "live_backend_disabled_in_tests" });
+    expect(resolveInvoiceDocumentStorageKind({ env: { ...baseEnv, provider: "google_drive", allowRealExternalServices: true }, nodeEnv: "test", testRun: true })).toEqual({ notConfigured: "live_backend_disabled_in_tests" });
   });
 
   it("setInvoiceDocumentStorageForTests installs an adapter, forces NOT_CONFIGURED, and refuses to run outside a test run", () => {
@@ -225,9 +230,11 @@ describe("provider selection (pure resolution + seam)", () => {
     vi.stubEnv("GOOGLE_APPLICATION_CREDENTIALS", "  ");
     vi.stubEnv("FINANCE_INVOICE_DRIVE_FOLDER_ID", " invoice_folder_id_0001 ");
     vi.stubEnv("FINANCE_INVOICE_DRIVE_PROVIDER", "GOOGLE_DRIVE");
-    expect(getFinanceInvoiceDriveEnv()).toEqual({ credentialsPath: undefined, folderId: "invoice_folder_id_0001", provider: undefined });
+    expect(getFinanceInvoiceDriveEnv()).toEqual({ credentialsPath: undefined, folderId: "invoice_folder_id_0001", provider: undefined, allowRealExternalServices: false });
     vi.stubEnv("FINANCE_INVOICE_DRIVE_PROVIDER", "google_drive");
     expect(getFinanceInvoiceDriveEnv().provider).toBe("google_drive");
+    vi.stubEnv("ALLOW_REAL_EXTERNAL_SERVICES", "true");
+    expect(getFinanceInvoiceDriveEnv().allowRealExternalServices).toBe(true);
   });
 
   it("with no override, no explicit provider and no test run, the process falls back to the in-memory fake (never a fabricated Drive reference)", () => {

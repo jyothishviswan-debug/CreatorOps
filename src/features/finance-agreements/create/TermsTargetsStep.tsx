@@ -20,6 +20,8 @@ import type { FieldViewModel } from "../field-view-model";
 
 import { FieldEditRow } from "./FieldEditRow";
 
+import styles from "./AgreementCreatePage.module.css";
+
 const SHORT_KEYS = ["agreementNumber", "signedDate", "effectiveDate", "terminationDate", "currency", "paymentCycle", "invoiceRequired", "monthlyRequiredQualifyingContentCount", "qualifyingUnit"] as const;
 
 function FieldGrid({ keys, known, span }: { keys: readonly AgreementFieldKey[]; known: Set<AgreementFieldKey>; span: "s4" | "s6" | "s12" }) {
@@ -28,7 +30,12 @@ function FieldGrid({ keys, known, span }: { keys: readonly AgreementFieldKey[]; 
   return (
     <div className="grid" style={{ marginBottom: 4 }}>
       {present.map((key) => (
-        <div key={key} className={span}>
+        // Finding #29: `min-width: 0` only, own module class (never a golden-master-ported class/rule -
+        // see foundation.css's own "do not hand-edit without checking the golden master first") - a real
+        // long-option <select> (Qualifying unit) has an intrinsic content width wider than its .s4 grid
+        // track, and a CSS grid item's default min-width:auto keeps it from shrinking to fit, forcing the
+        // whole card past its column. Live-measured: without this, the card overflowed its track by ~70px.
+        <div key={key} className={`${span} ${styles.fieldCell}`}>
           <FieldEditRow fieldKey={key} />
         </div>
       ))}

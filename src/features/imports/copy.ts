@@ -7,11 +7,13 @@ import type { ImportErrorCategory, ImportOutcomeGroup } from "./types";
 export const MODULE_LABELS: Record<string, string> = {
   analytics: "Analytics",
   contract_bundle: "Contract bundle (Partner/Vendor + Agreement)",
+  content_links: "Content links (record on the Partner's behalf)",
 };
 
 export const MODULE_DESCRIPTIONS: Record<string, string> = {
   analytics: "Campaign/Content posts or Channel/Account snapshots exported from a platform, matched against canonical Content and Partner Account records.",
   contract_bundle: "A bundle of Partner or Vendor records, one Partner Account each, and the Agreement draft to start for them - created through the same canonical services and duplicate checks as the ordinary Agreement-led onboarding screen.",
+  content_links: "A bulk sheet of Assignment Ref / Platform / URL rows - recorded through the same canonical, Assignment-required service as recording one link at a time on the Assignment's own page. Never creates unassigned Content.",
 };
 
 export const OUTCOME_LABELS: Record<ImportOutcomeGroup, string> = {

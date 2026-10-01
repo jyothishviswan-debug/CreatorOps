@@ -191,6 +191,77 @@ test.describe("Import Center - the real governed flow", () => {
     await expect(page.getByText("Completed with issues")).toBeVisible({ timeout: 10_000 });
   });
 
+  // Finding #58 - every eligible pre-commit step (Upload, Preview, plus the
+  // pre-existing Mapping/Review) gets an explicit "Back" button, not just
+  // the clickable step tabs. The first step (Choose data) has no meaningless
+  // Back, and the post-commit Results step never offers one either (only
+  // "Start a new import", a full, explicit reset - never an unsafe rewind
+  // into an editable pre-commit state).
+  test("finding #58: every eligible pre-commit step shows an explicit Back button; Choose data and the post-commit Results step do not", async ({ page }) => {
+    await signInAs(page, "analyst");
+    await page.goto("/imports");
+
+    await expect(page.getByRole("button", { name: "Back" })).toHaveCount(0);
+
+    await page.getByRole("button", { name: "Continue to upload" }).click();
+    await expect(page.getByRole("button", { name: "Back" })).toBeVisible();
+
+    await uploadFile(page, uniqueContentWorkbook(), "back-visibility.xlsx");
+    await page.getByRole("button", { name: "Continue to preview" }).click();
+    await expect(page.getByRole("button", { name: "Back" })).toBeVisible();
+
+    await page.getByRole("button", { name: "Continue to validation" }).click();
+    await expect(page.getByRole("tab", { name: "Review", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByRole("button", { name: "Back" })).toBeVisible();
+
+    await page.getByLabel("I have reviewed the counts and row outcomes above.").check();
+    await page.getByRole("button", { name: "Import" }).click();
+    await expect(page.getByText(/Completed|Completed with issues/)).toBeVisible({ timeout: 10_000 });
+
+    await expect(page.getByRole("button", { name: "Back" })).toHaveCount(0);
+  });
+
+  // Finding #58, explicitly regression-testing #54: Back/Forward navigation
+  // must never drop or desync the selected target kind, file, or any other
+  // interpretation option - the final Import must always reflect whatever
+  // is CURRENTLY visible on screen, never a stale earlier selection.
+  test("finding #58 (regression-tests #54): Back/Forward navigation preserves file and target-kind selection, and Import always reflects the currently-visible target", async ({ page }) => {
+    await signInAs(page, "analyst");
+    await page.goto("/imports");
+
+    await page.getByLabel("What kind of data is this?").selectOption("channel_account");
+    await page.getByRole("button", { name: "Continue to upload" }).click();
+    await expect(page.getByRole("tab", { name: "Upload" })).toHaveAttribute("aria-selected", "true");
+
+    // Back to Choose data with no file picked yet - the target-kind selection must survive.
+    await page.getByRole("button", { name: "Back" }).click();
+    await expect(page.getByRole("tab", { name: "Choose data" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByLabel("What kind of data is this?")).toHaveValue("channel_account");
+
+    // Forward again, pick a file, then Back to Choose data and Forward again - the file selection
+    // must survive too, and Back must never silently re-upload/reset it.
+    await page.getByRole("button", { name: "Continue to upload" }).click();
+    await uploadFile(page, workbookBuffer("Accounts", [["Username"], [`e2e-back-${Date.now()}`]]), "back-forward.xlsx");
+    await expect(page.getByText(/back-forward\.xlsx/)).toBeVisible();
+    await page.getByRole("button", { name: "Continue to preview" }).click();
+    await page.getByRole("button", { name: "Back" }).click();
+    await expect(page.getByRole("tab", { name: "Upload" })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText(/back-forward\.xlsx/)).toBeVisible();
+
+    // Forward through to Review - the final Import must use the CURRENTLY selected target
+    // (channel_account), never a stale/dropped earlier interpretation. A channel/account snapshot row
+    // has no Post URL/identity-post concept, so it would show as an Invalid row if the wrong
+    // (campaign_content) target were ever submitted instead of the one actually shown on screen.
+    await page.getByRole("button", { name: "Continue to preview" }).click();
+    await page.getByRole("button", { name: "Continue to validation" }).click();
+    await expect(page.getByRole("tab", { name: "Review", exact: true })).toHaveAttribute("aria-selected", "true");
+    await expect(page.getByText(/Invalid row/)).toHaveCount(0);
+
+    await page.getByLabel("I have reviewed the counts and row outcomes above.").check();
+    await page.getByRole("button", { name: "Import" }).click();
+    await expect(page.getByText(/Completed|Completed with issues/)).toBeVisible({ timeout: 10_000 });
+  });
+
   test("Viewer cannot see the Import Center nav link and is redirected away from the route", async ({ page }) => {
     await signInAs(page, "viewer");
     await expect(page.getByRole("link", { name: "Import Center" })).not.toBeVisible();

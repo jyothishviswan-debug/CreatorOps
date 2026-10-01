@@ -69,6 +69,11 @@ export const evidenceThreadSchema = z
   .strict();
 export type EvidenceThread = z.infer<typeof evidenceThreadSchema>;
 
+// Finding #50 (reopened): an Assignment can now carry several qualifying
+// Content records over its lifetime (one per submission cycle) - never
+// just one. `threads` replaces the old singular, nullable `thread` field.
+// See normalizeStoredEvidenceSnapshot below for how a v1-shaped stored
+// snapshot (singular `thread`) keeps parsing without ever being rewritten.
 export const evidenceProductionAssignmentSchema = z
   .object({
     assignmentRef: z.string().min(1),
@@ -86,7 +91,7 @@ export const evidenceProductionAssignmentSchema = z
     createdAt: isoTimestamp,
     completed: z.boolean(),
     cancelled: z.boolean(),
-    thread: evidenceThreadSchema.nullable(),
+    threads: z.array(evidenceThreadSchema).default([]),
   })
   .strict();
 export type EvidenceProductionAssignment = z.infer<typeof evidenceProductionAssignmentSchema>;
@@ -159,6 +164,12 @@ export const evidenceCompletenessSchema = z
         assignmentsInPeriod: z.boolean(),
         analyticsScan: z.boolean(),
         analyticsRecordsInPeriod: z.boolean(),
+        // Finding #50 (reopened): an Assignment can now own several Content
+        // records, so the bulk thread read in evidence-collector.ts can no
+        // longer assume ~1 per Assignment - true when its own hard ceiling
+        // was reached before every record for the in-period Assignments
+        // was read.
+        contentScan: z.boolean(),
       })
       .strict(),
     counts: z
@@ -183,6 +194,7 @@ export const INCOMPLETE_REASON_CODES = [
   "assignments_in_period_truncated",
   "analytics_scan_truncated",
   "analytics_records_in_period_truncated",
+  "content_scan_truncated",
   "approved_content_without_analytics",
   "analytics_records_without_reporting_period",
   "analytics_records_with_unparseable_reporting_period",
@@ -209,10 +221,16 @@ export const INCOMPLETE_REASON_CODES = [
 
 export const COMMERCIAL_EVIDENCE_POLICY_VERSION = 1;
 
-// The ONLY supported qualifying units. Both are derived from canonical
-// APPROVED Content evidence - never from raw submitted URLs or links of a
-// non-APPROVED thread.
-export const QUALIFYING_UNITS = ["approved_content_thread", "approved_current_link"] as const;
+// The ONLY supported qualifying units. approved_content_thread/approved_current_link are derived from
+// canonical APPROVED Content evidence - never from raw submitted URLs or links of a non-APPROVED thread
+// - and are kept for backward compatibility only (an Agreement already confirmed under one of them keeps
+// evaluating exactly as before); they are never offered as a choice for a new/edited Agreement going
+// forward (see qualifying-unit.ts's own selectable-options function). Finding #30 (user-decided):
+// qualifying_analytics_post is the ONE unit a standard Agreement is governed by going forward - derived
+// from distinct Analytics posts matched to the Partner/Partner Account (commercial-builder.ts's
+// qualifyingAnalyticsPostUnits), a counter that is DELIBERATELY separate from Assignment/Content-thread
+// fulfillment.
+export const QUALIFYING_UNITS = ["approved_content_thread", "approved_current_link", "qualifying_analytics_post"] as const;
 export const qualifyingUnitSchema = z.enum(QUALIFYING_UNITS);
 export type QualifyingUnit = z.infer<typeof qualifyingUnitSchema>;
 
@@ -221,7 +239,19 @@ export type EvidenceGoverningIdentity = z.infer<typeof governingIdentitySchema>;
 
 export const DELIVERABLE_EVALUATIONS = ["met", "below_requirement", "exceeded", "unavailable"] as const;
 
-export const evidenceCountUnitSchema = z.object({ assignmentRef: z.string().min(1), contentRef: z.string().min(1), unitCount: z.number().int().min(0) }).strict();
+// assignmentRef/contentRef identify a content_thread/content_link unit; sourceRecordRef identifies a
+// Finding #30 analytics_post unit instead - exactly one of the two identity shapes is populated,
+// depending on actualCountSources.sourceType below. Widened to nullable (never narrowed) so an existing
+// stored content_thread/content_link unit - which always has real, non-null assignmentRef/contentRef
+// values - keeps parsing byte-for-byte identically.
+export const evidenceCountUnitSchema = z
+  .object({
+    assignmentRef: z.string().min(1).nullable().default(null),
+    contentRef: z.string().min(1).nullable().default(null),
+    sourceRecordRef: z.string().min(1).nullable().default(null),
+    unitCount: z.number().int().min(0),
+  })
+  .strict();
 export type EvidenceCountUnit = z.infer<typeof evidenceCountUnitSchema>;
 
 export const evidenceMonthlyDeliverableSchema = z
@@ -231,8 +261,9 @@ export const evidenceMonthlyDeliverableSchema = z
     requirementSource: governingIdentitySchema.extend({ requirementSourceRef: z.string().min(1).nullable() }).strict().nullable(),
     qualifyingUnit: qualifyingUnitSchema.nullable(),
     actualQualifyingCount: z.number().int().min(0).nullable(),
-    // Exactly the canonical units that were counted (approved threads).
-    actualCountSources: z.object({ sourceType: z.enum(["content_thread", "content_link"]), units: z.array(evidenceCountUnitSchema) }).strict().nullable(),
+    // Exactly the canonical units that were counted (approved threads, or - finding #30 - distinct
+    // matched Analytics posts).
+    actualCountSources: z.object({ sourceType: z.enum(["content_thread", "content_link", "analytics_post"]), units: z.array(evidenceCountUnitSchema) }).strict().nullable(),
     // actual - required (may be negative); null when unavailable.
     variance: z.number().int().nullable(),
     evaluation: z.enum(DELIVERABLE_EVALUATIONS),
@@ -328,9 +359,17 @@ export const commercialEvidenceSchema = z
   .strict();
 export type CommercialEvidence = z.infer<typeof commercialEvidenceSchema>;
 
+// Finding #50 (reopened): bumped from 1 to 2 for the production.assignments
+// thread -> threads shape change. Every NEW snapshot always writes 2 -
+// normalizeStoredEvidenceSnapshot (below) coerces any stored v1 doc's
+// `snapshot` into the v2 shape BEFORE it ever reaches this schema, so this
+// stays a single strict literal rather than a union - no reader downstream
+// of that coercion boundary ever needs to know v1 existed.
+export const EVIDENCE_SNAPSHOT_SCHEMA_VERSION = 2;
+
 export const evidenceSnapshotSchema = z
   .object({
-    schemaVersion: z.literal(1),
+    schemaVersion: z.literal(EVIDENCE_SNAPSHOT_SCHEMA_VERSION),
     partnerRef: z.string().min(1),
     periodKey: z.string().regex(/^\d{4}-\d{2}$/),
     periodStart: utcDate,
@@ -364,6 +403,44 @@ export const evidenceSnapshotSchema = z
   })
   .strict();
 export type EvidenceSnapshot = z.infer<typeof evidenceSnapshotSchema>;
+
+// Finding #50 (reopened): coerces a raw stored PartnerReviewVersionDoc's
+// v1-shaped snapshot (singular, nullable `production.assignments[].thread`)
+// into the v2 shape (`threads` array) BEFORE it reaches
+// partnerReviewVersionDocSchema/evidenceSnapshotSchema parsing. Every
+// already-stored FINALIZED/SUPERSEDED version stays readable forever,
+// byte-for-byte in storage - this never writes anything back. Call this on
+// raw Firestore doc data at every read site before parsing; anything
+// already v2 (or not a recognizable v1 snapshot shape) passes through
+// completely untouched.
+export function normalizeStoredEvidenceSnapshot(raw: unknown): unknown {
+  if (!raw || typeof raw !== "object") return raw;
+  const doc = raw as Record<string, unknown>;
+  const snapshot = doc.snapshot;
+  if (!snapshot || typeof snapshot !== "object") return raw;
+  const snap = snapshot as Record<string, unknown>;
+  if (snap.schemaVersion !== 1) return raw;
+
+  const production = snap.production;
+  const productionObj = production && typeof production === "object" ? (production as Record<string, unknown>) : null;
+  const assignments = productionObj?.assignments;
+  const normalizedAssignments = Array.isArray(assignments)
+    ? assignments.map((entry) => {
+        if (!entry || typeof entry !== "object") return entry;
+        const { thread, ...rest } = entry as Record<string, unknown>;
+        return { ...rest, threads: thread ? [thread] : [] };
+      })
+    : assignments;
+
+  return {
+    ...doc,
+    snapshot: {
+      ...snap,
+      schemaVersion: EVIDENCE_SNAPSHOT_SCHEMA_VERSION,
+      production: productionObj ? { ...productionObj, assignments: normalizedAssignments } : production,
+    },
+  };
+}
 
 export const PARTNER_REVIEW_EVENT_KINDS = ["generated", "refreshed", "submitted", "finalized", "revision_created", "superseded"] as const;
 export const partnerReviewEventKindSchema = z.enum(PARTNER_REVIEW_EVENT_KINDS);

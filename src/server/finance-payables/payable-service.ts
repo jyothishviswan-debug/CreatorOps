@@ -53,6 +53,7 @@ import {
   type FinancePayablesServiceResult,
   type PayableHeadDoc,
   type PayableLine,
+  type PayableSourceRequest,
   type PayableVersionDoc,
 } from "./types";
 
@@ -291,6 +292,65 @@ export async function createPayable(actor: ActorContext | null, rawInput: unknow
 
   if (txResult.kind === "existing") return resolveExistingPayable(actor!, payableRef, resolved.businessKey);
   return { ok: true, data: { outcome: "created", payable: await buildPayableDetailDto(actor!, txResult.head, counterparty.authorized.displayName, txResult.version) } };
+}
+
+// --- Bulk create (finding #62) ----------------------------------------------------------------------------------------
+// A Batch with more items than this in one request is an anomaly, not a normal bulk action - fail
+// loud with a clear validation error rather than accepting an unbounded array.
+export const MAX_BULK_PAYABLE_ITEMS = 50;
+
+const createPayablesForItemsInputSchema = z
+  .object({ items: z.array(payableSourceRequestSchema).min(1).max(MAX_BULK_PAYABLE_ITEMS) })
+  .strict();
+export type CreatePayablesForItemsInput = z.input<typeof createPayablesForItemsInputSchema>;
+
+export type BulkPayableItemResult = { item: PayableSourceRequest; outcome: "created" | "existing" | "error"; payableRef: string | null; error: string | null };
+export type CreatePayablesForItemsResult = { results: BulkPayableItemResult[] };
+
+// Finding #62 (bulk Create Payable): one logical bulk request covering any mix of counterparties and
+// commercial periods - the browser sends ONE request, the server orchestrates. Deliberately does NOT
+// duplicate `createPayable`'s own gate/scope/resolve/idempotent-create logic - it calls that exact,
+// unmodified canonical function once per item. `createPayable` already: (a) independently re-checks
+// Record Scope for EACH item's own named counterparty (never inferred from this batch's own single
+// feature/action gate below - a batch authorized for Finance globally can still name one counterparty
+// outside the actor's own scope among many items, and only that ONE item fails); (b) is idempotent by
+// construction (payableRef is deterministic in counterparty+period, so a retried or concurrently-
+// racing item can only ever resolve to the ONE canonical Payable - see createPayable's own header
+// comment); (c) reuses finding #30's calculation engine and #64's period-resolution exactly, since
+// both live entirely inside the unmodified call. A single item's failure (no governing Agreement,
+// out-of-scope counterparty, not-ready evidence, a genuine error) is recorded in that item's own
+// result and never aborts or rolls back the rest of the batch - matching this codebase's own
+// established bulk-orchestration shape (createAssignmentsForPartners, assignment-service.ts).
+export async function createPayablesForItems(actor: ActorContext | null, rawInput: unknown, requestId: string): Promise<FinancePayablesServiceResult<CreatePayablesForItemsResult>> {
+  const access = await requireFinancePayablesAccess(actor, "manage_payables");
+  if (!access.ok) return financePayablesUnauthorizedResult(access.reason);
+
+  const parsed = createPayablesForItemsInputSchema.safeParse(rawInput);
+  if (!parsed.success) return financePayablesInvalidInputResult(formatIssues(parsed.error));
+
+  // Dedup an identical item named more than once in the SAME request - createPayable's own
+  // idempotency already makes a repeat safe either way, but this avoids two wasted transaction
+  // attempts (and two confusing result rows) for the literal same basis in one submission.
+  const seen = new Set<string>();
+  const items: PayableSourceRequest[] = [];
+  for (const item of parsed.data.items) {
+    const key = `${item.counterpartyType}|${item.counterpartyRef}|${item.commercialPeriod}`;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    items.push(item);
+  }
+
+  const results: BulkPayableItemResult[] = [];
+  for (const item of items) {
+    const result = await createPayable(actor, item, requestId);
+    if (!result.ok) {
+      results.push({ item, outcome: "error", payableRef: null, error: result.message });
+      continue;
+    }
+    results.push({ item, outcome: result.data.outcome, payableRef: result.data.payable.head.payableRef, error: null });
+  }
+
+  return { ok: true, data: { results } };
 }
 
 async function resolveExistingPayable(actor: ActorContext, payableRef: string, businessKey: string): Promise<FinancePayablesServiceResult<CreatePayableOutcome>> {

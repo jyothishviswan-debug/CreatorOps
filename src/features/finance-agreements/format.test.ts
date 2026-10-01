@@ -146,13 +146,18 @@ describe("registry field labels", () => {
 });
 
 describe("qualifying units, payment cycles, agreement types, platforms", () => {
-  it("offers exactly the two supported qualifying units with their human labels", () => {
+  // Findings #30/#66 (user-decided): the current unit plus the two legacy units kept RECOGNIZED for
+  // backward compatibility only (see qualifying-unit.ts's own qualifyingUnitSelectOptions for the
+  // separate, narrower list that decides what a person can actually choose).
+  it("recognizes the current qualifying unit plus the two legacy units, with their human labels", () => {
     expect(QUALIFYING_UNIT_OPTIONS.map((o) => [o.value, o.label])).toEqual([
-      ["approved_content_thread", "Approved Content"],
-      ["approved_current_link", "Approved current link"],
+      ["qualifying_analytics_post", "Monthly required posts/content"],
+      ["approved_content_thread", "Approved Content (legacy)"],
+      ["approved_current_link", "Approved current link (legacy)"],
     ]);
-    expect(qualifyingUnitLabel("approved_content_thread")).toBe("Approved Content");
-    expect(qualifyingUnitLabel("approved_current_link")).toBe("Approved current link");
+    expect(qualifyingUnitLabel("qualifying_analytics_post")).toBe("Monthly required posts/content");
+    expect(qualifyingUnitLabel("approved_content_thread")).toBe("Approved Content (legacy)");
+    expect(qualifyingUnitLabel("approved_current_link")).toBe("Approved current link (legacy)");
   });
   it("never maps unsupported wording: it is shown as written and reported unsupported", () => {
     expect(isSupportedQualifyingUnit("reel")).toBe(false);

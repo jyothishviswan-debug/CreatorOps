@@ -11,14 +11,14 @@ import { useState } from "react";
 
 import type { AgreementFieldKey } from "@/server/finance-agreements/fields";
 
-import { blankLfcSfcRow, blankObligation, blankSlab, blankTarget } from "../agreement-intake-logic/editors/editor-state";
+import { blankLfcSfcRow, blankObligation, blankSlab, blankTarget, isEditorStateBlank } from "../agreement-intake-logic/editors/editor-state";
 import { MONEY_EDITORS } from "../agreement-intake-logic/editors/editor-state";
 import { buildFieldRowView, requiredTextOf } from "../agreement-intake-logic/editors/field-row-view";
 import { useFieldEditor } from "../agreement-intake-logic/editors/use-field-editor";
 import { useIntake } from "../agreement-intake-logic/intake-context";
 import { editorKindFor, type FieldEditorKind, type FieldViewModel } from "../field-view-model";
 import { NEEDS_MAPPING_LABEL, PAYMENT_CYCLE_OPTIONS } from "../format";
-import { QUALIFYING_UNIT_SELECT_OPTIONS } from "../qualifying-unit";
+import { qualifyingUnitSelectOptions } from "../qualifying-unit";
 
 import styles from "./AgreementCreatePage.module.css";
 
@@ -186,11 +186,35 @@ function OptOutLinksExceptNotApplicable({ fieldKey, canOptOut }: { fieldKey: Agr
   );
 }
 
+// Finding #28: an empty, optional money field (Account transfer fee / Advance payment on a real Agreement
+// that has none) took the same 2-column Amount+Details card footprint as a populated one. Collapsed to one
+// compact line until there's something to show - expands permanently once a real value exists (from
+// extraction or typing) or the person explicitly asks to add one. No field is hidden (still fully present,
+// reachable and keyboard-focusable) and nothing about what's required changes - purely a visual-density fix.
 function MoneyEditor({ fieldKey }: { fieldKey: AgreementFieldKey }) {
   const kind = editorKindFor(fieldKey);
   const handle = useFieldEditor({ fieldKey, kind });
   const { state, update } = handle;
+  const [expanded, setExpanded] = useState(state.kind === "money" && !isEditorStateBlank(state));
   if (state.kind !== "money") return null;
+
+  // A real value arriving after mount (e.g. extraction resolving after this row was already rendered
+  // collapsed) must never stay hidden - adjusted during render (React's own recommended pattern for
+  // "derive state from a prop/value change"), not inside a useEffect.
+  const hasValue = !isEditorStateBlank(state);
+  if (hasValue && !expanded) setExpanded(true);
+
+  if (!expanded) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <small className="muted">Not set</small>
+        <button type="button" className="btn ghost" onClick={() => setExpanded(true)}>
+          + Add
+        </button>
+      </div>
+    );
+  }
+
   return (
     <div className="grid">
       <div className="s6 field">
@@ -271,9 +295,9 @@ function ValueEditor({ fieldKey, kind, model, canOptOut }: { fieldKey: Agreement
         // input made this unfillable by a person: the error text shows the LABEL ("Choose Approved Content ..."),
         // but the value the server accepts is the slug ("approved_content_thread"), never displayed anywhere a
         // person typing free text could see it. A select removes the guess entirely.
-        <select value={state.text} onChange={(e) => update({ kind: "text", text: e.target.value })}>
+        <select value={state.text} onChange={(e) => update({ kind: "text", text: e.target.value })} style={{ width: "100%" }}>
           <option value="">{model.label}</option>
-          {(kind === "qualifyingUnit" ? QUALIFYING_UNIT_SELECT_OPTIONS : PAYMENT_CYCLE_OPTIONS).map((option) => (
+          {(kind === "qualifyingUnit" ? qualifyingUnitSelectOptions(state.text) : PAYMENT_CYCLE_OPTIONS).map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>

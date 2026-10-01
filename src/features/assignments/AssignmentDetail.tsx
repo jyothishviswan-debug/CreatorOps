@@ -130,6 +130,12 @@ export function AssignmentDetail({ initialAssignment, notesMeetingsPermissions }
                 <span>Partner</span>
                 <b>{assignment.partnerDisplayName ?? "Unknown Partner"}</b>
               </div>
+              {assignment.routedThroughVendorRef && (
+                <div className="kv">
+                  <span>Routed through Vendor</span>
+                  <b>{assignment.routedThroughVendorDisplayName ?? "Unknown Vendor"}</b>
+                </div>
+              )}
               <div className="kv">
                 <span>Platform / account context</span>
                 <b>

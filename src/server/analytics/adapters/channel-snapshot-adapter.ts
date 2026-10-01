@@ -43,7 +43,7 @@ export type ChannelSnapshotCandidateRow = {
   ignoredColumns: string[];
 };
 
-export function classifyChannelSnapshotSheet(headers: string[]): { isRecognized: boolean; recognizedHeaderCount: number; unsupportedHeaders: string[]; unrecognizedHeaders: string[] } {
+export function classifyChannelSnapshotSheet(headers: string[]): { isRecognized: boolean; recognizedHeaderCount: number; unsupportedHeaders: string[]; unrecognizedHeaders: string[]; ambiguousHeaders: string[] } {
   const classification = classifyHeaders(headers, CHANNEL_SNAPSHOT_HEADER_ALIASES);
   const recognizedFieldIds = new Set(classification.recognized.values());
   const isRecognized = recognizedFieldIds.has("platformAccountId") || recognizedFieldIds.has("profileUrl") || recognizedFieldIds.has("handle");
@@ -52,6 +52,9 @@ export function classifyChannelSnapshotSheet(headers: string[]): { isRecognized:
     recognizedHeaderCount: classification.recognized.size,
     unsupportedHeaders: [...classification.unsupported.keys()],
     unrecognizedHeaders: classification.unrecognized,
+    // Wave B / finding #55 re-audit: every raw header involved in a same-field collision - never
+    // silently resolved to one column.
+    ambiguousHeaders: [...classification.ambiguous.values()].flat(),
   };
 }
 

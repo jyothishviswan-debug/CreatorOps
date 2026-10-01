@@ -174,24 +174,28 @@ function PartySourceChoice() {
         {/* Final Whole-Product Certification (accessibility pass, spec section 21): the four choice cards below are
             each `role="radio"` but had no enclosing group, an invalid/incomplete ARIA radio pattern (an assistive
             technology cannot announce "1 of 4" or the group's own purpose). Minimal, narrowly-scoped fix - adds
-            the missing `role="radiogroup"` + accessible name only; no visual or behavioral change. */}
-        <div className="grid" role="radiogroup" aria-label="What is this Agreement for?">
+            the missing `role="radiogroup"` + accessible name only; no visual or behavioral change.
+            Finding #22: these 4 cards (one short title + one short description line each) were oversized under
+            the rigid 12-col/.s3 grid's generic 16px-padding `.record`. Reusing this same feature's own already-
+            established denser auto-fit card pattern (`.recordgrid`, used identically for short-content cards in
+            ReviewTabs.tsx/VerificationStep.tsx) instead of inventing a new one - width now follows content
+            (minmax(235px,1fr)) rather than a fixed 4-per-row minimum, with no change to what each card shows. */}
+        <div className="recordgrid" role="radiogroup" aria-label="What is this Agreement for?" style={{ padding: 0 }}>
           {AGREEMENT_FOR_OPTIONS.map((option) => (
-            <div key={option.value} className="s3">
-              <button
-                type="button"
-                role="radio"
-                aria-checked={local.choice === option.value}
-                className="record"
-                style={{ width: "100%", textAlign: "left", cursor: "pointer", borderColor: local.choice === option.value ? "var(--orange)" : undefined, background: local.choice === option.value ? "var(--tint)" : undefined }}
-                onClick={() => chooseCard(option.value)}
-              >
-                <h3>{option.label}</h3>
-                <p className="muted" style={{ marginTop: 4 }}>
-                  {option.description}
-                </p>
-              </button>
-            </div>
+            <button
+              key={option.value}
+              type="button"
+              role="radio"
+              aria-checked={local.choice === option.value}
+              className="record"
+              style={{ width: "100%", textAlign: "left", cursor: "pointer", borderColor: local.choice === option.value ? "var(--orange)" : undefined, background: local.choice === option.value ? "var(--tint)" : undefined }}
+              onClick={() => chooseCard(option.value)}
+            >
+              <h3>{option.label}</h3>
+              <p className="muted" style={{ marginTop: 4 }}>
+                {option.description}
+              </p>
+            </button>
           ))}
         </div>
 

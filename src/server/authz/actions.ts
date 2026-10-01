@@ -40,6 +40,7 @@ export const ACTIONS = [
   "manage_commercial",
   "manage_asset_decision",
   "manage_manager_assignment",
+  "manage_owner_assignment",
   "manage_kyc",
   "transition_lifecycle",
   // Partners / Vendors
@@ -93,6 +94,11 @@ export const ACTIONS = [
   // without also being trusted to approve/request revision.
   "review_content",
   "cancel_content",
+  // Finding #44 (user-decided): a Manager recording content links on the Partner's behalf - a real,
+  // authenticated-actor write (never a public bearer-token session), gated separately from `create`
+  // (thread creation is automatic/implicit) and `review_content` (approve/request revision is a
+  // different, later step).
+  "record_content_links",
   // Analytics
   "explore",
   "manage_analytics_data",

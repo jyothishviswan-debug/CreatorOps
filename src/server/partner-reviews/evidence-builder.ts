@@ -8,6 +8,7 @@ import { policyConflictFingerprintFacts, policyFingerprintFacts, policyNeedsChan
 import { computeSourceFingerprint } from "./fingerprint";
 import { dateRangeOverlapsPeriod, dueInstantMs, parseLeadingUtcDate, toUtcDate, type ReviewPeriod } from "./period";
 import {
+  EVIDENCE_SNAPSHOT_SCHEMA_VERSION,
   evidenceSnapshotSchema,
   type EvidenceComplianceAssignment,
   type EvidencePerformanceRecord,
@@ -220,9 +221,13 @@ export type BuildEvidenceInput = {
   assignments: readonly AssignmentSource[];
   assignmentScanTruncated: boolean;
   assignmentsScanned: number;
-  // Canonical Content threads for the in-period Assignments (any extra
-  // threads are ignored).
+  // Content threads for the in-period Assignments - Finding #50 (reopened):
+  // an Assignment may legitimately have several (one per submission cycle),
+  // never just one.
   threads: readonly ContentThreadSource[];
+  // True when evidence-collector.ts's bulk thread scan hit its own hard
+  // ceiling before reading every record for the in-period Assignments.
+  contentScanTruncated: boolean;
   analyticsRecords: readonly AnalyticsRecordSource[];
   analyticsScanTruncated: boolean;
   analyticsRecordsScanned: number;
@@ -250,9 +255,18 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
 
   const assignmentSelection = selectInPeriodAssignments(input.assignments, input.period);
   const inPeriodRefs = new Set(assignmentSelection.selected.map((entry) => entry.assignment.assignmentRef));
-  const threadByAssignmentRef = new Map<string, ContentThreadSource>();
+  // Finding #50 (reopened): an Assignment can have SEVERAL Content threads
+  // (one per submission cycle) - push into a list per assignmentRef, never
+  // overwrite. (The prior single-thread Map silently dropped every thread
+  // but the last one seen for a given assignmentRef - a real, previously
+  // dormant bug, only reachable once an Assignment could have more than
+  // one thread at all.)
+  const threadByAssignmentRef = new Map<string, ContentThreadSource[]>();
   for (const thread of input.threads) {
-    if (inPeriodRefs.has(thread.assignmentRef)) threadByAssignmentRef.set(thread.assignmentRef, thread);
+    if (!inPeriodRefs.has(thread.assignmentRef)) continue;
+    const existing = threadByAssignmentRef.get(thread.assignmentRef);
+    if (existing) existing.push(thread);
+    else threadByAssignmentRef.set(thread.assignmentRef, [thread]);
   }
 
   const analyticsSelection = selectInPeriodAnalytics(input.partnerRef, input.analyticsRecords, input.period);
@@ -262,8 +276,7 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
   const compliance: EvidenceComplianceAssignment[] = [];
 
   for (const { assignment, eventDate, eventDateSource } of assignmentSelection.selected) {
-    const thread = threadByAssignmentRef.get(assignment.assignmentRef) ?? null;
-    const threadEvidence = thread ? buildThread(thread) : null;
+    const threads = threadByAssignmentRef.get(assignment.assignmentRef) ?? [];
     const completed = assignment.status === "COMPLETED";
     const cancelled = assignment.status === "CANCELLED";
 
@@ -281,26 +294,44 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
       createdAt: assignment.createdAt,
       completed,
       cancelled,
-      thread: threadEvidence,
+      threads: threads.map(buildThread),
     });
 
+    // Finding #50 (reopened): Compliance is now derived ACROSS every one of
+    // the Assignment's threads, never just one. submittedAt is the
+    // earliest first-submission across all cycles (the first sign of real
+    // work); approvedAt is the latest approval among APPROVED threads
+    // (the instant the obligation was most recently advanced);
+    // revisionRequestCount sums real friction across every cycle
+    // (revisionRequestCountIsExact only if every thread's own count is
+    // exact); threadStatus/threadOpenWithNoLinks describe the CURRENT
+    // (most recently opened) cycle specifically - those two fields answer
+    // "is there live open work right now", inherently a current-cycle
+    // question, not an aggregate one.
     const dueMs = assignment.brief.dueAt ? dueInstantMs(assignment.brief.dueAt) : null;
-    const submittedMs = thread?.firstSubmittedAt ? Date.parse(thread.firstSubmittedAt) : null;
-    const approvedMs = thread?.approvedAt ? Date.parse(thread.approvedAt) : null;
-    const revision = thread ? deriveRevisionRequestCount(thread) : { count: 0, exact: true };
+    const firstSubmittedAts = threads.map((t) => t.firstSubmittedAt).filter((v): v is string => v !== null).sort();
+    const submittedAt = firstSubmittedAts[0] ?? null;
+    const approvedAts = threads.filter((t) => t.status === "APPROVED").map((t) => t.approvedAt).filter((v): v is string => v !== null).sort();
+    const approvedAt = approvedAts.length > 0 ? approvedAts[approvedAts.length - 1]! : null;
+    const submittedMs = submittedAt ? Date.parse(submittedAt) : null;
+    const approvedMs = approvedAt ? Date.parse(approvedAt) : null;
+    const revisions = threads.map(deriveRevisionRequestCount);
+    const revisionRequestCount = revisions.reduce((sum, r) => sum + r.count, 0);
+    const revisionRequestCountIsExact = revisions.every((r) => r.exact);
+    const currentThread = threads.length > 0 ? threads.reduce((latest, t) => (t.openedAt > latest.openedAt ? t : latest)) : null;
 
     compliance.push({
       assignmentRef: assignment.assignmentRef,
       dueAt: assignment.brief.dueAt,
-      submittedAt: thread?.firstSubmittedAt ?? null,
-      approvedAt: thread?.approvedAt ?? null,
+      submittedAt,
+      approvedAt,
       submittedBeforeDue: dueMs !== null && submittedMs !== null && !Number.isNaN(submittedMs) ? submittedMs <= dueMs : null,
       approvedBeforeDue: dueMs !== null && approvedMs !== null && !Number.isNaN(approvedMs) ? approvedMs <= dueMs : null,
-      revisionRequestCount: revision.count,
-      revisionRequestCountIsExact: revision.exact,
-      threadStatus: thread?.status ?? null,
-      hasNoThread: thread === null && ISSUED_NON_CANCELLED_STATUSES.includes(assignment.status),
-      threadOpenWithNoLinks: thread !== null && thread.status === "OPEN" && thread.currentLinks.length === 0,
+      revisionRequestCount,
+      revisionRequestCountIsExact,
+      threadStatus: currentThread?.status ?? null,
+      hasNoThread: threads.length === 0 && ISSUED_NON_CANCELLED_STATUSES.includes(assignment.status),
+      threadOpenWithNoLinks: currentThread !== null && currentThread.status === "OPEN" && currentThread.currentLinks.length === 0,
       notCompletedPastDue: OBLIGATION_ACTIVE_STATUSES.includes(assignment.status) && dueMs !== null && !Number.isNaN(cutoffMs) && cutoffMs > dueMs,
       completed,
       cancelled,
@@ -346,13 +377,16 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
 
   // --- Completeness ----------------------------------------------------------------
   const analyticsContentRefs = new Set(records.map((record) => record.matchedContentRef).filter((ref): ref is string => ref !== null));
-  const approvedContentWithoutAnalytics = production.filter((entry) => entry.thread?.status === "APPROVED" && !analyticsContentRefs.has(entry.thread.contentRef)).length;
+  const approvedContentWithoutAnalytics = production
+    .flatMap((entry) => entry.threads)
+    .filter((thread) => thread.status === "APPROVED" && !analyticsContentRefs.has(thread.contentRef)).length;
 
   const incompleteReasons: string[] = [];
   if (input.assignmentScanTruncated) incompleteReasons.push("assignment_scan_truncated");
   if (assignmentSelection.truncated) incompleteReasons.push("assignments_in_period_truncated");
   if (input.analyticsScanTruncated) incompleteReasons.push("analytics_scan_truncated");
   if (analyticsSelection.truncated) incompleteReasons.push("analytics_records_in_period_truncated");
+  if (input.contentScanTruncated) incompleteReasons.push("content_scan_truncated");
   if (approvedContentWithoutAnalytics > 0) incompleteReasons.push("approved_content_without_analytics");
   if (analyticsSelection.excludedNoReportingPeriod > 0) incompleteReasons.push("analytics_records_without_reporting_period");
   if (analyticsSelection.excludedUnparseableReportingPeriod > 0) incompleteReasons.push("analytics_records_with_unparseable_reporting_period");
@@ -382,7 +416,7 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
   for (const entry of production) {
     addRef("assignment", entry.assignmentRef);
     addRef("campaign", entry.campaignRef);
-    if (entry.thread) addRef("content", entry.thread.contentRef);
+    for (const thread of entry.threads) addRef("content", thread.contentRef);
   }
   for (const record of records) addRef("analyticsSourceRecord", record.sourceRecordRef);
   // Channel snapshot records that fed an evaluated followerGrowth target.
@@ -390,7 +424,7 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
   const sourceRefs = [...refKeys.values()].sort((a, b) => (a.type === b.type ? (a.ref < b.ref ? -1 : a.ref > b.ref ? 1 : 0) : a.type < b.type ? -1 : 1));
 
   const snapshot: EvidenceSnapshot = evidenceSnapshotSchema.parse({
-    schemaVersion: 1,
+    schemaVersion: EVIDENCE_SNAPSHOT_SCHEMA_VERSION,
     partnerRef: input.partnerRef,
     periodKey: input.period.periodKey,
     periodStart: input.period.periodStart,
@@ -412,11 +446,15 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
         assignmentsInPeriod: assignmentSelection.truncated,
         analyticsScan: input.analyticsScanTruncated,
         analyticsRecordsInPeriod: analyticsSelection.truncated,
+        contentScan: input.contentScanTruncated,
       },
       counts: {
         assignmentsScanned: input.assignmentsScanned,
         assignmentsInPeriod: production.length,
-        threadsFound: production.filter((entry) => entry.thread !== null).length,
+        // Finding #50 (reopened): a real count of Content records found
+        // (an Assignment can now contribute more than one), not "how many
+        // assignments had at least one".
+        threadsFound: production.reduce((sum, entry) => sum + entry.threads.length, 0),
         analyticsRecordsScanned: input.analyticsRecordsScanned,
         analyticsRecordsInPeriod: records.length,
         analyticsRecordsExcludedNoReportingPeriod: analyticsSelection.excludedNoReportingPeriod,
@@ -431,7 +469,7 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
   // --- Fingerprint: SOURCE FACTS only, nothing time-dependent -------------------------
   // (no evidence cutoff, no overdue-relative-to-now boolean, no scan totals).
   const sourceFingerprint = computeSourceFingerprint({
-    schemaVersion: 1,
+    schemaVersion: EVIDENCE_SNAPSHOT_SCHEMA_VERSION,
     partnerRef: input.partnerRef,
     periodKey: input.period.periodKey,
     assignments: assignmentSelection.selected.map(({ assignment, eventDate }) => ({
@@ -445,8 +483,7 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
       eventDate,
     })),
     threads: assignmentSelection.selected
-      .map(({ assignment }) => threadByAssignmentRef.get(assignment.assignmentRef))
-      .filter((thread): thread is ContentThreadSource => thread !== undefined)
+      .flatMap(({ assignment }) => threadByAssignmentRef.get(assignment.assignmentRef) ?? [])
       .map((thread) => ({
         ref: thread.contentRef,
         assignmentRef: thread.assignmentRef,
@@ -474,6 +511,7 @@ export function buildEvidence(input: BuildEvidenceInput): BuiltEvidence {
       assignmentsInPeriod: assignmentSelection.truncated,
       analyticsScan: input.analyticsScanTruncated,
       analyticsRecordsInPeriod: analyticsSelection.truncated,
+      contentScan: input.contentScanTruncated,
     },
     // Commercial inputs feed the fingerprint ONLY when they exist, so a
     // Partner with no governing policy hashes byte-for-byte as it did before
